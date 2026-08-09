@@ -38,13 +38,13 @@ test("protocol: rejects noncanonical paths, model drift, and nonempty GetState p
 	const relative = createSessionPayload();
 	relative.cwd = "relative/workspace";
 	assert.throws(() => decodeCommand(1, "CreateSession", relative), ProtocolDecodeError);
-	assert.throws(() => absolutePath("/tmp/xsh/../escape"), ProtocolDecodeError);
-	assert.throws(() => absolutePath("/tmp/xsh//double-separator"), ProtocolDecodeError);
-	assert.throws(() => absolutePath("/tmp/xsh/trailing/"), ProtocolDecodeError);
-	assert.throws(() => absolutePath("/tmp/xsh/\0poison"), ProtocolDecodeError);
-	assert.equal(absolutePath("/tmp/xsh/normalized"), "/tmp/xsh/normalized");
+	assert.throws(() => absolutePath("/tmp/society/../escape"), ProtocolDecodeError);
+	assert.throws(() => absolutePath("/tmp/society//double-separator"), ProtocolDecodeError);
+	assert.throws(() => absolutePath("/tmp/society/trailing/"), ProtocolDecodeError);
+	assert.throws(() => absolutePath("/tmp/society/\0poison"), ProtocolDecodeError);
+	assert.equal(absolutePath("/tmp/society/normalized"), "/tmp/society/normalized");
 	const trailingCreatePath = createSessionPayload();
-	trailingCreatePath.cwd = "/tmp/xsh-society/work/";
+	trailingCreatePath.cwd = "/tmp/society-host-fixture/work/";
 	assert.throws(() => decodeCommand(1, "CreateSession", trailingCreatePath), ProtocolDecodeError);
 
 	const modelDrift = createSessionPayload();

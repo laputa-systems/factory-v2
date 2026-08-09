@@ -24,8 +24,8 @@ import {
 	PINNED_PROVIDER,
 	PINNED_THINKING_LEVEL,
 	absolutePath,
-	assertVs001ActorModelPolicy,
-	assertVs001ModelCatalogPolicy,
+	assertPinnedActorModelPolicy,
+	assertPinnedModelCatalogPolicy,
 	binary64BigEndianHex,
 	nonNegativeInteger,
 	providerCostObservation,
@@ -196,8 +196,8 @@ function assertExactCreatePayload(payload: CreateSessionPayload): void {
 		payload.model.thinkingLevel !== PINNED_THINKING_LEVEL
 	) throw new SdkConstructionError("execution_profile_drift");
 	try {
-		assertVs001ActorModelPolicy(payload.settings);
-		assertVs001ModelCatalogPolicy(payload.modelCatalog);
+		assertPinnedActorModelPolicy(payload.settings);
+		assertPinnedModelCatalogPolicy(payload.modelCatalog);
 	} catch {
 		throw new SdkConstructionError("execution_profile_drift");
 	}

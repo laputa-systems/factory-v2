@@ -368,9 +368,14 @@ pub struct UsdMicros(i64);
 
 impl UsdMicros {
     pub const ZERO: Self = Self(0);
-    pub const VS001_SOCIETY_HARD_CEILING: Self = Self(1_030_000);
-    pub const VS001_QUALIFICATION_CEILING: Self = Self(30_000);
-    pub const VS001_CYCLE_CEILING: Self = Self(1_000_000);
+    /// Current founding policy: the governing Society envelope covers one
+    /// pinned Pi SDK execution cycle plus its native qualification allowance.
+    pub const FOUNDING_SOCIETY_HARD_CEILING: Self = Self(1_030_000);
+    /// Current policy for the one native Pi SDK qualification cycle.
+    pub const PI_SDK_QUALIFICATION_CEILING: Self = Self(30_000);
+    /// Current policy for a cycle using the pinned Pi SDK model profile. The
+    /// deterministic Pi-host fixture has the same logical cycle envelope.
+    pub const PINNED_PI_SDK_CYCLE_CEILING: Self = Self(1_000_000);
 
     pub const fn new(value: i64) -> Option<Self> {
         if value >= 0 { Some(Self(value)) } else { None }
@@ -805,18 +810,19 @@ impl OperatingCycleState {
     }
 }
 
-/// The finite operating treatments permitted by VS-001. A treatment carries
-/// its constitutional budget exactly; callers never select an arbitrary
-/// ceiling for a cycle.
+/// The finite operating treatments permitted by the current pinned Pi SDK
+/// policy. A treatment carries its constitutional budget exactly; callers
+/// never select an arbitrary ceiling for a cycle.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(i64)]
 pub enum OperatingCycleTreatment {
     PiSdkQualificationV1 = 1,
-    Vs001LiveV1 = 2,
+    PinnedPiSdkLiveV1 = 2,
     /// Provider-free process-double treatment for trusted-kernel/supervisor
-    /// fixtures. It carries VS-001's logical envelope but denies provider
-    /// access and cannot stand in for the paid native qualification run.
-    Vs001DeterministicV1 = 3,
+    /// fixtures. It carries the pinned Pi SDK cycle envelope but denies
+    /// provider access and cannot stand in for the paid native qualification
+    /// run.
+    DeterministicPiHostFixtureV1 = 3,
 }
 
 /// M2 contains the planning and closure-blocker portion of the Project
@@ -965,13 +971,13 @@ pub enum AdversarialReviewState {
     Escalated = 9,
 }
 
-/// The M3 execution foundation permits only the one pinned VS-001 model
+/// The M3 execution foundation permits only the current pinned Pi SDK model
 /// policy. A future policy mutation needs its own versioned, qualified path;
 /// a provider/model string may not quietly change an Actor's identity.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(i64)]
 pub enum ActorModelPolicy {
-    Vs001DeepseekV4FlashHigh = 1,
+    PinnedDeepseekV4FlashHigh = 1,
 }
 
 /// Developmental attractors are explicit treatment biases, never authority
@@ -1546,8 +1552,10 @@ pub enum PostmortemActionKind {
 impl OperatingCycleTreatment {
     pub const fn budget_ceiling(self) -> UsdMicros {
         match self {
-            Self::PiSdkQualificationV1 => UsdMicros::VS001_QUALIFICATION_CEILING,
-            Self::Vs001LiveV1 | Self::Vs001DeterministicV1 => UsdMicros::VS001_CYCLE_CEILING,
+            Self::PiSdkQualificationV1 => UsdMicros::PI_SDK_QUALIFICATION_CEILING,
+            Self::PinnedPiSdkLiveV1 | Self::DeterministicPiHostFixtureV1 => {
+                UsdMicros::PINNED_PI_SDK_CYCLE_CEILING
+            }
         }
     }
 }

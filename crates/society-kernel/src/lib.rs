@@ -1,4 +1,4 @@
-//! Trusted, replayable domain and SQLite storage for the XSH Society.
+//! Trusted, replayable domain and SQLite storage for a Society.
 //!
 //! This crate intentionally has no JSON serialization boundary.  Commands are
 //! closed Rust values, and each accepted command/event has one named SQLite

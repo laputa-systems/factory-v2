@@ -535,8 +535,8 @@ impl BoundaryPeer {
                     self.fence();
                     return Err(PeerError::ExecutionProfileDrift);
                 }
-                payload.model_catalog.assert_vs001()?;
-                payload.settings.assert_vs001()?;
+                payload.model_catalog.assert_pinned()?;
+                payload.settings.assert_pinned()?;
             }
             InboundCommand::Prompt(payload) => {
                 let Some(create) = self.create.as_ref() else {
@@ -713,7 +713,7 @@ impl BoundaryPeer {
             self.fence();
             return Err(PeerError::ExecutionProfileDrift);
         };
-        configuration.assert_vs001()?;
+        configuration.assert_pinned()?;
         if configuration.session_kind != create.session_kind
             || configuration.cwd != create.cwd
             || configuration.session_directory != create.session_directory

@@ -4480,7 +4480,7 @@ mod tests {
             Capability::SetR0HardCeiling,
             ExpectedGeneration::NotApplicable,
             CommandBody::SetR0HardCeiling {
-                ceiling: UsdMicros::VS001_SOCIETY_HARD_CEILING,
+                ceiling: UsdMicros::FOUNDING_SOCIETY_HARD_CEILING,
             },
         );
         accepted(
@@ -4498,7 +4498,7 @@ mod tests {
             Capability::ProposeOperatingCycle,
             ExpectedGeneration::NotApplicable,
             CommandBody::ProposeOperatingCycle {
-                treatment: OperatingCycleTreatment::Vs001DeterministicV1,
+                treatment: OperatingCycleTreatment::DeterministicPiHostFixtureV1,
             },
         );
         let cycle_id = OperatingCycleId::new(1).unwrap();
@@ -4830,7 +4830,7 @@ mod tests {
         fn new(label: &str) -> Self {
             let nonce = NEXT_TEMPORARY.fetch_add(1, Ordering::Relaxed);
             let root = std::env::temp_dir().join(format!(
-                "xsh-society-{label}-{}-{nonce}",
+                "society-pi-execution-{label}-{}-{nonce}",
                 std::process::id()
             ));
             fs::create_dir_all(&root).unwrap();

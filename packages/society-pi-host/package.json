@@ -1,9 +1,9 @@
 {
-  "name": "@xsh-society/society-pi-host",
+  "name": "@society/pi-host",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Pinned, authority-free Pi SDK execution adapter for XSH Society V2.",
+  "description": "Pinned, authority-free Pi SDK execution adapter.",
   "bin": {
     "society-pi-host": "./dist/src/main.js"
   },

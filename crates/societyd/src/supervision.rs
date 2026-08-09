@@ -707,7 +707,7 @@ pub struct PiSpawnRequest {
     pub session_identity: SessionIdentity,
     pub spawn_nonce: SpawnNonce,
     pub host_execution: QualifiedHostExecution,
-    /// VS-001's current host contract grants no inherited environment values.
+    /// The current pinned host contract grants no inherited environment values.
     /// The empty process environment is intentional evidence, not an omitted
     /// default; future allowlists must become a new closed version.
     pub environment: NativeHostEnvironment,
@@ -2664,12 +2664,12 @@ fn validate_spawn_request(request: &PiSpawnRequest) -> Result<(), SupervisionErr
     request
         .create_session
         .model_catalog
-        .assert_vs001()
+        .assert_pinned()
         .map_err(SupervisionError::Protocol)?;
     request
         .create_session
         .settings
-        .assert_vs001()
+        .assert_pinned()
         .map_err(SupervisionError::Protocol)?;
     // The host receives ordinary native paths, so lexical containment alone
     // is insufficient: a symlink could redirect auth/models outside the owned

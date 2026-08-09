@@ -1016,8 +1016,8 @@ fn supervisor_capability_is_representable(capability: Capability) -> bool {
 fn operating_cycle_treatment_from_u8(value: u8) -> Result<OperatingCycleTreatment, WireError> {
     match value {
         1 => Ok(OperatingCycleTreatment::PiSdkQualificationV1),
-        2 => Ok(OperatingCycleTreatment::Vs001LiveV1),
-        3 => Ok(OperatingCycleTreatment::Vs001DeterministicV1),
+        2 => Ok(OperatingCycleTreatment::PinnedPiSdkLiveV1),
+        3 => Ok(OperatingCycleTreatment::DeterministicPiHostFixtureV1),
         _ => Err(WireError::InvalidValue),
     }
 }

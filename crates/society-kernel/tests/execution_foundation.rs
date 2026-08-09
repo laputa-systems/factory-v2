@@ -151,7 +151,7 @@ fn founded_cycle(
         Capability::SetR0HardCeiling,
         ExpectedGeneration::NotApplicable,
         CommandBody::SetR0HardCeiling {
-            ceiling: UsdMicros::VS001_SOCIETY_HARD_CEILING,
+            ceiling: UsdMicros::FOUNDING_SOCIETY_HARD_CEILING,
         },
     );
     accepted(
@@ -279,7 +279,8 @@ struct AdmittedPiOfficeFixture {
 }
 
 fn admitted_pi_office_fixture(store: &mut KernelStore, label: &str) -> AdmittedPiOfficeFixture {
-    let (architect, cycle) = founded_cycle(store, OperatingCycleTreatment::Vs001DeterministicV1);
+    let (architect, cycle) =
+        founded_cycle(store, OperatingCycleTreatment::DeterministicPiHostFixtureV1);
     let _project = active_project(store, architect, cycle);
     let generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
     let office_session = GrandArchitectOfficeSessionId::new(1).unwrap();
@@ -520,7 +521,7 @@ fn ledger_event_reads_verified_pi_child_receipts_and_rejects_tampering() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("xsh-m5-ledger-event-{nonce}.sqlite"));
+    let path = std::env::temp_dir().join(format!("society-m5-ledger-event-{nonce}.sqlite"));
     let mut store = KernelStore::open(&path).unwrap();
     let fixture = admitted_pi_office_fixture(&mut store, "m5-ledger-event");
     let generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
@@ -588,10 +589,12 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("xsh-execution-foundation-{nonce}.sqlite"));
+    let path = std::env::temp_dir().join(format!("society-execution-foundation-{nonce}.sqlite"));
     let mut store = KernelStore::open(&path).unwrap();
-    let (architect, cycle) =
-        founded_cycle(&mut store, OperatingCycleTreatment::Vs001DeterministicV1);
+    let (architect, cycle) = founded_cycle(
+        &mut store,
+        OperatingCycleTreatment::DeterministicPiHostFixtureV1,
+    );
     let generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
     let project = active_project(&mut store, architect, cycle);
 
@@ -621,7 +624,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
         ExpectedGeneration::NotApplicable,
         CommandBody::RegisterActorConfiguration {
             configuration_name: ActorConfigurationName::parse("independent critic v1").unwrap(),
-            model_policy: ActorModelPolicy::Vs001DeepseekV4FlashHigh,
+            model_policy: ActorModelPolicy::PinnedDeepseekV4FlashHigh,
             primary_attractor: DevelopmentalAttractor::Challenge,
         },
     );
@@ -1615,10 +1618,12 @@ fn pi_child_receipts_bind_epoch_treatment_cancellation_and_containment() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("xsh-m5-child-replay-{nonce}.sqlite"));
+    let path = std::env::temp_dir().join(format!("society-m5-child-replay-{nonce}.sqlite"));
     let mut store = KernelStore::open(&path).unwrap();
-    let (architect, cycle) =
-        founded_cycle(&mut store, OperatingCycleTreatment::Vs001DeterministicV1);
+    let (architect, cycle) = founded_cycle(
+        &mut store,
+        OperatingCycleTreatment::DeterministicPiHostFixtureV1,
+    );
     let generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
     let _project = active_project(&mut store, architect, cycle);
     let office_session = GrandArchitectOfficeSessionId::new(1).unwrap();
@@ -1674,11 +1679,11 @@ fn pi_child_receipts_bind_epoch_treatment_cancellation_and_containment() {
         Rejection::ChildSpawnAdmissionInvalid,
     );
 
-    let workspace = NativeWorkspaceId::parse("xsh-m5-proof").unwrap();
-    let workspace_path = CanonicalWorkspacePath::parse("/tmp/xsh-m5-proof").unwrap();
-    assert!(NativeWorkspaceId::parse("xsh-m5-proof-").is_err());
+    let workspace = NativeWorkspaceId::parse("society-m5-proof").unwrap();
+    let workspace_path = CanonicalWorkspacePath::parse("/tmp/society-m5-proof").unwrap();
+    assert!(NativeWorkspaceId::parse("society-m5-proof-").is_err());
     assert!(PiBoundarySessionIdentity::parse("π-session").is_err());
-    assert!(CanonicalWorkspacePath::parse("/tmp//xsh-m5-proof").is_err());
+    assert!(CanonicalWorkspacePath::parse("/tmp//society-m5-proof").is_err());
     let pi_session = PiBoundarySessionIdentity::parse("pi-session-m5-proof").unwrap();
     let nonce = SpawnNonce::parse("spawn-nonce-m5-proof").unwrap();
     rejected(
@@ -2027,7 +2032,7 @@ fn pi_child_receipts_bind_epoch_treatment_cancellation_and_containment() {
     // an admissible live child merely because an Office has a reservation.
     let mut live = KernelStore::open_in_memory().unwrap();
     let (live_architect, live_cycle) =
-        founded_cycle(&mut live, OperatingCycleTreatment::Vs001LiveV1);
+        founded_cycle(&mut live, OperatingCycleTreatment::PinnedPiSdkLiveV1);
     let live_generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
     let _live_project = active_project(&mut live, live_architect, live_cycle);
     accepted(
@@ -2068,8 +2073,9 @@ fn pi_child_receipts_bind_epoch_treatment_cancellation_and_containment() {
             ),
             budget_reservation_id: society_kernel::BudgetReservationId::new(1).unwrap(),
             execution_profile_id: ExecutionProfileId::NATIVE_PINNED_PI_SDK_V1,
-            native_workspace_id: NativeWorkspaceId::parse("xsh-m5-live").unwrap(),
-            canonical_workspace_path: CanonicalWorkspacePath::parse("/tmp/xsh-m5-live").unwrap(),
+            native_workspace_id: NativeWorkspaceId::parse("society-m5-live").unwrap(),
+            canonical_workspace_path: CanonicalWorkspacePath::parse("/tmp/society-m5-live")
+                .unwrap(),
             supervisor_epoch_id: live_epoch,
             supervisor_epoch_identity: live_epoch_identity,
             pi_session_identity: PiBoundarySessionIdentity::parse("pi-session-m5-live").unwrap(),
@@ -2109,8 +2115,10 @@ fn pi_child_receipts_bind_epoch_treatment_cancellation_and_containment() {
 #[test]
 fn lingering_group_cleanup_requires_later_absence_before_finalization() {
     let mut store = KernelStore::open_in_memory().unwrap();
-    let (architect, cycle) =
-        founded_cycle(&mut store, OperatingCycleTreatment::Vs001DeterministicV1);
+    let (architect, cycle) = founded_cycle(
+        &mut store,
+        OperatingCycleTreatment::DeterministicPiHostFixtureV1,
+    );
     let generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
     let _project = active_project(&mut store, architect, cycle);
     accepted(
@@ -2152,8 +2160,9 @@ fn lingering_group_cleanup_requires_later_absence_before_finalization() {
             ),
             budget_reservation_id: society_kernel::BudgetReservationId::new(1).unwrap(),
             execution_profile_id: ExecutionProfileId::DETERMINISTIC_PI_HOST_DOUBLE_V1,
-            native_workspace_id: NativeWorkspaceId::parse("xsh-m5-linger").unwrap(),
-            canonical_workspace_path: CanonicalWorkspacePath::parse("/tmp/xsh-m5-linger").unwrap(),
+            native_workspace_id: NativeWorkspaceId::parse("society-m5-linger").unwrap(),
+            canonical_workspace_path: CanonicalWorkspacePath::parse("/tmp/society-m5-linger")
+                .unwrap(),
             supervisor_epoch_id: epoch,
             supervisor_epoch_identity: epoch_identity,
             pi_session_identity: pi_session.clone(),
@@ -2332,8 +2341,10 @@ fn lingering_group_cleanup_requires_later_absence_before_finalization() {
 #[test]
 fn cancellation_freezes_an_admitted_unspawned_child_until_a_typed_not_spawned_fact() {
     let mut store = KernelStore::open_in_memory().unwrap();
-    let (architect, cycle) =
-        founded_cycle(&mut store, OperatingCycleTreatment::Vs001DeterministicV1);
+    let (architect, cycle) = founded_cycle(
+        &mut store,
+        OperatingCycleTreatment::DeterministicPiHostFixtureV1,
+    );
     let generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
     let _project = active_project(&mut store, architect, cycle);
     accepted(
@@ -2372,8 +2383,8 @@ fn cancellation_freezes_an_admitted_unspawned_child_until_a_typed_not_spawned_fa
             ),
             budget_reservation_id: society_kernel::BudgetReservationId::new(1).unwrap(),
             execution_profile_id: ExecutionProfileId::DETERMINISTIC_PI_HOST_DOUBLE_V1,
-            native_workspace_id: NativeWorkspaceId::parse("xsh-m5-unspawned").unwrap(),
-            canonical_workspace_path: CanonicalWorkspacePath::parse("/tmp/xsh-m5-unspawned")
+            native_workspace_id: NativeWorkspaceId::parse("society-m5-unspawned").unwrap(),
+            canonical_workspace_path: CanonicalWorkspacePath::parse("/tmp/society-m5-unspawned")
                 .unwrap(),
             supervisor_epoch_id: SupervisorEpochId::new(91).unwrap(),
             supervisor_epoch_identity: SupervisorEpochIdentity::parse("resident-supervisor-91")
@@ -3264,8 +3275,10 @@ fn pre_spawn_failure_and_raced_spawn_are_accounted_before_cancellation_reconcili
 #[test]
 fn lease_expiry_requires_a_work_item_without_an_attempt() {
     let mut store = KernelStore::open_in_memory().unwrap();
-    let (architect, cycle) =
-        founded_cycle(&mut store, OperatingCycleTreatment::Vs001DeterministicV1);
+    let (architect, cycle) = founded_cycle(
+        &mut store,
+        OperatingCycleTreatment::DeterministicPiHostFixtureV1,
+    );
     let generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
     let project = active_project(&mut store, architect, cycle);
     accepted(
@@ -3294,7 +3307,7 @@ fn lease_expiry_requires_a_work_item_without_an_attempt() {
         ExpectedGeneration::NotApplicable,
         CommandBody::RegisterActorConfiguration {
             configuration_name: ActorConfigurationName::parse("worker configuration").unwrap(),
-            model_policy: ActorModelPolicy::Vs001DeepseekV4FlashHigh,
+            model_policy: ActorModelPolicy::PinnedDeepseekV4FlashHigh,
             primary_attractor: DevelopmentalAttractor::Build,
         },
     );
@@ -3448,13 +3461,13 @@ fn lease_expiry_requires_a_work_item_without_an_attempt() {
 
 /// The deterministic process double is a provider-free fixture profile. It
 /// cannot stand in for either the paid native qualification treatment or a
-/// live VS-001 run; the unqualified native identity cannot admit an actor in
+/// live pinned Pi SDK run; the unqualified native identity cannot admit an actor in
 /// any treatment before the later typed qualification receipt exists.
 #[test]
 fn execution_profile_admission_is_closed_by_treatment_and_readiness() {
     let deterministic_cases = [
         OperatingCycleTreatment::PiSdkQualificationV1,
-        OperatingCycleTreatment::Vs001LiveV1,
+        OperatingCycleTreatment::PinnedPiSdkLiveV1,
     ];
     for (index, treatment) in deterministic_cases.into_iter().enumerate() {
         let mut store = KernelStore::open_in_memory().unwrap();
@@ -3473,7 +3486,7 @@ fn execution_profile_admission_is_closed_by_treatment_and_readiness() {
                 CommandBody::RegisterActorConfiguration {
                     configuration_name: ActorConfigurationName::parse("profile gate configuration")
                         .unwrap(),
-                    model_policy: ActorModelPolicy::Vs001DeepseekV4FlashHigh,
+                    model_policy: ActorModelPolicy::PinnedDeepseekV4FlashHigh,
                     primary_attractor: DevelopmentalAttractor::Build,
                 },
             );
@@ -3500,8 +3513,8 @@ fn execution_profile_admission_is_closed_by_treatment_and_readiness() {
 
     let native_cases = [
         OperatingCycleTreatment::PiSdkQualificationV1,
-        OperatingCycleTreatment::Vs001LiveV1,
-        OperatingCycleTreatment::Vs001DeterministicV1,
+        OperatingCycleTreatment::PinnedPiSdkLiveV1,
+        OperatingCycleTreatment::DeterministicPiHostFixtureV1,
     ];
     for (index, treatment) in native_cases.into_iter().enumerate() {
         let mut store = KernelStore::open_in_memory().unwrap();
@@ -3520,7 +3533,7 @@ fn execution_profile_admission_is_closed_by_treatment_and_readiness() {
                 CommandBody::RegisterActorConfiguration {
                     configuration_name: ActorConfigurationName::parse("native gate configuration")
                         .unwrap(),
-                    model_policy: ActorModelPolicy::Vs001DeepseekV4FlashHigh,
+                    model_policy: ActorModelPolicy::PinnedDeepseekV4FlashHigh,
                     primary_attractor: DevelopmentalAttractor::Build,
                 },
             );
@@ -3595,8 +3608,10 @@ fn paid_qualification_treatment_has_no_grand_architect_work_surface() {
 #[test]
 fn reviewer_attempt_cannot_be_rebound_to_a_different_requested_review() {
     let mut store = KernelStore::open_in_memory().unwrap();
-    let (architect, cycle) =
-        founded_cycle(&mut store, OperatingCycleTreatment::Vs001DeterministicV1);
+    let (architect, cycle) = founded_cycle(
+        &mut store,
+        OperatingCycleTreatment::DeterministicPiHostFixtureV1,
+    );
     let generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
     let project = active_project(&mut store, architect, cycle);
     accepted(
@@ -3667,7 +3682,7 @@ fn reviewer_attempt_cannot_be_rebound_to_a_different_requested_review() {
         ExpectedGeneration::NotApplicable,
         CommandBody::RegisterActorConfiguration {
             configuration_name: ActorConfigurationName::parse("cross review critic").unwrap(),
-            model_policy: ActorModelPolicy::Vs001DeepseekV4FlashHigh,
+            model_policy: ActorModelPolicy::PinnedDeepseekV4FlashHigh,
             primary_attractor: DevelopmentalAttractor::Challenge,
         },
     );
@@ -3798,9 +3813,12 @@ fn compiled_capability_grants_have_closed_origin_and_exact_service_set() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("xsh-capability-origin-{nonce}.sqlite"));
+    let path = std::env::temp_dir().join(format!("society-capability-origin-{nonce}.sqlite"));
     let mut store = KernelStore::open(&path).unwrap();
-    let (architect, _) = founded_cycle(&mut store, OperatingCycleTreatment::Vs001DeterministicV1);
+    let (architect, _) = founded_cycle(
+        &mut store,
+        OperatingCycleTreatment::DeterministicPiHostFixtureV1,
+    );
     assert!(store.validate_replayed_materialized_state().is_ok());
     drop(store);
 

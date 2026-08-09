@@ -2338,7 +2338,7 @@ fn set_r0_hard_ceiling(
     if exists(transaction, "SELECT 1 FROM society_bootstraps LIMIT 1")? {
         return Err(Rejection::FoundingInvariant);
     }
-    if ceiling != UsdMicros::VS001_SOCIETY_HARD_CEILING {
+    if ceiling != UsdMicros::FOUNDING_SOCIETY_HARD_CEILING {
         return Err(Rejection::BudgetPolicyViolation);
     }
     Ok(EventBody::R0HardCeilingSet {
@@ -2722,7 +2722,7 @@ fn authorize_pi_office_turn_prompt(
         || row.1 != OfficeTurnPurpose::OrdinaryWork as i64
         || row.3 != OfficeSessionState::TurnActive as i64
         || cycle.state != OperatingCycleState::Running
-        || row.5 != OperatingCycleTreatment::Vs001DeterministicV1 as i64
+        || row.5 != OperatingCycleTreatment::DeterministicPiHostFixtureV1 as i64
         || row.10 != ChildProcessState::Running as i64
         || row.11 != PiChildSessionState::SessionReady as i64
         || active_cancellation_for_cycle(transaction, cycle_id)?.is_some()
@@ -5466,11 +5466,11 @@ fn admit_actor_instance(
                 execution_profile_readiness_from_i64(readiness),
             ),
             (
-                OperatingCycleTreatment::Vs001DeterministicV1,
+                OperatingCycleTreatment::DeterministicPiHostFixtureV1,
                 Ok(ExecutionProfileKind::DeterministicPiHostProcessDoubleV1),
                 Ok(ExecutionProfileReadiness::DeterministicFixtureOnly),
             ) | (
-                OperatingCycleTreatment::Vs001LiveV1,
+                OperatingCycleTreatment::PinnedPiSdkLiveV1,
                 Ok(ExecutionProfileKind::NativePinnedPiSdkV1),
                 Ok(ExecutionProfileReadiness::QualifiedForLiveUse),
             )
@@ -5520,7 +5520,7 @@ fn pi_child_profile_allowed(
     matches!(
         (treatment, kind, readiness),
         (
-            OperatingCycleTreatment::Vs001DeterministicV1,
+            OperatingCycleTreatment::DeterministicPiHostFixtureV1,
             ExecutionProfileKind::DeterministicPiHostProcessDoubleV1,
             ExecutionProfileReadiness::DeterministicFixtureOnly,
         ) | (
@@ -5528,7 +5528,7 @@ fn pi_child_profile_allowed(
             ExecutionProfileKind::NativePinnedPiSdkV1,
             ExecutionProfileReadiness::Unqualified | ExecutionProfileReadiness::QualifiedForLiveUse,
         ) | (
-            OperatingCycleTreatment::Vs001LiveV1,
+            OperatingCycleTreatment::PinnedPiSdkLiveV1,
             ExecutionProfileKind::NativePinnedPiSdkV1,
             ExecutionProfileReadiness::QualifiedForLiveUse,
         )
@@ -5747,7 +5747,7 @@ fn reserve_attempt_budget(
 ) -> Result<BudgetReservationId, Rejection> {
     // M3 reserves only the governing society and Operating Cycle envelopes.
     // It is a provisional execution-boundary reservation, not a claim that
-    // every future VS-001 accounting dimension has been modeled.
+    // every future pinned execution accounting dimension has been modeled.
     if amount == UsdMicros::ZERO {
         return Err(Rejection::BudgetCeilingExceeded);
     }
@@ -15358,8 +15358,8 @@ fn process_signal_cause_from_sql(
 fn operating_cycle_treatment_from_i64(value: i64) -> Result<OperatingCycleTreatment, StoreError> {
     match value {
         1 => Ok(OperatingCycleTreatment::PiSdkQualificationV1),
-        2 => Ok(OperatingCycleTreatment::Vs001LiveV1),
-        3 => Ok(OperatingCycleTreatment::Vs001DeterministicV1),
+        2 => Ok(OperatingCycleTreatment::PinnedPiSdkLiveV1),
+        3 => Ok(OperatingCycleTreatment::DeterministicPiHostFixtureV1),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }
@@ -15572,7 +15572,7 @@ fn ticket_state_from_i64(value: i64) -> Result<TicketState, StoreError> {
 }
 fn actor_model_policy_from_i64(value: i64) -> Result<ActorModelPolicy, StoreError> {
     match value {
-        1 => Ok(ActorModelPolicy::Vs001DeepseekV4FlashHigh),
+        1 => Ok(ActorModelPolicy::PinnedDeepseekV4FlashHigh),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }

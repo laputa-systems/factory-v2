@@ -39,7 +39,7 @@ test("sdk: prompt-digest drift fails before ModelRuntime construction or a provi
 	);
 });
 
-test("sdk: typed callers cannot bypass the VS-001 execution-profile constants", async () => {
+test("sdk: typed callers cannot bypass the pinned execution-profile constants", async () => {
 	const payload = createSessionPayload();
 	const command = decodeCommand(1, "CreateSession", payload);
 	if (command.command !== "CreateSession") throw new Error("expected_create_session");

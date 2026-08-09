@@ -104,7 +104,7 @@ fn found_cycle(store: &mut KernelStore) -> (PrincipalId, OperatingCycleId) {
         Capability::CreateSocietyIdentity,
         ExpectedGeneration::NotApplicable,
         CommandBody::CreateSocietyIdentity {
-            name: SocietyName::parse("XSH Society VS-001").unwrap(),
+            name: SocietyName::parse("Founding Society").unwrap(),
         },
     );
     accepted(
@@ -142,7 +142,7 @@ fn found_cycle(store: &mut KernelStore) -> (PrincipalId, OperatingCycleId) {
         Capability::SetR0HardCeiling,
         ExpectedGeneration::NotApplicable,
         CommandBody::SetR0HardCeiling {
-            ceiling: UsdMicros::VS001_SOCIETY_HARD_CEILING,
+            ceiling: UsdMicros::FOUNDING_SOCIETY_HARD_CEILING,
         },
     );
     accepted(
@@ -160,7 +160,7 @@ fn found_cycle(store: &mut KernelStore) -> (PrincipalId, OperatingCycleId) {
         Capability::ProposeOperatingCycle,
         ExpectedGeneration::NotApplicable,
         CommandBody::ProposeOperatingCycle {
-            treatment: OperatingCycleTreatment::Vs001DeterministicV1,
+            treatment: OperatingCycleTreatment::DeterministicPiHostFixtureV1,
         },
     );
     let cycle_id = OperatingCycleId::new(1).unwrap();
@@ -181,7 +181,7 @@ fn current_operating_cycle_generation_is_typed_and_distinguishes_absence_from_co
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("xsh-cycle-generation-read-{nonce}.sqlite"));
+    let path = std::env::temp_dir().join(format!("society-cycle-generation-read-{nonce}.sqlite"));
     let mut store = KernelStore::open(&path).unwrap();
     let (grand_architect, cycle_id) = found_cycle(&mut store);
     assert_eq!(
@@ -469,7 +469,7 @@ fn founding_cycle_is_idempotent_fenced_and_replayable() {
 #[test]
 fn project_charter_activation_and_close_blocker_are_typed_and_replayable() {
     let path = std::env::temp_dir().join(format!(
-        "xsh-typed-graph-revisions-{}-{}.sqlite",
+        "society-typed-graph-revisions-{}-{}.sqlite",
         std::process::id(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -851,7 +851,7 @@ fn project_charter_activation_and_close_blocker_are_typed_and_replayable() {
 #[test]
 fn current_schema_reopens_after_atomic_fresh_bootstrap() {
     let path = std::env::temp_dir().join(format!(
-        "xsh-society-fresh-schema-{}-{}.sqlite",
+        "society-fresh-schema-{}-{}.sqlite",
         std::process::id(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -900,7 +900,7 @@ fn current_schema_reopens_after_atomic_fresh_bootstrap() {
 #[test]
 fn historical_schema_one_is_rejected_without_current_schema_mutation() {
     let path = std::env::temp_dir().join(format!(
-        "xsh-society-historical-schema-one-{}-{}.sqlite",
+        "society-historical-schema-one-{}-{}.sqlite",
         std::process::id(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -956,12 +956,13 @@ fn rejection_wire_codes_have_one_closed_round_trip_authority() {
 }
 
 #[test]
-fn vs001_foundation_uses_closed_exact_cycle_treatments() {
+fn founding_policy_uses_closed_exact_cycle_treatments() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("xsh-qualification-treatment-{unique}.sqlite3"));
+    let path =
+        std::env::temp_dir().join(format!("society-qualification-treatment-{unique}.sqlite3"));
     let mut store = KernelStore::open(&path).unwrap();
     let bootstrap = PrincipalId::BOOTSTRAP;
     accepted(
@@ -971,7 +972,7 @@ fn vs001_foundation_uses_closed_exact_cycle_treatments() {
         Capability::CreateSocietyIdentity,
         ExpectedGeneration::NotApplicable,
         CommandBody::CreateSocietyIdentity {
-            name: SocietyName::parse("XSH Society policy test").unwrap(),
+            name: SocietyName::parse("Founding Society policy test").unwrap(),
         },
     );
     accepted(
@@ -1009,7 +1010,7 @@ fn vs001_foundation_uses_closed_exact_cycle_treatments() {
         Capability::SetR0HardCeiling,
         ExpectedGeneration::NotApplicable,
         CommandBody::SetR0HardCeiling {
-            ceiling: UsdMicros::VS001_CYCLE_CEILING,
+            ceiling: UsdMicros::PINNED_PI_SDK_CYCLE_CEILING,
         },
         Rejection::BudgetPolicyViolation,
     );
@@ -1020,7 +1021,7 @@ fn vs001_foundation_uses_closed_exact_cycle_treatments() {
         Capability::SetR0HardCeiling,
         ExpectedGeneration::NotApplicable,
         CommandBody::SetR0HardCeiling {
-            ceiling: UsdMicros::VS001_SOCIETY_HARD_CEILING,
+            ceiling: UsdMicros::FOUNDING_SOCIETY_HARD_CEILING,
         },
     );
     accepted(
@@ -1053,11 +1054,15 @@ fn vs001_foundation_uses_closed_exact_cycle_treatments() {
     );
     assert_eq!(
         OperatingCycleTreatment::PiSdkQualificationV1.budget_ceiling(),
-        UsdMicros::VS001_QUALIFICATION_CEILING
+        UsdMicros::PI_SDK_QUALIFICATION_CEILING
     );
     assert_eq!(
-        OperatingCycleTreatment::Vs001LiveV1.budget_ceiling(),
-        UsdMicros::VS001_CYCLE_CEILING
+        OperatingCycleTreatment::PinnedPiSdkLiveV1.budget_ceiling(),
+        UsdMicros::PINNED_PI_SDK_CYCLE_CEILING
+    );
+    assert_eq!(
+        OperatingCycleTreatment::DeterministicPiHostFixtureV1.budget_ceiling(),
+        UsdMicros::PINNED_PI_SDK_CYCLE_CEILING
     );
     assert!(store.replay_ledger().unwrap().iter().any(|event| matches!(
         event.body,
@@ -1083,7 +1088,7 @@ fn vs001_foundation_uses_closed_exact_cycle_treatments() {
         (treatment, ceiling),
         (
             OperatingCycleTreatment::PiSdkQualificationV1 as i64,
-            UsdMicros::VS001_QUALIFICATION_CEILING.value(),
+            UsdMicros::PI_SDK_QUALIFICATION_CEILING.value(),
         )
     );
     drop(inspection);
@@ -1097,7 +1102,7 @@ fn actor_grant_must_match_the_cycle_pinned_office_occupancy() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("xsh-occupancy-scope-{unique}.sqlite3"));
+    let path = std::env::temp_dir().join(format!("society-occupancy-scope-{unique}.sqlite3"));
     let mut store = KernelStore::open(&path).unwrap();
     let (_, cycle_id) = found_cycle(&mut store);
 
@@ -1155,7 +1160,7 @@ fn forged_grant_principal_cannot_borrow_an_active_occupancy() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("xsh-forged-grant-{unique}.sqlite3"));
+    let path = std::env::temp_dir().join(format!("society-forged-grant-{unique}.sqlite3"));
     let mut store = KernelStore::open(&path).unwrap();
     let (_, cycle_id) = found_cycle(&mut store);
     let fixture = rusqlite::Connection::open(&path).unwrap();
@@ -1893,7 +1898,7 @@ fn known_overrun_postmortem_records_actual_spend_even_above_admission_ceiling() 
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("xsh-known-overrun-{unique}.sqlite3"));
+    let path = std::env::temp_dir().join(format!("society-known-overrun-{unique}.sqlite3"));
     let mut store = KernelStore::open(&path).unwrap();
     let (grand_architect, cycle_id) = found_cycle(&mut store);
     let zero = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
@@ -2053,7 +2058,7 @@ fn pi_office_turn_requires_authorized_delivered_peer_terminal_chain_and_debits_o
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("xsh-m6-office-turn-{unique}.sqlite3"));
+    let path = std::env::temp_dir().join(format!("society-m6-office-turn-{unique}.sqlite3"));
     let mut store = KernelStore::open(&path).unwrap();
     let (grand_architect, cycle_id) = found_cycle(&mut store);
     let zero = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
@@ -2850,7 +2855,8 @@ fn duplicate_cost_incident_cannot_open_another_postmortem_or_cancellation() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("xsh-duplicate-cost-incident-{unique}.sqlite3"));
+    let path =
+        std::env::temp_dir().join(format!("society-duplicate-cost-incident-{unique}.sqlite3"));
     let mut store = KernelStore::open(&path).unwrap();
     let (grand_architect, cycle_id) = found_cycle(&mut store);
     let zero = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
@@ -2934,7 +2940,7 @@ fn fresh_replay_detects_operating_cycle_budget_and_session_row_tampering() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("xsh-materialized-replay-{unique}.sqlite3"));
+    let path = std::env::temp_dir().join(format!("society-materialized-replay-{unique}.sqlite3"));
     let mut store = KernelStore::open(&path).unwrap();
     let (grand_architect, cycle_id) = found_cycle(&mut store);
     accepted(
@@ -3013,7 +3019,8 @@ fn on_disk_reopen_preserves_treatment_and_detects_materialized_tampering() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("xsh-reopen-material-replay-{unique}.sqlite3"));
+    let path =
+        std::env::temp_dir().join(format!("society-reopen-material-replay-{unique}.sqlite3"));
     {
         let mut store = KernelStore::open(&path).unwrap();
         let (_, cycle_id) = found_cycle(&mut store);
@@ -3021,7 +3028,7 @@ fn on_disk_reopen_preserves_treatment_and_detects_materialized_tampering() {
             event.body,
             EventBody::OperatingCycleProposed {
                 cycle_id: event_cycle_id,
-                treatment: OperatingCycleTreatment::Vs001DeterministicV1,
+                treatment: OperatingCycleTreatment::DeterministicPiHostFixtureV1,
                 ..
             } if event_cycle_id == cycle_id
         )));
@@ -3050,8 +3057,8 @@ fn on_disk_reopen_preserves_treatment_and_detects_materialized_tampering() {
     assert_eq!(
         (treatment, ceiling),
         (
-            OperatingCycleTreatment::Vs001DeterministicV1 as i64,
-            UsdMicros::VS001_CYCLE_CEILING.value(),
+            OperatingCycleTreatment::DeterministicPiHostFixtureV1 as i64,
+            UsdMicros::PINNED_PI_SDK_CYCLE_CEILING.value(),
         )
     );
     tamper
@@ -3078,7 +3085,7 @@ fn rejected_missing_subject_and_tampered_extra_body_are_detected() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("xsh-society-kernel-{unique}.sqlite3"));
+    let path = std::env::temp_dir().join(format!("society-kernel-{unique}.sqlite3"));
     let mut store = KernelStore::open(&path).unwrap();
     let (grand_architect, cycle_id) = found_cycle(&mut store);
     let invalid_grant_id = CommandId::parse("ga-invalid-capability-grant").unwrap();
@@ -3175,7 +3182,7 @@ fn rejected_missing_subject_and_tampered_extra_body_are_detected() {
     tamper
         .execute(
             "UPDATE command_create_society_identity SET name = ?1 WHERE command_row_id = 1",
-            ["XSH Society VS-001"],
+            ["Founding Society"],
         )
         .unwrap();
     assert!(store.replay_ledger().is_ok());
@@ -3192,7 +3199,7 @@ fn rejected_missing_subject_and_tampered_extra_body_are_detected() {
     tamper
         .execute(
             "UPDATE event_r0_hard_ceiling_set SET ceiling_micros = ?1 WHERE event_id = 5",
-            [UsdMicros::VS001_SOCIETY_HARD_CEILING.value()],
+            [UsdMicros::FOUNDING_SOCIETY_HARD_CEILING.value()],
         )
         .unwrap();
     assert!(store.replay_ledger().is_ok());

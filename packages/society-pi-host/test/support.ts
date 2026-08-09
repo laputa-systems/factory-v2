@@ -44,11 +44,11 @@ export function createSessionPayload(sessionKind: "TaskAttempt" | "GrandArchitec
 	const systemPrompt = "Universe Seed\nOffice contract";
 	return {
 		sessionKind,
-		cwd: "/tmp/xsh-society/work",
-		agentDirectory: "/tmp/xsh-society/agent",
-		authPath: "/tmp/xsh-society/agent/auth.json",
-		modelsPath: "/tmp/xsh-society/agent/models.json",
-		sessionDirectory: "/tmp/xsh-society/session",
+		cwd: "/tmp/society-host-fixture/work",
+		agentDirectory: "/tmp/society-host-fixture/agent",
+		authPath: "/tmp/society-host-fixture/agent/auth.json",
+		modelsPath: "/tmp/society-host-fixture/agent/models.json",
+		sessionDirectory: "/tmp/society-host-fixture/session",
 		systemPrompt,
 		systemPromptDigest: createHash("sha256").update(systemPrompt, "utf8").digest("hex"),
 		model: {
@@ -105,7 +105,7 @@ export function decodedCreatePayload(sessionKind: "TaskAttempt" | "GrandArchitec
 }
 
 export class FakeSdkSession implements SdkSession {
-	readonly sessionFile = absolutePath("/tmp/xsh-society/session/fixture.jsonl");
+	readonly sessionFile = absolutePath("/tmp/society-host-fixture/session/fixture.jsonl");
 	readonly calls: string[] = [];
 	private readonly listeners = new Set<SdkEventListener>();
 	private promptResolver: (() => void) | undefined;
@@ -191,7 +191,7 @@ export class FakeSdkSession implements SdkSession {
 				sessionFile: this.sessionFile,
 				materialization: "observed",
 				sessionFileSha256: sha256Digest("5".repeat(64)),
-				headerCwd: absolutePath("/tmp/xsh-society/work"),
+				headerCwd: absolutePath("/tmp/society-host-fixture/work"),
 				firstUserPrompt: { kind: "verified", digest: sha256Digest(createHash("sha256").update(this.firstPrompt, "utf8").digest("hex")) },
 			};
 		if (this.transcriptVerificationDeferred) {

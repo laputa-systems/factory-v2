@@ -1102,7 +1102,7 @@ impl Fixture {
     fn new(label: &str) -> Self {
         let nonce = NEXT_TEMPORARY.fetch_add(1, Ordering::Relaxed);
         let root = std::env::temp_dir().join(format!(
-            "xsh-society-m4-{label}-{}-{nonce}",
+            "societyd-supervision-m4-{label}-{}-{nonce}",
             std::process::id()
         ));
         fs::create_dir_all(&root).unwrap();
@@ -1314,7 +1314,7 @@ fn create_private_directory(path: &Path) {
 fn temporary_path(label: &str) -> PathBuf {
     let nonce = NEXT_TEMPORARY.fetch_add(1, Ordering::Relaxed);
     std::env::temp_dir().join(format!(
-        "xsh-society-m4-{label}-{}-{nonce}",
+        "societyd-supervision-m4-{label}-{}-{nonce}",
         std::process::id()
     ))
 }

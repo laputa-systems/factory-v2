@@ -226,7 +226,7 @@ fn founding_commands(client: &mut SupervisorClient, start_correlation: u64) {
             Capability::SetR0HardCeiling,
             ExpectedGeneration::NotApplicable,
             ClientCommandBody::SetR0HardCeiling {
-                ceiling: UsdMicros::VS001_SOCIETY_HARD_CEILING,
+                ceiling: UsdMicros::FOUNDING_SOCIETY_HARD_CEILING,
             },
         )
         .unwrap(),
@@ -755,13 +755,13 @@ fn reconnect_is_idempotent_qualification_is_closed_and_empty_deterministic_then_
     admit_and_close_empty_cycle(
         &mut supervisor,
         40,
-        OperatingCycleTreatment::Vs001DeterministicV1,
+        OperatingCycleTreatment::DeterministicPiHostFixtureV1,
         OperatingCycleId::new(1).unwrap(),
     );
     admit_and_close_empty_cycle(
         &mut supervisor,
         50,
-        OperatingCycleTreatment::Vs001LiveV1,
+        OperatingCycleTreatment::PinnedPiSdkLiveV1,
         OperatingCycleId::new(2).unwrap(),
     );
     stop(shutdown, join);

@@ -431,7 +431,8 @@ pub struct ActorModelPolicyV1 {
     pub images: Images,
 }
 impl ActorModelPolicyV1 {
-    pub fn assert_vs001(&self) -> Result<(), ProtocolError> {
+    /// Rejects any deviation from the current pinned Pi SDK actor policy.
+    pub fn assert_pinned(&self) -> Result<(), ProtocolError> {
         let retry = &self.retry;
         let compaction = &self.compaction;
         if retry.max_retries.value() != 2
@@ -450,7 +451,7 @@ impl ActorModelPolicyV1 {
             || self.analytics != Disabled::Disabled
             || self.images != Images::Blocked
         {
-            return Err(ProtocolError::InvalidFrame("VS-001 actor model policy"));
+            return Err(ProtocolError::InvalidFrame("pinned actor model policy"));
         }
         Ok(())
     }
@@ -492,7 +493,8 @@ pub struct ModelCatalogPolicyV1 {
     pub effective_model: EffectiveModelDescriptorV1,
 }
 impl ModelCatalogPolicyV1 {
-    pub fn assert_vs001(&self) -> Result<(), ProtocolError> {
+    /// Rejects any deviation from the current pinned Pi SDK model catalog.
+    pub fn assert_pinned(&self) -> Result<(), ProtocolError> {
         let model = &self.effective_model;
         if model.provider != Provider::OpenRouter
             || model.base_url != OpenRouterBaseUrl::ApiV1
@@ -507,7 +509,7 @@ impl ModelCatalogPolicyV1 {
             || model.cache_read_usd_per_million.usd_per_million.as_str() != "0.018"
             || model.cache_write_usd_per_million != CacheWritePerMillionRateV1::Absent
         {
-            return Err(ProtocolError::InvalidFrame("VS-001 model catalog policy"));
+            return Err(ProtocolError::InvalidFrame("pinned model catalog policy"));
         }
         Ok(())
     }
@@ -648,9 +650,11 @@ pub struct EffectiveSessionConfiguration {
     pub settings: ActorModelPolicyV1,
 }
 impl EffectiveSessionConfiguration {
-    pub fn assert_vs001(&self) -> Result<(), ProtocolError> {
-        self.model_catalog.assert_vs001()?;
-        self.settings.assert_vs001()?;
+    /// Rejects any configuration that does not use the current pinned Pi SDK
+    /// model and actor policies.
+    pub fn assert_pinned(&self) -> Result<(), ProtocolError> {
+        self.model_catalog.assert_pinned()?;
+        self.settings.assert_pinned()?;
         if self.model.provider != Provider::OpenRouter
             || self.model.model_id != ModelId::DeepseekV4Flash0731
             || self.model.thinking_level != ThinkingLevel::High
@@ -977,7 +981,7 @@ pub fn decode_inbound_jsonl(line: &str) -> Result<InboundFrame, ProtocolError> {
 }
 
 /// Serializes only a closed Rust command. Re-decoding the produced JSONL makes
-/// the writer subject to the same exact-key and VS-001 admission checks as a
+/// the writer subject to the same exact-key and pinned Pi SDK admission checks as a
 /// received command, so hand-constructed Rust values cannot bypass the wire
 /// contract before they reach the host's stdin.
 pub fn encode_inbound_jsonl(frame: &InboundFrame) -> Result<String, ProtocolError> {
@@ -1359,7 +1363,7 @@ fn decode_create_session(
         || model_selection.model_id != ModelId::DeepseekV4Flash0731
         || model_selection.thinking_level != ThinkingLevel::High
     {
-        return Err(ProtocolError::InvalidFrame("VS-001 model selection"));
+        return Err(ProtocolError::InvalidFrame("pinned model selection"));
     }
     let decoded = CreateSessionPayload {
         session_kind: session_kind(string(value, "sessionKind")?)?,
@@ -1375,8 +1379,8 @@ fn decode_create_session(
         tool_profile: tool_profile(string(value, "toolProfile")?)?,
         settings: decode_settings(object(required(value, "settings")?)?)?,
     };
-    decoded.model_catalog.assert_vs001()?;
-    decoded.settings.assert_vs001()?;
+    decoded.model_catalog.assert_pinned()?;
+    decoded.settings.assert_pinned()?;
     Ok(decoded)
 }
 fn decode_prompt(value: &Map<String, Value>) -> Result<PromptPayload, ProtocolError> {
@@ -1603,7 +1607,7 @@ fn decode_effective_configuration(
         tools,
         settings: decode_settings(object(required(value, "settings")?)?)?,
     };
-    config.assert_vs001()?;
+    config.assert_pinned()?;
     Ok(config)
 }
 fn decode_command_result_detail(
@@ -2387,8 +2391,8 @@ mod protocol_tests {
             json!({"type":"message_start","message":{"role":"assistant"}}),
             json!({"type":"message_update","message":{"role":"assistant"},"assistantMessageEvent":{"type":"text_delta","delta":"x"}}),
             json!({"type":"message_end","message":{"role":"assistant"}}),
-            json!({"type":"tool_execution_start","toolCallIdentity":"call-001","toolName":"read","args":{"path":"xsh"}}),
-            json!({"type":"tool_execution_update","toolCallIdentity":"call-001","toolName":"read","args":{"path":"xsh"},"partialResult":"part"}),
+            json!({"type":"tool_execution_start","toolCallIdentity":"call-001","toolName":"read","args":{"path":"society"}}),
+            json!({"type":"tool_execution_update","toolCallIdentity":"call-001","toolName":"read","args":{"path":"society"},"partialResult":"part"}),
             json!({"type":"tool_execution_end","toolCallIdentity":"call-001","toolName":"read","result":"done","isError":false}),
             json!({"type":"queue_update","steering":["urgent"],"followUp":["notice"]}),
             json!({"type":"entry_appended","entry":{"type":"message"}}),

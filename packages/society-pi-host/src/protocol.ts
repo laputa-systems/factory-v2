@@ -208,11 +208,12 @@ export interface ActorModelPolicyV1 {
 }
 
 /**
- * VS-001 has one treatment, not an adjustable family of Pi settings. Keeping
- * the registered numbers here makes an alternative retry/queue configuration
- * impossible to smuggle through the otherwise typed CreateSession boundary.
+ * The current pinned Pi SDK profile has one treatment, not an adjustable
+ * family of settings. Keeping the registered numbers here makes an
+ * alternative retry/queue configuration impossible to smuggle through the
+ * otherwise typed CreateSession boundary.
  */
-export const VS001_ACTOR_MODEL_POLICY_V1: ActorModelPolicyV1 = {
+export const PINNED_ACTOR_MODEL_POLICY_V1: ActorModelPolicyV1 = {
 	retry: {
 		maxRetries: nonNegativeInteger(2),
 		baseDelayMilliseconds: nonNegativeInteger(2_000),
@@ -234,8 +235,8 @@ export const VS001_ACTOR_MODEL_POLICY_V1: ActorModelPolicyV1 = {
 	images: "blocked",
 };
 
-export function assertVs001ActorModelPolicy(policy: ActorModelPolicyV1): ActorModelPolicyV1 {
-	const expected = VS001_ACTOR_MODEL_POLICY_V1;
+export function assertPinnedActorModelPolicy(policy: ActorModelPolicyV1): ActorModelPolicyV1 {
+	const expected = PINNED_ACTOR_MODEL_POLICY_V1;
 	if (
 		policy.retry.maxRetries !== expected.retry.maxRetries ||
 		policy.retry.baseDelayMilliseconds !== expected.retry.baseDelayMilliseconds ||
@@ -293,7 +294,7 @@ export interface ModelCatalogPolicyV1 {
 	readonly effectiveModel: EffectiveModelDescriptorV1;
 }
 
-export const VS001_EFFECTIVE_MODEL_DESCRIPTOR_V1: Omit<EffectiveModelDescriptorV1, "provider"> = {
+export const PINNED_EFFECTIVE_MODEL_DESCRIPTOR_V1: Omit<EffectiveModelDescriptorV1, "provider"> = {
 	baseUrl: PINNED_OPENROUTER_BASE_URL,
 	api: "openai-completions",
 	modelId: PINNED_MODEL,
@@ -307,9 +308,9 @@ export const VS001_EFFECTIVE_MODEL_DESCRIPTOR_V1: Omit<EffectiveModelDescriptorV
 	cacheWriteUsdPerMillion: { kind: "Absent" },
 };
 
-export function assertVs001ModelCatalogPolicy(policy: ModelCatalogPolicyV1): ModelCatalogPolicyV1 {
+export function assertPinnedModelCatalogPolicy(policy: ModelCatalogPolicyV1): ModelCatalogPolicyV1 {
 	const model = policy.effectiveModel;
-	const expected = VS001_EFFECTIVE_MODEL_DESCRIPTOR_V1;
+	const expected = PINNED_EFFECTIVE_MODEL_DESCRIPTOR_V1;
 	if (
 		model.provider !== PINNED_PROVIDER || model.baseUrl !== expected.baseUrl || model.api !== expected.api ||
 		model.modelId !== expected.modelId || model.canonicalSlug !== expected.canonicalSlug || model.input !== expected.input ||
@@ -793,14 +794,14 @@ function decodeCreateSessionPayload(value: Record<string, unknown>): CreateSessi
 			modelId: requiredLiteral(model, "modelId", PINNED_MODEL),
 			thinkingLevel: requiredLiteral(model, "thinkingLevel", PINNED_THINKING_LEVEL),
 		},
-		modelCatalog: assertVs001ModelCatalogPolicy(decodeModelCatalogPolicy(modelCatalog)),
+		modelCatalog: assertPinnedModelCatalogPolicy(decodeModelCatalogPolicy(modelCatalog)),
 		toolProfile: requiredOneOf(value, "toolProfile", [
 			"read_source_v1",
 			"curator_v1",
 			"product_builder_v1",
 			"task_actor_v1",
 		] as const),
-		settings: assertVs001ActorModelPolicy(decodeSettings(settings)),
+		settings: assertPinnedActorModelPolicy(decodeSettings(settings)),
 	};
 }
 

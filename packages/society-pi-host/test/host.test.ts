@@ -63,7 +63,7 @@ test("host: remains inert through AdapterReady and creates exactly one session o
 			kind: "state",
 			phase: "Ready",
 			liveness: "idle",
-			sessionFile: "/tmp/xsh-society/session/fixture.jsonl",
+			sessionFile: "/tmp/society-host-fixture/session/fixture.jsonl",
 		});
 	}
 });
@@ -113,10 +113,10 @@ test("host: serializes command admission while allowing office controls to reach
 		assert.deepEqual(disposed.transcriptFlushReceipt, {
 			format: "pi_session_manager_jsonl_v3",
 			sessionIdentity: "pi-session-test-001",
-			sessionFile: "/tmp/xsh-society/session/fixture.jsonl",
+			sessionFile: "/tmp/society-host-fixture/session/fixture.jsonl",
 			materialization: "observed",
 			sessionFileSha256: "5555555555555555555555555555555555555555555555555555555555555555",
-			headerCwd: "/tmp/xsh-society/work",
+			headerCwd: "/tmp/society-host-fixture/work",
 			firstUserPrompt: { kind: "verified", digest: "f6054ca339dc2ec4dcfaf1977f1d0ec978eea809e8214f3e89b4f7a4d5d16de2" },
 		});
 	}
