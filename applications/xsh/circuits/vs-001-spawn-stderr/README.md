@@ -43,7 +43,7 @@ product checkout file.
 The host profile is Unix-like: POSIX `sh`, `/dev/null`, an executable XSH/Xsht
 pair, cached offline `cargo`, and `awk`, `cmp`, `cp`, `cut`, `env`, `find`, `git`, `mkdir`, `od`, `rg`, `sed`,
 `sort`, plus either
-`sha256sum` or `shasum` must be available. These are evaluator prerequisites,
+`b3sum` must be available. These are evaluator prerequisites,
 not XSH product dependencies.
 
 `judges/run-negative-controls.sh` takes the same `--xsh`, `--xsht`, and
@@ -57,12 +57,12 @@ The `*.tsv` files are a transport for a future typed V2 adapter, not state and
 not a generic metadata channel. Each non-comment row has exactly the columns
 listed in its header. Fields never contain tabs, newlines, or free-form maps.
 Raw stdout, stderr, and redirected-file bytes stay as separately sealed files
-under `artifacts/`; the TSV contains only their SHA-256 identities.
+under `artifacts/`; the TSV contains only their BLAKE3 identities.
 
 For each stream, `*_evidence_kind` is one of `redirected`,
 `inherited_parent_stdout`, `inherited_parent_stderr`, `not_produced`, or
 `redirection_ignored`, or `redirected_dev_null`. Only `redirected` and
-`redirection_ignored` carry a digest in the companion `*_evidence_sha256`
+`redirection_ignored` carry a digest in the companion `*_evidence_blake3`
 field; the other four write `-`. Those spellings are wire encodings of
 `StreamEvidence`, not an extensible tag space.
 

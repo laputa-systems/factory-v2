@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
+import { blake3Hex } from "../src/digest.js";
 import { MAX_JSONL_FRAME_BYTES, type OutboundFrame } from "../src/protocol.js";
 import { consumeInboundJsonl } from "../src/main.js";
 
@@ -47,7 +47,7 @@ test("main: deeply nested sub-megabyte input terminates in a typed fatal, not a 
 });
 
 test("main: invalid UTF-8 in an otherwise-shaped Prompt is contained before command admission", async () => {
-	const prefix = Buffer.from('{"protocolVersion":"society-pi-host/v1","sequence":1,"sessionIdentity":"pipe-session-001","correlationIdentity":"prompt-001","command":"Prompt","payload":{"purpose":"TaskAssignment","text":"', "utf8");
+	const prefix = Buffer.from('{"protocolVersion":"society-pi-host/v2","sequence":1,"sessionIdentity":"pipe-session-001","correlationIdentity":"prompt-001","command":"Prompt","payload":{"purpose":"TaskAssignment","text":"', "utf8");
 	const suffix = Buffer.from('"}}', "utf8");
 	const result = await runHostBytes([prefix, Buffer.from([0xff]), suffix], true);
 	assert.equal(result.stderr, "");
@@ -88,9 +88,9 @@ test("main: real-pipe CreateSession then Dispose flushes before EOF without a pr
 	const prompt = "Universe Seed\nTask contract";
 	const createPayload = {
 		sessionKind: "TaskAttempt", cwd: directory, agentDirectory, authPath, modelsPath, sessionDirectory,
-		systemPrompt: prompt, systemPromptDigest: createHash("sha256").update(prompt, "utf8").digest("hex"),
+		systemPrompt: prompt, systemPromptDigest: blake3Hex(prompt),
 		model: { provider: "openrouter", modelId: "deepseek/deepseek-v4-flash-0731", thinkingLevel: "high" },
-		modelCatalog: { catalogSha256: createHash("sha256").update(catalog, "utf8").digest("hex"), effectiveModel: admittedDescriptor() },
+		modelCatalog: { catalogBlake3: blake3Hex(catalog), effectiveModel: admittedDescriptor() },
 		toolProfile: "read_source_v1",
 		settings: admittedSettings(),
 	};
@@ -126,9 +126,9 @@ test("main: a broken stdout after SessionReady fences a later Prompt before it c
 	const systemPrompt = "Universe Seed\nTransport containment";
 	const create = envelope(1, "CreateSession", {
 		sessionKind: "TaskAttempt", cwd: directory, agentDirectory, authPath, modelsPath, sessionDirectory,
-		systemPrompt, systemPromptDigest: createHash("sha256").update(systemPrompt, "utf8").digest("hex"),
+		systemPrompt, systemPromptDigest: blake3Hex(systemPrompt),
 		model: { provider: "openrouter", modelId: "deepseek/deepseek-v4-flash-0731", thinkingLevel: "high" },
-		modelCatalog: { catalogSha256: createHash("sha256").update(catalog, "utf8").digest("hex"), effectiveModel: admittedDescriptor() },
+		modelCatalog: { catalogBlake3: blake3Hex(catalog), effectiveModel: admittedDescriptor() },
 		toolProfile: "read_source_v1", settings: admittedSettings(),
 	});
 	// GetState forces an outbound write after the parent closes the pipe. The
@@ -142,7 +142,7 @@ test("main: a broken stdout after SessionReady fences a later Prompt before it c
 });
 
 function envelope(sequence: number, command: string, payload: unknown) {
-	return { protocolVersion: "society-pi-host/v1", sequence, sessionIdentity: "pipe-session-001", correlationIdentity: `pipe-command-${sequence}`, command, payload };
+	return { protocolVersion: "society-pi-host/v2", sequence, sessionIdentity: "pipe-session-001", correlationIdentity: `pipe-command-${sequence}`, command, payload };
 }
 
 async function* oneChunk(chunk: Uint8Array): AsyncIterable<Uint8Array> {
@@ -175,8 +175,8 @@ async function runHostBytes(chunks: readonly Buffer[], trailingNewline: boolean)
 	return new Promise((resolve, reject) => {
 		const child = spawn(process.execPath, [hostEntrypoint,
 			"--session-identity", "pipe-session-001", "--spawn-nonce", "pipe-spawn-001",
-			"--node-executable-sha256", DIGEST, "--lockfile-sha256", DIGEST,
-			"--adapter-build-sha256", DIGEST, "--pi-transitive-package-set-sha256", DIGEST,
+			"--node-executable-blake3", DIGEST, "--lockfile-blake3", DIGEST,
+			"--adapter-build-blake3", DIGEST, "--pi-transitive-package-set-blake3", DIGEST,
 		], { stdio: ["pipe", "pipe", "pipe"] });
 		let stdout = "";
 		let stderr = "";
@@ -199,8 +199,8 @@ async function runHostWithClosedStdout(line: string): Promise<number | null> {
 	return new Promise((resolve, reject) => {
 		const child = spawn(process.execPath, [hostEntrypoint,
 			"--session-identity", "pipe-session-001", "--spawn-nonce", "pipe-spawn-001",
-			"--node-executable-sha256", DIGEST, "--lockfile-sha256", DIGEST,
-			"--adapter-build-sha256", DIGEST, "--pi-transitive-package-set-sha256", DIGEST,
+			"--node-executable-blake3", DIGEST, "--lockfile-blake3", DIGEST,
+			"--adapter-build-blake3", DIGEST, "--pi-transitive-package-set-blake3", DIGEST,
 		], { stdio: ["pipe", "pipe", "pipe"] });
 		child.once("error", reject);
 		child.once("close", (code) => resolve(code));
@@ -215,8 +215,8 @@ async function runHostBreakStdoutAfterSessionReady(frames: readonly object[]): P
 	return new Promise((resolve, reject) => {
 		const child = spawn(process.execPath, [hostEntrypoint,
 			"--session-identity", "pipe-session-001", "--spawn-nonce", "pipe-spawn-001",
-			"--node-executable-sha256", DIGEST, "--lockfile-sha256", DIGEST,
-			"--adapter-build-sha256", DIGEST, "--pi-transitive-package-set-sha256", DIGEST,
+			"--node-executable-blake3", DIGEST, "--lockfile-blake3", DIGEST,
+			"--adapter-build-blake3", DIGEST, "--pi-transitive-package-set-blake3", DIGEST,
 		], { stdio: ["pipe", "pipe", "pipe"] });
 		let stdout = "";
 		let stderr = "";

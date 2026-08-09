@@ -32,4 +32,6 @@ application architecture, canonical vocabulary, executable VS-001 contract,
 and dependency boundary are [`ARCHITECTURE.md`](ARCHITECTURE.md),
 [`GLOSSARY.md`](GLOSSARY.md), [`VERTICAL-SLICE.md`](VERTICAL-SLICE.md), and
 [`DEPENDENCIES.md`](DEPENDENCIES.md). The root documents define only the
-generic authority and the still-unimplemented typed application port.
+generic authority, including the typed mission/alignment foundation. This XSH
+workspace has not yet admitted its mission through that port, and sealed
+mission-source and authorized product-output bindings remain open.

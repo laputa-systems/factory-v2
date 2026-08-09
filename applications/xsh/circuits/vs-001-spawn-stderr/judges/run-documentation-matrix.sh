@@ -63,8 +63,8 @@ for required_tool in awk cut find git rg sed; do
     exit 69
   }
 done
-if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
-  printf '%s\n' 'missing required host digest tool: sha256sum or shasum' >&2
+if ! command -v b3sum >/dev/null 2>&1; then
+  printf '%s\n' 'missing required host digest tool: b3sum' >&2
   exit 69
 fi
 [ -z "$(git -C "$xsh_root" status --porcelain=v1)" ] || {
@@ -103,12 +103,8 @@ fail() {
   exit 1
 }
 
-sha256() {
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" | awk '{print $1}'
-  else
-    shasum -a 256 "$1" | awk '{print $1}'
-  fi
+blake3() {
+  b3sum --no-names "$1"
 }
 
 line_of() {
@@ -127,9 +123,9 @@ printf '%s\n' '# schema: DocumentationConflictV1/tsv-v1' > "$conflicts"
 printf '%s\n' 'conflict_id	left_claim	right_claim	status' >> "$conflicts"
 input_digests="$out/input-digests.v1.tsv"
 printf '%s\n' '# schema: CircuitInputDigestV1/tsv-v1' > "$input_digests"
-printf '%s\n' 'input_kind	sha256' >> "$input_digests"
+printf '%s\n' 'input_kind	blake3' >> "$input_digests"
 record_input_digest() {
-  printf '%s\t%s\n' "$1" "$(sha256 "$2")" >> "$input_digests"
+  printf '%s\t%s\n' "$1" "$(blake3 "$2")" >> "$input_digests"
 }
 
 git -C "$xsh_root" rev-parse HEAD > "$out/xsh-source-head.txt"

@@ -11,25 +11,27 @@ does not redefine the generic terms.
 
 ### Application identity and revision
 
-`ApplicationIdentity` is the durable identity of one product-facing
-application. `ApplicationRevision` is one immutable, ordered revision of that
-application's typed mission contract. They are identifier newtypes, not a
-string discriminator or a package name interpreted by the kernel.
+`ApplicationIdentity` is the durable external identity of one product-facing
+application. `ApplicationRevisionId` and `ApplicationRevisionOrdinal` identify
+one immutable, ordered revision of that application's typed mission contract.
+They are domain types, not a package name interpreted by the kernel.
 
 ### Mission
 
 The typed purpose and worldview supplied by an application at bootstrap. It
 contains a named `MissionStatement`, ordered `MissionPrinciple` relation,
-`NorthStarQuestionSet`, and sealed source reference. Mission is durable input,
-not ambient documentation or a copied prompt fragment.
+`NorthStarQuestionSet`, and a BLAKE3 identity for its source rendering. The
+current digest is a caller attestation, not a physical content seal or
+provenance claim. Mission is durable input, not ambient documentation or a
+copied prompt fragment.
 
 ### North-star alignment
 
 One work object's typed application of its exact mission revision. It has four
 named fields: intended capability or behavior change, improvement evidence,
 boundary commitment, and revisit condition. Mission supplies purpose;
-alignment tests an action. The typed port is architectural target state and is
-not yet implemented by the prototype.
+alignment tests an action. The current kernel requires this exact alignment on
+Project creation and rejects a revision other than the founded seed revision.
 
 ### Capability
 
@@ -123,6 +125,14 @@ The future kernel-issued output binding one authorization, application
 revision, decision, repository, admitted base, patch, expected tree,
 validation profile, and delivery target. The current materializer receipt is
 not yet this durable output.
+
+### Product change authorization input
+
+`ProductChangeAuthorizationInput` is caller-supplied structural input to the
+standalone materializer. It preserves application-revision and decision
+cross-links but proves neither kernel authority nor receipt authenticity. It
+must not be confused with the future kernel-issued
+`AuthorizedProductChange`.
 
 ### Controlled product materialization
 

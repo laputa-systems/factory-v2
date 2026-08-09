@@ -3,16 +3,16 @@
 import { isUtf8 } from "node:buffer";
 
 import { PiSdkHost, localRuntimeIdentity } from "./host.js";
-import { MAX_JSONL_FRAME_BYTES, decodeInboundJsonl, sessionIdentity, sha256Digest, spawnNonce } from "./protocol.js";
+import { MAX_JSONL_FRAME_BYTES, decodeInboundJsonl, sessionIdentity, blake3Digest, spawnNonce } from "./protocol.js";
 import { PinnedPiSdkRuntime } from "./sdk.js";
 
 interface ProcessArguments {
 	readonly sessionIdentity: string;
 	readonly spawnNonce: string;
-	readonly nodeExecutableSha256: string;
-	readonly lockfileSha256: string;
-	readonly adapterBuildSha256: string;
-	readonly piTransitivePackageSetSha256: string;
+	readonly nodeExecutableBlake3: string;
+	readonly lockfileBlake3: string;
+	readonly adapterBuildBlake3: string;
+	readonly piTransitivePackageSetBlake3: string;
 }
 
 export async function run(): Promise<void> {
@@ -36,10 +36,10 @@ export async function run(): Promise<void> {
 			spawnNonce: spawnNonce(argumentsValue.spawnNonce),
 			pid: process.pid,
 			runtime: localRuntimeIdentity(process.version, {
-				nodeExecutableSha256: sha256Digest(argumentsValue.nodeExecutableSha256),
-				lockfileSha256: sha256Digest(argumentsValue.lockfileSha256),
-				adapterBuildSha256: sha256Digest(argumentsValue.adapterBuildSha256),
-				piTransitivePackageSetSha256: sha256Digest(argumentsValue.piTransitivePackageSetSha256),
+				nodeExecutableBlake3: blake3Digest(argumentsValue.nodeExecutableBlake3),
+				lockfileBlake3: blake3Digest(argumentsValue.lockfileBlake3),
+				adapterBuildBlake3: blake3Digest(argumentsValue.adapterBuildBlake3),
+				piTransitivePackageSetBlake3: blake3Digest(argumentsValue.piTransitivePackageSetBlake3),
 			}),
 		},
 		new PinnedPiSdkRuntime(),
@@ -144,24 +144,24 @@ function parseProcessArguments(argumentsValue: readonly string[]): ProcessArgume
 		argumentsValue.length !== 12 ||
 		argumentsValue[0] !== "--session-identity" ||
 		argumentsValue[2] !== "--spawn-nonce" ||
-		argumentsValue[4] !== "--node-executable-sha256" ||
-		argumentsValue[6] !== "--lockfile-sha256" ||
-		argumentsValue[8] !== "--adapter-build-sha256" ||
-		argumentsValue[10] !== "--pi-transitive-package-set-sha256"
+		argumentsValue[4] !== "--node-executable-blake3" ||
+		argumentsValue[6] !== "--lockfile-blake3" ||
+		argumentsValue[8] !== "--adapter-build-blake3" ||
+		argumentsValue[10] !== "--pi-transitive-package-set-blake3"
 	) {
-		throw new Error("usage: society-pi-host --session-identity <id> --spawn-nonce <nonce> --node-executable-sha256 <sha256> --lockfile-sha256 <sha256> --adapter-build-sha256 <sha256> --pi-transitive-package-set-sha256 <sha256>");
+		throw new Error("usage: society-pi-host --session-identity <id> --spawn-nonce <nonce> --node-executable-blake3 <blake3> --lockfile-blake3 <blake3> --adapter-build-blake3 <blake3> --pi-transitive-package-set-blake3 <blake3>");
 	}
 	const session = argumentsValue[1];
 	const nonce = argumentsValue[3];
-	const nodeExecutableSha256 = argumentsValue[5];
-	const lockfileSha256 = argumentsValue[7];
-	const adapterBuildSha256 = argumentsValue[9];
-	const piTransitivePackageSetSha256 = argumentsValue[11];
+	const nodeExecutableBlake3 = argumentsValue[5];
+	const lockfileBlake3 = argumentsValue[7];
+	const adapterBuildBlake3 = argumentsValue[9];
+	const piTransitivePackageSetBlake3 = argumentsValue[11];
 	if (
-		session === undefined || nonce === undefined || nodeExecutableSha256 === undefined || lockfileSha256 === undefined ||
-		adapterBuildSha256 === undefined || piTransitivePackageSetSha256 === undefined
+		session === undefined || nonce === undefined || nodeExecutableBlake3 === undefined || lockfileBlake3 === undefined ||
+		adapterBuildBlake3 === undefined || piTransitivePackageSetBlake3 === undefined
 	) throw new Error("missing_host_identity");
-	return { sessionIdentity: session, spawnNonce: nonce, nodeExecutableSha256, lockfileSha256, adapterBuildSha256, piTransitivePackageSetSha256 };
+	return { sessionIdentity: session, spawnNonce: nonce, nodeExecutableBlake3, lockfileBlake3, adapterBuildBlake3, piTransitivePackageSetBlake3 };
 }
 
 if (import.meta.url === new URL(process.argv[1] ?? "", "file:").href) {

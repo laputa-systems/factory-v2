@@ -15,9 +15,9 @@ required generic decision and review gates succeed.
 
 ## Intended typed application port
 
-The following contract is the required boundary. It is an architectural target;
-the current prototype has not yet implemented the mission/alignment input or
-the durable authorized product-change output described below.
+The following contract is the required complete boundary. The current
+prototype implements the normalized mission and Project alignment portion, but
+not the sealed source binding or durable authorized product-change output.
 
 ```text
 ApplicationMissionInput
@@ -89,11 +89,13 @@ being able to run a tool.
 
 ## Current implementation boundary
 
-The repository currently implements bounded portions of the generic kernel,
-content store, Pi host/peer, resident daemon, and guarded local materializer.
-Those foundations are not an implementation of the typed application port
-above. In particular, a sealed seed rendering is not yet a typed mission and
-north-star input, and the materializer's local receipt is not yet a durable
+The repository currently implements a normalized `ApplicationMissionInput`,
+four typed north-star questions, seed-revision-bound
+`ProjectNorthStarAlignment`, and closed daemon transport for that founding
+input. The source rendering is currently identified by a declared BLAKE3
+digest only; no `ContentObjectId`, physical seal, retention, or provenance is
+established. The materializer's caller-supplied
+`ProductChangeAuthorizationInput` and local receipt are likewise not a durable
 kernel-issued `AuthorizedProductChange`.
 
 The generic sequence therefore makes no claim that an application can yet run

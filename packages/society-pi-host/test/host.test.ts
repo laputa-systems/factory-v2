@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { blake3Hex } from "../src/digest.js";
 import { PiSdkHost, localRuntimeIdentity, resolvedInstalledPiSdkVersion } from "../src/host.js";
 import { nonNegativeInteger, providerCostObservation, spawnNonce, sessionIdentity, type OutboundFrame } from "../src/protocol.js";
 import { TEST_RUNTIME_EVIDENCE, DeferredSdkRuntime, FakeSdkRuntime, createSessionPayload, decodeCommand, drainMicrotasks } from "./support.js";
@@ -51,7 +52,7 @@ test("host: remains inert through AdapterReady and creates exactly one session o
 		assert.equal(ready.configuration.settings.installTelemetryEnabled, false);
 		assert.equal(ready.configuration.settings.analyticsEnabled, false);
 		assert.equal(ready.configuration.settings.images, "blocked");
-		assert.equal(ready.configuration.modelCatalog.catalogSha256, "6".repeat(64));
+		assert.equal(ready.configuration.modelCatalog.catalogBlake3, "6".repeat(64));
 		assert.equal(ready.configuration.modelCatalog.effectiveModel.baseUrl, "https://openrouter.ai/api/v1");
 		assert.equal(ready.configuration.modelCatalog.effectiveModel.cacheWriteUsdPerMillion.kind, "Absent");
 	}
@@ -115,9 +116,9 @@ test("host: serializes command admission while allowing office controls to reach
 			sessionIdentity: "pi-session-test-001",
 			sessionFile: "/tmp/society-host-fixture/session/fixture.jsonl",
 			materialization: "observed",
-			sessionFileSha256: "5555555555555555555555555555555555555555555555555555555555555555",
+			sessionFileBlake3: "5555555555555555555555555555555555555555555555555555555555555555",
 			headerCwd: "/tmp/society-host-fixture/work",
-			firstUserPrompt: { kind: "verified", digest: "f6054ca339dc2ec4dcfaf1977f1d0ec978eea809e8214f3e89b4f7a4d5d16de2" },
+			firstUserPrompt: { kind: "verified", digest: blake3Hex("initial Office turn") },
 		});
 	}
 });

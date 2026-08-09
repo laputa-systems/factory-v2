@@ -16,11 +16,46 @@ CREATE TABLE office_contracts (
     office_kind INTEGER NOT NULL UNIQUE CHECK (office_kind = 1),
     installed_by_command_id INTEGER NOT NULL
 );
+-- The application mission is a first-class, normalized constitution. Its
+-- source rendering has a BLAKE3 byte identity, while the mission remains
+-- queryable. It is not a physical content-seal or retention receipt.
+CREATE TABLE applications (
+    application_id INTEGER PRIMARY KEY,
+    application_identity TEXT NOT NULL UNIQUE,
+    application_name TEXT NOT NULL UNIQUE,
+    created_by_command_id INTEGER NOT NULL
+);
+CREATE TABLE application_revisions (
+    application_revision_id INTEGER PRIMARY KEY,
+    application_id INTEGER NOT NULL REFERENCES applications(application_id),
+    revision_ordinal INTEGER NOT NULL CHECK (revision_ordinal > 0),
+    mission_statement TEXT NOT NULL,
+    source_rendering_digest BLOB NOT NULL CHECK (length(source_rendering_digest) = 32),
+    installed_by_command_id INTEGER NOT NULL,
+    UNIQUE(application_id, revision_ordinal)
+);
+CREATE TABLE application_revision_principles (
+    application_revision_id INTEGER NOT NULL
+        REFERENCES application_revisions(application_revision_id),
+    principle_ordinal INTEGER NOT NULL CHECK (principle_ordinal > 0 AND principle_ordinal <= 16),
+    principle_kind INTEGER NOT NULL CHECK (principle_kind BETWEEN 1 AND 4),
+    principle_text TEXT NOT NULL,
+    PRIMARY KEY(application_revision_id, principle_ordinal)
+);
+CREATE TABLE application_revision_north_star_questions (
+    application_revision_id INTEGER PRIMARY KEY
+        REFERENCES application_revisions(application_revision_id),
+    change_question TEXT NOT NULL,
+    improvement_evidence_question TEXT NOT NULL,
+    boundary_commitment_question TEXT NOT NULL,
+    revisit_question TEXT NOT NULL
+);
 CREATE TABLE universe_seeds (
     universe_seed_id INTEGER PRIMARY KEY,
     society_id INTEGER NOT NULL REFERENCES societies(society_id),
+    application_revision_id INTEGER NOT NULL
+        REFERENCES application_revisions(application_revision_id),
     revision INTEGER NOT NULL CHECK (revision > 0),
-    rendering_digest BLOB NOT NULL CHECK (length(rendering_digest) = 32),
     active INTEGER NOT NULL CHECK (active IN (0, 1)),
     installed_by_command_id INTEGER NOT NULL,
     UNIQUE (society_id, revision)
@@ -162,7 +197,28 @@ CREATE TABLE cost_postmortem_resolutions (
 );
 CREATE TABLE command_create_society_identity (command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), name TEXT NOT NULL);
 CREATE TABLE command_install_grand_architect_office (command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id));
-CREATE TABLE command_install_founding_universe_seed (command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), rendering_digest BLOB NOT NULL CHECK (length(rendering_digest) = 32));
+CREATE TABLE command_install_founding_universe_seed (
+    command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id),
+    application_identity TEXT NOT NULL,
+    application_name TEXT NOT NULL,
+    revision_ordinal INTEGER NOT NULL CHECK (revision_ordinal > 0),
+    mission_statement TEXT NOT NULL,
+    source_rendering_digest BLOB NOT NULL CHECK (length(source_rendering_digest) = 32)
+);
+CREATE TABLE command_install_founding_universe_seed_principles (
+    command_row_id INTEGER NOT NULL REFERENCES command_install_founding_universe_seed(command_row_id),
+    principle_ordinal INTEGER NOT NULL CHECK (principle_ordinal > 0 AND principle_ordinal <= 16),
+    principle_kind INTEGER NOT NULL CHECK (principle_kind BETWEEN 1 AND 4),
+    principle_text TEXT NOT NULL,
+    PRIMARY KEY(command_row_id, principle_ordinal)
+);
+CREATE TABLE command_install_founding_universe_seed_north_star_questions (
+    command_row_id INTEGER PRIMARY KEY REFERENCES command_install_founding_universe_seed(command_row_id),
+    change_question TEXT NOT NULL,
+    improvement_evidence_question TEXT NOT NULL,
+    boundary_commitment_question TEXT NOT NULL,
+    revisit_question TEXT NOT NULL
+);
 CREATE TABLE command_appoint_initial_grand_architect (command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), actor_display_name TEXT NOT NULL);
 CREATE TABLE command_set_r0_hard_ceiling (command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), ceiling_micros INTEGER NOT NULL CHECK (ceiling_micros >= 0));
 CREATE TABLE command_bootstrap_society (command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id));
@@ -184,7 +240,11 @@ CREATE TABLE command_reconcile_cancellation (command_row_id INTEGER PRIMARY KEY 
 CREATE TABLE command_close_cost_postmortem (command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), postmortem_id INTEGER NOT NULL, resolution_kind INTEGER NOT NULL CHECK (resolution_kind IN (1, 2)));
 CREATE TABLE event_society_identity_created (event_id INTEGER PRIMARY KEY REFERENCES events(event_id), society_id INTEGER NOT NULL REFERENCES societies(society_id));
 CREATE TABLE event_grand_architect_office_installed (event_id INTEGER PRIMARY KEY REFERENCES events(event_id), office_id INTEGER NOT NULL REFERENCES office_contracts(office_id));
-CREATE TABLE event_founding_universe_seed_installed (event_id INTEGER PRIMARY KEY REFERENCES events(event_id), universe_seed_id INTEGER NOT NULL REFERENCES universe_seeds(universe_seed_id));
+CREATE TABLE event_founding_universe_seed_installed (
+    event_id INTEGER PRIMARY KEY REFERENCES events(event_id),
+    universe_seed_id INTEGER NOT NULL REFERENCES universe_seeds(universe_seed_id),
+    application_revision_id INTEGER NOT NULL REFERENCES application_revisions(application_revision_id)
+);
 CREATE TABLE event_grand_architect_appointed (event_id INTEGER PRIMARY KEY REFERENCES events(event_id), office_occupancy_id INTEGER NOT NULL REFERENCES office_occupancies(office_occupancy_id), principal_id INTEGER NOT NULL REFERENCES principals(principal_id));
 CREATE TABLE event_r0_hard_ceiling_set (event_id INTEGER PRIMARY KEY REFERENCES events(event_id), society_id INTEGER NOT NULL REFERENCES societies(society_id), ceiling_micros INTEGER NOT NULL CHECK (ceiling_micros > 0));
 CREATE TABLE event_society_bootstrapped (event_id INTEGER PRIMARY KEY REFERENCES events(event_id), society_id INTEGER NOT NULL REFERENCES societies(society_id));
@@ -206,6 +266,16 @@ CREATE TABLE projects (
     lifecycle_state INTEGER NOT NULL CHECK (lifecycle_state BETWEEN 1 AND 9),
     created_by_command_id INTEGER NOT NULL REFERENCES commands(command_row_id),
     last_transition_command_id INTEGER NOT NULL REFERENCES commands(command_row_id)
+);
+CREATE TABLE project_north_star_alignments (
+    project_id INTEGER PRIMARY KEY REFERENCES projects(project_id),
+    application_revision_id INTEGER NOT NULL
+        REFERENCES application_revisions(application_revision_id),
+    change_answer TEXT NOT NULL,
+    improvement_evidence_answer TEXT NOT NULL,
+    boundary_commitment_answer TEXT NOT NULL,
+    revisit_answer TEXT NOT NULL,
+    aligned_by_command_id INTEGER NOT NULL REFERENCES commands(command_row_id)
 );
 CREATE TABLE project_objectives (
     project_objective_id INTEGER PRIMARY KEY,
@@ -401,7 +471,16 @@ CREATE TABLE coordination_command_provenance (
     operating_cycle_id INTEGER NOT NULL REFERENCES operating_cycles(operating_cycle_id),
     project_id INTEGER REFERENCES projects(project_id)
 );
-CREATE TABLE command_create_project (command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), operating_cycle_id INTEGER NOT NULL, project_name TEXT NOT NULL);
+CREATE TABLE command_create_project (
+    command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id),
+    operating_cycle_id INTEGER NOT NULL,
+    project_name TEXT NOT NULL,
+    application_revision_id INTEGER NOT NULL,
+    change_answer TEXT NOT NULL,
+    improvement_evidence_answer TEXT NOT NULL,
+    boundary_commitment_answer TEXT NOT NULL,
+    revisit_answer TEXT NOT NULL
+);
 CREATE TABLE command_charter_project (command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), operating_cycle_id INTEGER NOT NULL, project_id INTEGER NOT NULL, objective_text TEXT NOT NULL, milestone_name TEXT NOT NULL, stop_condition_text TEXT NOT NULL);
 CREATE TABLE command_transition_project (command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), operating_cycle_id INTEGER NOT NULL, project_id INTEGER NOT NULL, target_state INTEGER NOT NULL CHECK (target_state BETWEEN 1 AND 9));
 CREATE TABLE command_complete_project_milestone (command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), operating_cycle_id INTEGER NOT NULL, project_milestone_id INTEGER NOT NULL);
@@ -425,7 +504,11 @@ CREATE TABLE command_trigger_postmortem (command_row_id INTEGER PRIMARY KEY REFE
 CREATE TABLE command_record_postmortem_causal_claim (command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), operating_cycle_id INTEGER NOT NULL, postmortem_id INTEGER NOT NULL, claim_kind INTEGER NOT NULL CHECK (claim_kind BETWEEN 1 AND 3), claim_text TEXT NOT NULL);
 CREATE TABLE command_propose_postmortem_action (command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), operating_cycle_id INTEGER NOT NULL, postmortem_id INTEGER NOT NULL, action_kind INTEGER NOT NULL CHECK (action_kind IN (1, 2)), action_text TEXT NOT NULL);
 CREATE TABLE command_close_postmortem (command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), operating_cycle_id INTEGER NOT NULL, postmortem_id INTEGER NOT NULL);
-CREATE TABLE event_project_created (event_id INTEGER PRIMARY KEY REFERENCES events(event_id), project_id INTEGER NOT NULL REFERENCES projects(project_id));
+CREATE TABLE event_project_created (
+    event_id INTEGER PRIMARY KEY REFERENCES events(event_id),
+    project_id INTEGER NOT NULL REFERENCES projects(project_id),
+    application_revision_id INTEGER NOT NULL REFERENCES application_revisions(application_revision_id)
+);
 CREATE TABLE event_project_chartered (event_id INTEGER PRIMARY KEY REFERENCES events(event_id), project_id INTEGER NOT NULL REFERENCES projects(project_id));
 CREATE TABLE event_project_state_changed (event_id INTEGER PRIMARY KEY REFERENCES events(event_id), project_id INTEGER NOT NULL REFERENCES projects(project_id), lifecycle_state INTEGER NOT NULL CHECK (lifecycle_state BETWEEN 1 AND 9));
 CREATE TABLE event_project_milestone_completed (event_id INTEGER PRIMARY KEY REFERENCES events(event_id), project_milestone_id INTEGER NOT NULL REFERENCES project_milestones(project_milestone_id));
@@ -1654,6 +1737,6 @@ INSERT INTO capability_grants VALUES(45,2,88,NULL,NULL,1,3,NULL,NULL);
 INSERT INTO capability_grants VALUES(46,2,89,NULL,NULL,1,3,NULL,NULL);
 INSERT INTO capability_grants VALUES(47,2,90,NULL,NULL,1,3,NULL,NULL);
 INSERT INTO capability_grants VALUES(48,2,91,NULL,NULL,1,3,NULL,NULL);
-PRAGMA user_version = 7;
+PRAGMA user_version = 9;
 COMMIT;
 PRAGMA foreign_keys = ON;

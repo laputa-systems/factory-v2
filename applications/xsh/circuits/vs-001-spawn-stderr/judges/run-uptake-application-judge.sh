@@ -43,8 +43,8 @@ for required_tool in awk find mkdir sed; do
     exit 69
   }
 done
-if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
-  printf '%s\n' 'uptake application: missing sha256sum or shasum' >&2
+if ! command -v b3sum >/dev/null 2>&1; then
+  printf '%s\n' 'missing required host digest tool: b3sum' >&2
   exit 69
 fi
 if [ -e "$out" ]; then
@@ -61,12 +61,8 @@ fail() {
   printf 'uptake application: %s\n' "$*" >&2
   exit 1
 }
-sha256() {
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" | awk '{print $1}'
-  else
-    shasum -a 256 "$1" | awk '{print $1}'
-  fi
+blake3() {
+  b3sum --no-names "$1"
 }
 assert_header_and_one_row() {
   table=$1
@@ -85,9 +81,9 @@ write_result() {
 
 input_digests="$out/input-digests.v1.tsv"
 printf '%s\n' '# schema: UptakeApplicationInputDigestV1/tsv-v1' > "$input_digests"
-printf 'input_kind\tsha256\n' >> "$input_digests"
+printf 'input_kind\tblake3\n' >> "$input_digests"
 record_input_digest() {
-  printf '%s\t%s\n' "$1" "$(sha256 "$2")" >> "$input_digests"
+  printf '%s\t%s\n' "$1" "$(blake3 "$2")" >> "$input_digests"
 }
 record_input_digest uptake_application_judge "$0"
 record_input_digest delivery_context "$context"

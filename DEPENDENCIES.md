@@ -16,7 +16,7 @@ the resolved transitive graph is committed in `Cargo.lock`.
 | --- | ---: | --- |
 | `rusqlite` | 0.40.2 | Sole SQLite binding in `society-kernel`; the canonical fresh schema is embedded SQL executed by the kernel rather than an ORM or migration framework. |
 | `thiserror` | 2.0.20 | Closed, inspectable error enums at trusted boundaries. |
-| `sha2` | 0.11.0 | SHA-256 identities for immutable content, command bodies, revisions, trees, execution artifacts, and the resident physical content store. |
+| `blake3` | 1.8.5 | Canonical 32-byte BLAKE3 identities for immutable content, command bodies, revisions, trees, execution artifacts, and the resident physical content store. Git object IDs remain governed by each repository's own object format. |
 | `tracing` | 0.1.44 | Typed spans and lifecycle events in `societyd`. |
 | `tracing-subscriber` | 0.3.23 | Mandatory monitor and bounded diagnostic rendering; only `fmt`, `registry`, and `std` features are enabled. |
 | `serde` | 1.0.229 | Serialization derives only in `society-pi`, at the closed Pi SDK-host protocol boundary. |
@@ -46,9 +46,10 @@ kernel contracts rather than delegated policy.
 ## TypeScript SDK host
 
 `packages/society-pi-host/package.json` and its exact npm lockfile own the
-JavaScript dependency surface. The production dependency is
-`@earendil-works/pi-coding-agent` 0.83.0. The build/test-only dependencies are
-`typescript` 5.9.3 and `@types/node` 24.12.4. All three direct dependencies are
+JavaScript dependency surface. The production dependencies are
+`@earendil-works/pi-coding-agent` 0.83.0 and the zero-dependency
+`@noble/hashes` 2.2.0 BLAKE3 implementation. The build/test-only dependencies
+are `typescript` 5.9.3 and `@types/node` 24.12.4. All four direct dependencies are
 exact-pinned in `package.json`; the full transitive graph is integrity-pinned
 in `package-lock.json`. `node_modules` and compiled `dist/` output are never
 committed.

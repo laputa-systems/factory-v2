@@ -439,7 +439,7 @@ fn parse_negative_control_row(
 // ---------------------------------------------------------------------------
 // Input-digest manifests
 
-const INPUT_HEADER: &str = "input_kind\tsha256";
+const INPUT_HEADER: &str = "input_kind\tblake3";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum InputDigestProducer {
@@ -755,7 +755,7 @@ impl InputDigestManifestV1 {
                     fields[1],
                     Vs001Schema::InputDigestManifest,
                     line_number,
-                    "sha256",
+                    "blake3",
                 )?,
             });
         }
@@ -1405,7 +1405,7 @@ impl DocumentationConflictSetV1 {
 // Fluency output relations
 
 const FLUENCY_SCHEMA: &str = "# schema: FluencyProbeObservationV1/tsv-v1";
-const FLUENCY_HEADER: &str = "case_id\tinput_manifest\texpected_exit\tsupervisor_exit\tparent_stdout_sha256\tparent_stderr_sha256\tredirected_stderr_sha256\tcorrectness\ttyped_boundary\townership_lifecycle\thost_path_access\tdisposition";
+const FLUENCY_HEADER: &str = "case_id\tinput_manifest\texpected_exit\tsupervisor_exit\tparent_stdout_blake3\tparent_stderr_blake3\tredirected_stderr_blake3\tcorrectness\ttyped_boundary\townership_lifecycle\thost_path_access\tdisposition";
 const FLUENCY_SURFACE_SCHEMA: &str = "# schema: FluencyProbeExecutionSurfaceV1/tsv-v1";
 const FLUENCY_SURFACE_HEADER: &str =
     "execution_kind\ttool_errors\tturns\tactive_wall\ttokens\treasoning_tokens\tcost";
@@ -1530,13 +1530,13 @@ impl FluencyProbeObservationSetV1 {
                 input_manifest,
                 expected_exit,
                 supervisor_exit,
-                parent_stdout: digest(fields[4], schema, line_number, "parent_stdout_sha256")?,
-                parent_stderr: digest(fields[5], schema, line_number, "parent_stderr_sha256")?,
+                parent_stdout: digest(fields[4], schema, line_number, "parent_stdout_blake3")?,
+                parent_stderr: digest(fields[5], schema, line_number, "parent_stderr_blake3")?,
                 redirected_stderr: digest(
                     fields[6],
                     schema,
                     line_number,
-                    "redirected_stderr_sha256",
+                    "redirected_stderr_blake3",
                 )?,
                 correctness: FluencyCorrectness::Passed,
                 typed_boundary: FluencyTypedBoundary::Compliant,

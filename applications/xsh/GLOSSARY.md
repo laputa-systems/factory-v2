@@ -93,9 +93,9 @@ is not a derived demand signal and cannot be created by signal pressure alone.
 ### Canonical fresh schema
 
 The one atomic embedded-SQL bootstrap accepted by the prototype kernel. The
-current schema has `PRAGMA user_version = 6`; version zero means an empty
+current schema has `PRAGMA user_version = 9`; version zero means an empty
 database eligible for bootstrap, while historical prototype versions one
-through five are rejected without mutation. This is deliberate prototype
+through eight are rejected without mutation. This is deliberate prototype
 replacement, not an upgrade or compatibility claim.
 
 ### Cancellation propagation
@@ -185,7 +185,7 @@ admission, so two runs may reuse identical bytes without sharing provenance.
 ### Content seal receipt
 
 A narrow kernel-service attestation that the physical content boundary already
-sealed one SHA-256 identity. The current kernel command receives only the
+sealed one BLAKE3 identity. The current kernel command receives only the
 digest: it does not ingest bytes, execute an evaluator, assign provenance, or
 admit evidence. The resident daemon now supplies that fact only through its
 private content writer: it seals the bytes first, then records the receipt,
@@ -194,7 +194,7 @@ express this authority.
 
 ### Content seal operation
 
-A retry-stable, daemon-internal binding of one expected SHA-256 digest to the
+A retry-stable, daemon-internal binding of one expected BLAKE3 digest to the
 exact `RecordContentSealReceipt` and `RegisterContentObject` command
 identities. It is an operational idempotency boundary, not provenance: a
 different occurrence of already registered bytes reuses the global
@@ -389,7 +389,7 @@ The non-secret, qualified identity of the exact Pi model catalog bytes and the
 effective model treatment selected from them: provider, endpoint, API shape,
 requested model, canonical provider slug, context and completion limits, input
 kinds, and every present or absent billing rate. `ModelCatalogPolicyV1` binds
-configuration to a SHA-256 digest and is checked before and after SDK model
+configuration to a BLAKE3 digest and is checked before and after SDK model
 resolution. It is not authentication material, an ambient `models.json`, or a
 provider-discovery result.
 

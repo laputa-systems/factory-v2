@@ -1,4 +1,4 @@
-//! The complete closed `society-pi-host/v1` wire schema.
+//! The complete closed `society-pi-host/v2` wire schema.
 //!
 //! `serde_json::Value` is used only after [`reject_duplicate_object_keys`] has
 //! ruled out JSON's last-key-wins ambiguity.  The subsequent decoder checks
@@ -11,7 +11,7 @@ use std::{collections::BTreeSet, fmt, path::Path};
 use serde_json::{Map, Value};
 use thiserror::Error;
 
-pub const ADAPTER_PROTOCOL_VERSION: &str = "society-pi-host/v1";
+pub const ADAPTER_PROTOCOL_VERSION: &str = "society-pi-host/v2";
 pub const ADAPTER_VERSION: &str = "1";
 pub const PINNED_PI_SDK_VERSION: &str = "0.83.0";
 pub const PINNED_PROVIDER: &str = "openrouter";
@@ -153,8 +153,8 @@ impl HostProcessId {
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct Sha256Digest(String);
-impl Sha256Digest {
+pub struct Blake3Digest(String);
+impl Blake3Digest {
     pub fn parse(value: impl Into<String>) -> Result<Self, ProtocolError> {
         let value = value.into();
         if value.len() != 64
@@ -162,7 +162,7 @@ impl Sha256Digest {
                 .bytes()
                 .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
         {
-            return Err(ProtocolError::InvalidFrame("sha256 digest"));
+            return Err(ProtocolError::InvalidFrame("blake3 digest"));
         }
         Ok(Self(value))
     }
@@ -489,7 +489,7 @@ pub struct EffectiveModelDescriptorV1 {
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ModelCatalogPolicyV1 {
-    pub catalog_sha256: Sha256Digest,
+    pub catalog_blake3: Blake3Digest,
     pub effective_model: EffectiveModelDescriptorV1,
 }
 impl ModelCatalogPolicyV1 {
@@ -524,7 +524,7 @@ pub struct CreateSessionPayload {
     pub models_path: AbsolutePath,
     pub session_directory: AbsolutePath,
     pub system_prompt: String,
-    pub system_prompt_digest: Sha256Digest,
+    pub system_prompt_digest: Blake3Digest,
     pub model: ModelSelection,
     pub model_catalog: ModelCatalogPolicyV1,
     pub tool_profile: ToolProfile,
@@ -623,10 +623,10 @@ pub struct RuntimeIdentity {
     pub node_version: NodeRuntimeVersion,
     pub adapter_version: AdapterVersion,
     pub pi_sdk_version: PiSdkVersion,
-    pub node_executable_sha256: Sha256Digest,
-    pub lockfile_sha256: Sha256Digest,
-    pub adapter_build_sha256: Sha256Digest,
-    pub pi_transitive_package_set_sha256: Sha256Digest,
+    pub node_executable_blake3: Blake3Digest,
+    pub lockfile_blake3: Blake3Digest,
+    pub adapter_build_blake3: Blake3Digest,
+    pub pi_transitive_package_set_blake3: Blake3Digest,
 }
 impl RuntimeIdentity {
     pub fn assert_v1(&self) -> Result<(), ProtocolError> {
@@ -886,14 +886,14 @@ pub enum FinalAssistantUnavailableReason {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FirstUserPromptReceipt {
     Absent,
-    Verified { digest: Sha256Digest },
+    Verified { digest: Blake3Digest },
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TranscriptFlushReceiptV1 {
     Materialized {
         session_identity: SessionIdentity,
         session_file: AbsolutePath,
-        session_file_sha256: Sha256Digest,
+        session_file_blake3: Blake3Digest,
         header_cwd: AbsolutePath,
         first_user_prompt: FirstUserPromptReceipt,
     },
@@ -1041,7 +1041,7 @@ fn encode_model_selection(value: &ModelSelection) -> Value {
 }
 fn encode_model_catalog(value: &ModelCatalogPolicyV1) -> Value {
     let model = &value.effective_model;
-    serde_json::json!({ "catalogSha256": value.catalog_sha256.as_str(), "effectiveModel": { "provider": provider_wire(model.provider), "baseUrl": base_url_wire(model.base_url), "api": model_api_wire(model.api), "modelId": model_id_wire(model.model_id), "canonicalSlug": canonical_slug_wire(model.canonical_slug), "input": model_input_wire(model.input), "contextWindow": model.context_window.value(), "maxTokens": model.max_tokens.value(), "inputUsdPerMillion": encode_rate(&model.input_usd_per_million), "outputUsdPerMillion": encode_rate(&model.output_usd_per_million), "cacheReadUsdPerMillion": encode_rate(&model.cache_read_usd_per_million), "cacheWriteUsdPerMillion": encode_cache_write_rate(&model.cache_write_usd_per_million) } })
+    serde_json::json!({ "catalogBlake3": value.catalog_blake3.as_str(), "effectiveModel": { "provider": provider_wire(model.provider), "baseUrl": base_url_wire(model.base_url), "api": model_api_wire(model.api), "modelId": model_id_wire(model.model_id), "canonicalSlug": canonical_slug_wire(model.canonical_slug), "input": model_input_wire(model.input), "contextWindow": model.context_window.value(), "maxTokens": model.max_tokens.value(), "inputUsdPerMillion": encode_rate(&model.input_usd_per_million), "outputUsdPerMillion": encode_rate(&model.output_usd_per_million), "cacheReadUsdPerMillion": encode_rate(&model.cache_read_usd_per_million), "cacheWriteUsdPerMillion": encode_cache_write_rate(&model.cache_write_usd_per_million) } })
 }
 fn encode_rate(value: &KnownPerMillionRateV1) -> Value {
     serde_json::json!({ "kind": "Known", "usdPerMillion": value.usd_per_million.as_str() })
@@ -1373,7 +1373,7 @@ fn decode_create_session(
         models_path: path(value, "modelsPath")?,
         session_directory: path(value, "sessionDirectory")?,
         system_prompt: nonempty(value, "systemPrompt")?,
-        system_prompt_digest: Sha256Digest::parse(string(value, "systemPromptDigest")?)?,
+        system_prompt_digest: Blake3Digest::parse(string(value, "systemPromptDigest")?)?,
         model: model_selection,
         model_catalog: decode_model_catalog(object(required(value, "modelCatalog")?)?)?,
         tool_profile: tool_profile(string(value, "toolProfile")?)?,
@@ -1422,7 +1422,7 @@ fn decode_dispose(value: &Map<String, Value>) -> Result<DisposePayload, Protocol
 }
 
 fn decode_model_catalog(value: &Map<String, Value>) -> Result<ModelCatalogPolicyV1, ProtocolError> {
-    exact_keys(value, &["catalogSha256", "effectiveModel"])?;
+    exact_keys(value, &["catalogBlake3", "effectiveModel"])?;
     let model = object(required(value, "effectiveModel")?)?;
     exact_keys(
         model,
@@ -1442,7 +1442,7 @@ fn decode_model_catalog(value: &Map<String, Value>) -> Result<ModelCatalogPolicy
         ],
     )?;
     Ok(ModelCatalogPolicyV1 {
-        catalog_sha256: Sha256Digest::parse(string(value, "catalogSha256")?)?,
+        catalog_blake3: Blake3Digest::parse(string(value, "catalogBlake3")?)?,
         effective_model: EffectiveModelDescriptorV1 {
             provider: provider(string(model, "provider")?)?,
             base_url: open_router_base_url(string(model, "baseUrl")?)?,
@@ -1551,22 +1551,22 @@ fn decode_runtime(value: &Map<String, Value>) -> Result<RuntimeIdentity, Protoco
             "nodeVersion",
             "adapterVersion",
             "piSdkVersion",
-            "nodeExecutableSha256",
-            "lockfileSha256",
-            "adapterBuildSha256",
-            "piTransitivePackageSetSha256",
+            "nodeExecutableBlake3",
+            "lockfileBlake3",
+            "adapterBuildBlake3",
+            "piTransitivePackageSetBlake3",
         ],
     )?;
     let runtime = RuntimeIdentity {
         node_version: NodeRuntimeVersion::parse(string(value, "nodeVersion")?)?,
         adapter_version: adapter_version(string(value, "adapterVersion")?)?,
         pi_sdk_version: pi_sdk_version(string(value, "piSdkVersion")?)?,
-        node_executable_sha256: Sha256Digest::parse(string(value, "nodeExecutableSha256")?)?,
-        lockfile_sha256: Sha256Digest::parse(string(value, "lockfileSha256")?)?,
-        adapter_build_sha256: Sha256Digest::parse(string(value, "adapterBuildSha256")?)?,
-        pi_transitive_package_set_sha256: Sha256Digest::parse(string(
+        node_executable_blake3: Blake3Digest::parse(string(value, "nodeExecutableBlake3")?)?,
+        lockfile_blake3: Blake3Digest::parse(string(value, "lockfileBlake3")?)?,
+        adapter_build_blake3: Blake3Digest::parse(string(value, "adapterBuildBlake3")?)?,
+        pi_transitive_package_set_blake3: Blake3Digest::parse(string(
             value,
-            "piTransitivePackageSetSha256",
+            "piTransitivePackageSetBlake3",
         )?)?,
     };
     runtime.assert_v1()?;
@@ -1714,7 +1714,7 @@ fn decode_transcript_receipt(
                     "sessionIdentity",
                     "sessionFile",
                     "materialization",
-                    "sessionFileSha256",
+                    "sessionFileBlake3",
                     "headerCwd",
                     "firstUserPrompt",
                 ],
@@ -1722,7 +1722,7 @@ fn decode_transcript_receipt(
             Ok(TranscriptFlushReceiptV1::Materialized {
                 session_identity: SessionIdentity::parse(string(value, "sessionIdentity")?)?,
                 session_file: path(value, "sessionFile")?,
-                session_file_sha256: Sha256Digest::parse(string(value, "sessionFileSha256")?)?,
+                session_file_blake3: Blake3Digest::parse(string(value, "sessionFileBlake3")?)?,
                 header_cwd: path(value, "headerCwd")?,
                 first_user_prompt: decode_first_user_prompt(object(required(
                     value,
@@ -1763,7 +1763,7 @@ fn decode_first_user_prompt(
         "verified" => {
             exact_keys(value, &["kind", "digest"])?;
             Ok(FirstUserPromptReceipt::Verified {
-                digest: Sha256Digest::parse(string(value, "digest")?)?,
+                digest: Blake3Digest::parse(string(value, "digest")?)?,
             })
         }
         _ => Err(ProtocolError::InvalidFrame("first user prompt receipt")),
@@ -2323,13 +2323,13 @@ mod protocol_tests {
     fn rejects_duplicate_nested_keys_and_negative_zero() {
         assert_eq!(
             decode_inbound_jsonl(
-                r#"{"protocolVersion":"society-pi-host/v1","sequence":1,"sequence":2,"sessionIdentity":"session-1","correlationIdentity":"correlation-1","command":"GetState","payload":{}}"#
+                r#"{"protocolVersion":"society-pi-host/v2","sequence":1,"sequence":2,"sessionIdentity":"session-1","correlationIdentity":"correlation-1","command":"GetState","payload":{}}"#
             ),
             Err(ProtocolError::DuplicateObjectKey)
         );
         assert_eq!(
             decode_inbound_jsonl(
-                r#"{"protocolVersion":"society-pi-host/v1","sequence":-0,"sessionIdentity":"session-1","correlationIdentity":"correlation-1","command":"GetState","payload":{}}"#
+                r#"{"protocolVersion":"society-pi-host/v2","sequence":-0,"sessionIdentity":"session-1","correlationIdentity":"correlation-1","command":"GetState","payload":{}}"#
             ),
             Err(ProtocolError::NegativeZero)
         );
@@ -2351,7 +2351,7 @@ mod protocol_tests {
     fn rejects_every_json_negative_zero_spelling_in_opaque_agent_evidence() {
         for spelling in ["-0", "-0.0", "-0e0", "-0E+10"] {
             let line = format!(
-                r#"{{"protocolVersion":"society-pi-host/v1","sequence":1,"sessionIdentity":"session-001","event":"AgentEvent","agentEvent":{{"type":"message_end","message":{{"value":{spelling}}}}}}}"#
+                r#"{{"protocolVersion":"society-pi-host/v2","sequence":1,"sessionIdentity":"session-001","event":"AgentEvent","agentEvent":{{"type":"message_end","message":{{"value":{spelling}}}}}}}"#
             );
             assert_eq!(
                 decode_outbound_jsonl(&line),
@@ -2359,13 +2359,13 @@ mod protocol_tests {
                 "{spelling}"
             );
         }
-        let nonzero = r#"{"protocolVersion":"society-pi-host/v1","sequence":1,"sessionIdentity":"session-001","event":"AgentEvent","agentEvent":{"type":"message_end","message":{"value":-1}}}"#;
+        let nonzero = r#"{"protocolVersion":"society-pi-host/v2","sequence":1,"sessionIdentity":"session-001","event":"AgentEvent","agentEvent":{"type":"message_end","message":{"value":-1}}}"#;
         assert!(decode_outbound_jsonl(nonzero).is_ok());
     }
 
     #[test]
     fn strict_get_state_and_path() {
-        assert!(decode_inbound_jsonl(r#"{"protocolVersion":"society-pi-host/v1","sequence":1,"sessionIdentity":"session-1","correlationIdentity":"correlation-1","command":"GetState","payload":{"x":1}}"#).is_err());
+        assert!(decode_inbound_jsonl(r#"{"protocolVersion":"society-pi-host/v2","sequence":1,"sessionIdentity":"session-1","correlationIdentity":"correlation-1","command":"GetState","payload":{"x":1}}"#).is_err());
         assert!(AbsolutePath::parse("/tmp/../secret").is_err());
         assert!(AbsolutePath::parse("/tmp//secret").is_err());
     }

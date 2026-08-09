@@ -30,7 +30,7 @@ sealed content, and application-owned contracts.
 
 One active application mission revision gives a society its purpose. A mission
 is not ambient README text and is not a prompt-only convention. It is a typed,
-revisioned input with a sealed source reference. The apparatus records its
+revisioned input. The apparatus records its
 identity, authority, revision, activation basis, and lineage without
 interpreting the product-specific meaning.
 
@@ -41,7 +41,7 @@ ApplicationMissionInput
   MissionStatement
   ordered MissionPrinciple relation
   NorthStarQuestionSet
-  source ContentObjectId
+  source rendering BLAKE3 digest
 
 NorthStarQuestionSet
   Change | ImprovementEvidence | BoundaryCommitment | Revisit
@@ -53,9 +53,11 @@ answers the four named questions through separate typed fields. Mission gives
 purpose; north-star alignment tests a particular proposed action. Neither is a
 second authority and neither is an extensible document-shaped field.
 
-This interface is not implemented by the current prototype. A sealed seed
-rendering is useful evidence, but it is not a substitute for these typed
-mission and alignment records.
+The current fresh schema normalizes this mission and requires every Project to
+persist the exact four-field alignment against its seed revision. Its source
+rendering field is presently a declared BLAKE3 byte identity, not a content
+seal or provenance claim. Binding that rendering to a daemon-sealed
+`ContentObjectId` remains the intended stronger boundary.
 
 ## Trusted substrate
 

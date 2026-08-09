@@ -883,7 +883,7 @@ impl Daemon {
         };
         let internal_command_id = CommandId::parse(format!(
             "kernel-drain-{:?}",
-            society_kernel::Sha256Digest::of_bytes(outer_command_id.as_str().as_bytes())
+            society_kernel::Blake3Digest::of_bytes(outer_command_id.as_str().as_bytes())
         ))
         .map_err(|_| {
             DaemonError::Kernel(StoreError::LedgerCorruption("invalid internal command id"))

@@ -64,8 +64,8 @@ for required_tool in awk cmp find git od rg sed; do
     exit 69
   }
 done
-if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
-  printf '%s\n' 'missing required host digest tool: sha256sum or shasum' >&2
+if ! command -v b3sum >/dev/null 2>&1; then
+  printf '%s\n' 'missing required host digest tool: b3sum' >&2
   exit 69
 fi
 [ -e /dev/null ] || {
@@ -98,14 +98,10 @@ artifacts="$out/artifacts"
 mkdir "$artifacts"
 results="$out/behavior-observations.v1.tsv"
 printf '%s\n' '# schema: BehaviorObservationV1/tsv-v1' > "$results"
-printf '%s\n' 'case_id	consumer	input_manifest	expected_contract_source	disposition	exit_shape	parent_stdout_sha256	parent_stderr_sha256	stdout_evidence_kind	stdout_evidence_sha256	stderr_evidence_kind	stderr_evidence_sha256	lifecycle' >> "$results"
+printf '%s\n' 'case_id	consumer	input_manifest	expected_contract_source	disposition	exit_shape	parent_stdout_blake3	parent_stderr_blake3	stdout_evidence_kind	stdout_evidence_blake3	stderr_evidence_kind	stderr_evidence_blake3	lifecycle' >> "$results"
 
-sha256() {
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" | awk '{print $1}'
-  else
-    shasum -a 256 "$1" | awk '{print $1}'
-  fi
+blake3() {
+  b3sum --no-names "$1"
 }
 
 fail() {
@@ -115,9 +111,9 @@ fail() {
 
 input_digests="$out/input-digests.v1.tsv"
 printf '%s\n' '# schema: CircuitInputDigestV1/tsv-v1' > "$input_digests"
-printf '%s\n' 'input_kind	sha256' >> "$input_digests"
+printf '%s\n' 'input_kind	blake3' >> "$input_digests"
 record_input_digest() {
-  printf '%s\t%s\n' "$1" "$(sha256 "$2")" >> "$input_digests"
+  printf '%s\t%s\n' "$1" "$(blake3 "$2")" >> "$input_digests"
 }
 
 git -C "$xsh_root" rev-parse HEAD > "$out/xsh-source-head.txt"
@@ -176,7 +172,7 @@ record() {
   lifecycle=${13}
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$case_id" "$consumer" "$input_manifest" "$expected_contract_source" "$disposition" "$exit_shape" \
-    "$(sha256 "$parent_stdout")" "$(sha256 "$parent_stderr")" \
+    "$(blake3 "$parent_stdout")" "$(blake3 "$parent_stderr")" \
     "$stdout_kind" "$stdout_digest" "$stderr_kind" "$stderr_digest" \
     "$lifecycle" >> "$results"
 }
@@ -210,7 +206,7 @@ assert_exact 'stdout:b01
 assert_exact 'stderr:b01
 ' "$b01_stderr"
 assert_exact 'complete:b01' "$b01_marker"
-record B01 process_run command_path_redirection spec_command_plan_stdio pass exited_0 "$artifacts/B01.parent.stdout" "$artifacts/B01.parent.stderr" redirected "$(sha256 "$b01_stdout")" redirected "$(sha256 "$b01_stderr")" completed_status
+record B01 process_run command_path_redirection spec_command_plan_stdio pass exited_0 "$artifacts/B01.parent.stdout" "$artifacts/B01.parent.stderr" redirected "$(blake3 "$b01_stdout")" redirected "$(blake3 "$b01_stderr")" completed_status
 
 # B02: the primary managed form must preserve both redirection and wait.
 b02_marker="$artifacts/B02.marker"
@@ -225,7 +221,7 @@ assert_exact 'stdout:b02
 assert_exact 'stderr:b02
 ' "$b02_stderr"
 assert_exact 'complete:b02' "$b02_marker"
-record B02 spawn_command owned_command_path_redirection spec_spawn_command_redirection pass exited_0 "$artifacts/B02.parent.stdout" "$artifacts/B02.parent.stderr" redirected "$(sha256 "$b02_stdout")" redirected "$(sha256 "$b02_stderr")" owned_waited
+record B02 spawn_command owned_command_path_redirection spec_spawn_command_redirection pass exited_0 "$artifacts/B02.parent.stdout" "$artifacts/B02.parent.stderr" redirected "$(blake3 "$b02_stdout")" redirected "$(blake3 "$b02_stderr")" owned_waited
 
 # B03: syntax-level spawn run must preserve independent direct redirections.
 b03_marker="$artifacts/B03.marker"
@@ -240,7 +236,7 @@ assert_exact 'stdout:b03
 assert_exact 'stderr:b03
 ' "$b03_stderr"
 assert_exact 'complete:b03' "$b03_marker"
-record B03 spawn_run direct_spawn_redirection spec_spawn_run_redirection pass exited_0 "$artifacts/B03.parent.stdout" "$artifacts/B03.parent.stderr" redirected "$(sha256 "$b03_stdout")" redirected "$(sha256 "$b03_stderr")" owned_waited
+record B03 spawn_run direct_spawn_redirection spec_spawn_run_redirection pass exited_0 "$artifacts/B03.parent.stdout" "$artifacts/B03.parent.stderr" redirected "$(blake3 "$b03_stdout")" redirected "$(blake3 "$b03_stderr")" owned_waited
 
 # B04: detached process.spawn is measured, not forced into owned-handle parity.
 b04_marker="$artifacts/B04.marker"
@@ -257,7 +253,7 @@ assert_exact 'stdout-sentinel
 assert_exact 'stderr-sentinel
 ' "$b04_stderr"
 assert_exact 'complete:b04' "$b04_marker"
-record B04 process_spawn detached_command_path_redirection spec_process_spawn_detached not_applicable detached_started "$artifacts/B04.parent.stdout" "$artifacts/B04.parent.stderr" redirection_ignored "$(sha256 "$b04_stdout")" redirection_ignored "$(sha256 "$b04_stderr")" detached_record_no_wait
+record B04 process_spawn detached_command_path_redirection spec_process_spawn_detached not_applicable detached_started "$artifacts/B04.parent.stdout" "$artifacts/B04.parent.stderr" redirection_ignored "$(blake3 "$b04_stdout")" redirection_ignored "$(blake3 "$b04_stderr")" detached_record_no_wait
 
 # B05: absent stderr policy always inherits child stderr to the parent.
 b05_marker="$artifacts/B05.marker"
@@ -284,7 +280,7 @@ assert_exact 'process-run:waited
 ' "$artifacts/B06.parent.stdout"
 assert_exact '' "$artifacts/B06.parent.stderr"
 assert_exact 'complete:b06' "$b06_marker"
-record B06 process_run command_stderr_truncate spec_command_stderr_truncate pass exited_0 "$artifacts/B06.parent.stdout" "$artifacts/B06.parent.stderr" redirected "$(sha256 "$b06_stdout")" redirected "$(sha256 "$b06_stderr")" completed_status
+record B06 process_run command_stderr_truncate spec_command_stderr_truncate pass exited_0 "$artifacts/B06.parent.stdout" "$artifacts/B06.parent.stderr" redirected "$(blake3 "$b06_stdout")" redirected "$(blake3 "$b06_stderr")" completed_status
 
 b07_marker="$artifacts/B07.marker"
 b07_stdout="$artifacts/B07.redirected.stdout"
@@ -300,7 +296,7 @@ assert_exact 'process-run:waited
 ' "$artifacts/B07.parent.stdout"
 assert_exact '' "$artifacts/B07.parent.stderr"
 assert_exact 'complete:b07' "$b07_marker"
-record B07 process_run command_stderr_append spec_command_stderr_append pass exited_0 "$artifacts/B07.parent.stdout" "$artifacts/B07.parent.stderr" redirected "$(sha256 "$b07_stdout")" redirected "$(sha256 "$b07_stderr")" completed_status
+record B07 process_run command_stderr_append spec_command_stderr_append pass exited_0 "$artifacts/B07.parent.stdout" "$artifacts/B07.parent.stderr" redirected "$(blake3 "$b07_stdout")" redirected "$(blake3 "$b07_stderr")" completed_status
 
 # B08: redirection setup fails before a child can publish its completion marker.
 b08_marker="$artifacts/B08.marker"
@@ -322,7 +318,7 @@ owned-nonzero:status-23
 assert_exact '' "$artifacts/B09.parent.stderr"
 assert_exact 'nonzero-stderr
 ' "$b09_stderr"
-record B09 spawn_command owned_nonzero_status spec_spawn_status_data pass exited_23 "$artifacts/B09.parent.stdout" "$artifacts/B09.parent.stderr" inherited_parent_stdout - redirected "$(sha256 "$b09_stderr")" owned_waited_nonzero_status
+record B09 spawn_command owned_nonzero_status spec_spawn_status_data pass exited_23 "$artifacts/B09.parent.stdout" "$artifacts/B09.parent.stderr" inherited_parent_stdout - redirected "$(blake3 "$b09_stderr")" owned_waited_nonzero_status
 
 # B10: the owned handle's cancellation path must prevent delayed completion.
 b10_ready="$artifacts/B10.ready"
@@ -339,7 +335,7 @@ assert_exact 'stdout:b10
 ' "$b10_stdout"
 assert_exact 'stderr:b10
 ' "$b10_stderr"
-record B10 spawn_command owned_cancelled_sleeper spec_os_owned_cancellation pass cancelled "$artifacts/B10.parent.stdout" "$artifacts/B10.parent.stderr" redirected "$(sha256 "$b10_stdout")" redirected "$(sha256 "$b10_stderr")" cancel_returned_no_delayed_effect
+record B10 spawn_command owned_cancelled_sleeper spec_os_owned_cancellation pass cancelled "$artifacts/B10.parent.stdout" "$artifacts/B10.parent.stderr" redirected "$(blake3 "$b10_stdout")" redirected "$(blake3 "$b10_stderr")" cancel_returned_no_delayed_effect
 
 # B11: /dev/null is an ordinary typed Path sink for stderr.
 b11_marker="$artifacts/B11.marker"
@@ -351,6 +347,6 @@ assert_exact '' "$artifacts/B11.parent.stderr"
 assert_exact 'stdout:b11
 ' "$b11_stdout"
 assert_exact 'complete:b11' "$b11_marker"
-record B11 process_run command_stderr_dev_null spec_command_path_sink pass exited_0 "$artifacts/B11.parent.stdout" "$artifacts/B11.parent.stderr" redirected "$(sha256 "$b11_stdout")" redirected_dev_null - completed_status
+record B11 process_run command_stderr_dev_null spec_command_path_sink pass exited_0 "$artifacts/B11.parent.stdout" "$artifacts/B11.parent.stderr" redirected "$(blake3 "$b11_stdout")" redirected_dev_null - completed_status
 
 printf 'behavior matrix passed; results: %s\n' "$results"

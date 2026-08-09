@@ -1,13 +1,12 @@
-import { createHash } from "node:crypto";
-
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
+import { blake3Hex } from "../src/digest.js";
 import {
 	absolutePath,
 	decodeInboundJsonl,
 	nonNegativeInteger,
 	providerCostObservation,
-	sha256Digest,
+	blake3Digest,
 	type CreateSessionPayload,
 	type InboundFrame,
 	type ModelCatalogPolicyV1,
@@ -21,16 +20,16 @@ import type { SdkEventListener, SdkRuntime, SdkSession } from "../src/sdk.js";
 export const TEST_SESSION_IDENTITY = "pi-session-test-001";
 
 export const TEST_RUNTIME_EVIDENCE = {
-	nodeExecutableSha256: sha256Digest("1".repeat(64)),
-	lockfileSha256: sha256Digest("2".repeat(64)),
-	adapterBuildSha256: sha256Digest("3".repeat(64)),
-	piTransitivePackageSetSha256: sha256Digest("4".repeat(64)),
-} satisfies Pick<RuntimeIdentity, "nodeExecutableSha256" | "lockfileSha256" | "adapterBuildSha256" | "piTransitivePackageSetSha256">;
+	nodeExecutableBlake3: blake3Digest("1".repeat(64)),
+	lockfileBlake3: blake3Digest("2".repeat(64)),
+	adapterBuildBlake3: blake3Digest("3".repeat(64)),
+	piTransitivePackageSetBlake3: blake3Digest("4".repeat(64)),
+} satisfies Pick<RuntimeIdentity, "nodeExecutableBlake3" | "lockfileBlake3" | "adapterBuildBlake3" | "piTransitivePackageSetBlake3">;
 
 export function decodeCommand(sequence: number, command: string, payload: Record<string, unknown>): InboundFrame {
 	return decodeInboundJsonl(
 		JSON.stringify({
-			protocolVersion: "society-pi-host/v1",
+			protocolVersion: "society-pi-host/v2",
 			sequence,
 			sessionIdentity: TEST_SESSION_IDENTITY,
 			correlationIdentity: `command-${sequence}`,
@@ -50,14 +49,14 @@ export function createSessionPayload(sessionKind: "TaskAttempt" | "GrandArchitec
 		modelsPath: "/tmp/society-host-fixture/agent/models.json",
 		sessionDirectory: "/tmp/society-host-fixture/session",
 		systemPrompt,
-		systemPromptDigest: createHash("sha256").update(systemPrompt, "utf8").digest("hex"),
+		systemPromptDigest: blake3Hex(systemPrompt),
 		model: {
 			provider: "openrouter",
 			modelId: "deepseek/deepseek-v4-flash-0731",
 			thinkingLevel: "high",
 		},
 		modelCatalog: {
-			catalogSha256: "6".repeat(64),
+			catalogBlake3: "6".repeat(64),
 			effectiveModel: {
 				provider: "openrouter",
 				baseUrl: "https://openrouter.ai/api/v1",
@@ -190,9 +189,9 @@ export class FakeSdkSession implements SdkSession {
 				sessionIdentity: this.sessionIdentity,
 				sessionFile: this.sessionFile,
 				materialization: "observed",
-				sessionFileSha256: sha256Digest("5".repeat(64)),
+				sessionFileBlake3: blake3Digest("5".repeat(64)),
 				headerCwd: absolutePath("/tmp/society-host-fixture/work"),
-				firstUserPrompt: { kind: "verified", digest: sha256Digest(createHash("sha256").update(this.firstPrompt, "utf8").digest("hex")) },
+				firstUserPrompt: { kind: "verified", digest: blake3Digest(blake3Hex(this.firstPrompt)) },
 			};
 		if (this.transcriptVerificationDeferred) {
 			await new Promise<void>((resolve) => { this.transcriptVerificationResolver = resolve; });

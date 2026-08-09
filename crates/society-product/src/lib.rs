@@ -23,7 +23,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 const MAX_IDENTITY_BYTES: usize = 128;
@@ -221,14 +220,14 @@ impl fmt::Display for TreeId {
     }
 }
 
-macro_rules! sha256_identity {
+macro_rules! blake3_identity {
     ($type_name:ident, $description:literal) => {
         #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
         pub struct $type_name([u8; 32]);
 
         impl $type_name {
             fn of_bytes(bytes: &[u8]) -> Self {
-                Self(Sha256::digest(bytes).into())
+                Self(*blake3::hash(bytes).as_bytes())
             }
 
             pub fn to_hex(&self) -> String {
@@ -249,17 +248,17 @@ macro_rules! sha256_identity {
     };
 }
 
-sha256_identity!(PatchDigest, "portable patch bytes");
-sha256_identity!(ValidationDigest, "closed validation receipt");
-sha256_identity!(OutputDigest, "process output bytes");
-sha256_identity!(CommitMessageDigest, "controlled commit message bytes");
+blake3_identity!(PatchDigest, "portable patch bytes");
+blake3_identity!(ValidationDigest, "closed validation receipt");
+blake3_identity!(OutputDigest, "process output bytes");
+blake3_identity!(CommitMessageDigest, "controlled commit message bytes");
 
 impl OutputDigest {
     /// Admit a digest emitted by an owned external supervisor. The caller does
     /// not thereby gain a way to provide arbitrary process output to this core.
     pub fn parse(value: &str) -> Result<Self, ProductError> {
         let bytes =
-            decode_exact_sha256(value).ok_or_else(|| ProductError::InvalidOutputDigest {
+            decode_exact_blake3(value).ok_or_else(|| ProductError::InvalidOutputDigest {
                 value: value.to_owned(),
             })?;
         Ok(Self(bytes))
@@ -3412,7 +3411,7 @@ fn hex(bytes: &[u8]) -> String {
     text
 }
 
-fn decode_exact_sha256(value: &str) -> Option<[u8; 32]> {
+fn decode_exact_blake3(value: &str) -> Option<[u8; 32]> {
     if value.len() != 64 || !value.as_bytes().iter().all(u8::is_ascii_hexdigit) {
         return None;
     }

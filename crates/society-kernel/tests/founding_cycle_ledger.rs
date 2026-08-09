@@ -10,12 +10,17 @@ use std::{
 
 use rusqlite::Connection;
 use society_kernel::{
-    AdmissionGeneration, AdversarialReviewId, BudgetFreezeReason, BudgetReservationId,
-    CancellationRequestId, CanonicalWorkspacePath, Capability, CausalEpisodeId, ChildProcessId,
-    CommandBody, CommandDisposition, CommandId, CommandReceipt, CommandRequest, CostObservation,
-    CostPostmortemResolution, CostUnavailableReason, CostUnknownReason, EpisodeState, EventBody,
-    ExpectedGeneration, GrandArchitectOfficeSessionId, GraphEdgeKind, GraphRevisionBody,
-    GraphRevisionId, HypothesisRevisionText, KernelStore, NativeChildPid, NativeWorkspaceId,
+    AdmissionGeneration, AdversarialReviewId, ApplicationIdentity, ApplicationMissionInput,
+    ApplicationName, ApplicationRevisionId, ApplicationRevisionOrdinal, Blake3Digest,
+    BudgetFreezeReason, BudgetReservationId, CancellationRequestId, CanonicalWorkspacePath,
+    Capability, CausalEpisodeId, ChildProcessId, CommandBody, CommandDisposition, CommandId,
+    CommandReceipt, CommandRequest, CostObservation, CostPostmortemResolution,
+    CostUnavailableReason, CostUnknownReason, EpisodeState, EventBody, ExpectedGeneration,
+    GrandArchitectOfficeSessionId, GraphEdgeKind, GraphRevisionBody, GraphRevisionId,
+    HypothesisRevisionText, KernelStore, MissionPrinciple, MissionPrincipleKind,
+    MissionPrincipleText, MissionPrinciples, MissionStatement, NativeChildPid, NativeWorkspaceId,
+    NorthStarBoundaryCommitmentQuestion, NorthStarChangeQuestion,
+    NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet, NorthStarRevisitQuestion,
     ObservationRevisionText, OfficeSessionTerminalState, OfficeTurnId, OfficeTurnPurpose,
     OperatingCycleId, OperatingCycleState, OperatingCycleTreatment, OwnedProcessGroupId,
     PiBoundarySessionIdentity, PiChildOwner, PiChildSpawnAdmissionId, PiCorrelationIdentity,
@@ -24,10 +29,74 @@ use society_kernel::{
     PiOfficeTurnUsageUnavailableReason, PiProtocolSequence, PiTokenCount, PostmortemActionKind,
     PostmortemActionProposalText, PostmortemCausalClaimKind, PostmortemCausalClaimText,
     PostmortemId, PrincipalDisplayName, PrincipalId, ProjectId, ProjectMilestoneName, ProjectName,
-    ProjectObjectiveText, ProjectState, ProjectStopConditionText, ProviderCostBinary64, Rejection,
-    ReviewChallengeSeverity, ReviewFailureHypothesis, Sha256Digest, SocietyName, SpawnNonce,
-    StoreError, SupervisedChildIdentity, SupervisorEpochId, SupervisorEpochIdentity, UsdMicros,
+    ProjectNorthStarAlignment, ProjectNorthStarBoundaryCommitmentAnswer,
+    ProjectNorthStarChangeAnswer, ProjectNorthStarImprovementEvidenceAnswer,
+    ProjectNorthStarRevisitAnswer, ProjectObjectiveText, ProjectState, ProjectStopConditionText,
+    ProviderCostBinary64, Rejection, ReviewChallengeSeverity, ReviewFailureHypothesis, SocietyName,
+    SpawnNonce, StoreError, SupervisedChildIdentity, SupervisorEpochId, SupervisorEpochIdentity,
+    UsdMicros,
 };
+
+fn example_application_mission() -> ApplicationMissionInput {
+    ApplicationMissionInput {
+        application_identity: ApplicationIdentity::parse("example-application").unwrap(),
+        application_name: ApplicationName::parse("Example Application").unwrap(),
+        revision_ordinal: ApplicationRevisionOrdinal::new(1).unwrap(),
+        statement: MissionStatement::parse("Improve a bounded example system responsibly.")
+            .unwrap(),
+        principles: MissionPrinciples::new(vec![
+            MissionPrinciple {
+                kind: MissionPrincipleKind::Purpose,
+                text: MissionPrincipleText::parse("Pursue a clear public purpose.").unwrap(),
+            },
+            MissionPrinciple {
+                kind: MissionPrincipleKind::Evidence,
+                text: MissionPrincipleText::parse("Prefer reproducible improvement evidence.")
+                    .unwrap(),
+            },
+            MissionPrinciple {
+                kind: MissionPrincipleKind::Boundary,
+                text: MissionPrincipleText::parse("Preserve explicit safety boundaries.").unwrap(),
+            },
+        ])
+        .unwrap(),
+        north_star_questions: NorthStarQuestionSet {
+            change: NorthStarChangeQuestion::parse("What change should this application make?")
+                .unwrap(),
+            improvement_evidence: NorthStarImprovementEvidenceQuestion::parse(
+                "What evidence would demonstrate improvement?",
+            )
+            .unwrap(),
+            boundary_commitment: NorthStarBoundaryCommitmentQuestion::parse(
+                "Which boundary must remain intact?",
+            )
+            .unwrap(),
+            revisit: NorthStarRevisitQuestion::parse("When should this direction be revisited?")
+                .unwrap(),
+        },
+        source_rendering_digest: Blake3Digest::of_bytes(b"example application mission revision 1"),
+    }
+}
+
+fn example_project_north_star_alignment() -> ProjectNorthStarAlignment {
+    ProjectNorthStarAlignment {
+        application_revision_id: ApplicationRevisionId::new(1).unwrap(),
+        change_answer: ProjectNorthStarChangeAnswer::parse("Deliver one bounded improvement.")
+            .unwrap(),
+        improvement_evidence_answer: ProjectNorthStarImprovementEvidenceAnswer::parse(
+            "Use a reproducible integration judge.",
+        )
+        .unwrap(),
+        boundary_commitment_answer: ProjectNorthStarBoundaryCommitmentAnswer::parse(
+            "Do not expand authority outside the fixture.",
+        )
+        .unwrap(),
+        revisit_answer: ProjectNorthStarRevisitAnswer::parse(
+            "Revisit after the next durable evidence review.",
+        )
+        .unwrap(),
+    }
+}
 
 fn submit(
     store: &mut KernelStore,
@@ -114,7 +183,7 @@ fn found_cycle(store: &mut KernelStore) -> (PrincipalId, OperatingCycleId) {
         Capability::InstallFoundingUniverseSeed,
         ExpectedGeneration::NotApplicable,
         CommandBody::InstallFoundingUniverseSeed {
-            rendering_digest: Sha256Digest::of_bytes(b"UniverseSeed revision 1"),
+            mission: example_application_mission(),
         },
     );
     accepted(
@@ -328,7 +397,7 @@ fn ready_supervised_office_session(
         },
     );
     let correlation = PiCorrelationIdentity::parse(format!("create-{label}")).unwrap();
-    let create_digest = Sha256Digest::of_bytes(format!("create-{label}").as_bytes());
+    let create_digest = Blake3Digest::of_bytes(format!("create-{label}").as_bytes());
     accepted(
         store,
         &format!("{label}-create-authorized"),
@@ -497,6 +566,7 @@ fn project_charter_activation_and_close_blocker_are_typed_and_replayable() {
         CommandBody::CreateProject {
             operating_cycle_id: cycle_id,
             project_name: ProjectName::parse("coordination spine").unwrap(),
+            north_star_alignment: example_project_north_star_alignment(),
         },
     );
     let project_id = ProjectId::new(1).unwrap();
@@ -850,6 +920,153 @@ fn project_charter_activation_and_close_blocker_are_typed_and_replayable() {
 }
 
 #[test]
+fn application_mission_alignment_is_normalized_seed_bound_and_replay_verified() {
+    let path = std::env::temp_dir().join(format!(
+        "society-application-mission-alignment-{}-{}.sqlite",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let mut store = KernelStore::open(&path).unwrap();
+    let (grand_architect, cycle_id) = found_cycle(&mut store);
+    let generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
+    accepted(
+        &mut store,
+        "mission-start-office-session",
+        grand_architect,
+        Capability::StartGrandArchitectOfficeSession,
+        generation,
+        CommandBody::StartGrandArchitectOfficeSession { cycle_id },
+    );
+
+    let mut stale_alignment = example_project_north_star_alignment();
+    stale_alignment.application_revision_id = ApplicationRevisionId::new(2).unwrap();
+    rejected(
+        &mut store,
+        "mission-project-stale-revision",
+        grand_architect,
+        Capability::CreateProject,
+        generation,
+        CommandBody::CreateProject {
+            operating_cycle_id: cycle_id,
+            project_name: ProjectName::parse("stale alignment project").unwrap(),
+            north_star_alignment: stale_alignment,
+        },
+        Rejection::ProjectNorthStarAlignmentMismatch,
+    );
+    accepted(
+        &mut store,
+        "mission-project-exact-alignment",
+        grand_architect,
+        Capability::CreateProject,
+        generation,
+        CommandBody::CreateProject {
+            operating_cycle_id: cycle_id,
+            project_name: ProjectName::parse("exact alignment project").unwrap(),
+            north_star_alignment: example_project_north_star_alignment(),
+        },
+    );
+    drop(store);
+    let inspection = Connection::open(&path).unwrap();
+    let application_row: (String, String, i64, String, i64) = inspection
+        .query_row(
+            "SELECT a.application_identity, a.application_name, r.revision_ordinal,
+                    r.mission_statement, COUNT(p.principle_ordinal)
+             FROM applications a
+             JOIN application_revisions r ON r.application_id = a.application_id
+             JOIN application_revision_principles p
+               ON p.application_revision_id = r.application_revision_id
+             GROUP BY a.application_id, r.application_revision_id",
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )
+        .unwrap();
+    assert_eq!(application_row.0, "example-application");
+    assert_eq!(application_row.1, "Example Application");
+    assert_eq!(application_row.2, 1);
+    assert_eq!(
+        application_row.3,
+        "Improve a bounded example system responsibly."
+    );
+    assert_eq!(application_row.4, 3);
+    let alignment: (i64, String, String, String, String) = inspection
+        .query_row(
+            "SELECT application_revision_id, change_answer, improvement_evidence_answer,
+                    boundary_commitment_answer, revisit_answer
+             FROM project_north_star_alignments WHERE project_id = 1",
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )
+        .unwrap();
+    assert_eq!(alignment.0, 1);
+    assert_eq!(alignment.1, "Deliver one bounded improvement.");
+    assert_eq!(alignment.2, "Use a reproducible integration judge.");
+    assert_eq!(alignment.3, "Do not expand authority outside the fixture.");
+    assert_eq!(
+        alignment.4,
+        "Revisit after the next durable evidence review."
+    );
+    drop(inspection);
+
+    assert!(KernelStore::open(&path).unwrap().replay_ledger().is_ok());
+
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute(
+            "UPDATE command_install_founding_universe_seed_principles
+             SET principle_text = 'tampered mission principle'
+             WHERE command_row_id = (
+                 SELECT command_row_id FROM commands WHERE command_id = 'found-install-seed'
+             ) AND principle_ordinal = 1",
+            [],
+        )
+        .unwrap();
+    drop(connection);
+    assert!(KernelStore::open(&path).unwrap().replay_ledger().is_err());
+
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute(
+            "UPDATE command_install_founding_universe_seed_principles
+             SET principle_text = 'Pursue a clear public purpose.'
+             WHERE command_row_id = (
+                 SELECT command_row_id FROM commands WHERE command_id = 'found-install-seed'
+             ) AND principle_ordinal = 1",
+            [],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "UPDATE project_north_star_alignments
+             SET change_answer = 'forged material alignment' WHERE project_id = 1",
+            [],
+        )
+        .unwrap();
+    drop(connection);
+    let tampered = KernelStore::open(&path).unwrap();
+    assert!(tampered.validate_replayed_materialized_state().is_err());
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn current_schema_reopens_after_atomic_fresh_bootstrap() {
     let path = std::env::temp_dir().join(format!(
         "society-fresh-schema-{}-{}.sqlite",
@@ -867,7 +1084,7 @@ fn current_schema_reopens_after_atomic_fresh_bootstrap() {
         connection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        7
+        9
     );
     drop(connection);
     drop(KernelStore::open(&path).unwrap());
@@ -876,7 +1093,7 @@ fn current_schema_reopens_after_atomic_fresh_bootstrap() {
         reopened
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        7
+        9
     );
     assert_eq!(
         reopened
@@ -899,9 +1116,9 @@ fn current_schema_reopens_after_atomic_fresh_bootstrap() {
 }
 
 #[test]
-fn previous_schema_six_is_rejected_without_current_schema_mutation() {
+fn historical_schema_eight_is_rejected_without_current_schema_mutation() {
     let path = std::env::temp_dir().join(format!(
-        "society-previous-schema-six-{}-{}.sqlite",
+        "society-historical-schema-eight-{}-{}.sqlite",
         std::process::id(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -909,33 +1126,33 @@ fn previous_schema_six_is_rejected_without_current_schema_mutation() {
             .as_nanos()
     ));
     let historical = Connection::open(&path).unwrap();
-    // The immediately preceding canonical schema must remain fail-closed:
-    // current kernels never reinterpret an old ledger as canonical merely
-    // because both happen to be SQLite databases.
+    // Schema eight was the former fresh-only canonical identity while durable
+    // byte identities still meant SHA-256. Schema nine never reinterprets its
+    // ledger as BLAKE3 merely because both digests are 32 bytes.
     historical
         .execute_batch(
-            "CREATE TABLE previous_v6_ledger_marker (entry_id INTEGER PRIMARY KEY);
-             INSERT INTO previous_v6_ledger_marker VALUES (1);
-             PRAGMA user_version = 6;",
+            "CREATE TABLE previous_v8_ledger_marker (entry_id INTEGER PRIMARY KEY);
+             INSERT INTO previous_v8_ledger_marker VALUES (1);
+             PRAGMA user_version = 8;",
         )
         .unwrap();
     drop(historical);
 
     assert!(matches!(
         KernelStore::open(&path),
-        Err(StoreError::UnsupportedSchemaVersion(6))
+        Err(StoreError::UnsupportedSchemaVersion(8))
     ));
     let inspection = Connection::open(&path).unwrap();
     assert_eq!(
         inspection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        6
+        8
     );
     assert_eq!(
         inspection
             .query_row(
-                "SELECT COUNT(*) FROM previous_v6_ledger_marker",
+                "SELECT COUNT(*) FROM previous_v8_ledger_marker",
                 [],
                 |row| { row.get::<_, i64>(0) }
             )
@@ -1004,7 +1221,7 @@ fn founding_budget_policy_is_explicit_per_closed_treatment() {
             Capability::InstallFoundingUniverseSeed,
             ExpectedGeneration::NotApplicable,
             CommandBody::InstallFoundingUniverseSeed {
-                rendering_digest: Sha256Digest::of_bytes(b"synthetic budget seed"),
+                mission: example_application_mission(),
             },
         );
         accepted(
@@ -2199,7 +2416,7 @@ fn pi_office_turn_requires_authorized_delivered_peer_terminal_chain_and_debits_o
         },
         Rejection::OfficeSessionBudgetRequiresDispose,
     );
-    let prompt_digest = Sha256Digest::of_bytes(b"sealed deterministic prompt");
+    let prompt_digest = Blake3Digest::of_bytes(b"sealed deterministic prompt");
     accepted(
         &mut store,
         "m6-seal-prompt",
@@ -2248,7 +2465,7 @@ fn pi_office_turn_requires_authorized_delivered_peer_terminal_chain_and_debits_o
             office_turn_id: turn_one,
             correlation_identity: correlation_one.clone(),
             prompt_content_object_id: society_kernel::ContentObjectId::new(1).unwrap(),
-            prompt_digest: Sha256Digest::of_bytes(b"recombined"),
+            prompt_digest: Blake3Digest::of_bytes(b"recombined"),
             frontier_event_id: frontier,
         },
         Rejection::PiOfficeTurnPromptBindingMismatch,
@@ -2805,7 +3022,7 @@ fn pi_office_turn_late_receipts_after_cancellation_never_restore_office_authorit
         "m6-race-office",
         UsdMicros::new(100).unwrap(),
     );
-    let digest = Sha256Digest::of_bytes(b"cancellation-race-prompt");
+    let digest = Blake3Digest::of_bytes(b"cancellation-race-prompt");
     accepted(
         &mut store,
         "m6-race-seal-prompt",

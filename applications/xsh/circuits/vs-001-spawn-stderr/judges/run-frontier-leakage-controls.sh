@@ -35,8 +35,8 @@ for required_tool in awk find mkdir sed sort; do
     exit 69
   }
 done
-if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
-  printf '%s\n' 'frontier leakage: missing sha256sum or shasum' >&2
+if ! command -v b3sum >/dev/null 2>&1; then
+  printf '%s\n' 'missing required host digest tool: b3sum' >&2
   exit 69
 fi
 if [ -e "$out" ]; then
@@ -53,12 +53,8 @@ fail() {
   printf 'frontier leakage: %s\n' "$*" >&2
   exit 1
 }
-sha256() {
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" | awk '{print $1}'
-  else
-    shasum -a 256 "$1" | awk '{print $1}'
-  fi
+blake3() {
+  b3sum --no-names "$1"
 }
 row_count() {
   awk 'END { print NR - 1 }' "$1"
@@ -76,10 +72,10 @@ sequestered="$frontier_dir/sequestered.v1.tsv"
 [ -f "$members" ] && [ -f "$sequestered" ] || fail 'missing frontier relation'
 input_digests="$out/input-digests.v1.tsv"
 printf '%s\n' '# schema: FrontierLeakageInputDigestV1/tsv-v1' > "$input_digests"
-printf 'input_kind\tsha256\n' >> "$input_digests"
-printf 'frontier_leakage_judge\t%s\n' "$(sha256 "$0")" >> "$input_digests"
-printf 'frontier_members\t%s\n' "$(sha256 "$members")" >> "$input_digests"
-printf 'sequestered_relations\t%s\n' "$(sha256 "$sequestered")" >> "$input_digests"
+printf 'input_kind\tblake3\n' >> "$input_digests"
+printf 'frontier_leakage_judge\t%s\n' "$(blake3 "$0")" >> "$input_digests"
+printf 'frontier_members\t%s\n' "$(blake3 "$members")" >> "$input_digests"
+printf 'sequestered_relations\t%s\n' "$(blake3 "$sequestered")" >> "$input_digests"
 
 expected_files=$(printf '%s\n' frontier-members.v1.tsv sequestered.v1.tsv)
 actual_files=$(find "$frontier_dir" -maxdepth 1 -type f -print | sed "s|$frontier_dir/||" | sort)

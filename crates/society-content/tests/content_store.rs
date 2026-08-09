@@ -44,7 +44,7 @@ fn object_path(parent: &Path, digest: ContentDigest) -> PathBuf {
     let hex = digest.to_hex();
     parent
         .join("objects")
-        .join("sha256")
+        .join("blake3")
         .join(&hex[..2])
         .join(&hex[2..])
 }
@@ -181,7 +181,7 @@ fn admitted_limit_failure_removes_partial_ingest_and_creates_no_object() {
     let hex = ContentDigest::of_bytes(&bytes).to_hex();
     assert!(
         !parent
-            .join("objects/sha256")
+            .join("objects/blake3")
             .join(&hex[..2])
             .join(&hex[2..])
             .exists()
@@ -238,7 +238,7 @@ fn root_and_internal_directory_indirection_are_rejected() {
     let store = open_store(&parent);
     let root = store.root().clone();
     drop(store);
-    let digest_root = parent.join("objects/sha256");
+    let digest_root = parent.join("objects/blake3");
     fs::remove_dir(&digest_root).unwrap();
     symlink(parent.join("objects/.incoming"), &digest_root).unwrap();
     assert!(matches!(
@@ -250,6 +250,14 @@ fn root_and_internal_directory_indirection_are_rejected() {
 
 #[test]
 fn digest_and_root_text_require_one_canonical_spelling() {
+    assert_eq!(
+        ContentDigest::of_bytes(b"").to_hex(),
+        "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262"
+    );
+    assert_eq!(
+        ContentDigest::of_bytes(b"abc").to_hex(),
+        "6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85"
+    );
     let digest = ContentDigest::of_bytes(b"canonical");
     assert_eq!(ContentDigest::parse(&digest.to_hex()).unwrap(), digest);
     assert!(ContentDigest::parse(&digest.to_hex().to_uppercase()).is_err());

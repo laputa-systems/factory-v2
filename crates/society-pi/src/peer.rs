@@ -7,18 +7,17 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::{
     cost::{CostDecodeError, UsageDelta, UsageTracker},
     protocol::{
-        AdapterFailureCode, AssistantStopReason, CommandName, CommandResult, CorrelationIdentity,
-        CreateSessionPayload, EffectiveSessionConfiguration, FinalAssistantOutcome, HostProcessId,
-        InboundCommand, InboundFrame, MAX_JSONL_FRAME_BYTES, OutboundEvent, OutboundFrame,
-        ProjectedAgentEvent, PromptPurpose, ProtocolError, RuntimeIdentity, SessionIdentity,
-        SessionKind, Sha256Digest, SpawnNonce, TranscriptFlushReceiptV1, UsageObservation,
-        UsageUnavailableReason, decode_inbound_jsonl, decode_outbound_jsonl,
+        AdapterFailureCode, AssistantStopReason, Blake3Digest, CommandName, CommandResult,
+        CorrelationIdentity, CreateSessionPayload, EffectiveSessionConfiguration,
+        FinalAssistantOutcome, HostProcessId, InboundCommand, InboundFrame, MAX_JSONL_FRAME_BYTES,
+        OutboundEvent, OutboundFrame, ProjectedAgentEvent, PromptPurpose, ProtocolError,
+        RuntimeIdentity, SessionIdentity, SessionKind, SpawnNonce, TranscriptFlushReceiptV1,
+        UsageObservation, UsageUnavailableReason, decode_inbound_jsonl, decode_outbound_jsonl,
     },
 };
 
@@ -64,7 +63,7 @@ pub struct TurnReceipt {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SealedLine {
-    pub sha256: Sha256Digest,
+    pub blake3: Blake3Digest,
 }
 impl SealedLine {
     /// Seals the exact raw bytes observed at the pipe boundary, before UTF-8
@@ -72,7 +71,7 @@ impl SealedLine {
     /// replacement string.
     pub fn of_bytes(line: &[u8]) -> Self {
         Self {
-            sha256: digest(line),
+            blake3: digest(line),
         }
     }
 
@@ -196,8 +195,8 @@ pub struct BoundaryPeer {
     pending_dispose: Option<PendingDispose>,
     active_turn: Option<ActiveTurn>,
     task_attempt_prompt_admitted: bool,
-    prompt_candidates: BTreeMap<CorrelationIdentity, Sha256Digest>,
-    first_prompt_digest: Option<Sha256Digest>,
+    prompt_candidates: BTreeMap<CorrelationIdentity, Blake3Digest>,
+    first_prompt_digest: Option<Blake3Digest>,
     settled_turns: Vec<TurnReceipt>,
     usage: UsageTracker,
     inbound_seals: Vec<SealedLine>,
@@ -1098,14 +1097,14 @@ fn observe_turn_evidence(
     }
 }
 
-fn digest(bytes: &[u8]) -> Sha256Digest {
-    let digest = Sha256::digest(bytes);
+fn digest(bytes: &[u8]) -> Blake3Digest {
+    let digest = blake3::hash(bytes);
     let mut output = String::with_capacity(64);
-    for byte in digest {
+    for byte in digest.as_bytes() {
         use std::fmt::Write as _;
         let _ = write!(&mut output, "{byte:02x}");
     }
-    Sha256Digest::parse(output).expect("SHA-256 formatter creates valid lowercase hex")
+    Blake3Digest::parse(output).expect("BLAKE3 formatter creates valid lowercase hex")
 }
 
 /// The host's final outcome must be derivable from the final non-retried
@@ -1147,18 +1146,18 @@ mod peer_tests {
 
     const DIGEST: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
-    fn digest_value() -> Sha256Digest {
-        Sha256Digest::parse(DIGEST).unwrap()
+    fn digest_value() -> Blake3Digest {
+        Blake3Digest::parse(DIGEST).unwrap()
     }
     fn runtime() -> RuntimeIdentity {
         RuntimeIdentity {
             node_version: crate::protocol::NodeRuntimeVersion::parse("v22.19.0").unwrap(),
             adapter_version: AdapterVersion::V1,
             pi_sdk_version: PiSdkVersion::V0830,
-            node_executable_sha256: digest_value(),
-            lockfile_sha256: digest_value(),
-            adapter_build_sha256: digest_value(),
-            pi_transitive_package_set_sha256: digest_value(),
+            node_executable_blake3: digest_value(),
+            lockfile_blake3: digest_value(),
+            adapter_build_blake3: digest_value(),
+            pi_transitive_package_set_blake3: digest_value(),
         }
     }
     fn model() -> ModelSelection {
@@ -1196,7 +1195,7 @@ mod peer_tests {
             usd_per_million: crate::protocol::UsdPerMillionDecimal::parse(value).unwrap(),
         };
         ModelCatalogPolicyV1 {
-            catalog_sha256: digest_value(),
+            catalog_blake3: digest_value(),
             effective_model: crate::protocol::EffectiveModelDescriptorV1 {
                 provider: Provider::OpenRouter,
                 base_url: OpenRouterBaseUrl::ApiV1,
@@ -1382,7 +1381,7 @@ mod peer_tests {
         assert_eq!(inbound.admit_inbound(prompt_frame()), Err(PeerError::Fatal));
 
         let mut outbound = setup_ready();
-        let duplicate = r#"{"protocolVersion":"society-pi-host/v1","sequence":4,"sequence":4,"sessionIdentity":"peer-session-001","event":"Fatal","failureCode":"protocol_decode_failed"}"#;
+        let duplicate = r#"{"protocolVersion":"society-pi-host/v2","sequence":4,"sequence":4,"sessionIdentity":"peer-session-001","event":"Fatal","failureCode":"protocol_decode_failed"}"#;
         assert_eq!(
             outbound.observe_outbound_jsonl(duplicate),
             Err(PeerError::Protocol(ProtocolError::DuplicateObjectKey))
@@ -2323,7 +2322,7 @@ mod peer_tests {
         let receipt = TranscriptFlushReceiptV1::Materialized {
             session_identity: SessionIdentity::parse("peer-session-001").unwrap(),
             session_file: AbsolutePath::parse("/tmp/peer/sessions/receipt.jsonl").unwrap(),
-            session_file_sha256: digest_value(),
+            session_file_blake3: digest_value(),
             header_cwd: AbsolutePath::parse("/tmp/peer/cwd").unwrap(),
             first_user_prompt: crate::protocol::FirstUserPromptReceipt::Verified {
                 digest: digest_value(),

@@ -17,16 +17,15 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use sha2::{Digest, Sha256};
 use society_pi::{
-    AbsolutePath, ActorModelPolicyV1, AdapterVersion, BoundarySequence, CacheWritePerMillionRateV1,
-    CanonicalModelSlug, CompactionMode, CompactionPolicyV1, CorrelationIdentity,
-    CreateSessionPayload, Disabled, EffectiveModelDescriptorV1, Images, InboundCommand,
-    InboundFrame, KnownPerMillionRateV1, MAX_JSONL_FRAME_BYTES, ModelApi, ModelCatalogPolicyV1,
-    ModelId, ModelInput, ModelSelection, NodeRuntimeVersion, NonNegativeInteger, OpenRouterBaseUrl,
-    PiSdkVersion, PositiveInteger, ProjectTrust, Provider, QueueMode, RetryPolicyV1,
-    RuntimeIdentity, SessionIdentity, SessionKind, Sha256Digest, SpawnNonce, ThinkingLevel,
-    ToolProfile, Transport, UsdPerMillionDecimal, encode_inbound_jsonl,
+    AbsolutePath, ActorModelPolicyV1, AdapterVersion, Blake3Digest, BoundarySequence,
+    CacheWritePerMillionRateV1, CanonicalModelSlug, CompactionMode, CompactionPolicyV1,
+    CorrelationIdentity, CreateSessionPayload, Disabled, EffectiveModelDescriptorV1, Images,
+    InboundCommand, InboundFrame, KnownPerMillionRateV1, MAX_JSONL_FRAME_BYTES, ModelApi,
+    ModelCatalogPolicyV1, ModelId, ModelInput, ModelSelection, NodeRuntimeVersion,
+    NonNegativeInteger, OpenRouterBaseUrl, PiSdkVersion, PositiveInteger, ProjectTrust, Provider,
+    QueueMode, RetryPolicyV1, RuntimeIdentity, SessionIdentity, SessionKind, SpawnNonce,
+    ThinkingLevel, ToolProfile, Transport, UsdPerMillionDecimal, encode_inbound_jsonl,
 };
 use societyd::supervision::{
     AdmissionDenied, CancellationMode, CancellationReason, CancellationRequest,
@@ -652,7 +651,7 @@ fn unread_control_pipe_cannot_wedge_create_and_expiry_emergency_reaps() {
     );
     assert_eq!(
         digest_bytes(receipt.transient_evidence.stdin.retained_bytes()),
-        receipt.transient_evidence.stdin.sha256
+        receipt.transient_evidence.stdin.blake3
     );
     assert_eq!(
         receipt
@@ -1133,10 +1132,10 @@ impl Fixture {
             node_version: NodeRuntimeVersion::parse(node_version).unwrap(),
             adapter_version: AdapterVersion::V1,
             pi_sdk_version: PiSdkVersion::V0830,
-            node_executable_sha256: node_digest.clone(),
-            lockfile_sha256: double_digest.clone(),
-            adapter_build_sha256: double_digest.clone(),
-            pi_transitive_package_set_sha256: double_digest.clone(),
+            node_executable_blake3: node_digest.clone(),
+            lockfile_blake3: double_digest.clone(),
+            adapter_build_blake3: double_digest.clone(),
+            pi_transitive_package_set_blake3: double_digest.clone(),
         };
         let host_execution = QualifiedHostExecution {
             node_executable: VerifiedArtifact::inspect(&node, node_digest).unwrap(),
@@ -1168,7 +1167,7 @@ impl Fixture {
             },
             model_catalog: {
                 let mut catalog_policy = admitted_catalog();
-                catalog_policy.catalog_sha256 = digest_utf8(&catalog);
+                catalog_policy.catalog_blake3 = digest_utf8(&catalog);
                 catalog_policy
             },
             tool_profile: ToolProfile::ReadSourceV1,
@@ -1228,15 +1227,15 @@ impl Fixture {
                 node_version: NodeRuntimeVersion::parse(node_version()).unwrap(),
                 adapter_version: AdapterVersion::V1,
                 pi_sdk_version: PiSdkVersion::V0830,
-                node_executable_sha256: node_digest,
-                lockfile_sha256: lockfile_digest,
-                adapter_build_sha256: entrypoint_digest,
-                pi_transitive_package_set_sha256: package_set_digest,
+                node_executable_blake3: node_digest,
+                lockfile_blake3: lockfile_digest,
+                adapter_build_blake3: entrypoint_digest,
+                pi_transitive_package_set_blake3: package_set_digest,
             },
         };
         let catalog = admitted_models_json();
         fs::write(self.create_session.models_path.as_path(), &catalog).unwrap();
-        self.create_session.model_catalog.catalog_sha256 = digest_utf8(&catalog);
+        self.create_session.model_catalog.catalog_blake3 = digest_utf8(&catalog);
     }
 
     fn cleanup(self) {
@@ -1285,22 +1284,22 @@ fn path(path: PathBuf) -> AbsolutePath {
     AbsolutePath::parse(fs::canonicalize(path).unwrap().to_str().unwrap()).unwrap()
 }
 
-fn digest_file(path: &Path) -> Sha256Digest {
+fn digest_file(path: &Path) -> Blake3Digest {
     digest_bytes(&fs::read(path).unwrap())
 }
 
-fn digest_utf8(text: &str) -> Sha256Digest {
+fn digest_utf8(text: &str) -> Blake3Digest {
     digest_bytes(text.as_bytes())
 }
 
-fn digest_bytes(bytes: &[u8]) -> Sha256Digest {
-    let digest = Sha256::digest(bytes);
+fn digest_bytes(bytes: &[u8]) -> Blake3Digest {
+    let digest = blake3::hash(bytes);
     let mut text = String::with_capacity(64);
-    for byte in digest {
+    for byte in digest.as_bytes() {
         use std::fmt::Write as _;
         write!(&mut text, "{byte:02x}").unwrap();
     }
-    Sha256Digest::parse(text).unwrap()
+    Blake3Digest::parse(text).unwrap()
 }
 
 fn create_private_directory(path: &Path) {
@@ -1321,7 +1320,7 @@ fn temporary_path(label: &str) -> PathBuf {
 
 fn admitted_catalog() -> ModelCatalogPolicyV1 {
     ModelCatalogPolicyV1 {
-        catalog_sha256: Sha256Digest::parse("a".repeat(64)).unwrap(),
+        catalog_blake3: Blake3Digest::parse("a".repeat(64)).unwrap(),
         effective_model: EffectiveModelDescriptorV1 {
             provider: Provider::OpenRouter,
             base_url: OpenRouterBaseUrl::ApiV1,

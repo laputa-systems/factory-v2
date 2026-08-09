@@ -49,7 +49,7 @@ fn duplicate_or_reordered_case_identity_is_not_a_partial_set() {
 fn stream_kind_and_digest_are_one_closed_union() {
     let changed = replace_once(
         FIXTURE,
-        "redirected\tc861c7e9a5d86a3545e8d2bf25b69d692cf3df262f612f9088b5fc9bd220efaf",
+        "redirected\t98321f5d20d4cd0134d9ffed014f663188e7a7663b41e92befcd88f6e36c214e",
         "redirected\t-",
     );
     assert!(matches!(
@@ -59,7 +59,7 @@ fn stream_kind_and_digest_are_one_closed_union() {
     let changed = replace_once(
         FIXTURE,
         "inherited_parent_stdout\t-",
-        "inherited_parent_stdout\tc861c7e9a5d86a3545e8d2bf25b69d692cf3df262f612f9088b5fc9bd220efaf",
+        "inherited_parent_stdout\t98321f5d20d4cd0134d9ffed014f663188e7a7663b41e92befcd88f6e36c214e",
     );
     assert!(matches!(
         BehaviorObservationSetV1::parse(&changed),
@@ -134,8 +134,8 @@ fn framing_header_arity_utf8_and_size_fail_before_a_partial_parse() {
     ));
     let changed = replace_once(
         FIXTURE,
-        "999d6c3044cc47a6dac06854d792e8d25e059c501be430cb20e1cadc5eb156fc",
-        "999D6C3044CC47A6DAC06854D792E8D25E059C501BE430CB20E1CADC5EB156FC",
+        "cc0b2a987a8574494c5af0bee696e22a0f2dcb2139bd3d56e5fd03b000eb3abc",
+        "CC0B2A987A8574494C5AF0BEE696E22A0F2DCB2139BD3D56E5FD03B000EB3ABC",
     );
     assert!(matches!(
         BehaviorObservationSetV1::parse(&changed),

@@ -9,19 +9,19 @@
 //! bytes.
 
 use society_kernel::{
-    AdmissionGeneration, BudgetReservationId, CanonicalWorkspacePath, Capability, ChildProcessId,
-    ChildStreamKind, ChildStreamSealCompleteness, CommandBody, CommandDisposition, CommandId,
-    CommandRequest, ContentObjectId, DirectChildWaitStatus, EventBody, EventId, ExecutionProfileId,
-    ExpectedGeneration, GrandArchitectOfficeSessionId, KernelStore, NativeChildPid,
-    NativeWorkspaceId as KernelWorkspaceId, OfficeTurnId,
+    AdmissionGeneration, Blake3Digest as KernelDigest, BudgetReservationId, CanonicalWorkspacePath,
+    Capability, ChildProcessId, ChildStreamKind, ChildStreamSealCompleteness, CommandBody,
+    CommandDisposition, CommandId, CommandRequest, ContentObjectId, DirectChildWaitStatus,
+    EventBody, EventId, ExecutionProfileId, ExpectedGeneration, GrandArchitectOfficeSessionId,
+    KernelStore, NativeChildPid, NativeWorkspaceId as KernelWorkspaceId, OfficeTurnId,
     OwnedProcessGroupId as KernelProcessGroupId, PiBoundarySessionIdentity, PiChildOwner,
     PiChildSpawnAdmissionId, PiCorrelationIdentity, PiCumulativeUsage,
     PiOfficeTurnAssistantOutcome, PiOfficeTurnDisposition, PiOfficeTurnTranscriptDisposition,
     PiOfficeTurnUsageFailure, PiOfficeTurnUsageUnavailableReason, PiOfficeTurnUsageUnknownReason,
     PiProtocolSequence, PiTokenCount, PrincipalId, ProcessExitCode,
     ProcessGroupLiveness as KernelLiveness, ProcessSignalNumber, ProviderCostBinary64,
-    Sha256Digest as KernelDigest, SpawnNonce as KernelSpawnNonce, SupervisedChildIdentity,
-    SupervisorEpochId, SupervisorEpochIdentity,
+    SpawnNonce as KernelSpawnNonce, SupervisedChildIdentity, SupervisorEpochId,
+    SupervisorEpochIdentity,
 };
 use society_pi::{
     AssistantStopReason, BoundarySequence, CommandName, CommandResult, CorrelationIdentity,
@@ -2516,7 +2516,7 @@ fn kernel_digest_from_boundary(
     capture: &TransientStreamCapture,
 ) -> Result<KernelDigest, PiExecutionError> {
     let mut bytes = [0_u8; 32];
-    let text = capture.sha256.as_str().as_bytes();
+    let text = capture.blake3.as_str().as_bytes();
     let (pairs, remainder) = text.as_chunks::<2>();
     if !remainder.is_empty() || pairs.len() != bytes.len() {
         return Err(PiExecutionError::BoundaryDigestInvalid);
@@ -2612,7 +2612,7 @@ pub(crate) enum PiExecutionError {
         "the owned process group was observed absent and later present; the kernel recorded possible identity reuse"
     )]
     ProcessGroupIdentityRegressed,
-    #[error("Pi boundary digest was not canonical lowercase SHA-256")]
+    #[error("Pi boundary digest was not canonical lowercase BLAKE3")]
     BoundaryDigestInvalid,
 }
 
@@ -2630,26 +2630,29 @@ mod tests {
         time::Duration,
     };
 
-    use sha2::{Digest, Sha256};
     use society_content::{ContentSealLimit, ContentStoreRoot};
     use society_kernel::{
-        AdmissionGeneration, BudgetReservationId, Capability, CommandBody, CommandDisposition,
-        CommandId, CommandRequest, ExpectedGeneration, GrandArchitectOfficeSessionId, KernelStore,
+        AdmissionGeneration, ApplicationIdentity, ApplicationMissionInput, ApplicationName,
+        ApplicationRevisionOrdinal, Blake3Digest as KernelDigest, BudgetReservationId, Capability,
+        CommandBody, CommandDisposition, CommandId, CommandRequest, ExpectedGeneration,
+        GrandArchitectOfficeSessionId, KernelStore, MissionPrinciple, MissionPrincipleKind,
+        MissionPrincipleText, MissionPrinciples, MissionStatement,
+        NorthStarBoundaryCommitmentQuestion, NorthStarChangeQuestion,
+        NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet, NorthStarRevisitQuestion,
         OfficeTurnId, OfficeTurnPurpose, OperatingCycleId, OperatingCycleTreatment,
-        PiProtocolSequence, PrincipalDisplayName, PrincipalId, Rejection,
-        Sha256Digest as KernelDigest, SocietyName, SupervisorEpochId, SupervisorEpochIdentity,
-        UsdMicros,
+        PiProtocolSequence, PrincipalDisplayName, PrincipalId, Rejection, SocietyName,
+        SupervisorEpochId, SupervisorEpochIdentity, UsdMicros,
     };
     #[cfg(feature = "test-support")]
     use society_kernel::{CancellationMode, CancellationPropagationId, CancellationRequestId};
     use society_pi::{
-        AbsolutePath, ActorModelPolicyV1, AdapterVersion, CacheWritePerMillionRateV1,
+        AbsolutePath, ActorModelPolicyV1, AdapterVersion, Blake3Digest, CacheWritePerMillionRateV1,
         CanonicalModelSlug, CompactionMode, CompactionPolicyV1, CorrelationIdentity,
         CreateSessionPayload, Disabled, EffectiveModelDescriptorV1, Images, KnownPerMillionRateV1,
         ModelApi, ModelCatalogPolicyV1, ModelId, ModelInput, ModelSelection, NodeRuntimeVersion,
         NonNegativeInteger, OpenRouterBaseUrl, PiSdkVersion, PositiveInteger, ProjectTrust,
         Provider, QueueMode, RetryPolicyV1, RuntimeIdentity, SessionIdentity, SessionKind,
-        Sha256Digest, SpawnNonce, ThinkingLevel, ToolProfile, Transport, UsdPerMillionDecimal,
+        SpawnNonce, ThinkingLevel, ToolProfile, Transport, UsdPerMillionDecimal,
     };
 
     use super::{
@@ -4434,6 +4437,40 @@ mod tests {
         epoch_identity: SupervisorEpochIdentity,
     }
 
+    fn office_bridge_application_mission() -> ApplicationMissionInput {
+        ApplicationMissionInput {
+            application_identity: ApplicationIdentity::parse("office-bridge-fixture").unwrap(),
+            application_name: ApplicationName::parse("Office bridge fixture").unwrap(),
+            revision_ordinal: ApplicationRevisionOrdinal::new(1).unwrap(),
+            statement: MissionStatement::parse(
+                "Exercise the bounded office execution bridge without a provider.",
+            )
+            .unwrap(),
+            principles: MissionPrinciples::new(vec![MissionPrinciple {
+                kind: MissionPrincipleKind::Boundary,
+                text: MissionPrincipleText::parse("Keep execution authority bounded.").unwrap(),
+            }])
+            .unwrap(),
+            north_star_questions: NorthStarQuestionSet {
+                change: NorthStarChangeQuestion::parse("What bounded execution change is needed?")
+                    .unwrap(),
+                improvement_evidence: NorthStarImprovementEvidenceQuestion::parse(
+                    "What receipt proves the execution improvement?",
+                )
+                .unwrap(),
+                boundary_commitment: NorthStarBoundaryCommitmentQuestion::parse(
+                    "Which execution boundary must remain intact?",
+                )
+                .unwrap(),
+                revisit: NorthStarRevisitQuestion::parse(
+                    "When should this execution mission be revisited?",
+                )
+                .unwrap(),
+            },
+            source_rendering_digest: KernelDigest::of_bytes(b"office-bridge-fixture-mission"),
+        }
+    }
+
     fn found_office_start(store: &mut KernelStore, label: &str) -> OfficeStart {
         let bootstrap = PrincipalId::BOOTSTRAP;
         accepted(
@@ -4453,7 +4490,7 @@ mod tests {
             Capability::InstallFoundingUniverseSeed,
             ExpectedGeneration::NotApplicable,
             CommandBody::InstallFoundingUniverseSeed {
-                rendering_digest: KernelDigest::of_bytes(b"m5-office-bridge"),
+                mission: office_bridge_application_mission(),
             },
         );
         accepted(
@@ -4873,10 +4910,10 @@ mod tests {
                     node_version: NodeRuntimeVersion::parse(node_version()).unwrap(),
                     adapter_version: AdapterVersion::V1,
                     pi_sdk_version: PiSdkVersion::V0830,
-                    node_executable_sha256: node_digest,
-                    lockfile_sha256: double_digest.clone(),
-                    adapter_build_sha256: double_digest.clone(),
-                    pi_transitive_package_set_sha256: double_digest,
+                    node_executable_blake3: node_digest,
+                    lockfile_blake3: double_digest.clone(),
+                    adapter_build_blake3: double_digest.clone(),
+                    pi_transitive_package_set_blake3: double_digest,
                 },
             };
             let prompt = "Universe Seed\nM5 provider-free Office bootstrap".to_owned();
@@ -4896,7 +4933,7 @@ mod tests {
                 },
                 model_catalog: {
                     let mut catalog = model_catalog();
-                    catalog.catalog_sha256 = digest_bytes(catalog_json.as_bytes());
+                    catalog.catalog_blake3 = digest_bytes(catalog_json.as_bytes());
                     catalog
                 },
                 tool_profile: ToolProfile::ReadSourceV1,
@@ -4937,7 +4974,7 @@ mod tests {
 
     fn model_catalog() -> ModelCatalogPolicyV1 {
         ModelCatalogPolicyV1 {
-            catalog_sha256: Sha256Digest::parse("a".repeat(64)).unwrap(),
+            catalog_blake3: Blake3Digest::parse("a".repeat(64)).unwrap(),
             effective_model: EffectiveModelDescriptorV1 {
                 provider: Provider::OpenRouter,
                 base_url: OpenRouterBaseUrl::ApiV1,
@@ -5002,15 +5039,15 @@ mod tests {
     fn absolute(path: PathBuf) -> AbsolutePath {
         AbsolutePath::parse(fs::canonicalize(path).unwrap().to_str().unwrap()).unwrap()
     }
-    fn digest_file(path: &Path) -> Sha256Digest {
+    fn digest_file(path: &Path) -> Blake3Digest {
         digest_bytes(&fs::read(path).unwrap())
     }
-    fn digest_bytes(bytes: &[u8]) -> Sha256Digest {
+    fn digest_bytes(bytes: &[u8]) -> Blake3Digest {
         let mut rendered = String::with_capacity(64);
-        for byte in Sha256::digest(bytes) {
+        for byte in blake3::hash(bytes).as_bytes() {
             use std::fmt::Write as _;
             write!(&mut rendered, "{byte:02x}").unwrap();
         }
-        Sha256Digest::parse(rendered).unwrap()
+        Blake3Digest::parse(rendered).unwrap()
     }
 }

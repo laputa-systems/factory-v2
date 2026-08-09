@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { tmpdir } from "node:os";
 
+import { blake3Hex } from "../src/digest.js";
 import { absolutePath, sessionIdentity } from "../src/protocol.js";
 import {
 	PinnedPiSdkRuntime,
@@ -14,6 +14,11 @@ import {
 } from "../src/sdk.js";
 import { decodeCommand } from "./support.js";
 import { createSessionPayload } from "./support.js";
+
+test("digest: Node and Rust share the canonical 32-byte BLAKE3 contract", () => {
+	assert.equal(blake3Hex(""), "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262");
+	assert.equal(blake3Hex("abc"), "6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85");
+});
 
 test("sdk: the V2 ResourceLoader exposes only the supplied system prompt and no discovered resources", async () => {
 	const loader = createInertResourceLoader("exact kernel system prompt");
@@ -90,7 +95,7 @@ test("sdk: pinned production construction accepts only an explicit local model c
 	rawPayload.authPath = authPath;
 	rawPayload.modelsPath = modelsPath;
 	rawPayload.sessionDirectory = sessionDirectory;
-	(rawPayload.modelCatalog as Record<string, unknown>).catalogSha256 = createHash("sha256").update(catalogText, "utf8").digest("hex");
+	(rawPayload.modelCatalog as Record<string, unknown>).catalogBlake3 = blake3Hex(catalogText);
 	const command = decodeCommand(1, "CreateSession", rawPayload);
 	if (command.command !== "CreateSession") throw new Error("expected_create_session");
 	const session = await new PinnedPiSdkRuntime().create(command.sessionIdentity, command.payload);
@@ -123,14 +128,14 @@ test("sdk: catalog digest, endpoint, zero-price and TOCTOU drift are rejected be
 			}],
 		} },
 	});
-	const commandFor = (catalogText: string, digest = createHash("sha256").update(catalogText, "utf8").digest("hex")) => {
+	const commandFor = (catalogText: string, digest = blake3Hex(catalogText)) => {
 		const payload = createSessionPayload();
 		payload.cwd = directory;
 		payload.agentDirectory = agentDirectory;
 		payload.authPath = authPath;
 		payload.modelsPath = modelsPath;
 		payload.sessionDirectory = sessionDirectory;
-		(payload.modelCatalog as Record<string, unknown>).catalogSha256 = digest;
+		(payload.modelCatalog as Record<string, unknown>).catalogBlake3 = digest;
 		return decodeCommand(1, "CreateSession", payload);
 	};
 	const expectDrift = async (command: ReturnType<typeof commandFor>, runtime = new PinnedPiSdkRuntime()) => {
@@ -184,7 +189,7 @@ test("sdk: transcript receipt proves Pi persisted the exact first unexpanded Pro
 	assert.equal(receipt.format, "pi_session_manager_jsonl_v3");
 	assert.equal(receipt.sessionFile, absolutePath(await realpath(sessionFile)));
 	assert.equal(receipt.materialization, "observed");
-	assert.match(receipt.sessionFileSha256, /^[a-f0-9]{64}$/u);
+	assert.match(receipt.sessionFileBlake3, /^[a-f0-9]{64}$/u);
 	assert.equal(receipt.headerCwd, cwd);
 	assert.equal(receipt.firstUserPrompt.kind, "verified");
 	if (receipt.firstUserPrompt.kind === "verified") assert.match(receipt.firstUserPrompt.digest, /^[a-f0-9]{64}$/u);

@@ -12,28 +12,79 @@ use rusqlite::Connection;
 use society_kernel::{
     ActorAttemptCancellationReason, ActorAttemptId, ActorAttemptTerminalKind,
     ActorConfigurationName, ActorConfigurationRevisionId, ActorInstanceId, ActorModelPolicy,
-    AdmissionGeneration, AdversarialReviewId, BudgetReservationId, CancellationMode,
-    CancellationPropagationId, CancellationRequestId, CanonicalWorkspacePath, Capability,
-    ChildProcessId, ChildRecoveryObservation, ChildStreamKind, ChildStreamSealCompleteness,
-    CommandBody, CommandDisposition, CommandId, CommandReceipt, CommandRequest, ContentObjectId,
-    ContentSealReceiptId, ContextPackPurpose, DeterministicEvaluationReceiptId,
-    DeterministicExperimentId, DevelopmentalAttractor, DirectChildWaitStatus, EvaluatorRevisionId,
-    EventBody, EventId, EvidenceApplicability, EvidenceLimitationText, EvidenceSemanticRole,
-    ExecutionProfileId, ExpectedGeneration, ForensicManifestCapturePolicy, ForensicManifestId,
-    GrandArchitectOfficeSessionId, GraphRevisionBody, GraphRevisionId, HypothesisRevisionText,
-    InputManifestId, KernelStore, NativeChildPid, NativeWorkspaceId, OfficeTurnPurpose,
-    OperatingCycleId, OperatingCycleTreatment, OutcomeObligationDisposition, OutcomeObligationId,
-    OutcomeObligationText, OwnedProcessGroupId, PiAbortControlWriteOutcome,
-    PiBoundarySessionIdentity, PiChildOwner, PiChildSpawnAdmissionId, PiCorrelationIdentity,
-    PrincipalDisplayName, PrincipalId, ProcessExitCode, ProcessGroupLiveness, ProcessSignalAction,
-    ProcessSignalCause, ProcessSignalDelivery, ProjectId, ProjectMilestoneId, ProjectMilestoneName,
-    ProjectName, ProjectObjectiveText, ProjectState, ProjectStopConditionText, Rejection,
-    RetentionAccessClass, ReviewChallengeId, ReviewChallengeSeverity, ReviewDispositionKind,
-    ReviewFailureHypothesis, ReviewResolutionKind, ReviewResponseText, Sha256Digest, SocietyName,
-    SpawnNonce, StoreError, SupervisedChildIdentity, SupervisorEpochId, SupervisorEpochIdentity,
-    TicketAcceptanceConditionText, TicketId, TicketTitle, UsdMicros, WorkAssignmentText,
-    WorkItemId, WorkItemKind, WorkLeaseId,
+    AdmissionGeneration, AdversarialReviewId, ApplicationIdentity, ApplicationMissionInput,
+    ApplicationName, ApplicationRevisionId, ApplicationRevisionOrdinal, Blake3Digest,
+    BudgetReservationId, CancellationMode, CancellationPropagationId, CancellationRequestId,
+    CanonicalWorkspacePath, Capability, ChildProcessId, ChildRecoveryObservation, ChildStreamKind,
+    ChildStreamSealCompleteness, CommandBody, CommandDisposition, CommandId, CommandReceipt,
+    CommandRequest, ContentObjectId, ContentSealReceiptId, ContextPackPurpose,
+    DeterministicEvaluationReceiptId, DeterministicExperimentId, DevelopmentalAttractor,
+    DirectChildWaitStatus, EvaluatorRevisionId, EventBody, EventId, EvidenceApplicability,
+    EvidenceLimitationText, EvidenceSemanticRole, ExecutionProfileId, ExpectedGeneration,
+    ForensicManifestCapturePolicy, ForensicManifestId, GrandArchitectOfficeSessionId,
+    GraphRevisionBody, GraphRevisionId, HypothesisRevisionText, InputManifestId, KernelStore,
+    MissionPrinciple, MissionPrincipleKind, MissionPrincipleText, MissionPrinciples,
+    MissionStatement, NativeChildPid, NativeWorkspaceId, NorthStarBoundaryCommitmentQuestion,
+    NorthStarChangeQuestion, NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet,
+    NorthStarRevisitQuestion, OfficeTurnPurpose, OperatingCycleId, OperatingCycleTreatment,
+    OutcomeObligationDisposition, OutcomeObligationId, OutcomeObligationText, OwnedProcessGroupId,
+    PiAbortControlWriteOutcome, PiBoundarySessionIdentity, PiChildOwner, PiChildSpawnAdmissionId,
+    PiCorrelationIdentity, PrincipalDisplayName, PrincipalId, ProcessExitCode,
+    ProcessGroupLiveness, ProcessSignalAction, ProcessSignalCause, ProcessSignalDelivery,
+    ProjectId, ProjectMilestoneId, ProjectMilestoneName, ProjectName, ProjectNorthStarAlignment,
+    ProjectNorthStarBoundaryCommitmentAnswer, ProjectNorthStarChangeAnswer,
+    ProjectNorthStarImprovementEvidenceAnswer, ProjectNorthStarRevisitAnswer, ProjectObjectiveText,
+    ProjectState, ProjectStopConditionText, Rejection, RetentionAccessClass, ReviewChallengeId,
+    ReviewChallengeSeverity, ReviewDispositionKind, ReviewFailureHypothesis, ReviewResolutionKind,
+    ReviewResponseText, SocietyName, SpawnNonce, StoreError, SupervisedChildIdentity,
+    SupervisorEpochId, SupervisorEpochIdentity, TicketAcceptanceConditionText, TicketId,
+    TicketTitle, UsdMicros, WorkAssignmentText, WorkItemId, WorkItemKind, WorkLeaseId,
 };
+
+fn example_application_mission() -> ApplicationMissionInput {
+    ApplicationMissionInput {
+        application_identity: ApplicationIdentity::parse("example-application").unwrap(),
+        application_name: ApplicationName::parse("Example Application").unwrap(),
+        revision_ordinal: ApplicationRevisionOrdinal::new(1).unwrap(),
+        statement: MissionStatement::parse("Improve a bounded example system responsibly.")
+            .unwrap(),
+        principles: MissionPrinciples::new(vec![MissionPrinciple {
+            kind: MissionPrincipleKind::Purpose,
+            text: MissionPrincipleText::parse("Keep work legible and bounded.").unwrap(),
+        }])
+        .unwrap(),
+        north_star_questions: NorthStarQuestionSet {
+            change: NorthStarChangeQuestion::parse("What change should be made?").unwrap(),
+            improvement_evidence: NorthStarImprovementEvidenceQuestion::parse(
+                "What evidence demonstrates improvement?",
+            )
+            .unwrap(),
+            boundary_commitment: NorthStarBoundaryCommitmentQuestion::parse(
+                "What boundary must remain intact?",
+            )
+            .unwrap(),
+            revisit: NorthStarRevisitQuestion::parse("When should it be revisited?").unwrap(),
+        },
+        source_rendering_digest: Blake3Digest::of_bytes(b"execution-foundation-mission"),
+    }
+}
+
+fn example_project_north_star_alignment() -> ProjectNorthStarAlignment {
+    ProjectNorthStarAlignment {
+        application_revision_id: ApplicationRevisionId::new(1).unwrap(),
+        change_answer: ProjectNorthStarChangeAnswer::parse("Deliver one bounded change.").unwrap(),
+        improvement_evidence_answer: ProjectNorthStarImprovementEvidenceAnswer::parse(
+            "A deterministic judge must pass.",
+        )
+        .unwrap(),
+        boundary_commitment_answer: ProjectNorthStarBoundaryCommitmentAnswer::parse(
+            "No authority is widened.",
+        )
+        .unwrap(),
+        revisit_answer: ProjectNorthStarRevisitAnswer::parse("Review after evidence arrives.")
+            .unwrap(),
+    }
+}
 
 fn request(
     store: &mut KernelStore,
@@ -123,7 +174,7 @@ fn founded_cycle(
         Capability::InstallFoundingUniverseSeed,
         ExpectedGeneration::NotApplicable,
         CommandBody::InstallFoundingUniverseSeed {
-            rendering_digest: Sha256Digest::of_bytes(b"execution-foundation-seed"),
+            mission: example_application_mission(),
         },
     );
     accepted(
@@ -208,6 +259,7 @@ fn active_project(
         CommandBody::CreateProject {
             operating_cycle_id: cycle,
             project_name: ProjectName::parse("Independent execution proof").unwrap(),
+            north_star_alignment: example_project_north_star_alignment(),
         },
     );
     let project_id = ProjectId::new(1).unwrap();
@@ -391,7 +443,7 @@ fn record_fixture_session_ready(
         },
     );
     let correlation = PiCorrelationIdentity::parse(format!("create-{label}")).unwrap();
-    let create_digest = Sha256Digest::of_bytes(format!("create-{label}").as_bytes());
+    let create_digest = Blake3Digest::of_bytes(format!("create-{label}").as_bytes());
     accepted(
         store,
         &format!("{label}-create-authorized"),
@@ -472,7 +524,7 @@ fn finalize_fixture_child(
     .enumerate()
     {
         let number = i64::try_from(index + 1).unwrap();
-        let digest = Sha256Digest::of_bytes(format!("{label}-stream-{number}").as_bytes());
+        let digest = Blake3Digest::of_bytes(format!("{label}-stream-{number}").as_bytes());
         accepted(
             store,
             &format!("{label}-seal-{number}"),
@@ -641,7 +693,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
         CommandBody::RegisterContextPack {
             operating_cycle_id: cycle,
             purpose: ContextPackPurpose::IndependentReview,
-            rendering_digest: Sha256Digest::of_bytes(b"reviewer-context-v1"),
+            rendering_digest: Blake3Digest::of_bytes(b"reviewer-context-v1"),
         },
     );
     let context = society_kernel::ContextPackId::new(1).unwrap();
@@ -1006,7 +1058,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
     // deterministic evaluator binding, forensic manifest, and semantic
     // admission. None of these commands executes Pi or an evaluator; the
     // kernel-service facts are narrow receipt seams for later integration.
-    let evaluator_digest = Sha256Digest::of_bytes(b"m4-evaluator-revision");
+    let evaluator_digest = Blake3Digest::of_bytes(b"m4-evaluator-revision");
     accepted(
         &mut store,
         "m4-seal-evaluator",
@@ -1024,7 +1076,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
         Capability::RecordContentSealReceipt,
         ExpectedGeneration::NotApplicable,
         CommandBody::RecordContentSealReceipt {
-            digest: Sha256Digest::of_bytes(b"m4-substituted-evaluator"),
+            digest: Blake3Digest::of_bytes(b"m4-substituted-evaluator"),
         },
     );
     assert!(matches!(
@@ -1048,7 +1100,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
         Capability::RecordContentSealReceipt,
         ExpectedGeneration::NotApplicable,
         CommandBody::RecordContentSealReceipt {
-            digest: Sha256Digest::of_bytes(b"m4-input-manifest"),
+            digest: Blake3Digest::of_bytes(b"m4-input-manifest"),
         },
     );
     accepted(
@@ -1100,7 +1152,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
         Capability::RecordContentSealReceipt,
         ExpectedGeneration::NotApplicable,
         CommandBody::RecordContentSealReceipt {
-            digest: Sha256Digest::of_bytes(b"m4-identical-evaluator-output"),
+            digest: Blake3Digest::of_bytes(b"m4-identical-evaluator-output"),
         },
     );
     accepted(
@@ -1120,7 +1172,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
         Capability::RecordContentSealReceipt,
         ExpectedGeneration::NotApplicable,
         CommandBody::RecordContentSealReceipt {
-            digest: Sha256Digest::of_bytes(b"m4-recombined-output"),
+            digest: Blake3Digest::of_bytes(b"m4-recombined-output"),
         },
     );
     accepted(
@@ -1787,7 +1839,7 @@ fn pi_child_receipts_bind_epoch_treatment_cancellation_and_containment() {
         },
     );
     let correlation = PiCorrelationIdentity::parse("create-correlation-m5-proof").unwrap();
-    let create_digest = Sha256Digest::of_bytes(b"canonical-create-request");
+    let create_digest = Blake3Digest::of_bytes(b"canonical-create-request");
     accepted(
         &mut store,
         "m5-authorize-create",
@@ -1809,7 +1861,7 @@ fn pi_child_receipts_bind_epoch_treatment_cancellation_and_containment() {
         CommandBody::RecordPiCreateSessionDelivery {
             child_process_id: child,
             correlation_identity: correlation.clone(),
-            create_request_digest: Sha256Digest::of_bytes(b"altered-create-request"),
+            create_request_digest: Blake3Digest::of_bytes(b"altered-create-request"),
         },
         Rejection::InvalidLifecycleTransition,
     );
@@ -1900,7 +1952,7 @@ fn pi_child_receipts_bind_epoch_treatment_cancellation_and_containment() {
             child_process_id: child,
             cancellation_propagation_id: CancellationPropagationId::new(1).unwrap(),
             correlation_identity: PiCorrelationIdentity::parse("abort-unsnapshotted-m5").unwrap(),
-            abort_command_digest: Sha256Digest::of_bytes(b"canonical-abort-unsnapshotted"),
+            abort_command_digest: Blake3Digest::of_bytes(b"canonical-abort-unsnapshotted"),
             outcome: PiAbortControlWriteOutcome::FullyWritten,
         },
         Rejection::CancellationPropagationIncomplete,
@@ -1956,7 +2008,7 @@ fn pi_child_receipts_bind_epoch_treatment_cancellation_and_containment() {
             child_process_id: child,
             cancellation_propagation_id: propagation,
             correlation_identity: PiCorrelationIdentity::parse("abort-cancellation-m5").unwrap(),
-            abort_command_digest: Sha256Digest::of_bytes(b"canonical-abort-cancellation"),
+            abort_command_digest: Blake3Digest::of_bytes(b"canonical-abort-cancellation"),
             outcome: PiAbortControlWriteOutcome::FullyWritten,
         },
     );
@@ -2198,7 +2250,7 @@ fn lingering_group_cleanup_requires_later_absence_before_finalization() {
             spawn_nonce: nonce,
         },
     );
-    let digest = Sha256Digest::of_bytes(b"linger-create");
+    let digest = Blake3Digest::of_bytes(b"linger-create");
     let correlation = PiCorrelationIdentity::parse("linger-correlation").unwrap();
     accepted(
         &mut store,
@@ -2295,7 +2347,7 @@ fn lingering_group_cleanup_requires_later_absence_before_finalization() {
     .into_iter()
     .enumerate()
     {
-        let digest = Sha256Digest::of_bytes(format!("m5-linger-stream-{index}").as_bytes());
+        let digest = Blake3Digest::of_bytes(format!("m5-linger-stream-{index}").as_bytes());
         accepted(
             &mut store,
             &format!("m5-linger-seal-{index}"),
@@ -2543,7 +2595,7 @@ fn supervised_office_turns_recheck_the_exact_live_pi_child() {
     .enumerate()
     {
         let number = i64::try_from(index + 1).unwrap();
-        let digest = Sha256Digest::of_bytes(format!("m5-turn-final-stream-{number}").as_bytes());
+        let digest = Blake3Digest::of_bytes(format!("m5-turn-final-stream-{number}").as_bytes());
         accepted(
             &mut store,
             &format!("m5-turn-final-seal-{number}"),
@@ -2698,7 +2750,7 @@ fn buffered_pi_receipts_after_cancellation_are_attributed_without_reopening_work
         },
     );
     let correlation = PiCorrelationIdentity::parse("buffered-create-correlation").unwrap();
-    let create_digest = Sha256Digest::of_bytes(b"buffered-create-request");
+    let create_digest = Blake3Digest::of_bytes(b"buffered-create-request");
     accepted(
         &mut store,
         "m5-buffered-authorize-before-cancel",
@@ -2756,7 +2808,7 @@ fn buffered_pi_receipts_after_cancellation_are_attributed_without_reopening_work
         CommandBody::RecordPiCreateSessionDelivery {
             child_process_id: fixture.child,
             correlation_identity: correlation.clone(),
-            create_request_digest: Sha256Digest::of_bytes(b"altered-buffered-create"),
+            create_request_digest: Blake3Digest::of_bytes(b"altered-buffered-create"),
         },
         Rejection::InvalidLifecycleTransition,
     );
@@ -2792,7 +2844,7 @@ fn buffered_pi_receipts_after_cancellation_are_attributed_without_reopening_work
         CommandBody::AuthorizePiCreateSession {
             child_process_id: fixture.child,
             correlation_identity: PiCorrelationIdentity::parse("second-buffered-create").unwrap(),
-            create_request_digest: Sha256Digest::of_bytes(b"second-buffered-create"),
+            create_request_digest: Blake3Digest::of_bytes(b"second-buffered-create"),
         },
         Rejection::StaleAdmissionGeneration,
     );
@@ -2871,7 +2923,7 @@ fn adapter_ready_race_after_cancellation_preserves_receipt_but_rejects_create() 
                     "{command_id}-correlation"
                 ))
                 .unwrap(),
-                create_request_digest: Sha256Digest::of_bytes(command_id.as_bytes()),
+                create_request_digest: Blake3Digest::of_bytes(command_id.as_bytes()),
             },
             Rejection::StaleAdmissionGeneration,
         );
@@ -2899,7 +2951,7 @@ fn partial_abort_is_a_durable_attempt_and_allows_cancellation_escalation() {
         },
     );
     let create = PiCorrelationIdentity::parse("partial-abort-create").unwrap();
-    let create_digest = Sha256Digest::of_bytes(b"partial-abort-create");
+    let create_digest = Blake3Digest::of_bytes(b"partial-abort-create");
     accepted(
         &mut store,
         "m5-partial-abort-authorize-create",
@@ -2982,7 +3034,7 @@ fn partial_abort_is_a_durable_attempt_and_allows_cancellation_escalation() {
             child_process_id: fixture.child,
             cancellation_propagation_id: propagation,
             correlation_identity: PiCorrelationIdentity::parse("partial-abort-attempt").unwrap(),
-            abort_command_digest: Sha256Digest::of_bytes(b"partial-abort-command"),
+            abort_command_digest: Blake3Digest::of_bytes(b"partial-abort-command"),
             outcome: PiAbortControlWriteOutcome::PartialWriteDiscarded,
         },
     );
@@ -3323,7 +3375,7 @@ fn lease_expiry_requires_a_work_item_without_an_attempt() {
         CommandBody::RegisterContextPack {
             operating_cycle_id: cycle,
             purpose: ContextPackPurpose::TicketExecution,
-            rendering_digest: Sha256Digest::of_bytes(b"ticket context"),
+            rendering_digest: Blake3Digest::of_bytes(b"ticket context"),
         },
     );
     accepted(
@@ -3587,6 +3639,7 @@ fn paid_qualification_treatment_has_no_grand_architect_work_surface() {
         CommandBody::CreateProject {
             operating_cycle_id: cycle,
             project_name: ProjectName::parse("Forbidden qualification project").unwrap(),
+            north_star_alignment: example_project_north_star_alignment(),
         },
         Rejection::QualificationTreatmentRestricted,
     );
@@ -3698,7 +3751,7 @@ fn reviewer_attempt_cannot_be_rebound_to_a_different_requested_review() {
         CommandBody::RegisterContextPack {
             operating_cycle_id: cycle,
             purpose: ContextPackPurpose::IndependentReview,
-            rendering_digest: Sha256Digest::of_bytes(b"cross-review-context"),
+            rendering_digest: Blake3Digest::of_bytes(b"cross-review-context"),
         },
     );
     accepted(

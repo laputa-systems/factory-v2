@@ -1,6 +1,5 @@
 use std::fmt;
 
-use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 macro_rules! identifier {
@@ -33,6 +32,8 @@ macro_rules! identifier {
 
 identifier!(SocietyId);
 identifier!(UniverseSeedId);
+identifier!(ApplicationId);
+identifier!(ApplicationRevisionId);
 identifier!(OfficeId);
 identifier!(OfficeOccupancyId);
 identifier!(OperatingCycleId);
@@ -278,6 +279,57 @@ impl SocietyName {
     }
 }
 
+/// A stable, application-owned identity. It intentionally uses the same
+/// portable grammar as other durable boundary identifiers, while remaining a
+/// distinct domain type: a mission cannot be accidentally attached to an
+/// Office, workspace, or Pi session identity.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct ApplicationIdentity(String);
+
+impl ApplicationIdentity {
+    pub fn parse(value: impl Into<String>) -> Result<Self, DomainValueError> {
+        let value = value.into();
+        if value.is_empty()
+            || value.len() > 128
+            || !value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+            || !value
+                .as_bytes()
+                .first()
+                .is_some_and(u8::is_ascii_alphanumeric)
+            || !value
+                .as_bytes()
+                .last()
+                .is_some_and(u8::is_ascii_alphanumeric)
+        {
+            return Err(DomainValueError::InvalidApplicationIdentity);
+        }
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct ApplicationName(String);
+
+impl ApplicationName {
+    pub fn parse(value: impl Into<String>) -> Result<Self, DomainValueError> {
+        let value = value.into();
+        if value.trim().is_empty() || value.len() > 160 || value.contains('\0') {
+            return Err(DomainValueError::InvalidApplicationName);
+        }
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 /// A display value for a durable Principal. It is descriptive only; the
 /// generated identifier and exact capability grant remain the authority.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -337,12 +389,146 @@ coordination_text!(WorkAssignmentText);
 coordination_text!(OutcomeObligationText);
 coordination_text!(EvidenceLimitationText);
 
-#[derive(Clone, Copy, Eq, Hash, PartialEq)]
-pub struct Sha256Digest([u8; 32]);
+macro_rules! mission_text {
+    ($name:ident) => {
+        #[derive(Clone, Debug, Eq, Hash, PartialEq)]
+        pub struct $name(String);
 
-impl Sha256Digest {
+        impl $name {
+            pub fn parse(value: impl Into<String>) -> Result<Self, DomainValueError> {
+                let value = value.into();
+                if value.trim().is_empty() || value.len() > 4_096 || value.contains('\0') {
+                    return Err(DomainValueError::InvalidMissionText {
+                        type_name: stringify!($name),
+                    });
+                }
+                Ok(Self(value))
+            }
+
+            pub fn as_str(&self) -> &str {
+                &self.0
+            }
+        }
+    };
+}
+
+mission_text!(MissionStatement);
+mission_text!(MissionPrincipleText);
+mission_text!(NorthStarChangeQuestion);
+mission_text!(NorthStarImprovementEvidenceQuestion);
+mission_text!(NorthStarBoundaryCommitmentQuestion);
+mission_text!(NorthStarRevisitQuestion);
+mission_text!(ProjectNorthStarChangeAnswer);
+mission_text!(ProjectNorthStarImprovementEvidenceAnswer);
+mission_text!(ProjectNorthStarBoundaryCommitmentAnswer);
+mission_text!(ProjectNorthStarRevisitAnswer);
+
+/// Application revisions are immutable ordered statements. The ordinal is
+/// supplied by the application boundary rather than inferred from insertion
+/// order, so a later importer cannot silently rewrite its declared lineage.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct ApplicationRevisionOrdinal(i64);
+
+impl ApplicationRevisionOrdinal {
+    pub const fn new(value: i64) -> Option<Self> {
+        if value > 0 { Some(Self(value)) } else { None }
+    }
+
+    pub const fn value(self) -> i64 {
+        self.0
+    }
+}
+
+impl TryFrom<i64> for ApplicationRevisionOrdinal {
+    type Error = DomainValueError;
+
+    fn try_from(value: i64) -> Result<Self, Self::Error> {
+        Self::new(value).ok_or(DomainValueError::NonPositiveApplicationRevisionOrdinal(
+            value,
+        ))
+    }
+}
+
+/// A generic closed category for a mission principle. The actual commitment is
+/// in `MissionPrincipleText`; application-specific category strings never
+/// become a hidden discriminator in the kernel schema.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum MissionPrincipleKind {
+    Purpose = 1,
+    Evidence = 2,
+    Boundary = 3,
+    Revision = 4,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MissionPrinciple {
+    pub kind: MissionPrincipleKind,
+    pub text: MissionPrincipleText,
+}
+
+/// The founding boundary admits a compact, ordered constitution rather than
+/// an unbounded narrative list. SQLite stores its position explicitly and the
+/// request fingerprint preserves the caller's ordering.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MissionPrinciples(Vec<MissionPrinciple>);
+
+impl MissionPrinciples {
+    pub const MAX_COUNT: usize = 16;
+
+    pub fn new(principles: Vec<MissionPrinciple>) -> Result<Self, DomainValueError> {
+        if principles.is_empty() || principles.len() > Self::MAX_COUNT {
+            return Err(DomainValueError::InvalidMissionPrincipleCount {
+                count: principles.len(),
+            });
+        }
+        Ok(Self(principles))
+    }
+
+    pub fn as_slice(&self) -> &[MissionPrinciple] {
+        &self.0
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NorthStarQuestionSet {
+    pub change: NorthStarChangeQuestion,
+    pub improvement_evidence: NorthStarImprovementEvidenceQuestion,
+    pub boundary_commitment: NorthStarBoundaryCommitmentQuestion,
+    pub revisit: NorthStarRevisitQuestion,
+}
+
+/// The complete first-class mission boundary for one application revision.
+/// Its source rendering retains a BLAKE3 byte identity, but this input does
+/// not claim physical sealing, retention, or `ContentObject` admission. The
+/// kernel uses the normalized fields below for durable reasoning and alignment
+/// rather than treating the rendering as an opaque prompt.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ApplicationMissionInput {
+    pub application_identity: ApplicationIdentity,
+    pub application_name: ApplicationName,
+    pub revision_ordinal: ApplicationRevisionOrdinal,
+    pub statement: MissionStatement,
+    pub principles: MissionPrinciples,
+    pub north_star_questions: NorthStarQuestionSet,
+    pub source_rendering_digest: Blake3Digest,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectNorthStarAlignment {
+    pub application_revision_id: ApplicationRevisionId,
+    pub change_answer: ProjectNorthStarChangeAnswer,
+    pub improvement_evidence_answer: ProjectNorthStarImprovementEvidenceAnswer,
+    pub boundary_commitment_answer: ProjectNorthStarBoundaryCommitmentAnswer,
+    pub revisit_answer: ProjectNorthStarRevisitAnswer,
+}
+
+#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+pub struct Blake3Digest([u8; 32]);
+
+impl Blake3Digest {
     pub fn of_bytes(bytes: &[u8]) -> Self {
-        Self(Sha256::digest(bytes).into())
+        Self(*blake3::hash(bytes).as_bytes())
     }
 
     pub const fn from_bytes(bytes: [u8; 32]) -> Self {
@@ -354,7 +540,7 @@ impl Sha256Digest {
     }
 }
 
-impl fmt::Debug for Sha256Digest {
+impl fmt::Debug for Blake3Digest {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         for byte in self.0 {
             write!(formatter, "{byte:02x}")?;
@@ -1700,7 +1886,7 @@ pub enum CommandBody {
     },
     InstallGrandArchitectOffice,
     InstallFoundingUniverseSeed {
-        rendering_digest: Sha256Digest,
+        mission: ApplicationMissionInput,
     },
     AppointInitialGrandArchitect {
         actor_display_name: PrincipalDisplayName,
@@ -1771,6 +1957,7 @@ pub enum CommandBody {
     CreateProject {
         operating_cycle_id: OperatingCycleId,
         project_name: ProjectName,
+        north_star_alignment: ProjectNorthStarAlignment,
     },
     CharterProject {
         operating_cycle_id: OperatingCycleId,
@@ -1899,7 +2086,7 @@ pub enum CommandBody {
     RegisterContextPack {
         operating_cycle_id: OperatingCycleId,
         purpose: ContextPackPurpose,
-        rendering_digest: Sha256Digest,
+        rendering_digest: Blake3Digest,
     },
     AdmitActorInstance {
         operating_cycle_id: OperatingCycleId,
@@ -1968,7 +2155,7 @@ pub enum CommandBody {
     /// global byte identity, so producer/capture occurrence belongs on a
     /// `ForensicManifest`, never on this receipt.
     RecordContentSealReceipt {
-        digest: Sha256Digest,
+        digest: Blake3Digest,
     },
     /// Turns a verified digest receipt into a global content identity. This is
     /// still forensic storage identity, not an occurrence-specific schema,
@@ -2053,12 +2240,12 @@ pub enum CommandBody {
     AuthorizePiCreateSession {
         child_process_id: ChildProcessId,
         correlation_identity: PiCorrelationIdentity,
-        create_request_digest: Sha256Digest,
+        create_request_digest: Blake3Digest,
     },
     RecordPiCreateSessionDelivery {
         child_process_id: ChildProcessId,
         correlation_identity: PiCorrelationIdentity,
-        create_request_digest: Sha256Digest,
+        create_request_digest: Blake3Digest,
     },
     RecordPiSessionReady {
         child_process_id: ChildProcessId,
@@ -2068,13 +2255,13 @@ pub enum CommandBody {
         child_process_id: ChildProcessId,
         cancellation_propagation_id: CancellationPropagationId,
         correlation_identity: PiCorrelationIdentity,
-        abort_command_digest: Sha256Digest,
+        abort_command_digest: Blake3Digest,
         outcome: PiAbortControlWriteOutcome,
     },
     RecordChildStreamSeal {
         child_process_id: ChildProcessId,
         stream_kind: ChildStreamKind,
-        full_observed_digest: Sha256Digest,
+        full_observed_digest: Blake3Digest,
         retained_content_object_id: ContentObjectId,
         completeness: ChildStreamSealCompleteness,
     },
@@ -2122,7 +2309,7 @@ pub enum CommandBody {
         office_turn_id: OfficeTurnId,
         correlation_identity: PiCorrelationIdentity,
         prompt_content_object_id: ContentObjectId,
-        prompt_digest: Sha256Digest,
+        prompt_digest: Blake3Digest,
         frontier_event_id: EventId,
     },
     /// Attests only a complete physical Prompt write for an already authorized
@@ -2130,7 +2317,7 @@ pub enum CommandBody {
     RecordPiOfficeTurnPromptDelivery {
         office_turn_id: OfficeTurnId,
         correlation_identity: PiCorrelationIdentity,
-        prompt_digest: Sha256Digest,
+        prompt_digest: Blake3Digest,
     },
     /// Attests the Pi-host's accepted Prompt command result at one exact
     /// outbound protocol sequence after the complete physical delivery.
@@ -2611,6 +2798,7 @@ closed_rejection_codes! {
     OfficeSessionBudgetRequiresDispose = 55,
     PiOfficeTurnTerminalAlreadyRecorded = 56,
     PiOfficeTurnUsageAlreadyFrozen = 57,
+    ProjectNorthStarAlignmentMismatch = 58,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2623,6 +2811,7 @@ pub enum EventBody {
     },
     FoundingUniverseSeedInstalled {
         seed_id: UniverseSeedId,
+        application_revision_id: ApplicationRevisionId,
     },
     GrandArchitectAppointed {
         occupancy_id: OfficeOccupancyId,
@@ -2699,6 +2888,7 @@ pub enum EventBody {
     },
     ProjectCreated {
         project_id: ProjectId,
+        application_revision_id: ApplicationRevisionId,
     },
     ProjectChartered {
         project_id: ProjectId,
@@ -2836,7 +3026,7 @@ pub enum EventBody {
     },
     ContentSealReceiptRecorded {
         content_seal_receipt_id: ContentSealReceiptId,
-        digest: Sha256Digest,
+        digest: Blake3Digest,
     },
     ContentObjectRegistered {
         content_object_id: ContentObjectId,
@@ -2893,7 +3083,7 @@ pub enum EventBody {
         child_process_id: ChildProcessId,
         cancellation_propagation_id: CancellationPropagationId,
         correlation_identity: PiCorrelationIdentity,
-        abort_command_digest: Sha256Digest,
+        abort_command_digest: Blake3Digest,
         outcome: PiAbortControlWriteOutcome,
     },
     ChildStreamSealed {
@@ -3201,10 +3391,20 @@ pub enum DomainValueError {
     InvalidCommandId,
     #[error("society name must be nonblank, shorter than 161 bytes, and contain no NUL")]
     InvalidSocietyName,
+    #[error("application identity must use canonical ASCII application identity grammar")]
+    InvalidApplicationIdentity,
+    #[error("application name must be nonblank, shorter than 161 bytes, and contain no NUL")]
+    InvalidApplicationName,
     #[error("principal display name must be nonblank, shorter than 161 bytes, and contain no NUL")]
     InvalidPrincipalDisplayName,
     #[error("{type_name} must be nonblank, shorter than 1025 bytes, and contain no NUL")]
     InvalidCoordinationText { type_name: &'static str },
+    #[error("{type_name} must be nonblank, shorter than 4097 bytes, and contain no NUL")]
+    InvalidMissionText { type_name: &'static str },
+    #[error("application revision ordinal must be positive: {0}")]
+    NonPositiveApplicationRevisionOrdinal(i64),
+    #[error("mission principle relation must contain 1 through 16 ordered principles, got {count}")]
+    InvalidMissionPrincipleCount { count: usize },
     #[error("{type_name} must use canonical boundary identity grammar")]
     InvalidOperationalIdentity { type_name: &'static str },
     #[error("micro-US-dollars cannot be negative: {0}")]

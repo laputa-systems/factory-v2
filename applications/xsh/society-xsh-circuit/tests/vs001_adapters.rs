@@ -77,7 +77,7 @@ fn replace_once(source: &[u8], from: &str, to: &str) -> Vec<u8> {
 }
 
 fn digest_manifest(schema: &str, kinds: &[&str]) -> Vec<u8> {
-    let mut text = format!("{schema}\ninput_kind\tsha256\n");
+    let mut text = format!("{schema}\ninput_kind\tblake3\n");
     for kind in kinds {
         text.push_str(kind);
         text.push_str("\t0000000000000000000000000000000000000000000000000000000000000000\n");
@@ -325,7 +325,7 @@ fn real_negative_control_report_is_one_exact_closed_rejection_set() {
 fn fluency_relations_preserve_fixture_boundaries_without_actor_inference() {
     let zero = "0000000000000000000000000000000000000000000000000000000000000000";
     let observations = format!(
-        "# schema: FluencyProbeObservationV1/tsv-v1\ncase_id\tinput_manifest\texpected_exit\tsupervisor_exit\tparent_stdout_sha256\tparent_stderr_sha256\tredirected_stderr_sha256\tcorrectness\ttyped_boundary\townership_lifecycle\thost_path_access\tdisposition\nF01\tpreexisting_log_truncate\t0\t0\t{zero}\t{zero}\t{zero}\tpassed\tcompliant\towned_waited\tclean\tpass\nF02\tpath_with_spaces\t0\t0\t{zero}\t{zero}\t{zero}\tpassed\tcompliant\towned_waited\tclean\tpass\nF03\tnonzero_child_status\t23\t23\t{zero}\t{zero}\t{zero}\tpassed\tcompliant\towned_waited\tclean\tpass\n"
+        "# schema: FluencyProbeObservationV1/tsv-v1\ncase_id\tinput_manifest\texpected_exit\tsupervisor_exit\tparent_stdout_blake3\tparent_stderr_blake3\tredirected_stderr_blake3\tcorrectness\ttyped_boundary\townership_lifecycle\thost_path_access\tdisposition\nF01\tpreexisting_log_truncate\t0\t0\t{zero}\t{zero}\t{zero}\tpassed\tcompliant\towned_waited\tclean\tpass\nF02\tpath_with_spaces\t0\t0\t{zero}\t{zero}\t{zero}\tpassed\tcompliant\towned_waited\tclean\tpass\nF03\tnonzero_child_status\t23\t23\t{zero}\t{zero}\t{zero}\tpassed\tcompliant\towned_waited\tclean\tpass\n"
     );
     assert_eq!(
         FluencyProbeObservationSetV1::parse(observations.as_bytes())

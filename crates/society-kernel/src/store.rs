@@ -10,8 +10,10 @@ use crate::{
     ActorAttemptCancellationReason, ActorAttemptId, ActorAttemptState, ActorAttemptTerminalKind,
     ActorConfigurationId, ActorConfigurationRevisionId, ActorInstanceId, ActorInstanceState,
     ActorModelPolicy, AdmissionGeneration, AdversarialReviewId, AdversarialReviewState,
-    BudgetEnvelopeId, BudgetFreezeReason, BudgetReservationId, BudgetReservationState,
-    CancellationMode, CancellationPropagationId, CancellationPropagationState,
+    ApplicationId, ApplicationIdentity, ApplicationMissionInput, ApplicationName,
+    ApplicationRevisionId, ApplicationRevisionOrdinal, Blake3Digest, BudgetEnvelopeId,
+    BudgetFreezeReason, BudgetReservationId, BudgetReservationState, CancellationMode,
+    CancellationPropagationId, CancellationPropagationState,
     CancellationPropagationTargetDisposition, CancellationRequestId, CancellationState,
     CanonicalWorkspacePath, Capability, CausalEpisodeId, ChildProcessId,
     ChildProcessLivenessObservationId, ChildProcessReapReceiptId, ChildProcessRecoveryReceiptId,
@@ -27,7 +29,10 @@ use crate::{
     ExecutionProfileReadiness, ExpectedGeneration, ForensicManifestCapturePolicy,
     ForensicManifestId, GrandArchitectOfficeSessionId, GraphEdgeId, GraphEdgeKind, GraphObjectId,
     GraphObjectKind, GraphRevisionBody, GraphRevisionId, GraphRevisionState,
-    HypothesisRevisionText, InputManifestId, LedgerEvent, NativeChildPid, NativeWorkspaceId,
+    HypothesisRevisionText, InputManifestId, LedgerEvent, MissionPrinciple, MissionPrincipleKind,
+    MissionPrincipleText, MissionPrinciples, MissionStatement, NativeChildPid, NativeWorkspaceId,
+    NorthStarBoundaryCommitmentQuestion, NorthStarChangeQuestion,
+    NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet, NorthStarRevisitQuestion,
     ObservationRevisionText, OfficeId, OfficeKind, OfficeOccupancyId, OfficeSessionState,
     OfficeSessionTerminalState, OfficeTurnId, OfficeTurnPurpose, OfficeTurnState, OperatingCycleId,
     OperatingCycleState, OperatingCycleTreatment, OutcomeObligationDisposition,
@@ -42,20 +47,22 @@ use crate::{
     PostmortemActionProposalId, PostmortemCausalClaimId, PostmortemCausalClaimKind, PostmortemId,
     PostmortemState, PrincipalId, PrincipalKind, ProcessExitCode, ProcessGroupLiveness,
     ProcessSignalAction, ProcessSignalCause, ProcessSignalDelivery, ProcessSignalNumber,
-    ProcessSignalReceiptId, ProjectId, ProjectMilestoneId, ProjectMilestoneState, ProjectState,
-    ProviderCostBinary64, Rejection, RetentionAccessClass, ReviewChallengeId,
-    ReviewChallengeResponseState, ReviewChallengeSeverity, ReviewDispositionKind,
-    ReviewResolutionKind, Sha256Digest, SocietyId, SocietyName, SpawnNonce,
+    ProcessSignalReceiptId, ProjectId, ProjectMilestoneId, ProjectMilestoneState,
+    ProjectNorthStarAlignment, ProjectNorthStarBoundaryCommitmentAnswer,
+    ProjectNorthStarChangeAnswer, ProjectNorthStarImprovementEvidenceAnswer,
+    ProjectNorthStarRevisitAnswer, ProjectState, ProviderCostBinary64, Rejection,
+    RetentionAccessClass, ReviewChallengeId, ReviewChallengeResponseState, ReviewChallengeSeverity,
+    ReviewDispositionKind, ReviewResolutionKind, SocietyId, SocietyName, SpawnNonce,
     SupervisedChildIdentity, SupervisorEpochId, SupervisorEpochIdentity, TicketId, TicketState,
     UniverseSeedId, UsdMicros, WorkItemId, WorkItemKind, WorkItemState, WorkLeaseId,
     WorkLeaseState,
 };
 
 const CURRENT_SCHEMA: &str = include_str!("../../../migrations/0001_kernel.sql");
-// Historical prototype schemas used versions one through six. The collapsed
+// Historical prototype schemas used versions one through seven. The collapsed
 // fresh schema deliberately occupies a noncolliding identity, so an old
 // ledger cannot be mistaken for current trusted physics.
-const CURRENT_SCHEMA_VERSION: i64 = 7;
+const CURRENT_SCHEMA_VERSION: i64 = 9;
 
 struct PiChildSpawnAdmissionInput<'a> {
     operating_cycle_id: OperatingCycleId,
@@ -73,7 +80,7 @@ struct PiChildSpawnAdmissionInput<'a> {
 struct ChildStreamSealInput {
     child_id: ChildProcessId,
     stream: ChildStreamKind,
-    full_digest: Sha256Digest,
+    full_digest: Blake3Digest,
     retained: ContentObjectId,
     completeness: ChildStreamSealCompleteness,
 }
@@ -90,7 +97,7 @@ struct PiAbortControlDeliveryInput<'a> {
     child_id: ChildProcessId,
     propagation_id: CancellationPropagationId,
     correlation: &'a PiCorrelationIdentity,
-    abort_digest: Sha256Digest,
+    abort_digest: Blake3Digest,
     outcome: PiAbortControlWriteOutcome,
 }
 
@@ -99,7 +106,7 @@ struct PiOfficeTurnPromptAuthorizationInput<'a> {
     office_turn_id: OfficeTurnId,
     correlation_identity: &'a PiCorrelationIdentity,
     prompt_content_object_id: ContentObjectId,
-    prompt_digest: Sha256Digest,
+    prompt_digest: Blake3Digest,
     frontier_event_id: EventId,
 }
 
@@ -323,7 +330,7 @@ pub struct KernelStore {
     connection: Connection,
 }
 
-/// The only durable recovery states for one physical SHA-256 identity.
+/// The only durable recovery states for one physical BLAKE3 identity.
 ///
 /// A content object cannot exist without the receipt that attests its physical
 /// seal, so this closed result makes that impossible state unrepresentable to
@@ -673,7 +680,7 @@ impl KernelStore {
     /// compares every current material table/field through a deterministic
     /// digest. This catches mutable-state tampering without pretending that
     /// body-table cardinality alone is replay.
-    pub fn validate_replayed_materialized_state(&self) -> Result<Sha256Digest, StoreError> {
+    pub fn validate_replayed_materialized_state(&self) -> Result<Blake3Digest, StoreError> {
         let expected_events = self.replay_ledger()?;
         let commands = replay_command_requests(&self.connection)?;
         let mut reconstructed = Self::open_in_memory()?;
@@ -734,7 +741,7 @@ impl KernelStore {
     /// the daemon's receipt-to-global-object transition.
     pub fn content_identity_state(
         &self,
-        digest: Sha256Digest,
+        digest: Blake3Digest,
     ) -> Result<ContentIdentityState, StoreError> {
         let row = self
             .connection
@@ -1234,8 +1241,8 @@ fn apply_command(
         CommandBody::InstallGrandArchitectOffice => {
             install_grand_architect_office(transaction, command_row_id)
         }
-        CommandBody::InstallFoundingUniverseSeed { rendering_digest } => {
-            install_founding_universe_seed(transaction, command_row_id, *rendering_digest)
+        CommandBody::InstallFoundingUniverseSeed { mission } => {
+            install_founding_universe_seed(transaction, command_row_id, mission)
         }
         CommandBody::AppointInitialGrandArchitect { actor_display_name } => {
             appoint_initial_grand_architect(
@@ -1355,12 +1362,14 @@ fn apply_command(
         CommandBody::CreateProject {
             operating_cycle_id,
             project_name,
+            north_star_alignment,
         } => create_project(
             transaction,
             command_row_id,
             request.expected_generation,
             *operating_cycle_id,
             project_name.as_str(),
+            north_star_alignment,
         ),
         CommandBody::CharterProject {
             operating_cycle_id,
@@ -2267,7 +2276,7 @@ fn install_grand_architect_office(
 fn install_founding_universe_seed(
     transaction: &Transaction<'_>,
     command_row_id: i64,
-    rendering_digest: Sha256Digest,
+    mission: &ApplicationMissionInput,
 ) -> Result<EventBody, Rejection> {
     let society_id = only_society_id(transaction)?;
     if exists(
@@ -2278,13 +2287,83 @@ fn install_founding_universe_seed(
     }
     transaction
         .execute(
-            "INSERT INTO universe_seeds(society_id, revision, rendering_digest, active, installed_by_command_id)
-             VALUES (?1, 1, ?2, 1, ?3)",
-            params![society_id.value(), rendering_digest.as_bytes().as_slice(), command_row_id],
+            "INSERT INTO applications(application_identity, application_name, created_by_command_id)
+             VALUES (?1, ?2, ?3)",
+            params![
+                mission.application_identity.as_str(),
+                mission.application_name.as_str(),
+                command_row_id
+            ],
+        )
+        .map_err(|_| Rejection::FoundingInvariant)?;
+    let application_id = id_from_last_insert::<ApplicationId>(transaction)?;
+    transaction
+        .execute(
+            "INSERT INTO application_revisions(
+                 application_id, revision_ordinal, mission_statement,
+                 source_rendering_digest, installed_by_command_id
+             ) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                application_id.value(),
+                mission.revision_ordinal.value(),
+                mission.statement.as_str(),
+                mission.source_rendering_digest.as_bytes().as_slice(),
+                command_row_id,
+            ],
+        )
+        .map_err(|_| Rejection::FoundingInvariant)?;
+    let application_revision_id = id_from_last_insert::<ApplicationRevisionId>(transaction)?;
+    for (index, principle) in mission.principles.as_slice().iter().enumerate() {
+        let ordinal = i64::try_from(index + 1).map_err(|_| Rejection::FoundingInvariant)?;
+        transaction
+            .execute(
+                "INSERT INTO application_revision_principles(
+                     application_revision_id, principle_ordinal,
+                     principle_kind, principle_text
+                 ) VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    application_revision_id.value(),
+                    ordinal,
+                    principle.kind as i64,
+                    principle.text.as_str(),
+                ],
+            )
+            .map_err(|_| Rejection::FoundingInvariant)?;
+    }
+    let questions = &mission.north_star_questions;
+    transaction
+        .execute(
+            "INSERT INTO application_revision_north_star_questions(
+                 application_revision_id, change_question,
+                 improvement_evidence_question, boundary_commitment_question,
+                 revisit_question
+             ) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                application_revision_id.value(),
+                questions.change.as_str(),
+                questions.improvement_evidence.as_str(),
+                questions.boundary_commitment.as_str(),
+                questions.revisit.as_str(),
+            ],
+        )
+        .map_err(|_| Rejection::FoundingInvariant)?;
+    transaction
+        .execute(
+            "INSERT INTO universe_seeds(
+                 society_id, application_revision_id, revision,
+                 active, installed_by_command_id
+             ) VALUES (?1, ?2, ?3, 1, ?4)",
+            params![
+                society_id.value(),
+                application_revision_id.value(),
+                mission.revision_ordinal.value(),
+                command_row_id
+            ],
         )
         .map_err(|_| Rejection::FoundingInvariant)?;
     Ok(EventBody::FoundingUniverseSeedInstalled {
         seed_id: id_from_last_insert::<UniverseSeedId>(transaction)?,
+        application_revision_id,
     })
 }
 
@@ -2833,7 +2912,7 @@ fn record_pi_office_turn_prompt_delivery(
     command_row_id: i64,
     office_turn_id: OfficeTurnId,
     correlation_identity: &PiCorrelationIdentity,
-    prompt_digest: Sha256Digest,
+    prompt_digest: Blake3Digest,
 ) -> Result<EventBody, Rejection> {
     let authorization: Option<i64> = transaction.query_row(
         "SELECT pi_office_turn_prompt_authorization_id FROM pi_office_turn_prompt_authorizations
@@ -4167,14 +4246,45 @@ fn create_project(
     expected_generation: ExpectedGeneration,
     operating_cycle_id: OperatingCycleId,
     project_name: &str,
+    north_star_alignment: &ProjectNorthStarAlignment,
 ) -> Result<EventBody, Rejection> {
     let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
+    let seed_application_revision_id: i64 = transaction
+        .query_row(
+            "SELECT application_revision_id FROM universe_seeds WHERE universe_seed_id = ?1",
+            [cycle.seed_id.value()],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|_| Rejection::SubjectNotFound)?
+        .ok_or(Rejection::SubjectNotFound)?;
+    if seed_application_revision_id != north_star_alignment.application_revision_id.value() {
+        return Err(Rejection::ProjectNorthStarAlignmentMismatch);
+    }
     transaction.execute(
         "INSERT INTO projects(project_name, universe_seed_id, lifecycle_state, created_by_command_id, last_transition_command_id)
          VALUES (?1, ?2, ?3, ?4, ?4)",
         params![project_name, cycle.seed_id.value(), ProjectState::Proposed as i64, command_row_id],
     ).map_err(|_| Rejection::FoundingInvariant)?;
     let project_id = id_from_last_insert::<ProjectId>(transaction)?;
+    transaction
+        .execute(
+            "INSERT INTO project_north_star_alignments(
+                 project_id, application_revision_id, change_answer,
+                 improvement_evidence_answer, boundary_commitment_answer,
+                 revisit_answer, aligned_by_command_id
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                project_id.value(),
+                north_star_alignment.application_revision_id.value(),
+                north_star_alignment.change_answer.as_str(),
+                north_star_alignment.improvement_evidence_answer.as_str(),
+                north_star_alignment.boundary_commitment_answer.as_str(),
+                north_star_alignment.revisit_answer.as_str(),
+                command_row_id,
+            ],
+        )
+        .map_err(|_| Rejection::ProjectNorthStarAlignmentMismatch)?;
     record_coordination_provenance(
         transaction,
         command_row_id,
@@ -4182,7 +4292,10 @@ fn create_project(
         operating_cycle_id,
         Some(project_id),
     )?;
-    Ok(EventBody::ProjectCreated { project_id })
+    Ok(EventBody::ProjectCreated {
+        project_id,
+        application_revision_id: north_star_alignment.application_revision_id,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -5431,7 +5544,7 @@ fn register_context_pack(
     expected_generation: ExpectedGeneration,
     operating_cycle_id: OperatingCycleId,
     purpose: ContextPackPurpose,
-    rendering_digest: Sha256Digest,
+    rendering_digest: Blake3Digest,
 ) -> Result<EventBody, Rejection> {
     let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
     transaction.execute(
@@ -6186,7 +6299,7 @@ fn resolve_outcome_obligation(
 fn record_content_seal_receipt(
     transaction: &Transaction<'_>,
     command_row_id: i64,
-    digest: Sha256Digest,
+    digest: Blake3Digest,
 ) -> Result<EventBody, Rejection> {
     let duplicate: i64 = transaction
         .query_row(
@@ -6972,7 +7085,7 @@ fn authorize_pi_create_session(
     expected: ExpectedGeneration,
     child_id: ChildProcessId,
     correlation: &PiCorrelationIdentity,
-    create_request_digest: Sha256Digest,
+    create_request_digest: Blake3Digest,
 ) -> Result<EventBody, Rejection> {
     let (cycle_id, state, _) = child_cycle_for_generation(transaction, child_id, expected)?;
     let cycle = cycle_for_generation(transaction, cycle_id, expected)?;
@@ -7024,7 +7137,7 @@ fn record_pi_create_session_delivery(
     expected: ExpectedGeneration,
     child_id: ChildProcessId,
     correlation: &PiCorrelationIdentity,
-    create_request_digest: Sha256Digest,
+    create_request_digest: Blake3Digest,
 ) -> Result<EventBody, Rejection> {
     let (_, state, _) = child_cycle_for_generation(transaction, child_id, expected)?;
     let matches: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM pi_child_session_protocols WHERE child_process_id = ?1 AND lifecycle_state = ?2 AND create_correlation_identity = ?3 AND create_request_digest = ?4)", params![child_id.value(), PiChildSessionState::CreateAuthorized as i64, correlation.as_str(), create_request_digest.as_bytes().as_slice()], |r| r.get::<_, i64>(0)).map_err(|_| Rejection::ChildLifecycleReceiptMissing)? != 0;
@@ -8589,7 +8702,7 @@ fn expected_generation_to_sql(value: ExpectedGeneration) -> Option<i64> {
     }
 }
 
-fn request_fingerprint(request: &CommandRequest) -> Sha256Digest {
+fn request_fingerprint(request: &CommandRequest) -> Blake3Digest {
     let mut bytes = Vec::with_capacity(128);
     put_bytes(&mut bytes, request.command_id.as_str().as_bytes());
     put_i64(&mut bytes, request.principal_id.value());
@@ -8605,8 +8718,41 @@ fn request_fingerprint(request: &CommandRequest) -> Sha256Digest {
             put_bytes(&mut bytes, name.as_str().as_bytes())
         }
         CommandBody::InstallGrandArchitectOffice | CommandBody::BootstrapSociety => {}
-        CommandBody::InstallFoundingUniverseSeed { rendering_digest } => {
-            put_bytes(&mut bytes, &rendering_digest.as_bytes())
+        CommandBody::InstallFoundingUniverseSeed { mission } => {
+            put_bytes(&mut bytes, mission.application_identity.as_str().as_bytes());
+            put_bytes(&mut bytes, mission.application_name.as_str().as_bytes());
+            put_i64(&mut bytes, mission.revision_ordinal.value());
+            put_bytes(&mut bytes, mission.statement.as_str().as_bytes());
+            put_i64(&mut bytes, mission.principles.as_slice().len() as i64);
+            for principle in mission.principles.as_slice() {
+                put_i64(&mut bytes, principle.kind as i64);
+                put_bytes(&mut bytes, principle.text.as_str().as_bytes());
+            }
+            put_bytes(
+                &mut bytes,
+                mission.north_star_questions.change.as_str().as_bytes(),
+            );
+            put_bytes(
+                &mut bytes,
+                mission
+                    .north_star_questions
+                    .improvement_evidence
+                    .as_str()
+                    .as_bytes(),
+            );
+            put_bytes(
+                &mut bytes,
+                mission
+                    .north_star_questions
+                    .boundary_commitment
+                    .as_str()
+                    .as_bytes(),
+            );
+            put_bytes(
+                &mut bytes,
+                mission.north_star_questions.revisit.as_str().as_bytes(),
+            );
+            put_bytes(&mut bytes, &mission.source_rendering_digest.as_bytes());
         }
         CommandBody::AppointInitialGrandArchitect { actor_display_name } => {
             put_bytes(&mut bytes, actor_display_name.as_str().as_bytes())
@@ -8691,9 +8837,36 @@ fn request_fingerprint(request: &CommandRequest) -> Sha256Digest {
         CommandBody::CreateProject {
             operating_cycle_id,
             project_name,
+            north_star_alignment,
         } => {
             put_i64(&mut bytes, operating_cycle_id.value());
             put_bytes(&mut bytes, project_name.as_str().as_bytes());
+            put_i64(
+                &mut bytes,
+                north_star_alignment.application_revision_id.value(),
+            );
+            put_bytes(
+                &mut bytes,
+                north_star_alignment.change_answer.as_str().as_bytes(),
+            );
+            put_bytes(
+                &mut bytes,
+                north_star_alignment
+                    .improvement_evidence_answer
+                    .as_str()
+                    .as_bytes(),
+            );
+            put_bytes(
+                &mut bytes,
+                north_star_alignment
+                    .boundary_commitment_answer
+                    .as_str()
+                    .as_bytes(),
+            );
+            put_bytes(
+                &mut bytes,
+                north_star_alignment.revisit_answer.as_str().as_bytes(),
+            );
         }
         CommandBody::CharterProject {
             operating_cycle_id,
@@ -9358,14 +9531,14 @@ fn request_fingerprint(request: &CommandRequest) -> Sha256Digest {
             put_i64(&mut bytes, *transcript_disposition as i64);
         }
     }
-    Sha256Digest::of_bytes(&bytes)
+    Blake3Digest::of_bytes(&bytes)
 }
 
 /// A compact integrity commitment to an exact ledger event. Event identity and
 /// its command identity are committed before the closed body so relinking an
 /// otherwise valid event to a different command is detectable. This is not a
 /// hash chain: events remain independently inspectable.
-fn event_fingerprint(event_id: EventId, command_id: &CommandId, body: &EventBody) -> Sha256Digest {
+fn event_fingerprint(event_id: EventId, command_id: &CommandId, body: &EventBody) -> Blake3Digest {
     let mut bytes = Vec::with_capacity(96);
     put_i64(&mut bytes, event_id.value());
     put_bytes(&mut bytes, command_id.as_str().as_bytes());
@@ -9378,8 +9551,12 @@ fn event_fingerprint(event_id: EventId, command_id: &CommandId, body: &EventBody
         EventBody::GrandArchitectOfficeInstalled { office_id } => {
             put_i64(&mut bytes, office_id.value());
         }
-        EventBody::FoundingUniverseSeedInstalled { seed_id } => {
+        EventBody::FoundingUniverseSeedInstalled {
+            seed_id,
+            application_revision_id,
+        } => {
             put_i64(&mut bytes, seed_id.value());
+            put_i64(&mut bytes, application_revision_id.value());
         }
         EventBody::GrandArchitectAppointed {
             occupancy_id,
@@ -9518,9 +9695,14 @@ fn event_fingerprint(event_id: EventId, command_id: &CommandId, body: &EventBody
             put_i64(&mut bytes, *resolution as i64);
             put_i64(&mut bytes, charged.value());
         }
-        EventBody::ProjectCreated { project_id } | EventBody::ProjectChartered { project_id } => {
-            put_i64(&mut bytes, project_id.value())
+        EventBody::ProjectCreated {
+            project_id,
+            application_revision_id,
+        } => {
+            put_i64(&mut bytes, project_id.value());
+            put_i64(&mut bytes, application_revision_id.value());
         }
+        EventBody::ProjectChartered { project_id } => put_i64(&mut bytes, project_id.value()),
         EventBody::ProjectStateChanged { project_id, state } => {
             put_i64(&mut bytes, project_id.value());
             put_i64(&mut bytes, *state as i64);
@@ -9977,7 +10159,7 @@ fn event_fingerprint(event_id: EventId, command_id: &CommandId, body: &EventBody
             put_i64(&mut bytes, *assistant_outcome as i64);
         }
     }
-    Sha256Digest::of_bytes(&bytes)
+    Blake3Digest::of_bytes(&bytes)
 }
 
 fn put_bytes(bytes: &mut Vec<u8>, value: &[u8]) {
@@ -10088,8 +10270,48 @@ fn insert_command_body(
                 [command_row_id],
             )?;
         }
-        CommandBody::InstallFoundingUniverseSeed { rendering_digest } => {
-            transaction.execute("INSERT INTO command_install_founding_universe_seed(command_row_id, rendering_digest) VALUES (?1, ?2)", params![command_row_id, rendering_digest.as_bytes().as_slice()])?;
+        CommandBody::InstallFoundingUniverseSeed { mission } => {
+            transaction.execute(
+                "INSERT INTO command_install_founding_universe_seed(
+                     command_row_id, application_identity, application_name,
+                     revision_ordinal, mission_statement, source_rendering_digest
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    command_row_id,
+                    mission.application_identity.as_str(),
+                    mission.application_name.as_str(),
+                    mission.revision_ordinal.value(),
+                    mission.statement.as_str(),
+                    mission.source_rendering_digest.as_bytes().as_slice(),
+                ],
+            )?;
+            for (index, principle) in mission.principles.as_slice().iter().enumerate() {
+                transaction.execute(
+                    "INSERT INTO command_install_founding_universe_seed_principles(
+                         command_row_id, principle_ordinal, principle_kind, principle_text
+                     ) VALUES (?1, ?2, ?3, ?4)",
+                    params![
+                        command_row_id,
+                        i64::try_from(index + 1).map_err(|_| StoreError::InvalidStoredValue)?,
+                        principle.kind as i64,
+                        principle.text.as_str(),
+                    ],
+                )?;
+            }
+            let questions = &mission.north_star_questions;
+            transaction.execute(
+                "INSERT INTO command_install_founding_universe_seed_north_star_questions(
+                     command_row_id, change_question, improvement_evidence_question,
+                     boundary_commitment_question, revisit_question
+                 ) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    command_row_id,
+                    questions.change.as_str(),
+                    questions.improvement_evidence.as_str(),
+                    questions.boundary_commitment.as_str(),
+                    questions.revisit.as_str(),
+                ],
+            )?;
         }
         CommandBody::AppointInitialGrandArchitect { actor_display_name } => {
             transaction.execute("INSERT INTO command_appoint_initial_grand_architect(command_row_id, actor_display_name) VALUES (?1, ?2)", params![command_row_id, actor_display_name.as_str()])?;
@@ -10183,13 +10405,19 @@ fn insert_command_body(
         CommandBody::CreateProject {
             operating_cycle_id,
             project_name,
+            north_star_alignment,
         } => {
             transaction.execute(
-                "INSERT INTO command_create_project VALUES (?1, ?2, ?3)",
+                "INSERT INTO command_create_project VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![
                     command_row_id,
                     operating_cycle_id.value(),
-                    project_name.as_str()
+                    project_name.as_str(),
+                    north_star_alignment.application_revision_id.value(),
+                    north_star_alignment.change_answer.as_str(),
+                    north_star_alignment.improvement_evidence_answer.as_str(),
+                    north_star_alignment.boundary_commitment_answer.as_str(),
+                    north_star_alignment.revisit_answer.as_str(),
                 ],
             )?;
         }
@@ -11196,8 +11424,20 @@ fn insert_event_body(
         EventBody::GrandArchitectOfficeInstalled { office_id } => {
             transaction.execute("INSERT INTO event_grand_architect_office_installed(event_id, office_id) VALUES (?1, ?2)", params![event_id.value(), office_id.value()])?;
         }
-        EventBody::FoundingUniverseSeedInstalled { seed_id } => {
-            transaction.execute("INSERT INTO event_founding_universe_seed_installed(event_id, universe_seed_id) VALUES (?1, ?2)", params![event_id.value(), seed_id.value()])?;
+        EventBody::FoundingUniverseSeedInstalled {
+            seed_id,
+            application_revision_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_founding_universe_seed_installed(
+                     event_id, universe_seed_id, application_revision_id
+                 ) VALUES (?1, ?2, ?3)",
+                params![
+                    event_id.value(),
+                    seed_id.value(),
+                    application_revision_id.value()
+                ],
+            )?;
         }
         EventBody::GrandArchitectAppointed {
             occupancy_id,
@@ -11302,10 +11542,17 @@ fn insert_event_body(
         } => {
             transaction.execute("INSERT INTO event_cost_postmortem_closed(event_id, postmortem_id, budget_reservation_id, operating_cycle_id, resolution_kind, charged_micros) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![event_id.value(), postmortem_id.value(), reservation_id.value(), cycle_id.value(), *resolution as i64, charged.value()])?;
         }
-        EventBody::ProjectCreated { project_id } => {
+        EventBody::ProjectCreated {
+            project_id,
+            application_revision_id,
+        } => {
             transaction.execute(
-                "INSERT INTO event_project_created VALUES (?1, ?2)",
-                params![event_id.value(), project_id.value()],
+                "INSERT INTO event_project_created VALUES (?1, ?2, ?3)",
+                params![
+                    event_id.value(),
+                    project_id.value(),
+                    application_revision_id.value()
+                ],
             )?;
         }
         EventBody::ProjectChartered { project_id } => {
@@ -12116,14 +12363,25 @@ fn decode_event_body(
                 event_id_typed,
             )?,
         },
-        EventKind::FoundingUniverseSeedInstalled => EventBody::FoundingUniverseSeedInstalled {
-            seed_id: query_event_id(
-                connection,
-                "event_founding_universe_seed_installed",
-                "universe_seed_id",
-                event_id_typed,
-            )?,
-        },
+        EventKind::FoundingUniverseSeedInstalled => {
+            let (seed_id, application_revision_id) = connection
+                .query_row(
+                    "SELECT universe_seed_id, application_revision_id
+                     FROM event_founding_universe_seed_installed WHERE event_id = ?1",
+                    [event_id],
+                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+                )
+                .optional()?
+                .ok_or(StoreError::LedgerCorruption(
+                    "missing founding universe seed event body",
+                ))?;
+            EventBody::FoundingUniverseSeedInstalled {
+                seed_id: UniverseSeedId::try_from(seed_id)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                application_revision_id: ApplicationRevisionId::try_from(application_revision_id)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
         EventKind::GrandArchitectAppointed => {
             let (occupancy_id, principal_id) = connection
                 .query_row(
@@ -12277,14 +12535,25 @@ fn decode_event_body(
                     .map_err(|_| StoreError::InvalidStoredValue)?,
             }
         }
-        EventKind::ProjectCreated => EventBody::ProjectCreated {
-            project_id: query_event_id(
-                connection,
-                "event_project_created",
-                "project_id",
-                event_id_typed,
-            )?,
-        },
+        EventKind::ProjectCreated => {
+            let (project_id, application_revision_id) = connection
+                .query_row(
+                    "SELECT project_id, application_revision_id FROM event_project_created
+                     WHERE event_id = ?1",
+                    [event_id],
+                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+                )
+                .optional()?
+                .ok_or(StoreError::LedgerCorruption(
+                    "missing project creation event body",
+                ))?;
+            EventBody::ProjectCreated {
+                project_id: ProjectId::try_from(project_id)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                application_revision_id: ApplicationRevisionId::try_from(application_revision_id)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
         EventKind::ProjectChartered => EventBody::ProjectChartered {
             project_id: query_event_id(
                 connection,
@@ -13185,10 +13454,14 @@ fn replay_command_requests(
     Ok(commands)
 }
 
-const MATERIALIZED_TABLES: [&str; 84] = [
+const MATERIALIZED_TABLES: [&str; 89] = [
     "principals",
     "societies",
     "office_contracts",
+    "applications",
+    "application_revisions",
+    "application_revision_principles",
+    "application_revision_north_star_questions",
     "universe_seeds",
     "office_occupancies",
     "capability_grants",
@@ -13206,6 +13479,7 @@ const MATERIALIZED_TABLES: [&str; 84] = [
     "cost_postmortems",
     "cost_postmortem_resolutions",
     "projects",
+    "project_north_star_alignments",
     "project_objectives",
     "project_milestones",
     "project_stop_conditions",
@@ -13272,7 +13546,7 @@ const MATERIALIZED_TABLES: [&str; 84] = [
     "pi_office_turn_terminal_receipts",
 ];
 
-fn materialized_state_digest(connection: &Connection) -> Result<Sha256Digest, StoreError> {
+fn materialized_state_digest(connection: &Connection) -> Result<Blake3Digest, StoreError> {
     let mut bytes = Vec::with_capacity(4_096);
     for table in MATERIALIZED_TABLES {
         put_bytes(&mut bytes, table.as_bytes());
@@ -13306,7 +13580,7 @@ fn materialized_state_digest(connection: &Connection) -> Result<Sha256Digest, St
         }
         put_i64(&mut bytes, 0);
     }
-    Ok(Sha256Digest::of_bytes(&bytes))
+    Ok(Blake3Digest::of_bytes(&bytes))
 }
 
 fn decode_command_body(
@@ -13327,17 +13601,9 @@ fn decode_command_body(
             }
         }
         CommandKind::InstallGrandArchitectOffice => CommandBody::InstallGrandArchitectOffice,
-        CommandKind::InstallFoundingUniverseSeed => {
-            let digest: Vec<u8> = query_command_value(
-                connection,
-                "command_install_founding_universe_seed",
-                "rendering_digest",
-                command_row_id,
-            )?;
-            CommandBody::InstallFoundingUniverseSeed {
-                rendering_digest: digest_from_stored_bytes(&digest)?,
-            }
-        }
+        CommandKind::InstallFoundingUniverseSeed => CommandBody::InstallFoundingUniverseSeed {
+            mission: decode_application_mission_input(connection, command_row_id)?,
+        },
         CommandKind::AppointInitialGrandArchitect => {
             let display_name: String = query_command_value(
                 connection,
@@ -13591,13 +13857,50 @@ fn decode_command_body(
             }
         }
         CommandKind::CreateProject => {
-            let (cycle, name) =
-                query_command_i64_text(connection, "command_create_project", command_row_id)?;
+            let (cycle, name, revision, change, evidence, boundary, revisit) = connection
+                .query_row(
+                    "SELECT operating_cycle_id, project_name, application_revision_id,
+                            change_answer, improvement_evidence_answer,
+                            boundary_commitment_answer, revisit_answer
+                     FROM command_create_project WHERE command_row_id = ?1",
+                    [command_row_id],
+                    |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, i64>(2)?,
+                            row.get::<_, String>(3)?,
+                            row.get::<_, String>(4)?,
+                            row.get::<_, String>(5)?,
+                            row.get::<_, String>(6)?,
+                        ))
+                    },
+                )
+                .optional()?
+                .ok_or(StoreError::LedgerCorruption(
+                    "missing project creation command body",
+                ))?;
             CommandBody::CreateProject {
                 operating_cycle_id: OperatingCycleId::try_from(cycle)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
                 project_name: crate::ProjectName::parse(name)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
+                north_star_alignment: ProjectNorthStarAlignment {
+                    application_revision_id: ApplicationRevisionId::try_from(revision)
+                        .map_err(|_| StoreError::InvalidStoredValue)?,
+                    change_answer: ProjectNorthStarChangeAnswer::parse(change)
+                        .map_err(|_| StoreError::InvalidStoredValue)?,
+                    improvement_evidence_answer: ProjectNorthStarImprovementEvidenceAnswer::parse(
+                        evidence,
+                    )
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                    boundary_commitment_answer: ProjectNorthStarBoundaryCommitmentAnswer::parse(
+                        boundary,
+                    )
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                    revisit_answer: ProjectNorthStarRevisitAnswer::parse(revisit)
+                        .map_err(|_| StoreError::InvalidStoredValue)?,
+                },
             }
         }
         CommandKind::CharterProject => {
@@ -14516,17 +14819,6 @@ fn query_command_three(
             "missing three-field command body",
         ))
 }
-fn query_command_i64_text(
-    connection: &Connection,
-    table: &str,
-    id: i64,
-) -> Result<(i64, String), StoreError> {
-    let query = format!("SELECT * FROM {table} WHERE command_row_id = ?1");
-    connection
-        .query_row(&query, [id], |r| Ok((r.get(1)?, r.get(2)?)))
-        .optional()?
-        .ok_or(StoreError::LedgerCorruption("missing text command body"))
-}
 fn query_command_six(
     connection: &Connection,
     table: &str,
@@ -14639,11 +14931,112 @@ where
     .map_err(|_| StoreError::InvalidStoredValue)
 }
 
-fn digest_from_stored_bytes(bytes: &[u8]) -> Result<Sha256Digest, StoreError> {
+fn digest_from_stored_bytes(bytes: &[u8]) -> Result<Blake3Digest, StoreError> {
     let bytes: [u8; 32] = bytes
         .try_into()
         .map_err(|_| StoreError::InvalidStoredValue)?;
-    Ok(Sha256Digest::from_bytes(bytes))
+    Ok(Blake3Digest::from_bytes(bytes))
+}
+
+/// Decodes the complete normalized founding mission body. The parent body is
+/// still subject to ordinary one-to-one command-cardinality checks; this
+/// helper additionally makes its ordered principle relation and exact four
+/// question fields part of that body rather than treating either as ambient
+/// configuration.
+fn decode_application_mission_input(
+    connection: &Connection,
+    command_row_id: i64,
+) -> Result<ApplicationMissionInput, StoreError> {
+    let (identity, name, ordinal, statement, rendering_digest) = connection
+        .query_row(
+            "SELECT application_identity, application_name, revision_ordinal,
+                    mission_statement, source_rendering_digest
+             FROM command_install_founding_universe_seed WHERE command_row_id = ?1",
+            [command_row_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, Vec<u8>>(4)?,
+                ))
+            },
+        )
+        .optional()?
+        .ok_or(StoreError::LedgerCorruption(
+            "missing founding mission command body",
+        ))?;
+    let mut statement_rows = connection.prepare(
+        "SELECT principle_ordinal, principle_kind, principle_text
+         FROM command_install_founding_universe_seed_principles
+         WHERE command_row_id = ?1 ORDER BY principle_ordinal",
+    )?;
+    let rows = statement_rows.query_map([command_row_id], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, String>(2)?,
+        ))
+    })?;
+    let mut principles = Vec::new();
+    for (index, row) in rows.enumerate() {
+        let (stored_ordinal, kind, text) = row?;
+        let expected_ordinal =
+            i64::try_from(index + 1).map_err(|_| StoreError::InvalidStoredValue)?;
+        if stored_ordinal != expected_ordinal {
+            return Err(StoreError::LedgerCorruption(
+                "mission principle ordinals are not contiguous",
+            ));
+        }
+        principles.push(MissionPrinciple {
+            kind: mission_principle_kind_from_i64(kind)?,
+            text: MissionPrincipleText::parse(text).map_err(|_| StoreError::InvalidStoredValue)?,
+        });
+    }
+    let questions = connection
+        .query_row(
+            "SELECT change_question, improvement_evidence_question,
+                    boundary_commitment_question, revisit_question
+             FROM command_install_founding_universe_seed_north_star_questions
+             WHERE command_row_id = ?1",
+            [command_row_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            },
+        )
+        .optional()?
+        .ok_or(StoreError::LedgerCorruption(
+            "missing founding North Star questions command body",
+        ))?;
+    Ok(ApplicationMissionInput {
+        application_identity: ApplicationIdentity::parse(identity)
+            .map_err(|_| StoreError::InvalidStoredValue)?,
+        application_name: ApplicationName::parse(name)
+            .map_err(|_| StoreError::InvalidStoredValue)?,
+        revision_ordinal: ApplicationRevisionOrdinal::try_from(ordinal)
+            .map_err(|_| StoreError::InvalidStoredValue)?,
+        statement: MissionStatement::parse(statement)
+            .map_err(|_| StoreError::InvalidStoredValue)?,
+        principles: MissionPrinciples::new(principles)
+            .map_err(|_| StoreError::InvalidStoredValue)?,
+        north_star_questions: NorthStarQuestionSet {
+            change: NorthStarChangeQuestion::parse(questions.0)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+            improvement_evidence: NorthStarImprovementEvidenceQuestion::parse(questions.1)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+            boundary_commitment: NorthStarBoundaryCommitmentQuestion::parse(questions.2)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+            revisit: NorthStarRevisitQuestion::parse(questions.3)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+        },
+        source_rendering_digest: digest_from_stored_bytes(&rendering_digest)?,
+    })
 }
 
 fn verify_exact_event_body(
@@ -15578,6 +15971,16 @@ fn cost_unavailable_reason_from_i64(value: i64) -> Result<CostUnavailableReason,
         2 => Ok(CostUnavailableReason::CredentialUnavailable),
         3 => Ok(CostUnavailableReason::QualificationRejected),
         4 => Ok(CostUnavailableReason::AdapterAccountingUnavailable),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+
+fn mission_principle_kind_from_i64(value: i64) -> Result<MissionPrincipleKind, StoreError> {
+    match value {
+        1 => Ok(MissionPrincipleKind::Purpose),
+        2 => Ok(MissionPrincipleKind::Evidence),
+        3 => Ok(MissionPrincipleKind::Boundary),
+        4 => Ok(MissionPrincipleKind::Revision),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }

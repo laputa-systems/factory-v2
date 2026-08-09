@@ -4,7 +4,6 @@
  * project resources nor exposes a mutating Pi configuration surface.
  */
 
-import { createHash } from "node:crypto";
 import { access, readFile, realpath, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, normalize, relative } from "node:path";
 
@@ -19,6 +18,8 @@ import {
 	type ResourceLoader,
 } from "@earendil-works/pi-coding-agent";
 
+import { blake3Hex } from "./digest.js";
+
 import {
 	PINNED_MODEL,
 	PINNED_PROVIDER,
@@ -29,7 +30,7 @@ import {
 	binary64BigEndianHex,
 	nonNegativeInteger,
 	providerCostObservation,
-	sha256Digest,
+	blake3Digest,
 	type ActorModelPolicyV1,
 	type AbsolutePath,
 	type CreateSessionPayload,
@@ -185,7 +186,7 @@ function toPiSettings(policy: ActorModelPolicyV1) {
 }
 
 function assertSystemPromptDigest(payload: CreateSessionPayload): void {
-	const observed = createHash("sha256").update(payload.systemPrompt, "utf8").digest("hex");
+	const observed = blake3Hex(payload.systemPrompt);
 	if (observed !== payload.systemPromptDigest) throw new SdkConstructionError("execution_profile_drift");
 }
 
@@ -207,7 +208,7 @@ interface BoundCatalogFiles {
 	readonly agentDirectory: AbsolutePath;
 	readonly authPath: AbsolutePath;
 	readonly modelsPath: AbsolutePath;
-	readonly catalogSha256: ReturnType<typeof sha256Digest>;
+	readonly catalogBlake3: ReturnType<typeof blake3Digest>;
 }
 
 /**
@@ -221,9 +222,9 @@ async function bindCatalogFiles(payload: CreateSessionPayload): Promise<BoundCat
 		const authPath = await resolveOwnedRegularFile(payload.authPath, agentDirectory);
 		const modelsPath = await resolveOwnedRegularFile(payload.modelsPath, agentDirectory);
 		const bytes = await readFile(modelsPath);
-		const catalogSha256 = sha256Digest(createHash("sha256").update(bytes).digest("hex"));
-		if (catalogSha256 !== payload.modelCatalog.catalogSha256) throw new SdkConstructionError("execution_profile_drift");
-		return { agentDirectory, authPath, modelsPath, catalogSha256 };
+		const catalogBlake3 = blake3Digest(blake3Hex(bytes));
+		if (catalogBlake3 !== payload.modelCatalog.catalogBlake3) throw new SdkConstructionError("execution_profile_drift");
+		return { agentDirectory, authPath, modelsPath, catalogBlake3 };
 	} catch (error) {
 		if (error instanceof SdkConstructionError) throw error;
 		throw new SdkConstructionError("execution_profile_drift");
@@ -232,8 +233,8 @@ async function bindCatalogFiles(payload: CreateSessionPayload): Promise<BoundCat
 
 async function assertCatalogUnchanged(catalog: BoundCatalogFiles): Promise<void> {
 	try {
-		const observed = sha256Digest(createHash("sha256").update(await readFile(catalog.modelsPath)).digest("hex"));
-		if (observed !== catalog.catalogSha256) throw new SdkConstructionError("execution_profile_drift");
+		const observed = blake3Digest(blake3Hex(await readFile(catalog.modelsPath)));
+		if (observed !== catalog.catalogBlake3) throw new SdkConstructionError("execution_profile_drift");
 	} catch (error) {
 		if (error instanceof SdkConstructionError) throw error;
 		throw new SdkConstructionError("execution_profile_drift");
@@ -494,7 +495,7 @@ export async function verifyCanonicalTranscriptFile(
 			sessionIdentity,
 			sessionFile: resolvedSessionFile,
 			materialization: "observed",
-			sessionFileSha256: sha256Digest(createHash("sha256").update(transcript, "utf8").digest("hex")),
+			sessionFileBlake3: blake3Digest(blake3Hex(transcript)),
 			headerCwd,
 			firstUserPrompt,
 		};
@@ -568,13 +569,13 @@ function absentFirstPromptReceipt(firstUserMessage: { message: unknown } | undef
 function verifiedFirstPromptReceipt(
 	firstUserMessage: { message: unknown } | undefined,
 	expectedFirstPromptRendering: string,
-): { readonly kind: "verified"; readonly digest: ReturnType<typeof sha256Digest> } {
+): { readonly kind: "verified"; readonly digest: ReturnType<typeof blake3Digest> } {
 	if (firstUserMessage === undefined || !hasExactTextContent(firstUserMessage.message, expectedFirstPromptRendering)) {
 		throw new SdkConstructionError("sdk_operation_failed");
 	}
 	return {
 		kind: "verified",
-		digest: sha256Digest(createHash("sha256").update(expectedFirstPromptRendering, "utf8").digest("hex")),
+		digest: blake3Digest(blake3Hex(expectedFirstPromptRendering)),
 	};
 }
 

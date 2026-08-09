@@ -15,8 +15,8 @@ use society_content::{
     ContentStoreRoot,
 };
 use society_kernel::{
-    Capability, CommandBody, CommandDisposition, CommandId, CommandRequest, ContentIdentityState,
-    ContentObjectId, KernelStore, PrincipalId, Sha256Digest, StoreError,
+    Blake3Digest, Capability, CommandBody, CommandDisposition, CommandId, CommandRequest,
+    ContentIdentityState, ContentObjectId, KernelStore, PrincipalId, StoreError,
 };
 use thiserror::Error;
 
@@ -34,7 +34,7 @@ const REGISTER_COMMAND_SUFFIX: &str = "/object";
 /// registering a second meaning for the same operation identity.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ContentSealOperationId {
-    expected_digest: Sha256Digest,
+    expected_digest: Blake3Digest,
     record_content_seal_receipt_command_id: CommandId,
     register_content_object_command_id: CommandId,
 }
@@ -45,7 +45,7 @@ impl ContentSealOperationId {
     /// text, so their relation cannot drift across crash retries.
     pub(crate) fn parse(
         label: impl AsRef<str>,
-        expected_digest: Sha256Digest,
+        expected_digest: Blake3Digest,
     ) -> Result<Self, ContentSealOperationIdError> {
         let label = label.as_ref();
         if !valid_operation_label(label) {
@@ -66,7 +66,7 @@ impl ContentSealOperationId {
         })
     }
 
-    pub(crate) const fn expected_digest(&self) -> Sha256Digest {
+    pub(crate) const fn expected_digest(&self) -> Blake3Digest {
         self.expected_digest
     }
 
@@ -105,7 +105,7 @@ pub(crate) enum ContentSealOperationIdError {
 /// identity and physical store disposition, never contextual semantics.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ContentObjectRegistration {
-    pub(crate) digest: Sha256Digest,
+    pub(crate) digest: Blake3Digest,
     pub(crate) content_object_id: ContentObjectId,
     pub(crate) physical_disposition: ContentSealDisposition,
 }
@@ -226,7 +226,7 @@ impl ContentSealingAuthority {
         &self,
         kernel: &mut KernelStore,
         operation: &ContentSealOperationId,
-        digest: Sha256Digest,
+        digest: Blake3Digest,
         physical_disposition: ContentSealDisposition,
         content_seal_receipt_id: society_kernel::ContentSealReceiptId,
     ) -> Result<ContentObjectRegistration, ContentSealingError> {
@@ -277,8 +277,8 @@ impl ContentSealingAuthority {
     }
 }
 
-fn kernel_digest(digest: ContentDigest) -> Sha256Digest {
-    Sha256Digest::from_bytes(*digest.as_bytes())
+fn kernel_digest(digest: ContentDigest) -> Blake3Digest {
+    Blake3Digest::from_bytes(*digest.as_bytes())
 }
 
 fn execute_kernel_service_command(
@@ -418,14 +418,14 @@ mod tests {
     }
 
     fn operation(label: &str, bytes: &[u8]) -> ContentSealOperationId {
-        ContentSealOperationId::parse(label, Sha256Digest::of_bytes(bytes)).unwrap()
+        ContentSealOperationId::parse(label, Blake3Digest::of_bytes(bytes)).unwrap()
     }
 
-    fn physical_path(parent: &std::path::Path, digest: Sha256Digest) -> PathBuf {
+    fn physical_path(parent: &std::path::Path, digest: Blake3Digest) -> PathBuf {
         let hex = format!("{digest:?}");
         parent
             .join("content")
-            .join("sha256")
+            .join("blake3")
             .join(&hex[..2])
             .join(&hex[2..])
     }
@@ -440,7 +440,7 @@ mod tests {
             .seal_and_register(&mut kernel, &operation, bytes)
             .unwrap();
 
-        assert_eq!(registered.digest, Sha256Digest::of_bytes(bytes));
+        assert_eq!(registered.digest, Blake3Digest::of_bytes(bytes));
         assert_eq!(
             registered.content_object_id,
             ContentObjectId::new(1).unwrap()
@@ -631,7 +631,7 @@ mod tests {
         assert_eq!(kernel.command_count().unwrap(), 0);
         assert_eq!(
             kernel
-                .content_identity_state(Sha256Digest::of_bytes(bytes))
+                .content_identity_state(Blake3Digest::of_bytes(bytes))
                 .unwrap(),
             ContentIdentityState::Absent
         );
@@ -691,7 +691,7 @@ mod tests {
         assert_eq!(kernel.command_count().unwrap(), 1);
         assert!(matches!(
             kernel
-                .content_identity_state(Sha256Digest::of_bytes(bytes))
+                .content_identity_state(Blake3Digest::of_bytes(bytes))
                 .unwrap(),
             ContentIdentityState::SealReceiptOnly { .. }
         ));
@@ -714,7 +714,7 @@ mod tests {
         authority
             .seal_and_register(&mut kernel, &first, bytes)
             .unwrap();
-        let path = physical_path(&parent, Sha256Digest::of_bytes(bytes));
+        let path = physical_path(&parent, Blake3Digest::of_bytes(bytes));
         fs::write(&path, b"mutated bytes").unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
         let second = operation("tamper-second", bytes);
@@ -745,7 +745,7 @@ mod tests {
         authority
             .seal_and_register(&mut kernel, &first, bytes)
             .unwrap();
-        let path = physical_path(&parent, Sha256Digest::of_bytes(bytes));
+        let path = physical_path(&parent, Blake3Digest::of_bytes(bytes));
         fs::remove_file(&path).unwrap();
         let target = parent.join("redirected-content");
         fs::write(&target, bytes).unwrap();

@@ -15,7 +15,7 @@ pub use vs001::*;
 
 const MAX_BEHAVIOR_OBSERVATION_BYTES: usize = 64 * 1024;
 const BEHAVIOR_SCHEMA: &str = "# schema: BehaviorObservationV1/tsv-v1";
-const BEHAVIOR_HEADER: &str = "case_id\tconsumer\tinput_manifest\texpected_contract_source\tdisposition\texit_shape\tparent_stdout_sha256\tparent_stderr_sha256\tstdout_evidence_kind\tstdout_evidence_sha256\tstderr_evidence_kind\tstderr_evidence_sha256\tlifecycle";
+const BEHAVIOR_HEADER: &str = "case_id\tconsumer\tinput_manifest\texpected_contract_source\tdisposition\texit_shape\tparent_stdout_blake3\tparent_stderr_blake3\tstdout_evidence_kind\tstdout_evidence_blake3\tstderr_evidence_kind\tstderr_evidence_blake3\tlifecycle";
 const BEHAVIOR_FIELD_COUNT: usize = 13;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

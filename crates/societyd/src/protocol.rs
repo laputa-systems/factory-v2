@@ -8,15 +8,19 @@
 use std::io::{self, Read, Write};
 
 use society_kernel::{
-    AdmissionGeneration, CancellationMode, Capability, CapabilityGrantId, CommandBody,
-    CommandDisposition, CommandId, CommandReceipt, CommandRequest, CostPostmortemId,
-    CostPostmortemResolution, ExpectedGeneration, GrandArchitectOfficeSessionId, OfficeTurnPurpose,
-    OperatingCycleId, OperatingCycleTreatment, PrincipalDisplayName, PrincipalId, Rejection,
-    Sha256Digest, SocietyName, UsdMicros,
+    AdmissionGeneration, ApplicationIdentity, ApplicationMissionInput, ApplicationName,
+    ApplicationRevisionOrdinal, Blake3Digest, CancellationMode, Capability, CapabilityGrantId,
+    CommandBody, CommandDisposition, CommandId, CommandReceipt, CommandRequest, CostPostmortemId,
+    CostPostmortemResolution, ExpectedGeneration, GrandArchitectOfficeSessionId, MissionPrinciple,
+    MissionPrincipleKind, MissionPrincipleText, MissionPrinciples, MissionStatement,
+    NorthStarBoundaryCommitmentQuestion, NorthStarChangeQuestion,
+    NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet, NorthStarRevisitQuestion,
+    OfficeTurnPurpose, OperatingCycleId, OperatingCycleTreatment, PrincipalDisplayName,
+    PrincipalId, Rejection, SocietyName, UsdMicros,
 };
 use thiserror::Error;
 
-pub const PROTOCOL_VERSION: u16 = 2;
+pub const PROTOCOL_VERSION: u16 = 4;
 pub const MAX_FRAME_BYTES: usize = 64 * 1024;
 
 // Request discriminants are intentionally partitioned by transport. A raw
@@ -52,7 +56,7 @@ pub enum ClientCommandBody {
     },
     InstallGrandArchitectOffice,
     InstallFoundingUniverseSeed {
-        rendering_digest: Sha256Digest,
+        mission: Box<ApplicationMissionInput>,
     },
     AppointInitialGrandArchitect {
         actor_display_name: PrincipalDisplayName,
@@ -128,8 +132,8 @@ impl ClientCommandBody {
         match self {
             Self::CreateSocietyIdentity { name } => CommandBody::CreateSocietyIdentity { name },
             Self::InstallGrandArchitectOffice => CommandBody::InstallGrandArchitectOffice,
-            Self::InstallFoundingUniverseSeed { rendering_digest } => {
-                CommandBody::InstallFoundingUniverseSeed { rendering_digest }
+            Self::InstallFoundingUniverseSeed { mission } => {
+                CommandBody::InstallFoundingUniverseSeed { mission: *mission }
             }
             Self::AppointInitialGrandArchitect { actor_display_name } => {
                 CommandBody::AppointInitialGrandArchitect { actor_display_name }
@@ -669,8 +673,8 @@ fn encode_command_request(
     match &command.body {
         ClientCommandBody::CreateSocietyIdentity { name } => put_string(bytes, name.as_str()),
         ClientCommandBody::InstallGrandArchitectOffice | ClientCommandBody::BootstrapSociety => {}
-        ClientCommandBody::InstallFoundingUniverseSeed { rendering_digest } => {
-            bytes.extend_from_slice(&rendering_digest.as_bytes());
+        ClientCommandBody::InstallFoundingUniverseSeed { mission } => {
+            encode_application_mission_input(bytes, mission)
         }
         ClientCommandBody::AppointInitialGrandArchitect { actor_display_name } => {
             put_string(bytes, actor_display_name.as_str());
@@ -744,7 +748,7 @@ fn decode_client_command_body(
         }),
         2 => Ok(ClientCommandBody::InstallGrandArchitectOffice),
         3 => Ok(ClientCommandBody::InstallFoundingUniverseSeed {
-            rendering_digest: Sha256Digest::from_bytes(cursor.array_32()?),
+            mission: Box::new(decode_application_mission_input(cursor)?),
         }),
         4 => Ok(ClientCommandBody::AppointInitialGrandArchitect {
             actor_display_name: PrincipalDisplayName::parse(cursor.string(160)?)
@@ -805,6 +809,76 @@ fn decode_client_command_body(
         }),
         _ => Err(WireError::UnknownTag),
     }
+}
+
+// The founding mission is a fixed, typed sequence rather than an opaque
+// rendering: identity, revision, mission, ordered principles, North Star
+// questions, then the source byte identity.
+fn encode_application_mission_input(bytes: &mut Vec<u8>, mission: &ApplicationMissionInput) {
+    put_string(bytes, mission.application_identity.as_str());
+    put_string(bytes, mission.application_name.as_str());
+    put_i64(bytes, mission.revision_ordinal.value());
+    put_string(bytes, mission.statement.as_str());
+    put_u8(bytes, mission.principles.as_slice().len() as u8);
+    for principle in mission.principles.as_slice() {
+        put_u8(bytes, principle.kind as u8);
+        put_string(bytes, principle.text.as_str());
+    }
+    put_string(bytes, mission.north_star_questions.change.as_str());
+    put_string(
+        bytes,
+        mission.north_star_questions.improvement_evidence.as_str(),
+    );
+    put_string(
+        bytes,
+        mission.north_star_questions.boundary_commitment.as_str(),
+    );
+    put_string(bytes, mission.north_star_questions.revisit.as_str());
+    bytes.extend_from_slice(&mission.source_rendering_digest.as_bytes());
+}
+
+fn decode_application_mission_input(
+    cursor: &mut Cursor<'_>,
+) -> Result<ApplicationMissionInput, WireError> {
+    let application_identity =
+        ApplicationIdentity::parse(cursor.string(128)?).map_err(|_| WireError::InvalidValue)?;
+    let application_name =
+        ApplicationName::parse(cursor.string(160)?).map_err(|_| WireError::InvalidValue)?;
+    let revision_ordinal =
+        ApplicationRevisionOrdinal::try_from(cursor.i64()?).map_err(|_| WireError::InvalidValue)?;
+    let statement =
+        MissionStatement::parse(cursor.string(4_096)?).map_err(|_| WireError::InvalidValue)?;
+    let principle_count = usize::from(cursor.u8()?);
+    if principle_count == 0 || principle_count > MissionPrinciples::MAX_COUNT {
+        return Err(WireError::InvalidValue);
+    }
+    let mut principles = Vec::with_capacity(principle_count);
+    for _ in 0..principle_count {
+        principles.push(MissionPrinciple {
+            kind: mission_principle_kind_from_u8(cursor.u8()?)?,
+            text: MissionPrincipleText::parse(cursor.string(4_096)?)
+                .map_err(|_| WireError::InvalidValue)?,
+        });
+    }
+    let north_star_questions = NorthStarQuestionSet {
+        change: NorthStarChangeQuestion::parse(cursor.string(4_096)?)
+            .map_err(|_| WireError::InvalidValue)?,
+        improvement_evidence: NorthStarImprovementEvidenceQuestion::parse(cursor.string(4_096)?)
+            .map_err(|_| WireError::InvalidValue)?,
+        boundary_commitment: NorthStarBoundaryCommitmentQuestion::parse(cursor.string(4_096)?)
+            .map_err(|_| WireError::InvalidValue)?,
+        revisit: NorthStarRevisitQuestion::parse(cursor.string(4_096)?)
+            .map_err(|_| WireError::InvalidValue)?,
+    };
+    Ok(ApplicationMissionInput {
+        application_identity,
+        application_name,
+        revision_ordinal,
+        statement,
+        principles: MissionPrinciples::new(principles).map_err(|_| WireError::InvalidValue)?,
+        north_star_questions,
+        source_rendering_digest: Blake3Digest::from_bytes(cursor.array_32()?),
+    })
 }
 
 fn encode_expected_generation(bytes: &mut Vec<u8>, expected_generation: ExpectedGeneration) {
@@ -1035,6 +1109,16 @@ fn operating_cycle_treatment_from_u8(value: u8) -> Result<OperatingCycleTreatmen
     }
 }
 
+fn mission_principle_kind_from_u8(value: u8) -> Result<MissionPrincipleKind, WireError> {
+    match value {
+        1 => Ok(MissionPrincipleKind::Purpose),
+        2 => Ok(MissionPrincipleKind::Evidence),
+        3 => Ok(MissionPrincipleKind::Boundary),
+        4 => Ok(MissionPrincipleKind::Revision),
+        _ => Err(WireError::InvalidValue),
+    }
+}
+
 fn office_turn_purpose_from_u8(value: u8) -> Result<OfficeTurnPurpose, WireError> {
     match value {
         1 => Ok(OfficeTurnPurpose::OrdinaryWork),
@@ -1084,8 +1168,111 @@ fn protocol_error_from_u8(value: u8) -> Result<ProtocolErrorCode, WireError> {
 mod tests {
     use super::*;
 
+    fn example_application_mission() -> ApplicationMissionInput {
+        ApplicationMissionInput {
+            application_identity: ApplicationIdentity::parse("wire-mission-fixture")
+                .expect("the fixed application identity is valid"),
+            application_name: ApplicationName::parse("Wire mission fixture")
+                .expect("the fixed application name is valid"),
+            revision_ordinal: ApplicationRevisionOrdinal::new(7)
+                .expect("the fixed positive revision ordinal is valid"),
+            statement: MissionStatement::parse("Keep the resident protocol bounded and exact.")
+                .expect("the fixed mission statement is valid"),
+            principles: MissionPrinciples::new(vec![
+                MissionPrinciple {
+                    kind: MissionPrincipleKind::Purpose,
+                    text: MissionPrincipleText::parse("Preserve a legible mission boundary.")
+                        .expect("the fixed principle text is valid"),
+                },
+                MissionPrinciple {
+                    kind: MissionPrincipleKind::Evidence,
+                    text: MissionPrincipleText::parse("Retain exact evidence for each change.")
+                        .expect("the fixed principle text is valid"),
+                },
+            ])
+            .expect("the fixed principles are bounded and nonempty"),
+            north_star_questions: NorthStarQuestionSet {
+                change: NorthStarChangeQuestion::parse("What bounded change is needed?")
+                    .expect("the fixed change question is valid"),
+                improvement_evidence: NorthStarImprovementEvidenceQuestion::parse(
+                    "What evidence proves the improvement?",
+                )
+                .expect("the fixed evidence question is valid"),
+                boundary_commitment: NorthStarBoundaryCommitmentQuestion::parse(
+                    "Which authority boundary must remain intact?",
+                )
+                .expect("the fixed boundary question is valid"),
+                revisit: NorthStarRevisitQuestion::parse("When should this mission be revisited?")
+                    .expect("the fixed revisit question is valid"),
+            },
+            source_rendering_digest: Blake3Digest::of_bytes(b"wire-mission-fixture-revision-7"),
+        }
+    }
+
+    fn seed_request(mission: ApplicationMissionInput) -> SupervisorRequest {
+        SupervisorRequest::Execute {
+            correlation: CorrelationId::new(1).expect("the fixed nonzero correlation is valid"),
+            command: ClientCommandRequest {
+                command_id: CommandId::parse("wire-mission-001")
+                    .expect("the fixed command identity is valid"),
+                principal_id: PrincipalId::new(3).expect("the fixed nonzero principal is valid"),
+                capability_grant_id: CapabilityGrantId::new(1)
+                    .expect("the fixed nonzero capability grant is valid"),
+                capability: Capability::InstallFoundingUniverseSeed,
+                expected_generation: ExpectedGeneration::NotApplicable,
+                body: ClientCommandBody::InstallFoundingUniverseSeed {
+                    mission: Box::new(mission),
+                },
+            },
+        }
+    }
+
+    fn raw_seed_request_payload(
+        application_identity: &str,
+        revision_ordinal: i64,
+        statement: &str,
+        principle_kinds: &[u8],
+    ) -> Vec<u8> {
+        let mut payload = Vec::new();
+        put_u16(&mut payload, PROTOCOL_VERSION);
+        put_u8(&mut payload, SUPERVISOR_EXECUTE_TAG);
+        put_correlation(
+            &mut payload,
+            CorrelationId::new(1).expect("the fixed nonzero correlation is valid"),
+        );
+        put_string(&mut payload, "wire-mission-001");
+        put_i64(&mut payload, 3);
+        put_i64(&mut payload, 1);
+        put_u8(&mut payload, Capability::InstallFoundingUniverseSeed as u8);
+        put_u8(&mut payload, 0);
+        put_u8(&mut payload, 3);
+        put_string(&mut payload, application_identity);
+        put_string(&mut payload, "Wire mission fixture");
+        put_i64(&mut payload, revision_ordinal);
+        put_string(&mut payload, statement);
+        put_u8(&mut payload, principle_kinds.len() as u8);
+        for kind in principle_kinds {
+            put_u8(&mut payload, *kind);
+            put_string(&mut payload, "A bounded mission principle.");
+        }
+        put_string(&mut payload, "What bounded change is needed?");
+        put_string(&mut payload, "What evidence proves the improvement?");
+        put_string(&mut payload, "Which authority boundary must remain intact?");
+        put_string(&mut payload, "When should this mission be revisited?");
+        payload.extend_from_slice(&[0x5A; 32]);
+        payload
+    }
+
+    fn framed(payload: &[u8]) -> Vec<u8> {
+        let mut framed = Vec::new();
+        write_frame(&mut framed, payload).expect("the bounded test frame must encode");
+        framed
+    }
+
     #[test]
     fn every_kernel_rejection_round_trips_through_the_receipt_wire() {
+        assert_eq!(Rejection::ProjectNorthStarAlignmentMismatch.as_u8(), 58);
+        assert!(Rejection::ALL.contains(&Rejection::ProjectNorthStarAlignmentMismatch));
         for rejection in Rejection::ALL {
             let response = Response::CommandReceipt {
                 correlation: CorrelationId::new(1).expect("the fixed nonzero correlation is valid"),
@@ -1103,6 +1290,61 @@ mod tests {
                 response
             );
         }
+    }
+
+    #[test]
+    fn supervisor_founding_mission_round_trips_as_one_exact_typed_input() {
+        let request = seed_request(example_application_mission());
+        let mut encoded = Vec::new();
+        write_supervisor_request(&mut encoded, &request)
+            .expect("the closed supervisor request must encode");
+        assert_eq!(
+            read_supervisor_request(&mut encoded.as_slice())
+                .expect("the closed supervisor request must decode"),
+            request
+        );
+    }
+
+    #[test]
+    fn supervisor_founding_mission_rejects_malformed_principles_and_fields_at_the_wire() {
+        let invalid_value_payloads = [
+            raw_seed_request_payload("wire-mission-fixture", 7, "A bounded mission.", &[9]),
+            raw_seed_request_payload("wire-mission-fixture", 7, "A bounded mission.", &[]),
+            raw_seed_request_payload(
+                "wire-mission-fixture",
+                7,
+                "A bounded mission.",
+                &[1; MissionPrinciples::MAX_COUNT + 1],
+            ),
+            raw_seed_request_payload("", 7, "A bounded mission.", &[1]),
+            raw_seed_request_payload("wire-mission-fixture", 0, "A bounded mission.", &[1]),
+            raw_seed_request_payload("wire-mission-fixture", 7, "", &[1]),
+        ];
+        for payload in invalid_value_payloads {
+            let encoded = framed(&payload);
+            assert!(matches!(
+                read_supervisor_request(&mut encoded.as_slice()),
+                Err(WireError::InvalidValue)
+            ));
+        }
+
+        let valid_payload =
+            raw_seed_request_payload("wire-mission-fixture", 7, "A bounded mission.", &[1]);
+        let mut truncated_payload = valid_payload.clone();
+        truncated_payload.pop();
+        let truncated = framed(&truncated_payload);
+        assert!(matches!(
+            read_supervisor_request(&mut truncated.as_slice()),
+            Err(WireError::MissingField)
+        ));
+
+        let mut trailing_payload = valid_payload;
+        trailing_payload.push(0);
+        let trailing = framed(&trailing_payload);
+        assert!(matches!(
+            read_supervisor_request(&mut trailing.as_slice()),
+            Err(WireError::TrailingBytes)
+        ));
     }
 
     #[test]

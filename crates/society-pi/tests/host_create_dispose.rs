@@ -16,10 +16,9 @@ use std::{
 };
 
 use serde_json::json;
-use sha2::{Digest, Sha256};
 use society_pi::{
-    AdapterVersion, BoundaryPeer, HostProcessId, NodeRuntimeVersion, PiSdkVersion, RuntimeIdentity,
-    SessionIdentity, Sha256Digest, SpawnNonce,
+    AdapterVersion, Blake3Digest, BoundaryPeer, HostProcessId, NodeRuntimeVersion, PiSdkVersion,
+    RuntimeIdentity, SessionIdentity, SpawnNonce,
 };
 
 const SESSION: &str = "rust-pipe-session-001";
@@ -40,7 +39,7 @@ fn committed_host_create_then_dispose_is_sealed_without_a_provider_call() {
     fs::write(&models, &catalog).unwrap();
 
     let system_prompt = "Universe Seed\nProvider-free construction receipt";
-    let catalog_sha256 = sha256(&catalog);
+    let catalog_blake3 = blake3(&catalog);
     let create = envelope(
         1,
         "create-correlation-001",
@@ -53,9 +52,9 @@ fn committed_host_create_then_dispose_is_sealed_without_a_provider_call() {
             "modelsPath": models.to_str().unwrap(),
             "sessionDirectory": sessions.to_str().unwrap(),
             "systemPrompt": system_prompt,
-            "systemPromptDigest": sha256(system_prompt),
+            "systemPromptDigest": blake3(system_prompt),
             "model": { "provider": "openrouter", "modelId": "deepseek/deepseek-v4-flash-0731", "thinkingLevel": "high" },
-            "modelCatalog": { "catalogSha256": catalog_sha256, "effectiveModel": admitted_effective_model() },
+            "modelCatalog": { "catalogBlake3": catalog_blake3, "effectiveModel": admitted_effective_model() },
             "toolProfile": "read_source_v1",
             "settings": admitted_settings(),
         }),
@@ -69,11 +68,11 @@ fn committed_host_create_then_dispose_is_sealed_without_a_provider_call() {
     let entry = std::env::var_os("SOCIETY_PI_HOST_ENTRYPOINT")
         .map(std::path::PathBuf::from)
         .expect("set SOCIETY_PI_HOST_ENTRYPOINT to the tested pinned host build");
-    let adapter_build_sha256 = std::env::var("SOCIETY_PI_HOST_BUILD_SHA256")
-        .expect("set SOCIETY_PI_HOST_BUILD_SHA256 to SHA-256(SOCIETY_PI_HOST_ENTRYPOINT)");
+    let adapter_build_blake3 = std::env::var("SOCIETY_PI_HOST_BUILD_BLAKE3")
+        .expect("set SOCIETY_PI_HOST_BUILD_BLAKE3 to BLAKE3(SOCIETY_PI_HOST_ENTRYPOINT)");
     assert_eq!(
-        sha256(fs::read(&entry).expect("host entrypoint must be readable")),
-        adapter_build_sha256
+        blake3(fs::read(&entry).expect("host entrypoint must be readable")),
+        adapter_build_blake3
     );
     assert!(
         entry.is_file(),
@@ -91,10 +90,10 @@ fn committed_host_create_then_dispose_is_sealed_without_a_provider_call() {
         node_version: NodeRuntimeVersion::parse(node_version.trim()).unwrap(),
         adapter_version: AdapterVersion::V1,
         pi_sdk_version: PiSdkVersion::V0830,
-        node_executable_sha256: Sha256Digest::parse(DIGEST).unwrap(),
-        lockfile_sha256: Sha256Digest::parse(DIGEST).unwrap(),
-        adapter_build_sha256: Sha256Digest::parse(&adapter_build_sha256).unwrap(),
-        pi_transitive_package_set_sha256: Sha256Digest::parse(DIGEST).unwrap(),
+        node_executable_blake3: Blake3Digest::parse(DIGEST).unwrap(),
+        lockfile_blake3: Blake3Digest::parse(DIGEST).unwrap(),
+        adapter_build_blake3: Blake3Digest::parse(&adapter_build_blake3).unwrap(),
+        pi_transitive_package_set_blake3: Blake3Digest::parse(DIGEST).unwrap(),
     };
     let mut child = Command::new("node")
         .arg(entry)
@@ -103,13 +102,13 @@ fn committed_host_create_then_dispose_is_sealed_without_a_provider_call() {
             SESSION,
             "--spawn-nonce",
             NONCE,
-            "--node-executable-sha256",
+            "--node-executable-blake3",
             DIGEST,
-            "--lockfile-sha256",
+            "--lockfile-blake3",
             DIGEST,
-            "--adapter-build-sha256",
-            &adapter_build_sha256,
-            "--pi-transitive-package-set-sha256",
+            "--adapter-build-blake3",
+            &adapter_build_blake3,
+            "--pi-transitive-package-set-blake3",
             DIGEST,
         ])
         .current_dir(repository)
@@ -168,7 +167,7 @@ fn committed_host_create_then_dispose_is_sealed_without_a_provider_call() {
 }
 
 fn envelope(sequence: u64, correlation: &str, command: &str, payload: serde_json::Value) -> String {
-    json!({ "protocolVersion":"society-pi-host/v1", "sequence":sequence, "sessionIdentity":SESSION, "correlationIdentity":correlation, "command":command, "payload":payload }).to_string()
+    json!({ "protocolVersion":"society-pi-host/v2", "sequence":sequence, "sessionIdentity":SESSION, "correlationIdentity":correlation, "command":command, "payload":payload }).to_string()
 }
 fn admitted_catalog() -> String {
     json!({ "providers": { "openrouter": { "baseUrl":"https://openrouter.ai/api/v1", "api":"openai-completions", "models":[{ "id":"deepseek/deepseek-v4-flash-0731", "name":"admitted", "reasoning":true, "input":["text"], "contextWindow":1_048_576, "maxTokens":384_000, "cost":{"input":0.00000009,"output":0.00000018,"cacheRead":0.000000018,"cacheWrite":0} }] } } }).to_string()
@@ -179,9 +178,13 @@ fn admitted_effective_model() -> serde_json::Value {
 fn admitted_settings() -> serde_json::Value {
     json!({ "retry":{"maxRetries":2,"baseDelayMilliseconds":2_000,"providerTimeoutMilliseconds":300_000,"providerMaxRetries":1,"providerMaxRetryDelayMilliseconds":30_000}, "compaction":{"mode":"enabled","reserveTokens":16_384,"keepRecentTokens":20_000}, "steeringMode":"one-at-a-time", "followUpMode":"one-at-a-time", "transport":"sse", "projectTrust":"never", "installTelemetryEnabled":false, "analyticsEnabled":false, "images":"blocked" })
 }
-fn sha256(value: impl AsRef<[u8]>) -> String {
-    let digest = Sha256::digest(value);
-    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+fn blake3(value: impl AsRef<[u8]>) -> String {
+    let digest = blake3::hash(value.as_ref());
+    digest
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 fn temporary_directory(label: &str) -> std::path::PathBuf {
     let nonce = SystemTime::now()

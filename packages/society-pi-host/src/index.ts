@@ -28,7 +28,7 @@ export {
 	decodeInboundJsonl,
 	providerCostObservation,
 	sessionIdentity,
-	sha256Digest,
+	blake3Digest,
 	spawnNonce,
 	toolsForProfile,
 	type AdapterFailureCode,

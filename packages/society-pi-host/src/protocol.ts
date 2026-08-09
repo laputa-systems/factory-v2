@@ -7,7 +7,7 @@
 
 import { isAbsolute, normalize } from "node:path";
 
-export const ADAPTER_PROTOCOL_VERSION = "society-pi-host/v1" as const;
+export const ADAPTER_PROTOCOL_VERSION = "society-pi-host/v2" as const;
 export const ADAPTER_VERSION = "1" as const;
 export const PINNED_PI_SDK_VERSION = "0.83.0" as const;
 export const PINNED_PROVIDER = "openrouter" as const;
@@ -33,7 +33,7 @@ export type ThinkingLevel = typeof PINNED_THINKING_LEVEL;
 declare const sessionIdentityBrand: unique symbol;
 declare const correlationIdentityBrand: unique symbol;
 declare const spawnNonceBrand: unique symbol;
-declare const sha256DigestBrand: unique symbol;
+declare const blake3DigestBrand: unique symbol;
 declare const boundarySequenceBrand: unique symbol;
 declare const absolutePathBrand: unique symbol;
 declare const nonNegativeIntegerBrand: unique symbol;
@@ -46,7 +46,7 @@ declare const usdPerMillionDecimalBrand: unique symbol;
 export type SessionIdentity = string & { readonly [sessionIdentityBrand]: "SessionIdentity" };
 export type CorrelationIdentity = string & { readonly [correlationIdentityBrand]: "CorrelationIdentity" };
 export type SpawnNonce = string & { readonly [spawnNonceBrand]: "SpawnNonce" };
-export type Sha256Digest = string & { readonly [sha256DigestBrand]: "Sha256Digest" };
+export type Blake3Digest = string & { readonly [blake3DigestBrand]: "Blake3Digest" };
 export type BoundarySequence = number & { readonly [boundarySequenceBrand]: "BoundarySequence" };
 export type AbsolutePath = string & { readonly [absolutePathBrand]: "AbsolutePath" };
 export type NonNegativeInteger = number & { readonly [nonNegativeIntegerBrand]: "NonNegativeInteger" };
@@ -58,7 +58,7 @@ export type NodeRuntimeVersion = string & { readonly [nodeRuntimeVersionBrand]: 
 export type UsdPerMillionDecimal = string & { readonly [usdPerMillionDecimalBrand]: "UsdPerMillionDecimal" };
 
 const ID_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/u;
-const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
+const BLAKE3_PATTERN = /^[a-f0-9]{64}$/u;
 const USD_PER_MILLION_PATTERN = /^(?:0|[1-9][0-9]*)(?:\.[0-9]*[1-9])?$/u;
 
 export function sessionIdentity(value: string): SessionIdentity {
@@ -76,9 +76,9 @@ export function spawnNonce(value: string): SpawnNonce {
 	return value as SpawnNonce;
 }
 
-export function sha256Digest(value: string): Sha256Digest {
-	if (!SHA256_PATTERN.test(value)) throw new ProtocolDecodeError("invalid_sha256_digest");
-	return value as Sha256Digest;
+export function blake3Digest(value: string): Blake3Digest {
+	if (!BLAKE3_PATTERN.test(value)) throw new ProtocolDecodeError("invalid_blake3_digest");
+	return value as Blake3Digest;
 }
 
 export function boundarySequence(value: number): BoundarySequence {
@@ -290,7 +290,7 @@ export interface EffectiveModelDescriptorV1 {
 
 /** The Rust-admitted raw models.json bytes and its complete billing treatment. */
 export interface ModelCatalogPolicyV1 {
-	readonly catalogSha256: Sha256Digest;
+	readonly catalogBlake3: Blake3Digest;
 	readonly effectiveModel: EffectiveModelDescriptorV1;
 }
 
@@ -336,7 +336,7 @@ export interface CreateSessionPayload {
 	readonly modelsPath: AbsolutePath;
 	readonly sessionDirectory: AbsolutePath;
 	readonly systemPrompt: string;
-	readonly systemPromptDigest: Sha256Digest;
+	readonly systemPromptDigest: Blake3Digest;
 	readonly model: ModelSelection;
 	readonly modelCatalog: ModelCatalogPolicyV1;
 	readonly toolProfile: ToolProfile;
@@ -436,10 +436,10 @@ export interface RuntimeIdentity {
 	readonly adapterVersion: AdapterVersion;
 	readonly piSdkVersion: PiSdkVersion;
 	/** Supervisor-bound evidence; the host validates shape and emits it intact. */
-	readonly nodeExecutableSha256: Sha256Digest;
-	readonly lockfileSha256: Sha256Digest;
-	readonly adapterBuildSha256: Sha256Digest;
-	readonly piTransitivePackageSetSha256: Sha256Digest;
+	readonly nodeExecutableBlake3: Blake3Digest;
+	readonly lockfileBlake3: Blake3Digest;
+	readonly adapterBuildBlake3: Blake3Digest;
+	readonly piTransitivePackageSetBlake3: Blake3Digest;
 }
 
 export interface EffectiveSessionConfiguration {
@@ -600,7 +600,7 @@ export interface MaterializedTranscriptFlushReceiptV1 {
 	readonly sessionIdentity: SessionIdentity;
 	readonly sessionFile: AbsolutePath;
 	readonly materialization: "observed";
-	readonly sessionFileSha256: Sha256Digest;
+	readonly sessionFileBlake3: Blake3Digest;
 	readonly headerCwd: AbsolutePath;
 	readonly firstUserPrompt: FirstUserPromptReceipt;
 }
@@ -616,7 +616,7 @@ export interface UnmaterializedTranscriptFlushReceiptV1 {
 
 export type FirstUserPromptReceipt =
 	| { readonly kind: "absent" }
-	| { readonly kind: "verified"; readonly digest: Sha256Digest };
+	| { readonly kind: "verified"; readonly digest: Blake3Digest };
 
 export interface FatalFrame extends OutboundFrameBase {
 	readonly event: "Fatal";
@@ -634,7 +634,7 @@ export type OutboundFrame =
 	| FatalFrame;
 
 export class ProtocolDecodeError extends Error {
-	constructor(readonly code: "invalid_session_identity" | "invalid_correlation_identity" | "invalid_spawn_nonce" | "invalid_sha256_digest" | "invalid_boundary_sequence" | "invalid_frame") {
+	constructor(readonly code: "invalid_session_identity" | "invalid_correlation_identity" | "invalid_spawn_nonce" | "invalid_blake3_digest" | "invalid_boundary_sequence" | "invalid_frame") {
 		super(code);
 		this.name = "ProtocolDecodeError";
 	}
@@ -788,7 +788,7 @@ function decodeCreateSessionPayload(value: Record<string, unknown>): CreateSessi
 		modelsPath: requiredAbsolutePath(value, "modelsPath"),
 		sessionDirectory: requiredAbsolutePath(value, "sessionDirectory"),
 		systemPrompt: requiredNonEmptyString(value, "systemPrompt"),
-		systemPromptDigest: sha256Digest(requiredString(value, "systemPromptDigest")),
+		systemPromptDigest: blake3Digest(requiredString(value, "systemPromptDigest")),
 		model: {
 			provider: requiredLiteral(model, "provider", PINNED_PROVIDER),
 			modelId: requiredLiteral(model, "modelId", PINNED_MODEL),
@@ -806,14 +806,14 @@ function decodeCreateSessionPayload(value: Record<string, unknown>): CreateSessi
 }
 
 function decodeModelCatalogPolicy(value: Record<string, unknown>): ModelCatalogPolicyV1 {
-	requireExactKeys(value, ["catalogSha256", "effectiveModel"]);
+	requireExactKeys(value, ["catalogBlake3", "effectiveModel"]);
 	const model = requiredRecord(value.effectiveModel);
 	requireExactKeys(model, [
 		"provider", "baseUrl", "api", "modelId", "canonicalSlug", "input", "contextWindow", "maxTokens",
 		"inputUsdPerMillion", "outputUsdPerMillion", "cacheReadUsdPerMillion", "cacheWriteUsdPerMillion",
 	]);
 	return {
-		catalogSha256: sha256Digest(requiredString(value, "catalogSha256")),
+		catalogBlake3: blake3Digest(requiredString(value, "catalogBlake3")),
 		effectiveModel: {
 			provider: requiredLiteral(model, "provider", PINNED_PROVIDER),
 			baseUrl: requiredLiteral(model, "baseUrl", PINNED_OPENROUTER_BASE_URL),

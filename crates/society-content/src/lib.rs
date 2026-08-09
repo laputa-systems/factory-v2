@@ -1,6 +1,6 @@
 //! Immutable, digest-addressed byte sealing for society forensic content.
 //!
-//! This crate has one semantic operation: seal exact bytes under SHA-256. A
+//! This crate has one semantic operation: seal exact bytes under BLAKE3. A
 //! successful receipt establishes physical byte identity only. It does not
 //! admit evidence, create graph knowledge, assign a forensic role, or emit
 //! provenance. Those require separate typed kernel commands.
@@ -21,7 +21,7 @@ use std::{
     },
 };
 
-use sha2::{Digest, Sha256};
+use blake3::Hasher;
 use thiserror::Error;
 
 const DIRECTORY_MODE: u32 = 0o700;
@@ -34,7 +34,7 @@ pub struct ContentDigest([u8; 32]);
 
 impl ContentDigest {
     pub fn of_bytes(bytes: &[u8]) -> Self {
-        Self(Sha256::digest(bytes).into())
+        Self(*blake3::hash(bytes).as_bytes())
     }
 
     pub fn parse(value: &str) -> Result<Self, ContentDigestError> {
@@ -44,7 +44,7 @@ impl ContentDigest {
                 .iter()
                 .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
         {
-            return Err(ContentDigestError::NotCanonicalSha256);
+            return Err(ContentDigestError::NotCanonicalBlake3);
         }
         let mut bytes = [0_u8; 32];
         for (index, byte) in bytes.iter_mut().enumerate() {
@@ -88,14 +88,14 @@ fn hex_nibble(byte: u8) -> Result<u8, ContentDigestError> {
     match byte {
         b'0'..=b'9' => Ok(byte - b'0'),
         b'a'..=b'f' => Ok(byte - b'a' + 10),
-        _ => Err(ContentDigestError::NotCanonicalSha256),
+        _ => Err(ContentDigestError::NotCanonicalBlake3),
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum ContentDigestError {
-    #[error("content digest must be 64 lowercase SHA-256 hexadecimal characters")]
-    NotCanonicalSha256,
+    #[error("content digest must be 64 lowercase BLAKE3 hexadecimal characters")]
+    NotCanonicalBlake3,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -189,7 +189,7 @@ impl ContentObjectStore {
         validate_directory(parent)?;
         create_or_validate_directory(root.as_path())?;
         let ownership_lock = Arc::new(acquire_ownership_lock(root.as_path())?);
-        let digest_root = root.as_path().join("sha256");
+        let digest_root = root.as_path().join("blake3");
         let incoming_root = root.as_path().join(".incoming");
         create_or_validate_directory(&digest_root)?;
         create_or_validate_directory(&incoming_root)?;
@@ -236,7 +236,7 @@ impl ContentObjectStore {
         let cleanup = TemporaryArtifact::new(temporary_path.clone());
         validate_object_metadata(&temporary.metadata()?)?;
 
-        let mut hasher = Sha256::new();
+        let mut hasher = Hasher::new();
         let mut observed = 0_u64;
         let mut buffer = [0_u8; 16 * 1024];
         loop {
@@ -254,7 +254,7 @@ impl ContentObjectStore {
             temporary.write_all(&buffer[..read])?;
         }
         temporary.sync_all()?;
-        let digest = ContentDigest(hasher.finalize().into());
+        let digest = ContentDigest(*hasher.finalize().as_bytes());
         let final_path = self.object_path(digest)?;
 
         let disposition = match fs::hard_link(&temporary_path, &final_path) {
@@ -295,7 +295,7 @@ impl ContentObjectStore {
                 _ => ContentStoreError::Io(error),
             })?;
         validate_object_metadata(&object.metadata()?)?;
-        let mut hasher = Sha256::new();
+        let mut hasher = Hasher::new();
         let mut buffer = [0_u8; 16 * 1024];
         loop {
             let read = object.read(&mut buffer)?;
@@ -304,7 +304,7 @@ impl ContentObjectStore {
             }
             hasher.update(&buffer[..read]);
         }
-        if ContentDigest(hasher.finalize().into()) != digest {
+        if ContentDigest(*hasher.finalize().as_bytes()) != digest {
             return Err(ContentStoreError::StoredDigestMismatch);
         }
         Ok(ContentVerificationReceipt { digest })

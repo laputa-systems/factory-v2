@@ -71,8 +71,8 @@ for required_tool in awk cmp cp env find git mkdir od rg sed; do
     exit 69
   }
 done
-if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
-  printf '%s\n' 'fluency evaluator: missing sha256sum or shasum' >&2
+if ! command -v b3sum >/dev/null 2>&1; then
+  printf '%s\n' 'missing required host digest tool: b3sum' >&2
   exit 69
 fi
 [ -z "$(git -C "$xsh_root" status --porcelain=v1)" ] || {
@@ -93,12 +93,8 @@ fail() {
   exit 1
 }
 
-sha256() {
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" | awk '{print $1}'
-  else
-    shasum -a 256 "$1" | awk '{print $1}'
-  fi
+blake3() {
+  b3sum --no-names "$1"
 }
 
 assert_exact() {
@@ -221,9 +217,9 @@ git -C "$xsh_root" rev-parse HEAD > "$out/xsh-source-head.txt"
 git -C "$xsh_root" status --porcelain=v1 > "$out/xsh-source-status.txt"
 input_digests="$out/input-digests.v1.tsv"
 printf '%s\n' '# schema: FluencyProbeInputDigestV1/tsv-v1' > "$input_digests"
-printf 'input_kind\tsha256\n' >> "$input_digests"
+printf 'input_kind\tblake3\n' >> "$input_digests"
 record_input_digest() {
-  printf '%s\t%s\n' "$1" "$(sha256 "$2")" >> "$input_digests"
+  printf '%s\t%s\n' "$1" "$(blake3 "$2")" >> "$input_digests"
 }
 record_input_digest xsh_binary "$xsh"
 record_input_digest xsht_binary "$xsht"
@@ -244,7 +240,7 @@ assert_source_boundary
 
 results="$out/fluency-task-observations.v1.tsv"
 printf '%s\n' '# schema: FluencyProbeObservationV1/tsv-v1' > "$results"
-printf 'case_id\tinput_manifest\texpected_exit\tsupervisor_exit\tparent_stdout_sha256\tparent_stderr_sha256\tredirected_stderr_sha256\tcorrectness\ttyped_boundary\townership_lifecycle\thost_path_access\tdisposition\n' >> "$results"
+printf 'case_id\tinput_manifest\texpected_exit\tsupervisor_exit\tparent_stdout_blake3\tparent_stderr_blake3\tredirected_stderr_blake3\tcorrectness\ttyped_boundary\townership_lifecycle\thost_path_access\tdisposition\n' >> "$results"
 execution_surface="$out/fluency-task-execution-surface.v1.tsv"
 printf '%s\n' '# schema: FluencyProbeExecutionSurfaceV1/tsv-v1' > "$execution_surface"
 printf 'execution_kind\ttool_errors\tturns\tactive_wall\ttokens\treasoning_tokens\tcost\n' >> "$execution_surface"
@@ -276,7 +272,7 @@ run_case() {
   assert_exact "$expected_stderr" "$stderr"
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\tpassed\tcompliant\towned_waited\tclean\tpass\n' \
     "$case_id" "$input_manifest" "$expected_exit" "$supervisor_exit" \
-    "$(sha256 "$case_dir/parent.stdout")" "$(sha256 "$case_dir/parent.stderr")" "$(sha256 "$stderr")" >> "$results"
+    "$(blake3 "$case_dir/parent.stdout")" "$(blake3 "$case_dir/parent.stderr")" "$(blake3 "$stderr")" >> "$results"
 }
 
 run_case F01 preexisting_log_truncate child-alpha.xsh 'stdout:alpha

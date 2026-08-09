@@ -16,10 +16,10 @@ const runtime = {
 	nodeVersion: process.version,
 	adapterVersion: "1",
 	piSdkVersion: "0.83.0",
-	nodeExecutableSha256: requireArgument("--node-executable-sha256"),
-	lockfileSha256: requireArgument("--lockfile-sha256"),
-	adapterBuildSha256: requireArgument("--adapter-build-sha256"),
-	piTransitivePackageSetSha256: requireArgument("--pi-transitive-package-set-sha256"),
+	nodeExecutableBlake3: requireArgument("--node-executable-blake3"),
+	lockfileBlake3: requireArgument("--lockfile-blake3"),
+	adapterBuildBlake3: requireArgument("--adapter-build-blake3"),
+	piTransitivePackageSetBlake3: requireArgument("--pi-transitive-package-set-blake3"),
 };
 
 if (sessionIdentity.includes("exit-before-ready")) process.exit(0);
@@ -138,7 +138,7 @@ function requireArgument(flag) {
 
 function emit(event) {
 	process.stdout.write(`${JSON.stringify({
-		protocolVersion: "society-pi-host/v1",
+		protocolVersion: "society-pi-host/v2",
 		sequence: outboundSequence++,
 		sessionIdentity,
 		...event,

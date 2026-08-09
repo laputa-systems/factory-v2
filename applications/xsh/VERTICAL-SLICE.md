@@ -776,7 +776,7 @@ Runtime state is outside Git under a configurable root, initially
 ```text
 var/
 ├── society.sqlite3
-├── content/sha256/<prefix>/<digest>
+├── content/blake3/<prefix>/<digest>
 ├── runtime/
 │   └── society.sock              # disposable local control socket
 ├── office-sessions/<office-session-id>/
@@ -3047,7 +3047,7 @@ An enclosing milestone remains open until its exit judge passes.
 | `62a8bbe` | byte-sealed Rust Pi-boundary peer with exact child/runtime/profile validation, fail-closed JSONL decoding, pending-command and ordered-turn lifecycles, prompt-attributed monotonic usage, closed downstream observations, and symmetric host hardening; 48 TypeScript tests, 36 Rust unit tests, a public-consumer test, and a real provider-free `CreateSession` to `Dispose` pipe test | durable stream/transcript objects, ledger correlation, budget reservation and charging, process ownership/reaping, package-advisory resolution, native qualification, and Milestone 5 as a whole |
 | `8c5f4f4` | root-workspace resident single-writer spine with a query-only named socket, distinct supervisor command stream, one-writer/runtime-file enforcement, replay-fenced restart, crash seams, fixed INFO+ monitor, signal wakeup, and literal no-child empty-cycle closure across 11 integration tests | content/object store, outbox/projections, Pi/process ownership and reaping, recovery reconciliation, full typed notices/spans/redaction, and an external trusted supervisor launcher |
 | `1c12b84` | typed Project/Ticket planning, Observation/Hypothesis revision bodies in named one-to-one tables, finite edge matrix, Episode, conservative review/Postmortem blockers, exact authority/provenance, migration-step fencing, and semantic replay/tamper detection across 20 integration tests | independent Actor provisioning, WorkItem/Attempt and Ticket execution, review execution/resolution, evidence/delivery, content/outbox, supervision, recovery, and remaining Milestone-1 domains |
-| `b5cc365` | isolated single-writer physical content store with canonical SHA-256 paths, atomic non-overwriting seals, file/directory sync ordering, verified idempotent reuse, strict stale-ingest recovery, cross-process locking, and tamper/symlink/limit controls across nine tests | root/daemon ownership, typed `SealContentObject`, durable database reference after its receipt, forensic manifests, evidence admission, retention/access policy, and any provenance or graph meaning |
+| `b5cc365` | isolated single-writer physical content store with canonical BLAKE3 paths, atomic non-overwriting seals, file/directory sync ordering, verified idempotent reuse, strict stale-ingest recovery, cross-process locking, and tamper/symlink/limit controls across nine tests | root/daemon ownership, typed `SealContentObject`, durable database reference after its receipt, forensic manifests, evidence admission, retention/access policy, and any provenance or graph meaning |
 | `5058188` | isolated closed parser for the exact B01-B11 behavior matrix, including static case-manifest binding, typed stream-evidence/digest union, canonical status/framing, fixed cardinality/order, and adversarial parsing controls | sealed evaluator/input/TSV/artifact binding, input-digest and documentation adapters, durable behavior-observation bodies, evidence admission, process reaping, and the Milestone-7 end-to-end judge |
 | `0d1dc2e` | parsing-only closed adapters for all six deterministic producer digest manifests and the documentation, fluency, C1 curation, uptake, and W1 frontier relations; exact LF framing, row identity/order, closed value unions, 64-byte opaque workspace labels, and C20 producer/parser symmetry are covered across 11 Rust tests and the real negative judge | sealed producer/input/output identity, evaluator execution, actor/treatment/capability authority, process reaping, durable evidence admission, real disclosure enforcement, and the Milestone-7 end-to-end judge |
 | `ebfaa81` | third provider-free deterministic treatment, explicitly unqualified native profile, closed actor configuration/instance/context, Work Item/lease/Attempt reservation and retry lineage, terminal/pause/treatment fences, exact independent-review binding and resolution, outcome closure blockers, typed capability-grant origins, and migration/replay/tamper controls across 28 integration tests | Pi/process/submission/evaluator receipts; native qualification; Project, Office-session, and exact per-Attempt accounting; configuration mutation/retirement; full Attempt lifecycle; content/evidence/delivery/notices/recovery; and Milestone 1 as a whole |
@@ -3285,7 +3285,7 @@ could be honest.
 
 The dependency gate is resolved by `DEPENDENCIES.md` and the exact workspace
 pins in `Cargo.toml`. The allowed Rust surface is `rusqlite` with bundled SQLite
-and default features disabled, `thiserror`, `sha2`, `tracing`,
+and default features disabled, `thiserror`, `blake3`, `tracing`,
 `tracing-subscriber`, Pi-boundary-only `serde`/`serde_json`, and narrow Unix
 `libc` calls. The TypeScript package exact-pins
 `@earendil-works/pi-coding-agent` 0.83.0 and its build/test support in

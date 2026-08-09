@@ -1,4 +1,4 @@
-//! Closed, sealed peer for the `society-pi-host/v1` JSONL boundary.
+//! Closed, sealed peer for the `society-pi-host/v2` JSONL boundary.
 //!
 //! This crate deliberately owns only transport validation and transient
 //! execution facts.  It neither charges durable budgets nor authorizes Pi;

@@ -19,7 +19,7 @@ import {
 	MAX_JSONL_FRAME_BYTES,
 	boundarySequence,
 	nodeRuntimeVersion,
-	sha256Digest,
+	blake3Digest,
 	type AdapterFailureCode,
 	type AdapterPhase,
 	type AdapterReadyFrame,
@@ -46,10 +46,10 @@ export interface HostIdentity {
 
 /** Digests are supplied by the Rust execution-profile admission, not guessed by Node. */
 export interface SupervisorRuntimeEvidence {
-	readonly nodeExecutableSha256: RuntimeIdentity["nodeExecutableSha256"];
-	readonly lockfileSha256: RuntimeIdentity["lockfileSha256"];
-	readonly adapterBuildSha256: RuntimeIdentity["adapterBuildSha256"];
-	readonly piTransitivePackageSetSha256: RuntimeIdentity["piTransitivePackageSetSha256"];
+	readonly nodeExecutableBlake3: RuntimeIdentity["nodeExecutableBlake3"];
+	readonly lockfileBlake3: RuntimeIdentity["lockfileBlake3"];
+	readonly adapterBuildBlake3: RuntimeIdentity["adapterBuildBlake3"];
+	readonly piTransitivePackageSetBlake3: RuntimeIdentity["piTransitivePackageSetBlake3"];
 }
 
 export type FrameSink = (frame: OutboundFrame) => void;
@@ -641,10 +641,10 @@ function validateHostIdentity(identity: HostIdentity): void {
 		throw new Error("runtime_identity_drift");
 	}
 	nodeRuntimeVersion(identity.runtime.nodeVersion);
-	sha256Digest(identity.runtime.nodeExecutableSha256);
-	sha256Digest(identity.runtime.lockfileSha256);
-	sha256Digest(identity.runtime.adapterBuildSha256);
-	sha256Digest(identity.runtime.piTransitivePackageSetSha256);
+	blake3Digest(identity.runtime.nodeExecutableBlake3);
+	blake3Digest(identity.runtime.lockfileBlake3);
+	blake3Digest(identity.runtime.adapterBuildBlake3);
+	blake3Digest(identity.runtime.piTransitivePackageSetBlake3);
 }
 
 function isMeaningfulUsageEvent(event: AgentSessionEvent): boolean {

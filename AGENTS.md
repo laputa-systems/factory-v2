@@ -82,11 +82,12 @@ npm test --prefix packages/society-pi-host
 cargo test -p society-content
 cargo test -p society-product
 cargo test -p societyd --test supervision -- --test-threads=1
+tests/generic-boundary/run-no-application-knowledge.sh
 
 pi_host_entry="$PWD/packages/society-pi-host/dist/src/main.js"
-pi_host_digest="$(shasum -a 256 "$pi_host_entry" | awk '{print $1}')"
+pi_host_digest="$(b3sum --no-names "$pi_host_entry")"
 SOCIETY_PI_HOST_ENTRYPOINT="$pi_host_entry" \
-SOCIETY_PI_HOST_BUILD_SHA256="$pi_host_digest" \
+SOCIETY_PI_HOST_BUILD_BLAKE3="$pi_host_digest" \
 cargo test --workspace
 
 cargo clippy --workspace --all-targets -- -D warnings

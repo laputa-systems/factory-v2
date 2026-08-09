@@ -14,9 +14,13 @@ use std::{
 };
 
 use society_kernel::{
-    AdmissionGeneration, Capability, CapabilityGrantId, CommandId, ExpectedGeneration,
-    OperatingCycleId, OperatingCycleTreatment, PrincipalDisplayName, PrincipalId, Sha256Digest,
-    SocietyName, UsdMicros,
+    AdmissionGeneration, ApplicationIdentity, ApplicationMissionInput, ApplicationName,
+    ApplicationRevisionOrdinal, Blake3Digest, Capability, CapabilityGrantId, CommandId,
+    ExpectedGeneration, MissionPrinciple, MissionPrincipleKind, MissionPrincipleText,
+    MissionPrinciples, MissionStatement, NorthStarBoundaryCommitmentQuestion,
+    NorthStarChangeQuestion, NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet,
+    NorthStarRevisitQuestion, OperatingCycleId, OperatingCycleTreatment, PrincipalDisplayName,
+    PrincipalId, SocietyName, UsdMicros,
 };
 use societyctl::{SocietyctlClient, SocietyctlError, SupervisorClient};
 use societyd::protocol::{
@@ -27,6 +31,40 @@ use societyd::{Daemon, DaemonConfig, DaemonError, FaultInjection, ShutdownHandle
 
 const BOOTSTRAP: PrincipalId = PrincipalId::BOOTSTRAP;
 const GRAND_ARCHITECT: PrincipalId = PrincipalId::new(3).expect("compiled principal id");
+
+fn resident_application_mission() -> ApplicationMissionInput {
+    ApplicationMissionInput {
+        application_identity: ApplicationIdentity::parse("resident-protocol-fixture").unwrap(),
+        application_name: ApplicationName::parse("Resident protocol fixture").unwrap(),
+        revision_ordinal: ApplicationRevisionOrdinal::new(1).unwrap(),
+        statement: MissionStatement::parse("Exercise the bounded resident protocol.").unwrap(),
+        principles: MissionPrinciples::new(vec![
+            MissionPrinciple {
+                kind: MissionPrincipleKind::Purpose,
+                text: MissionPrincipleText::parse("Keep the fixture generic and legible.").unwrap(),
+            },
+            MissionPrinciple {
+                kind: MissionPrincipleKind::Boundary,
+                text: MissionPrincipleText::parse("Do not widen daemon authority.").unwrap(),
+            },
+        ])
+        .unwrap(),
+        north_star_questions: NorthStarQuestionSet {
+            change: NorthStarChangeQuestion::parse("What bounded change is needed?").unwrap(),
+            improvement_evidence: NorthStarImprovementEvidenceQuestion::parse(
+                "What evidence proves the improvement?",
+            )
+            .unwrap(),
+            boundary_commitment: NorthStarBoundaryCommitmentQuestion::parse(
+                "Which authority boundary must remain intact?",
+            )
+            .unwrap(),
+            revisit: NorthStarRevisitQuestion::parse("When should this mission be revisited?")
+                .unwrap(),
+        },
+        source_rendering_digest: Blake3Digest::of_bytes(b"resident-protocol-fixture-mission"),
+    }
+}
 
 fn temporary_runtime_root(label: &str) -> PathBuf {
     let unique = SystemTime::now()
@@ -186,7 +224,7 @@ fn founding_commands(client: &mut SupervisorClient, start_correlation: u64) {
             Capability::InstallFoundingUniverseSeed,
             ExpectedGeneration::NotApplicable,
             ClientCommandBody::InstallFoundingUniverseSeed {
-                rendering_digest: Sha256Digest::of_bytes(b"daemon test seed"),
+                mission: Box::new(resident_application_mission()),
             },
         )
         .unwrap(),

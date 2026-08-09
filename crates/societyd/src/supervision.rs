@@ -20,13 +20,13 @@ use std::{
     thread::{self, JoinHandle},
 };
 
-use sha2::{Digest, Sha256};
+use blake3::Hasher;
 use society_pi::{
-    AbortPayload, AbortReason, AbsolutePath, BoundaryPeer, BoundarySequence, CorrelationIdentity,
-    CreateSessionPayload, DisposePayload, DisposeReason, HostProcessId, InboundCommand,
-    InboundFrame, MAX_JSONL_FRAME_BYTES, ModelId, OutboundFrame, PeerError, PeerObservation,
-    PeerPhase, PromptPayload, Provider, RuntimeIdentity, SessionIdentity, Sha256Digest, SpawnNonce,
-    ThinkingLevel, decode_outbound_jsonl, encode_inbound_jsonl,
+    AbortPayload, AbortReason, AbsolutePath, Blake3Digest, BoundaryPeer, BoundarySequence,
+    CorrelationIdentity, CreateSessionPayload, DisposePayload, DisposeReason, HostProcessId,
+    InboundCommand, InboundFrame, MAX_JSONL_FRAME_BYTES, ModelId, OutboundFrame, PeerError,
+    PeerObservation, PeerPhase, PromptPayload, Provider, RuntimeIdentity, SessionIdentity,
+    SpawnNonce, ThinkingLevel, decode_outbound_jsonl, encode_inbound_jsonl,
 };
 use thiserror::Error;
 
@@ -519,7 +519,7 @@ pub enum TransientByteCount {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TransientStreamCapture {
     pub observed_byte_count: TransientByteCount,
-    pub sha256: Sha256Digest,
+    pub blake3: Blake3Digest,
     pub retention: TransientRetention,
     retained_bytes: Vec<u8>,
 }
@@ -651,13 +651,13 @@ impl QualifiedHostExecution {
             .assert_v1()
             .map_err(SupervisionError::Protocol)?;
         self.node_executable
-            .verify_matches(&self.runtime.node_executable_sha256)?;
+            .verify_matches(&self.runtime.node_executable_blake3)?;
         self.adapter_entrypoint
-            .verify_matches(&self.runtime.adapter_build_sha256)?;
+            .verify_matches(&self.runtime.adapter_build_blake3)?;
         self.lockfile
-            .verify_matches(&self.runtime.lockfile_sha256)?;
+            .verify_matches(&self.runtime.lockfile_blake3)?;
         self.pi_transitive_package_set
-            .verify_matches(&self.runtime.pi_transitive_package_set_sha256)?;
+            .verify_matches(&self.runtime.pi_transitive_package_set_blake3)?;
         Ok(())
     }
 }
@@ -665,13 +665,13 @@ impl QualifiedHostExecution {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VerifiedArtifact {
     path: AbsolutePath,
-    expected_sha256: Sha256Digest,
+    expected_blake3: Blake3Digest,
 }
 
 impl VerifiedArtifact {
     pub fn inspect(
         path: impl AsRef<Path>,
-        expected_sha256: Sha256Digest,
+        expected_blake3: Blake3Digest,
     ) -> Result<Self, SupervisionError> {
         let canonical = fs::canonicalize(path)?;
         let metadata = fs::metadata(&canonical)?;
@@ -681,9 +681,9 @@ impl VerifiedArtifact {
         let path = absolute_path_from_path(&canonical)?;
         let artifact = Self {
             path,
-            expected_sha256,
+            expected_blake3,
         };
-        artifact.verify_matches(&artifact.expected_sha256)?;
+        artifact.verify_matches(&artifact.expected_blake3)?;
         Ok(artifact)
     }
 
@@ -691,9 +691,9 @@ impl VerifiedArtifact {
         &self.path
     }
 
-    fn verify_matches(&self, expected: &Sha256Digest) -> Result<(), SupervisionError> {
+    fn verify_matches(&self, expected: &Blake3Digest) -> Result<(), SupervisionError> {
         let observed = digest_file(self.path.as_path())?;
-        if &observed != expected || &self.expected_sha256 != expected {
+        if &observed != expected || &self.expected_blake3 != expected {
             return Err(SupervisionError::ArtifactDigestDrift);
         }
         Ok(())
@@ -945,24 +945,24 @@ impl PiSupervisor {
             .arg(request.session_identity.as_str())
             .arg("--spawn-nonce")
             .arg(request.spawn_nonce.as_str())
-            .arg("--node-executable-sha256")
+            .arg("--node-executable-blake3")
             .arg(
                 request
                     .host_execution
                     .runtime
-                    .node_executable_sha256
+                    .node_executable_blake3
                     .as_str(),
             )
-            .arg("--lockfile-sha256")
-            .arg(request.host_execution.runtime.lockfile_sha256.as_str())
-            .arg("--adapter-build-sha256")
-            .arg(request.host_execution.runtime.adapter_build_sha256.as_str())
-            .arg("--pi-transitive-package-set-sha256")
+            .arg("--lockfile-blake3")
+            .arg(request.host_execution.runtime.lockfile_blake3.as_str())
+            .arg("--adapter-build-blake3")
+            .arg(request.host_execution.runtime.adapter_build_blake3.as_str())
+            .arg("--pi-transitive-package-set-blake3")
             .arg(
                 request
                     .host_execution
                     .runtime
-                    .pi_transitive_package_set_sha256
+                    .pi_transitive_package_set_blake3
                     .as_str(),
             )
             .current_dir(request.workspace.directory().as_path())
@@ -2497,7 +2497,7 @@ impl Drop for ManagedPiChild {
 struct StreamCapture {
     observed_byte_count: u64,
     count_overflowed: bool,
-    hasher: Sha256,
+    hasher: Hasher,
     retained_bytes: Vec<u8>,
     retention: TransientRetention,
 }
@@ -2527,7 +2527,7 @@ impl StreamCapture {
             } else {
                 TransientByteCount::Exact(self.observed_byte_count)
             },
-            sha256: digest_to_type(self.hasher.clone().finalize()),
+            blake3: digest_to_type(self.hasher.clone().finalize().as_bytes()),
             retention: self.retention,
             retained_bytes: self.retained_bytes.clone(),
         }
@@ -2694,7 +2694,7 @@ fn validate_spawn_request(request: &PiSpawnRequest) -> Result<(), SupervisionErr
         &request.create_session.agent_directory,
     )?;
     if digest_file(request.create_session.models_path.as_path())?
-        != request.create_session.model_catalog.catalog_sha256
+        != request.create_session.model_catalog.catalog_blake3
     {
         return Err(SupervisionError::InvalidSpawnRequest);
     }
@@ -2847,30 +2847,30 @@ fn reap_status(status: ExitStatus) -> ReapStatus {
     }
 }
 
-fn digest_file(path: &Path) -> Result<Sha256Digest, SupervisionError> {
+fn digest_file(path: &Path) -> Result<Blake3Digest, SupervisionError> {
     let mut file = fs::File::open(path)?;
-    let mut hasher = Sha256::new();
+    let mut hasher = Hasher::new();
     let mut buffer = [0_u8; 8192];
     loop {
         let count = file.read(&mut buffer)?;
         if count == 0 {
-            return Ok(digest_to_type(hasher.finalize()));
+            return Ok(digest_to_type(hasher.finalize().as_bytes()));
         }
         hasher.update(&buffer[..count]);
     }
 }
 
-fn digest_bytes(bytes: &[u8]) -> Sha256Digest {
-    digest_to_type(Sha256::digest(bytes))
+fn digest_bytes(bytes: &[u8]) -> Blake3Digest {
+    digest_to_type(blake3::hash(bytes).as_bytes())
 }
 
-fn digest_to_type(digest: impl AsRef<[u8]>) -> Sha256Digest {
+fn digest_to_type(digest: impl AsRef<[u8]>) -> Blake3Digest {
     let mut output = String::with_capacity(64);
     for byte in digest.as_ref() {
         use std::fmt::Write as _;
         let _ = write!(&mut output, "{byte:02x}");
     }
-    Sha256Digest::parse(output).expect("SHA-256 formatter produces lowercase hex")
+    Blake3Digest::parse(output).expect("BLAKE3 formatter produces lowercase hex")
 }
 
 fn absolute_path_from_path(path: &Path) -> Result<AbsolutePath, SupervisionError> {
