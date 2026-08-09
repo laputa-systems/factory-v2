@@ -1,0 +1,7 @@
+/target/
+/var/
+/packages/society-pi-host/node_modules/
+/packages/society-pi-host/dist/
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
