@@ -728,7 +728,8 @@ fn git_stdout_is_bounded_before_a_fake_git_can_exhaust_process_memory() {
 }
 
 #[test]
-fn structural_externally_supervised_receipt_verification_preserves_provenance_through_delivery() {
+fn structural_externally_supervised_receipt_verification_preserves_application_and_decision_cross_links_through_delivery()
+ {
     let fixture = Fixture::new();
     fs::create_dir_all(fixture.repo.join("artifacts")).unwrap();
     fs::write(fixture.repo.join("artifacts/unit.bin"), b"\0\x01\x02\x03").unwrap();
