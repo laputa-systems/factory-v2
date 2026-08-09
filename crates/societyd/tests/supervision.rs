@@ -559,7 +559,7 @@ fn unread_control_pipe_cannot_wedge_create_and_expiry_emergency_reaps() {
 }
 
 #[test]
-fn cancellation_discards_pending_create_before_a_paused_reader_can_resume() {
+fn cancellation_discards_pending_create_before_session_initialization() {
     let fixture = Fixture::new("m4-paused-reader-resume");
     let child_id = fixture.child_id();
     let mut supervisor = PiSupervisor::new();
@@ -587,12 +587,44 @@ fn cancellation_discards_pending_create_before_a_paused_reader_can_resume() {
         supervisor.drive_control_write(&child_id, MonotonicTick::from_milliseconds(1)),
         Err(SupervisionError::InvalidLifecycle)
     ));
-    let receipt = supervisor.wait_and_reap(&child_id).unwrap();
+
+    // `request_cancellation` records the fixed graceful schedule but does
+    // not sleep or signal by itself. Advance the same typed clock the daemon
+    // control loop uses; this reader remains paused far beyond that deadline.
+    assert!(
+        supervisor
+            .drive_cancellation(&child_id, MonotonicTick::from_milliseconds(4_999))
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        supervisor
+            .drive_cancellation(&child_id, MonotonicTick::from_milliseconds(5_000))
+            .unwrap()
+            .is_none()
+    );
+
+    // SIGTERM has been delivered to the owned group, so waiting now is a
+    // prompt reap of a contained child, not a wait for the fixture's reader.
+    let receipt = supervisor
+        .wait_and_reap_at(&child_id, MonotonicTick::from_milliseconds(5_000))
+        .unwrap();
     assert_eq!(
         receipt.terminal_disposition,
-        ChildTerminalDisposition::ContainmentFailed
+        ChildTerminalDisposition::Terminated
     );
     assert!(receipt.canonical_session_file.is_none());
+    assert_eq!(receipt.peer_phase, society_pi::PeerPhase::Fatal);
+    assert_eq!(receipt.transient_evidence.outbound_frame_count, 1);
+    assert!(
+        receipt
+            .cancellation_deliveries
+            .iter()
+            .any(|delivery| matches!(
+                delivery.delivery,
+                societyd::supervision::SignalDelivery::TermSent
+            ))
+    );
     fixture.cleanup();
 }
 

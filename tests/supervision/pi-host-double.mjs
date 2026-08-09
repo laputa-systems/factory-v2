@@ -44,9 +44,10 @@ if (sessionIdentity.includes("never-read-stdin")) {
 }
 if (sessionIdentity.includes("paused-reader-resume")) {
 	// This delay begins only after AdapterReady was written. It is deliberately
-	// long enough that the Rust test can stage/cancel the full v1 frame before
-	// this double attaches an stdin reader, without depending on scheduler luck.
-	await new Promise((resolve) => setTimeout(resolve, 500));
+	// beyond the supervisor's 5s graceful abort deadline. The paired test
+	// drives that deadline and terminates this process before it can attach an
+	// stdin reader; it never relies on voluntary reader resumption.
+	await new Promise((resolve) => setTimeout(resolve, 60_000));
 }
 if (sessionIdentity.includes("malformed-live")) {
 	process.stdout.write("{\n");
