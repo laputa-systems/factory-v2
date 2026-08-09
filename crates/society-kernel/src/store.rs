@@ -338,6 +338,8 @@ pub enum StoreError {
     },
     #[error("command id was already used with a different typed request")]
     IdempotencyConflict,
+    #[error("operating cycle {0:?} was not found")]
+    OperatingCycleNotFound(OperatingCycleId),
     #[error("ledger event {0:?} was not found")]
     LedgerEventNotFound(EventId),
     #[error("ledger corruption: {0}")]
@@ -744,6 +746,29 @@ impl KernelStore {
         Ok(self
             .connection
             .query_row("SELECT COUNT(*) FROM commands", [], |row| row.get(0))?)
+    }
+
+    /// Reads the current admission generation for one exact Operating Cycle.
+    ///
+    /// The resident supervisor uses this only to attribute an already-spawned
+    /// inert child at the generation current when its physical receipt lands;
+    /// it is not a work-authorization decision or a generic cycle query.
+    pub fn current_operating_cycle_admission_generation(
+        &self,
+        operating_cycle_id: OperatingCycleId,
+    ) -> Result<AdmissionGeneration, StoreError> {
+        let generation = self
+            .connection
+            .query_row(
+                "SELECT admission_generation FROM operating_cycles WHERE operating_cycle_id = ?1",
+                [operating_cycle_id.value()],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?
+            .ok_or(StoreError::OperatingCycleNotFound(operating_cycle_id))?;
+        AdmissionGeneration::try_from(generation).map_err(|_| {
+            StoreError::LedgerCorruption("operating cycle has invalid admission generation")
+        })
     }
 
     /// Reads the one closed recovery state for an already physically sealed

@@ -173,6 +173,69 @@ fn found_cycle(store: &mut KernelStore) -> (PrincipalId, OperatingCycleId) {
     (PrincipalId::new(3).unwrap(), cycle_id)
 }
 
+#[test]
+fn current_operating_cycle_generation_is_typed_and_distinguishes_absence_from_corruption() {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("xsh-cycle-generation-read-{nonce}.sqlite"));
+    let mut store = KernelStore::open(&path).unwrap();
+    let (grand_architect, cycle_id) = found_cycle(&mut store);
+    assert_eq!(
+        store
+            .current_operating_cycle_admission_generation(cycle_id)
+            .unwrap(),
+        AdmissionGeneration::INITIAL
+    );
+
+    accepted(
+        &mut store,
+        "cycle-generation-read-cancel",
+        grand_architect,
+        Capability::RequestCancellation,
+        ExpectedGeneration::Exact(AdmissionGeneration::INITIAL),
+        CommandBody::RequestCancellation {
+            cycle_id,
+            mode: society_kernel::CancellationMode::GracefulCancel,
+        },
+    );
+    assert_eq!(
+        store
+            .current_operating_cycle_admission_generation(cycle_id)
+            .unwrap(),
+        AdmissionGeneration::try_from(1).unwrap()
+    );
+
+    let unknown = OperatingCycleId::new(9_999_999).unwrap();
+    assert!(matches!(
+        store.current_operating_cycle_admission_generation(unknown),
+        Err(StoreError::OperatingCycleNotFound(found)) if found == unknown
+    ));
+
+    drop(store);
+    let inspect = Connection::open(&path).unwrap();
+    inspect
+        .pragma_update(None, "ignore_check_constraints", "ON")
+        .unwrap();
+    inspect
+        .execute(
+            "UPDATE operating_cycles SET admission_generation = -1 WHERE operating_cycle_id = ?1",
+            [cycle_id.value()],
+        )
+        .unwrap();
+    drop(inspect);
+    let corrupted = KernelStore::open(&path).unwrap();
+    assert!(matches!(
+        corrupted.current_operating_cycle_admission_generation(cycle_id),
+        Err(StoreError::LedgerCorruption(
+            "operating cycle has invalid admission generation"
+        ))
+    ));
+    drop(corrupted);
+    fs::remove_file(path).unwrap();
+}
+
 /// The M5 Office Ready fact is no longer a synthetic service assertion. This
 /// fixture builds the provider-free deterministic child receipt chain needed
 /// before an Office can open ordinary turns. The tiny reservation is settled
