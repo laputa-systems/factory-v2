@@ -1091,8 +1091,9 @@ deterministic Rust/XSH product judges <-------- execution
                        SQLite + content objects          Git worktrees/target
 ```
 
-`societyd` is the sole SQLite writer and will become the content-store writer,
-child-process owner, and Git materializer as those tranches land. Its named
+`societyd` is the sole SQLite writer and now owns the private physical content
+writer; child-process persistence and Git materialization remain later
+resident integrations. Its named
 `0600` Unix socket is a query-only public monitor surface used by `societyctl`;
 it has no mutation tag. Commands arrive only over a distinct pre-opened
 connected `AF_UNIX` supervisor stream. Stream type, peer family, same effective
@@ -3055,6 +3056,7 @@ An enclosing milestone remains open until its exit judge passes.
 | `748fec0` | provider-free native Pi-host process physics: private fresh workspaces, verified artifacts, inert process-group spawn, nonblocking and deadline-bounded control/handshake streams, pending-create cancellation fences, honest logical-versus-physical transient byte receipts, typed TERM/KILL race outcomes, escalation, direct-child reap, and Drop containment across 20 process tests, five library tests, and one exact built-host `CreateSession` to `Dispose` smoke | resident daemon ownership and durable child/session/signal/reap rows; content sealing; budget reservation, charge, and cancellation transactions; restart recovery; package import/qualification proof; detached-descendant containment; and Milestone 4 as a whole |
 | `7931d32` | isolated local product mechanics: clean exact-ref qualification, immutable candidate-tree capture, binary patch/path binding, opaque anti-recombination receipts, fresh materialization, bounded trusted-Git validation, externally supervised XSH/Xsht receipt seam, controlled no-hook commit, guarded CAS delivery, explicit checkout-recovery fence, and no-follow cleanup ownership across 22 provider-free tests | kernel C2/delivery authority, SQLite persistence/idempotency, daemon workspace/process custody, authentic validation/process evidence, content sealing, budgets/cancellation, outcome scheduling, remote delivery, and Milestone 6 as a whole |
 | `71ad51e` | normalized deterministic content/evidence foundation: global digest identity is separated from run-specific manifest producer/schema/retention, evaluator/input revisions and evaluation receipts are exact, evidence admission preserves semantic role/applicability/limitations, two experiments may reuse identical output bytes without merging provenance, and all command/event bodies, material replay, migration rollback, and resident rejection/treatment wire values are closed across 30 kernel and 11 daemon integration tests | physical content-store invocation, evaluator execution and artifact authentication, parsed observation persistence, Pi/process receipts, curation/graph conversion, daemon command integration, influence/disclosure/propagation, and Milestone 1 as a whole |
+| `64a5977` | root-workspace physical content integration: the resident daemon exclusively owns the physical store, seals exact bytes before issuing the existing receipt and global-object commands, resumes the closed `Absent`/`SealReceiptOnly`/`Registered` split within one live authority using retry-stable command identities, rejects tamper/symlink/limit and changed-byte recombination, and exposes no public or supervisor content mutation tag across 14 daemon integration tests plus the nine physical-store tests | post-process restart completion or reconciliation (restart remains `RecoveryFenced`); evaluator execution or artifact authentication; media/schema, producer, retention, provenance, evidence, graph, or influence meaning; durable child/process integration; and Milestone 1 as a whole |
 
 The current coordination, M3 execution, and deterministic-evidence kernel is
 still a bounded foundation,
@@ -3067,9 +3069,13 @@ submission/evaluator evidence, or judgment. M3 Attempt reservations debit only
 the Society and Operating Cycle envelopes; Project, Office-session, and exact
 per-Attempt constraints remain part of durable accounting integration. Global
 content identity, run-specific deterministic manifests, evaluation receipts,
-and narrow evidence admissions are typed trusted-kernel attestations; the
-kernel does not yet invoke the physical store or evaluator, authenticate their
-artifacts, persist parsed observations, or turn an admission into graph truth.
+and narrow evidence admissions are typed trusted-kernel attestations. The
+daemon now invokes its private physical store before recording the narrow seal
+receipt and global object identity, but does not invoke an evaluator,
+authenticate evaluator artifacts, persist parsed observations, or turn an
+admission into graph truth. Its two split-transition retry seams are
+same-lifetime evidence only: a restarted nonempty daemon remains
+`RecoveryFenced` and cannot complete a half-recorded content operation.
 Curation, delivery, notices/outbox, process receipt binding, native
 qualification, recovery, and the full graph vocabulary are still open.
 

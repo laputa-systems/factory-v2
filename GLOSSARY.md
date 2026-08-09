@@ -159,7 +159,20 @@ admission, so two runs may reuse identical bytes without sharing provenance.
 A narrow kernel-service attestation that the physical content boundary already
 sealed one SHA-256 identity. The current kernel command receives only the
 digest: it does not ingest bytes, execute an evaluator, assign provenance, or
-admit evidence. Physical-store and daemon integration must supply that fact.
+admit evidence. The resident daemon now supplies that fact only through its
+private content writer: it seals the bytes first, then records the receipt,
+then registers the global `ContentObject`. Neither local wire protocol can
+express this authority.
+
+### Content seal operation
+
+A retry-stable, daemon-internal binding of one expected SHA-256 digest to the
+exact `RecordContentSealReceipt` and `RegisterContentObject` command
+identities. It is an operational idempotency boundary, not provenance: a
+different occurrence of already registered bytes reuses the global
+`ContentObject` without creating another producer claim. The current operation
+can resume across its typed split states only while the same daemon authority
+remains live; a restarted nonempty daemon is deliberately recovery-fenced.
 
 ### Coordination pulse
 

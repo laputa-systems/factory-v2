@@ -14,7 +14,7 @@ the resolved transitive graph is committed in `Cargo.lock`.
 | --- | ---: | --- |
 | `rusqlite` | 0.40.2 | Sole SQLite binding in `society-kernel`; migrations are embedded SQL executed by the kernel rather than an ORM or migration framework. |
 | `thiserror` | 2.0.20 | Closed, inspectable error enums at trusted boundaries. |
-| `sha2` | 0.11.0 | SHA-256 identities for immutable content, command bodies, revisions, trees, execution artifacts, and the isolated physical content store. |
+| `sha2` | 0.11.0 | SHA-256 identities for immutable content, command bodies, revisions, trees, execution artifacts, and the resident physical content store. |
 | `tracing` | 0.1.44 | Typed spans and lifecycle events in `societyd`. |
 | `tracing-subscriber` | 0.3.23 | Mandatory monitor and bounded diagnostic rendering; only `fmt`, `registry`, and `std` features are enabled. |
 | `serde` | 1.0.229 | Serialization derives only in `society-pi`, at the closed Pi SDK-host protocol boundary. |

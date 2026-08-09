@@ -65,15 +65,16 @@ circuits/vs-001-spawn-stderr/
 crates/society-pi/         implemented provider-free-audited typed Rust peer;
                            durable sealing, charging, and process ownership remain
                            in the planned resident authority
-crates/society-content/    implemented isolated physical byte-seal store; it
-                           confers no evidence or provenance meaning
-crates/society-circuit/    implemented isolated closed VS-001 observation
+crates/society-content/    implemented root-workspace physical byte-seal store;
+                           it confers no evidence or provenance meaning
+crates/society-circuit/    implemented root-workspace closed VS-001 observation
                            adapters; daemon/evaluator admission remains
 crates/society-product/    implemented isolated guarded local Git
                            materialization; durable authorization remains
 crates/societyd/           implemented bounded resident SQLite authority,
-                           monitor, and native Pi child/process-group physics;
-                           durable Pi/content/recovery integration remains
+                           monitor, private physical-to-kernel content writer,
+                           and native Pi child/process-group physics; durable
+                           Pi receipt and restart-recovery integration remains
 crates/societyctl/         implemented public query and supervisor-stream client
 tests/daemon/              implemented resident-protocol integration fixtures
 tests/supervision/         provider-free native Pi-host process/race fixture
@@ -92,8 +93,8 @@ Run the narrowest relevant judge first, then broaden:
 cargo test -p society-kernel --test <contract>
 cargo test -p society-pi --lib
 npm test --prefix packages/society-pi-host
-cargo test --manifest-path crates/society-content/Cargo.toml
-cargo test --manifest-path crates/society-circuit/Cargo.toml
+cargo test -p society-content
+cargo test -p society-circuit
 cargo test --manifest-path crates/society-product/Cargo.toml
 cargo test -p societyd --test supervision -- --test-threads=1
 
