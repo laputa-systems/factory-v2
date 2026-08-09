@@ -1,0 +1,2359 @@
+//! Native-host process ownership for the Pi SDK boundary.
+//!
+//! This module deliberately stops at process physics. It prepares an owned
+//! workspace, verifies the qualified host artifacts, owns one process group,
+//! captures raw pipe directions in bounded transient buffers, and returns
+//! typed receipts. The returned facts
+//! are **inputs** to the later kernel transaction; this module makes no SQLite
+//! write, durable charge, admission decision, or successor admission.
+
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    ffi::CString,
+    fs,
+    io::{self, BufRead, BufReader, Read, Write},
+    os::fd::AsRawFd,
+    os::unix::{fs::MetadataExt, process::CommandExt},
+    path::Path,
+    process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus, Stdio},
+    sync::{Arc, Mutex},
+    thread::{self, JoinHandle},
+};
+
+use sha2::{Digest, Sha256};
+use society_pi::{
+    AbortPayload, AbortReason, AbsolutePath, BoundaryPeer, BoundarySequence, CorrelationIdentity,
+    CreateSessionPayload, DisposePayload, DisposeReason, HostProcessId, InboundCommand,
+    InboundFrame, MAX_JSONL_FRAME_BYTES, ModelId, PeerError, PeerObservation, PeerPhase, Provider,
+    RuntimeIdentity, SessionIdentity, Sha256Digest, SpawnNonce, ThinkingLevel,
+    encode_inbound_jsonl,
+};
+use thiserror::Error;
+
+const MAX_HANDSHAKE_FRAMES: usize = 8;
+const WORKSPACE_MODE: libc::mode_t = 0o700;
+const MAX_TRANSIENT_STREAM_BYTES: usize = 8 * MAX_JSONL_FRAME_BYTES;
+
+/// A kernel-assigned child identity. It is never inferred from a PID: PIDs can
+/// be reused while the logical child must remain unique through its receipt.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct SupervisedChildId(String);
+
+impl SupervisedChildId {
+    pub fn parse(value: impl Into<String>) -> Result<Self, SupervisionError> {
+        let value = value.into();
+        if !is_domain_identifier(&value) {
+            return Err(SupervisionError::InvalidChildIdentity);
+        }
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// A workspace identity is distinct from a filesystem path. The former is an
+/// audit subject; the latter is an OS boundary validated at preparation time.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct NativeWorkspaceId(String);
+
+impl NativeWorkspaceId {
+    pub fn parse(value: impl Into<String>) -> Result<Self, SupervisionError> {
+        let value = value.into();
+        if !is_domain_identifier(&value) {
+            return Err(SupervisionError::InvalidWorkspaceIdentity);
+        }
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// A pre-existing daemon-owned root under which this subsystem may allocate
+/// fresh direct children. Opening it is observational: it never creates or
+/// chmods a caller-selected path.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeWorkspaceRoot {
+    directory: AbsolutePath,
+}
+
+impl NativeWorkspaceRoot {
+    /// Validates an already-provisioned private root. Symlink spellings are
+    /// rejected rather than canonicalized into an ambiguous authority path.
+    pub fn open_owned(directory: impl AsRef<Path>) -> Result<Self, SupervisionError> {
+        let directory = directory.as_ref();
+        if fs::symlink_metadata(directory)?.file_type().is_symlink() {
+            return Err(SupervisionError::UnsafeWorkspaceRoot);
+        }
+        let canonical = fs::canonicalize(directory)?;
+        let metadata = fs::metadata(&canonical)?;
+        // SAFETY: `geteuid` reads this process's credential without touching
+        // memory, locks, descriptors, or process state.
+        let daemon_uid = unsafe { libc::geteuid() };
+        if !metadata.is_dir() || metadata.uid() != daemon_uid || metadata.mode() & 0o077 != 0 {
+            return Err(SupervisionError::UnsafeWorkspaceRoot);
+        }
+        let directory = absolute_path_from_path(&canonical)?;
+        Ok(Self { directory })
+    }
+
+    pub fn directory(&self) -> &AbsolutePath {
+        &self.directory
+    }
+
+    /// Allocates exactly one brand-new direct child. `mkdir(0700)` is atomic
+    /// with respect to pre-existing/symlink targets and avoids chmod on any
+    /// caller-selected existing directory.
+    pub fn allocate(
+        &self,
+        identity: NativeWorkspaceId,
+    ) -> Result<NativeWorkspace, SupervisionError> {
+        let candidate = self.directory.as_path().join(identity.as_str());
+        let candidate_text = candidate
+            .to_str()
+            .ok_or(SupervisionError::InvalidSpawnRequest)?;
+        let candidate_c =
+            CString::new(candidate_text).map_err(|_| SupervisionError::InvalidSpawnRequest)?;
+        // SAFETY: the C string is NUL-terminated and lives across the call;
+        // `mkdir` reads it and creates one direct child with mode 0700.
+        if unsafe { libc::mkdir(candidate_c.as_ptr(), WORKSPACE_MODE) } != 0 {
+            return match io::Error::last_os_error().kind() {
+                io::ErrorKind::AlreadyExists => Err(SupervisionError::WorkspaceAlreadyExists),
+                _ => Err(SupervisionError::Io(io::Error::last_os_error())),
+            };
+        }
+        let canonical = fs::canonicalize(&candidate)?;
+        let metadata = fs::metadata(&canonical)?;
+        // SAFETY: `geteuid` observes process credentials only.
+        let daemon_uid = unsafe { libc::geteuid() };
+        let canonical = absolute_path_from_path(&canonical)?;
+        if !metadata.is_dir()
+            || metadata.uid() != daemon_uid
+            || metadata.mode() & 0o077 != 0
+            || !canonical.is_strict_descendant_of(&self.directory)
+        {
+            return Err(SupervisionError::UnsafeWorkspace);
+        }
+        Ok(NativeWorkspace {
+            identity,
+            directory: canonical,
+        })
+    }
+}
+
+/// A fresh direct child of [`NativeWorkspaceRoot`], not a native sandbox.
+/// Its contents remain under the ordinary host account.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeWorkspace {
+    identity: NativeWorkspaceId,
+    directory: AbsolutePath,
+}
+
+impl NativeWorkspace {
+    pub fn identity(&self) -> &NativeWorkspaceId {
+        &self.identity
+    }
+
+    pub fn directory(&self) -> &AbsolutePath {
+        &self.directory
+    }
+}
+
+/// A process group intentionally created for one direct host child.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct OwnedProcessGroupId(libc::pid_t);
+
+impl OwnedProcessGroupId {
+    fn from_child_pid(pid: HostProcessId) -> Result<Self, SupervisionError> {
+        let pid =
+            i32::try_from(pid.value()).map_err(|_| SupervisionError::InvalidProcessIdentity)?;
+        if pid <= 0 {
+            return Err(SupervisionError::InvalidProcessIdentity);
+        }
+        Ok(Self(pid))
+    }
+
+    pub const fn value(self) -> libc::pid_t {
+        self.0
+    }
+}
+
+/// A monotonic tick supplied by the daemon's control loop. Tests advance this
+/// value directly; this subsystem never sleeps while holding child ownership.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct MonotonicTick(u64);
+
+impl MonotonicTick {
+    pub const ZERO: Self = Self(0);
+
+    pub const fn from_milliseconds(value: u64) -> Self {
+        Self(value)
+    }
+
+    pub const fn milliseconds(self) -> u64 {
+        self.0
+    }
+
+    fn checked_add(self, duration: CancellationDelay) -> Result<Self, SupervisionError> {
+        self.0
+            .checked_add(duration.value())
+            .map(Self)
+            .ok_or(SupervisionError::DeadlineOverflow)
+    }
+}
+
+/// A control-loop deadline for a handshake observation. The supervisor never
+/// blocks a daemon thread waiting for a silent adapter; callers poll at a
+/// monotonic tick and expiry starts owned-child containment.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct HandshakeDeadline {
+    expires_at: MonotonicTick,
+}
+
+impl HandshakeDeadline {
+    pub const fn at(expires_at: MonotonicTick) -> Self {
+        Self { expires_at }
+    }
+
+    pub const fn expires_at(self) -> MonotonicTick {
+        self.expires_at
+    }
+}
+
+/// Deadline for a single ordered stdin frame. A frame is admitted to the
+/// Rust peer before its first byte reaches the child, so an incomplete write
+/// must either finish under this deadline or fail closed; later frames can
+/// never overtake it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ControlWriteDeadline {
+    expires_at: MonotonicTick,
+}
+
+impl ControlWriteDeadline {
+    pub const fn at(expires_at: MonotonicTick) -> Self {
+        Self { expires_at }
+    }
+
+    pub const fn expires_at(self) -> MonotonicTick {
+        self.expires_at
+    }
+}
+
+/// Progress of one strictly ordered adapter-control frame.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ControlWriteProgress {
+    Delivered,
+    Pending,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CancellationDelay(u64);
+
+impl CancellationDelay {
+    pub const fn milliseconds(value: u64) -> Self {
+        Self(value)
+    }
+
+    pub const fn value(self) -> u64 {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CancellationMode {
+    Quiesce,
+    GracefulCancel,
+    EmergencyStop,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CancellationReason {
+    OperatorStop,
+    WallBudgetExpired,
+    BudgetGuardrail,
+    ProtocolContainment,
+    DaemonRecovery,
+}
+
+/// Closed cancellation identity, supplied by the kernel/control plane rather
+/// than synthesized from a signal or trace message.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct CancellationRequestId(String);
+
+impl CancellationRequestId {
+    pub fn parse(value: impl Into<String>) -> Result<Self, SupervisionError> {
+        let value = value.into();
+        if !is_domain_identifier(&value) {
+            return Err(SupervisionError::InvalidCancellationIdentity);
+        }
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// The externally admitted cancellation fact. There is no generic reason map
+/// or arbitrary deadline override at this trusted boundary.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CancellationRequest {
+    pub cancellation_request_id: CancellationRequestId,
+    pub mode: CancellationMode,
+    pub reason: CancellationReason,
+    pub observed_admission_generation: u64,
+    pub abort_correlation_identity: CorrelationIdentity,
+}
+
+/// Explains whether a shutdown lineage came from an admitted kernel request
+/// or from this boundary's fail-closed transport containment. The latter is
+/// an in-memory safety action, not a fabricated durable cancellation command.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CancellationOrigin {
+    ExplicitRequest,
+    AutomaticBoundaryContainment,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CancellationModeRevision {
+    pub from: CancellationMode,
+    pub to: CancellationMode,
+    pub observed_at: MonotonicTick,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CancellationDeadlines {
+    pub cooperative_abort_wait: CancellationDelay,
+    pub terminate_wait: CancellationDelay,
+}
+
+impl CancellationDeadlines {
+    pub const fn for_mode(mode: CancellationMode) -> Option<Self> {
+        match mode {
+            CancellationMode::Quiesce => None,
+            CancellationMode::GracefulCancel => Some(Self {
+                cooperative_abort_wait: CancellationDelay::milliseconds(5_000),
+                terminate_wait: CancellationDelay::milliseconds(5_000),
+            }),
+            CancellationMode::EmergencyStop => Some(Self {
+                cooperative_abort_wait: CancellationDelay::milliseconds(1_000),
+                terminate_wait: CancellationDelay::milliseconds(2_000),
+            }),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ChildLifecycle {
+    AwaitingAdapterReady,
+    InertVerified,
+    CreateSent,
+    SessionReady,
+    Quiescing,
+    AwaitingCooperativeAbort,
+    AwaitingTermination,
+    AwaitingKill,
+    Reaped,
+    Contained,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProcessGroupLiveness {
+    Absent,
+    Present,
+    /// POSIX reported a group but denied signal-zero. This supervisor never
+    /// guesses it still owns that group after reaping the direct-child PID.
+    Inaccessible,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ChildTerminalDisposition {
+    NotRunning,
+    CompletedBeforeDelivery,
+    CooperativelyAborted,
+    Terminated,
+    Killed,
+    ContainmentFailed,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SignalDelivery {
+    AbortControlWritten,
+    TermSent,
+    KillSent,
+    /// The direct child exited while a member of the owned process group was
+    /// still alive. The supervisor sent one final SIGKILL before it touched
+    /// potentially pipe-blocking stdout/stderr drains.
+    LingeringGroupKillSent,
+    /// A probe found a group the daemon cannot signal. This is explicit
+    /// negative delivery evidence, not a successful cleanup claim.
+    GroupInaccessible,
+    /// The group was absent during the pre-send liveness probe; no signal was
+    /// attempted.
+    AbsentBeforeSignal,
+    /// The group passed the pre-send probe but disappeared before `kill(2)`
+    /// could deliver the signal; no signal was delivered.
+    AbsentDuringSignal,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SignalGroupOutcome {
+    AbsentBeforeSignal,
+    InaccessibleBeforeSignal,
+    AbsentDuringSignal,
+    InaccessibleDuringSignal,
+    Delivered {
+        group_liveness_after_delivery: ProcessGroupLiveness,
+    },
+}
+
+impl SignalGroupOutcome {
+    const fn was_delivered(self) -> bool {
+        matches!(self, Self::Delivered { .. })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SignalReceipt {
+    pub delivery: SignalDelivery,
+    pub observed_at: MonotonicTick,
+    /// Liveness observed after the signal attempt or negative preflight. A
+    /// negative delivery never pretends a signal was delivered.
+    pub group_liveness_after_attempt: ProcessGroupLiveness,
+}
+
+/// Whether the later kernel receives every transient byte observed at this
+/// pipe, or only a bounded prefix plus a digest of the full observed stream.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum TransientRetention {
+    #[default]
+    Complete,
+    PrefixBounded,
+    /// More than `u64::MAX` bytes were observed. The digest is useful only as
+    /// a bounded transient diagnostic; this receipt makes no exact-size claim
+    /// and is terminally contained.
+    CountOverflow,
+}
+
+/// An exact byte count is evidence only while arithmetic has not overflowed.
+/// The later kernel must never coerce `Overflowed` to a cap, zero, or charge.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TransientByteCount {
+    Exact(u64),
+    Overflowed,
+}
+
+/// Raw transient pipe evidence handed to the later content-sealing authority.
+/// This subsystem computes a digest but deliberately does **not** call that a
+/// sealed content object or durable evidence record.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TransientStreamCapture {
+    pub observed_byte_count: TransientByteCount,
+    pub sha256: Sha256Digest,
+    pub retention: TransientRetention,
+    retained_bytes: Vec<u8>,
+}
+
+impl TransientStreamCapture {
+    pub fn retained_bytes(&self) -> &[u8] {
+        &self.retained_bytes
+    }
+
+    pub fn into_retained_bytes(self) -> Vec<u8> {
+        self.retained_bytes
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TransientExecutionEvidence {
+    /// Full logical control frames accepted by the Rust peer. These bytes are
+    /// not a claim that the native stdin pipe accepted them.
+    pub admitted_control: TransientStreamCapture,
+    /// Bytes actually accepted by successful native `write(2)` calls.
+    pub stdin: TransientStreamCapture,
+    pub stdout: TransientStreamCapture,
+    pub stderr: TransientStreamCapture,
+    pub logically_admitted_inbound_frame_count: u64,
+    pub physically_delivered_inbound_frame_count: u64,
+    pub outbound_frame_count: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReapStatus {
+    Exited {
+        code: i32,
+    },
+    Signaled {
+        signal: i32,
+    },
+    /// POSIX supplied neither a numeric exit code nor a terminating signal.
+    /// The receipt never invents signal zero as evidence.
+    Unknown,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReapReceipt {
+    pub child_process_id: SupervisedChildId,
+    pub host_process_id: HostProcessId,
+    pub process_group_id: OwnedProcessGroupId,
+    pub status: ReapStatus,
+    /// Direct-child reaping does not prove descendants were contained. This is
+    /// the pre-cleanup process-group observation; the final field records the
+    /// result after the one owned-group cleanup attempt.
+    pub group_liveness_before_cleanup: ProcessGroupLiveness,
+    pub group_liveness_after_reap: ProcessGroupLiveness,
+}
+
+/// This receipt is intentionally not a durable object. The later kernel is
+/// responsible for sealing/persisting it and for deciding whether known usage
+/// may be charged or an admission generation may change.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SupervisionReceipt {
+    pub child_process_id: SupervisedChildId,
+    pub session_identity: SessionIdentity,
+    pub workspace_identity: NativeWorkspaceId,
+    pub workspace_directory: AbsolutePath,
+    pub terminal_disposition: ChildTerminalDisposition,
+    pub reap: Option<ReapReceipt>,
+    pub cancellation_deliveries: Vec<SignalReceipt>,
+    pub cancellation_origin: Option<CancellationOrigin>,
+    pub cancellation_mode_revisions: Vec<CancellationModeRevision>,
+    /// The peer-validated canonical SessionManager path, if `SessionReady`
+    /// occurred. It is a transient location fact only: the kernel later owns
+    /// opening, sealing, and deciding whether its contents are admissible.
+    pub canonical_session_file: Option<AbsolutePath>,
+    /// Bounded raw bytes and full-stream transient digests. The kernel later
+    /// chooses whether/how to content-seal them; no durable evidence exists
+    /// merely because this receipt was returned.
+    pub transient_evidence: TransientExecutionEvidence,
+    pub peer_phase: PeerPhase,
+}
+
+/// Exact, pre-Create artifact identities for the Node host. Paths are
+/// canonical regular files and digests are rechecked immediately before
+/// `exec`; no ambient command lookup is used. In particular,
+/// `pi_transitive_package_set` identifies a supplied package-set manifest. It
+/// does **not** prove an arbitrary adapter entrypoint imports that manifest;
+/// the adapter's v1 runtime report and the separately pinned host qualification
+/// remain the evidence for Pi 0.83 behavior.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct QualifiedHostExecution {
+    pub node_executable: VerifiedArtifact,
+    pub adapter_entrypoint: VerifiedArtifact,
+    pub lockfile: VerifiedArtifact,
+    /// Identity prerequisite for the supplied package-set manifest, not a
+    /// native proof of the adapter's dynamic import graph.
+    pub pi_transitive_package_set: VerifiedArtifact,
+    pub runtime: RuntimeIdentity,
+}
+
+impl QualifiedHostExecution {
+    fn verify_before_spawn(&self) -> Result<(), SupervisionError> {
+        self.runtime
+            .assert_v1()
+            .map_err(SupervisionError::Protocol)?;
+        self.node_executable
+            .verify_matches(&self.runtime.node_executable_sha256)?;
+        self.adapter_entrypoint
+            .verify_matches(&self.runtime.adapter_build_sha256)?;
+        self.lockfile
+            .verify_matches(&self.runtime.lockfile_sha256)?;
+        self.pi_transitive_package_set
+            .verify_matches(&self.runtime.pi_transitive_package_set_sha256)?;
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VerifiedArtifact {
+    path: AbsolutePath,
+    expected_sha256: Sha256Digest,
+}
+
+impl VerifiedArtifact {
+    pub fn inspect(
+        path: impl AsRef<Path>,
+        expected_sha256: Sha256Digest,
+    ) -> Result<Self, SupervisionError> {
+        let canonical = fs::canonicalize(path)?;
+        let metadata = fs::metadata(&canonical)?;
+        if !metadata.is_file() {
+            return Err(SupervisionError::ArtifactIsNotRegularFile);
+        }
+        let path = absolute_path_from_path(&canonical)?;
+        let artifact = Self {
+            path,
+            expected_sha256,
+        };
+        artifact.verify_matches(&artifact.expected_sha256)?;
+        Ok(artifact)
+    }
+
+    pub fn path(&self) -> &AbsolutePath {
+        &self.path
+    }
+
+    fn verify_matches(&self, expected: &Sha256Digest) -> Result<(), SupervisionError> {
+        let observed = digest_file(self.path.as_path())?;
+        if &observed != expected || &self.expected_sha256 != expected {
+            return Err(SupervisionError::ArtifactDigestDrift);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PiSpawnRequest {
+    pub child_process_id: SupervisedChildId,
+    pub workspace: NativeWorkspace,
+    pub session_identity: SessionIdentity,
+    pub spawn_nonce: SpawnNonce,
+    pub host_execution: QualifiedHostExecution,
+    /// VS-001's current host contract grants no inherited environment values.
+    /// The empty process environment is intentional evidence, not an omitted
+    /// default; future allowlists must become a new closed version.
+    pub environment: NativeHostEnvironment,
+    pub create_correlation_identity: CorrelationIdentity,
+    pub create_session: CreateSessionPayload,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativeHostEnvironment {
+    EmptyV1,
+}
+
+/// A narrow synchronous seam for the kernel's final transactional recheck.
+/// It is deliberately invoked only after Rust has recorded the child PID in
+/// memory and validated the inert AdapterReady frame, immediately before the
+/// first command which can create a Pi session.
+pub trait PreCreateAdmissionGate {
+    fn recheck(&mut self, facts: &InertChildFacts) -> Result<(), AdmissionDenied>;
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InertChildFacts {
+    pub child_process_id: SupervisedChildId,
+    pub session_identity: SessionIdentity,
+    pub host_process_id: HostProcessId,
+    pub process_group_id: OwnedProcessGroupId,
+    pub workspace_identity: NativeWorkspaceId,
+    pub workspace_directory: AbsolutePath,
+    pub runtime: RuntimeIdentity,
+    pub environment: NativeHostEnvironment,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AdmissionDenied {
+    StaleGeneration,
+    CancellationObserved,
+    CapabilityAbsent,
+    ReservationAbsent,
+}
+
+#[derive(Debug, Error)]
+pub enum SupervisionError {
+    #[error("process supervision I/O failed: {0}")]
+    Io(#[from] io::Error),
+    #[error("Pi boundary rejected a frame: {0}")]
+    Peer(#[from] PeerError),
+    #[error("Pi protocol construction failed: {0}")]
+    Protocol(#[from] society_pi::ProtocolError),
+    #[error("child identity is invalid")]
+    InvalidChildIdentity,
+    #[error("workspace identity is invalid")]
+    InvalidWorkspaceIdentity,
+    #[error("cancellation identity is invalid")]
+    InvalidCancellationIdentity,
+    #[error("process identity is invalid")]
+    InvalidProcessIdentity,
+    #[error("fresh workspace allocation did not remain a private direct child")]
+    UnsafeWorkspace,
+    #[error("workspace root is not an existing private directory owned by this daemon user")]
+    UnsafeWorkspaceRoot,
+    #[error("workspace identity already has an allocated direct child")]
+    WorkspaceAlreadyExists,
+    #[error("qualified artifact is not a regular file")]
+    ArtifactIsNotRegularFile,
+    #[error("qualified artifact digest drifted")]
+    ArtifactDigestDrift,
+    #[error("spawn request does not exactly bind its workspace/profile")]
+    InvalidSpawnRequest,
+    #[error("child id was already supervised; successors are never automatic")]
+    DuplicateChildIdentity,
+    #[error("child operation is invalid in its closed lifecycle")]
+    InvalidLifecycle,
+    #[error("the final pre-Create admission recheck denied this inert child")]
+    AdmissionDenied(AdmissionDenied),
+    #[error("stdout record exceeded the closed Pi frame bound")]
+    OutboundFrameTooLarge,
+    #[error("host stdout ended in an unterminated JSONL record")]
+    UnterminatedOutboundRecord,
+    #[error("host stdout ended before an evidenced terminal frame")]
+    OutputLost,
+    #[error("process group operation failed: {0}")]
+    ProcessGroup(io::Error),
+    #[error("monotonic cancellation deadline overflowed")]
+    DeadlineOverflow,
+    #[error("stderr capture thread did not complete")]
+    StderrCaptureFailed,
+    #[error("a contained child is still live; drive its bounded cancellation before reaping")]
+    ContainmentAwaitingDrive,
+    #[error("Pi host handshake did not become ready before its typed deadline")]
+    HandshakeDeadlineExpired,
+    #[error("the ordered Pi control write did not drain before its typed deadline")]
+    ControlWriteDeadlineExpired,
+    #[error("the Pi control pipe accepted a zero-byte write")]
+    ControlWriteZero,
+}
+
+impl From<AdmissionDenied> for SupervisionError {
+    fn from(value: AdmissionDenied) -> Self {
+        Self::AdmissionDenied(value)
+    }
+}
+
+/// The in-memory process registry. It is intentionally single-owner and has
+/// no clone/automatic-restart API: a successor needs a new kernel admission.
+pub struct PiSupervisor {
+    children: BTreeMap<SupervisedChildId, ManagedPiChild>,
+    historical_child_ids: BTreeSet<SupervisedChildId>,
+}
+
+impl Default for PiSupervisor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PiSupervisor {
+    pub fn new() -> Self {
+        Self {
+            children: BTreeMap::new(),
+            historical_child_ids: BTreeSet::new(),
+        }
+    }
+
+    /// Verifies all exact artifacts and creates a new native process group.
+    /// The returned child remains inert until [`Self::observe_adapter_ready`]
+    /// and [`Self::send_create_session`] complete their two-step handshake.
+    pub fn spawn_inert(&mut self, request: PiSpawnRequest) -> Result<(), SupervisionError> {
+        if self
+            .historical_child_ids
+            .contains(&request.child_process_id)
+        {
+            return Err(SupervisionError::DuplicateChildIdentity);
+        }
+        validate_spawn_request(&request)?;
+        request.host_execution.verify_before_spawn()?;
+
+        let mut command = Command::new(request.host_execution.node_executable.path().as_path());
+        command
+            .arg(request.host_execution.adapter_entrypoint.path().as_path())
+            .arg("--session-identity")
+            .arg(request.session_identity.as_str())
+            .arg("--spawn-nonce")
+            .arg(request.spawn_nonce.as_str())
+            .arg("--node-executable-sha256")
+            .arg(
+                request
+                    .host_execution
+                    .runtime
+                    .node_executable_sha256
+                    .as_str(),
+            )
+            .arg("--lockfile-sha256")
+            .arg(request.host_execution.runtime.lockfile_sha256.as_str())
+            .arg("--adapter-build-sha256")
+            .arg(request.host_execution.runtime.adapter_build_sha256.as_str())
+            .arg("--pi-transitive-package-set-sha256")
+            .arg(
+                request
+                    .host_execution
+                    .runtime
+                    .pi_transitive_package_set_sha256
+                    .as_str(),
+            )
+            .current_dir(request.workspace.directory().as_path())
+            .env_clear()
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        // SAFETY: this closure runs in the freshly forked child immediately
+        // before exec. It invokes only async-signal-safe `setpgid(0, 0)` and
+        // returns the OS error without touching Rust allocation or locks.
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setpgid(0, 0) != 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let mut child = command.spawn()?;
+        let host_process_id =
+            HostProcessId::parse(u64::from(child.id())).map_err(SupervisionError::Protocol)?;
+        let process_group_id = OwnedProcessGroupId::from_child_pid(host_process_id)?;
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or(SupervisionError::InvalidLifecycle)?;
+        set_nonblocking_stdin(&stdin)?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or(SupervisionError::InvalidLifecycle)?;
+        set_nonblocking_stdout(&stdout)?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or(SupervisionError::InvalidLifecycle)?;
+        let stderr_capture = spawn_stderr_capture(stderr);
+        let peer = BoundaryPeer::new(
+            request.session_identity.clone(),
+            host_process_id,
+            request.spawn_nonce.clone(),
+            request.host_execution.runtime.clone(),
+        )?;
+        self.historical_child_ids
+            .insert(request.child_process_id.clone());
+        self.children.insert(
+            request.child_process_id.clone(),
+            ManagedPiChild {
+                request,
+                child,
+                host_process_id,
+                process_group_id,
+                stdin: Some(stdin),
+                stdout: BufReader::new(stdout),
+                stderr_capture: Some(stderr_capture),
+                peer,
+                lifecycle: ChildLifecycle::AwaitingAdapterReady,
+                next_inbound_sequence: 1,
+                stdin_capture: StreamCapture::default(),
+                admitted_control_capture: StreamCapture::default(),
+                stdout_capture: StreamCapture::default(),
+                stdout_partial_record: Vec::new(),
+                pending_control: None,
+                physically_delivered_inbound_frame_count: 0,
+                cancellation: None,
+                deliveries: Vec::new(),
+                completed_receipt: None,
+            },
+        );
+        Ok(())
+    }
+
+    pub fn lifecycle(&self, child_process_id: &SupervisedChildId) -> Option<ChildLifecycle> {
+        self.children
+            .get(child_process_id)
+            .map(|child| child.lifecycle)
+    }
+
+    /// Records that the host boundary is no longer trustworthy, closes its
+    /// control writer, and starts the fixed EmergencyStop escalation. This is
+    /// deliberately automatic containment, not a synthetic kernel command.
+    pub fn contain_boundary_failure(
+        &mut self,
+        child_process_id: &SupervisedChildId,
+        now: MonotonicTick,
+    ) -> Result<(), SupervisionError> {
+        self.child_mut(child_process_id)?
+            .start_automatic_boundary_containment(now)
+    }
+
+    /// Polls for the inert AdapterReady record and proves it belongs to the
+    /// direct child/pgroup just spawned by this supervisor. `Ok(None)` is a
+    /// normal not-ready poll before `deadline`; expiry itself contains the
+    /// owned child rather than leaving a silent host unowned.
+    pub fn observe_adapter_ready_at(
+        &mut self,
+        child_process_id: &SupervisedChildId,
+        now: MonotonicTick,
+        deadline: HandshakeDeadline,
+    ) -> Result<Option<InertChildFacts>, SupervisionError> {
+        let child = self.child_mut(child_process_id)?;
+        if child.lifecycle != ChildLifecycle::AwaitingAdapterReady {
+            return Err(SupervisionError::InvalidLifecycle);
+        }
+        match child.read_one_outbound() {
+            Ok(OutboundRead::NotReady) => {
+                if now >= deadline.expires_at() {
+                    child.start_automatic_boundary_containment(now)?;
+                    return Err(SupervisionError::HandshakeDeadlineExpired);
+                }
+                return Ok(None);
+            }
+            Ok(OutboundRead::Observation(_)) => {
+                if child.peer.phase() == PeerPhase::Fatal {
+                    child.start_automatic_boundary_containment(now)?;
+                    return Err(SupervisionError::Peer(PeerError::Fatal));
+                }
+            }
+            Err(error) => {
+                child.start_automatic_boundary_containment(now)?;
+                return Err(error);
+            }
+        }
+        let owns_expected_group = match child.owns_expected_process_group() {
+            Ok(owns_group) => owns_group,
+            Err(error) => {
+                child.start_automatic_boundary_containment(now)?;
+                return Err(error);
+            }
+        };
+        if child.peer.phase() != PeerPhase::Inert || !owns_expected_group {
+            child.start_automatic_boundary_containment(now)?;
+            return Err(SupervisionError::InvalidLifecycle);
+        }
+        child.lifecycle = ChildLifecycle::InertVerified;
+        Ok(Some(child.inert_facts()))
+    }
+
+    /// Runs the final synchronous admission gate and only then writes the
+    /// first session-creating command to the owned stdin pipe.
+    pub fn send_create_session<G: PreCreateAdmissionGate>(
+        &mut self,
+        child_process_id: &SupervisedChildId,
+        gate: &mut G,
+        now: MonotonicTick,
+        deadline: ControlWriteDeadline,
+    ) -> Result<ControlWriteProgress, SupervisionError> {
+        let facts = {
+            let child = self.child_mut(child_process_id)?;
+            if child.lifecycle != ChildLifecycle::InertVerified {
+                return Err(SupervisionError::InvalidLifecycle);
+            }
+            child.inert_facts()
+        };
+        if let Err(denial) = gate.recheck(&facts) {
+            // The host is still inert. Closing the sole control writer makes
+            // the v1 adapter exit without ever constructing an AgentSession.
+            let child = self.child_mut(child_process_id)?;
+            child.stdin.take();
+            child.lifecycle = ChildLifecycle::Quiescing;
+            return Err(denial.into());
+        }
+        let child = self.child_mut(child_process_id)?;
+        let frame = child.next_frame(
+            child.request.create_correlation_identity.clone(),
+            InboundCommand::CreateSession(Box::new(child.request.create_session.clone())),
+        )?;
+        let progress =
+            match child.stage_inbound(frame, PendingControlCommand::CreateSession, now, deadline) {
+                Ok(progress) => progress,
+                Err(error) => {
+                    child.start_automatic_boundary_containment(now)?;
+                    return Err(error);
+                }
+            };
+        child.lifecycle = ChildLifecycle::CreateSent;
+        Ok(progress)
+    }
+
+    /// Drains the finite CreateSession handshake. The peer validates command
+    /// correlation, runtime/profile equality, and effective SessionReady.
+    pub fn observe_session_ready_at(
+        &mut self,
+        child_process_id: &SupervisedChildId,
+        now: MonotonicTick,
+        deadline: HandshakeDeadline,
+    ) -> Result<bool, SupervisionError> {
+        let child = self.child_mut(child_process_id)?;
+        if child.lifecycle != ChildLifecycle::CreateSent {
+            return Err(SupervisionError::InvalidLifecycle);
+        }
+        if child.pending_control.is_some() {
+            return Ok(false);
+        }
+        for _ in 0..MAX_HANDSHAKE_FRAMES {
+            match child.read_one_outbound() {
+                Ok(OutboundRead::NotReady) => {
+                    if now >= deadline.expires_at() {
+                        child.start_automatic_boundary_containment(now)?;
+                        return Err(SupervisionError::HandshakeDeadlineExpired);
+                    }
+                    return Ok(false);
+                }
+                Ok(OutboundRead::Observation(_)) => {
+                    if child.peer.phase() == PeerPhase::Fatal {
+                        child.start_automatic_boundary_containment(now)?;
+                        return Err(SupervisionError::Peer(PeerError::Fatal));
+                    }
+                }
+                Err(error) => {
+                    child.start_automatic_boundary_containment(now)?;
+                    return Err(error);
+                }
+            }
+            if child.peer.phase() == PeerPhase::Ready {
+                child.lifecycle = ChildLifecycle::SessionReady;
+                return Ok(true);
+            }
+        }
+        child.start_automatic_boundary_containment(now)?;
+        Err(SupervisionError::InvalidLifecycle)
+    }
+
+    pub fn send_dispose(
+        &mut self,
+        child_process_id: &SupervisedChildId,
+        correlation_identity: CorrelationIdentity,
+        reason: DisposeReason,
+        now: MonotonicTick,
+        deadline: ControlWriteDeadline,
+    ) -> Result<ControlWriteProgress, SupervisionError> {
+        let child = self.child_mut(child_process_id)?;
+        if child.lifecycle != ChildLifecycle::SessionReady {
+            return Err(SupervisionError::InvalidLifecycle);
+        }
+        let frame = child.next_frame(
+            correlation_identity,
+            InboundCommand::Dispose(DisposePayload { reason }),
+        )?;
+        let progress =
+            match child.stage_inbound(frame, PendingControlCommand::Dispose, now, deadline) {
+                Ok(progress) => progress,
+                Err(error) => {
+                    child.start_automatic_boundary_containment(now)?;
+                    return Err(error);
+                }
+            };
+        child.lifecycle = ChildLifecycle::Quiescing;
+        Ok(progress)
+    }
+
+    pub fn observe_disposed_at(
+        &mut self,
+        child_process_id: &SupervisedChildId,
+        now: MonotonicTick,
+        deadline: HandshakeDeadline,
+    ) -> Result<bool, SupervisionError> {
+        let child = self.child_mut(child_process_id)?;
+        if child.lifecycle != ChildLifecycle::Quiescing {
+            return Err(SupervisionError::InvalidLifecycle);
+        }
+        if child.pending_control.is_some() {
+            return Ok(false);
+        }
+        for _ in 0..MAX_HANDSHAKE_FRAMES {
+            match child.read_one_outbound() {
+                Ok(OutboundRead::NotReady) => {
+                    if now >= deadline.expires_at() {
+                        child.start_automatic_boundary_containment(now)?;
+                        return Err(SupervisionError::HandshakeDeadlineExpired);
+                    }
+                    return Ok(false);
+                }
+                Ok(OutboundRead::Observation(_)) => {
+                    if child.peer.phase() == PeerPhase::Fatal {
+                        child.start_automatic_boundary_containment(now)?;
+                        return Err(SupervisionError::Peer(PeerError::Fatal));
+                    }
+                }
+                Err(error) => {
+                    child.start_automatic_boundary_containment(now)?;
+                    return Err(error);
+                }
+            }
+            if child.peer.phase() == PeerPhase::Disposed {
+                child.stdin.take();
+                return Ok(true);
+            }
+        }
+        child.start_automatic_boundary_containment(now)?;
+        Err(SupervisionError::InvalidLifecycle)
+    }
+
+    /// Observes one non-handshake output frame while a session or cancellation
+    /// is live. This makes malformed/oversize stream containment explicit to
+    /// the control loop without pretending the frame was a normal handshake.
+    pub fn observe_live_output_at(
+        &mut self,
+        child_process_id: &SupervisedChildId,
+        now: MonotonicTick,
+    ) -> Result<Option<PeerObservation>, SupervisionError> {
+        let child = self.child_mut(child_process_id)?;
+        match child.read_one_outbound() {
+            Ok(OutboundRead::NotReady) => Ok(None),
+            Ok(OutboundRead::Observation(observation)) => {
+                if child.peer.phase() == PeerPhase::Fatal {
+                    child.start_automatic_boundary_containment(now)?;
+                    return Err(SupervisionError::Peer(PeerError::Fatal));
+                }
+                Ok(observation)
+            }
+            Err(error) => {
+                child.start_automatic_boundary_containment(now)?;
+                Err(error)
+            }
+        }
+    }
+
+    /// Advances the one admitted stdin frame without blocking the daemon. A
+    /// `Pending` result leaves the exact byte suffix in place; expiry fences
+    /// the host and starts emergency containment. The caller must drive this
+    /// alongside handshake/cancellation ticks.
+    pub fn drive_control_write(
+        &mut self,
+        child_process_id: &SupervisedChildId,
+        now: MonotonicTick,
+    ) -> Result<ControlWriteProgress, SupervisionError> {
+        let child = self.child_mut(child_process_id)?;
+        if child.pending_control.is_none() {
+            return Err(SupervisionError::InvalidLifecycle);
+        }
+        match child.flush_pending_control(now) {
+            Ok(progress) => Ok(progress),
+            Err(error) => {
+                child.start_automatic_boundary_containment(now)?;
+                Err(error)
+            }
+        }
+    }
+
+    /// Starts a typed cancellation lineage. Quiesce never signals a running
+    /// child. Graceful/Emergency cancellation writes the SDK Abort control
+    /// first when the session handshake completed; deadline escalation occurs
+    /// only through [`Self::drive_cancellation`].
+    pub fn request_cancellation(
+        &mut self,
+        child_process_id: &SupervisedChildId,
+        request: CancellationRequest,
+        now: MonotonicTick,
+    ) -> Result<ControlWriteProgress, SupervisionError> {
+        let child = self.child_mut(child_process_id)?;
+        // A partially delivered CreateSession is not an inert operation: if
+        // its suffix later reaches the host after cancellation, it could begin
+        // paid work. Every cancellation therefore closes the writer and drops
+        // the pending suffix before it can be resumed.
+        child.discard_pending_control_before_cancellation();
+        if let Some(existing) = child.cancellation.as_mut() {
+            upgrade_or_replay_cancellation(existing, request, now)?;
+            return Ok(ControlWriteProgress::Delivered);
+        }
+        if matches!(
+            child.lifecycle,
+            ChildLifecycle::Reaped | ChildLifecycle::Contained
+        ) {
+            return Err(SupervisionError::InvalidLifecycle);
+        }
+        let mode = request.mode;
+        let Some(deadlines) = CancellationDeadlines::for_mode(mode) else {
+            // Quiesce is an admission fence, not a signal. Keep an already
+            // ready session live so the caller may still send its explicit
+            // close/dispose control; this supervisor exposes no work-admit
+            // method while a cancellation lineage exists.
+            child.cancellation = Some(CancellationProgress::quiesce(request));
+            return Ok(ControlWriteProgress::Delivered);
+        };
+        let abort_deadline = now.checked_add(deadlines.cooperative_abort_wait)?;
+        let kill_deadline = abort_deadline.checked_add(deadlines.terminate_wait)?;
+        let stage_abort = child.lifecycle == ChildLifecycle::SessionReady;
+        let abort_reason = abort_reason_for(request.reason);
+        let abort_correlation_identity = request.abort_correlation_identity.clone();
+        child.lifecycle = ChildLifecycle::AwaitingCooperativeAbort;
+        child.cancellation = Some(CancellationProgress {
+            explicit_request: Some(request),
+            origin: CancellationOrigin::ExplicitRequest,
+            mode,
+            mode_revisions: Vec::new(),
+            abort_deadline,
+            kill_deadline,
+            abort_control_written: false,
+            term_sent: false,
+            term_delivered: false,
+            kill_sent: false,
+            kill_delivered: false,
+        });
+        if stage_abort {
+            let frame = child.next_frame(
+                abort_correlation_identity,
+                InboundCommand::Abort(AbortPayload {
+                    reason: abort_reason,
+                }),
+            )?;
+            match child.stage_inbound(
+                frame,
+                PendingControlCommand::Abort,
+                now,
+                ControlWriteDeadline::at(abort_deadline),
+            ) {
+                Ok(progress) => Ok(progress),
+                Err(error) => {
+                    child.start_automatic_boundary_containment(now)?;
+                    Err(error)
+                }
+            }
+        } else {
+            Ok(ControlWriteProgress::Delivered)
+        }
+    }
+
+    /// Advances deterministic cancellation physics without sleeping. The
+    /// daemon control loop calls this with its monotonic tick; tests can cover
+    /// each race by choosing exact tick values.
+    pub fn drive_cancellation(
+        &mut self,
+        child_process_id: &SupervisedChildId,
+        now: MonotonicTick,
+    ) -> Result<Option<SupervisionReceipt>, SupervisionError> {
+        let child = self.child_mut(child_process_id)?;
+        if let Some(receipt) = child.try_reap(now)? {
+            return Ok(Some(receipt));
+        }
+        let Some(progress) = child.cancellation.as_ref() else {
+            return Err(SupervisionError::InvalidLifecycle);
+        };
+        if matches!(progress.mode, CancellationMode::Quiesce) {
+            return Ok(None);
+        }
+        let send_term = !progress.term_sent && now >= progress.abort_deadline;
+        if send_term {
+            let outcome = child.signal_group(libc::SIGTERM)?;
+            let delivered = outcome.was_delivered();
+            child
+                .deliveries
+                .push(signal_receipt(outcome, SignalDelivery::TermSent, now));
+            let progress = child
+                .cancellation
+                .as_mut()
+                .ok_or(SupervisionError::InvalidLifecycle)?;
+            progress.term_sent = true;
+            progress.term_delivered = delivered;
+            child.lifecycle = ChildLifecycle::AwaitingTermination;
+        }
+        let send_kill = child.cancellation.as_ref().is_some_and(|progress| {
+            progress.term_sent && !progress.kill_sent && now >= progress.kill_deadline
+        });
+        if send_kill {
+            let outcome = child.signal_group(libc::SIGKILL)?;
+            let delivered = outcome.was_delivered();
+            child
+                .deliveries
+                .push(signal_receipt(outcome, SignalDelivery::KillSent, now));
+            let progress = child
+                .cancellation
+                .as_mut()
+                .ok_or(SupervisionError::InvalidLifecycle)?;
+            progress.kill_sent = true;
+            progress.kill_delivered = delivered;
+            child.lifecycle = ChildLifecycle::AwaitingKill;
+        }
+        Ok(None)
+    }
+
+    /// Waits/reaps the direct child and returns all partial pipe evidence even
+    /// when cancellation or stdout loss prevented normal settlement.
+    pub fn wait_and_reap(
+        &mut self,
+        child_process_id: &SupervisedChildId,
+    ) -> Result<SupervisionReceipt, SupervisionError> {
+        self.wait_and_reap_at(child_process_id, MonotonicTick::ZERO)
+    }
+
+    /// Reaps an already-exited child. A child that entered automatic boundary
+    /// containment is never waited on indefinitely: the control loop must
+    /// drive its fixed TERM/KILL deadlines and call this again.
+    pub fn wait_and_reap_at(
+        &mut self,
+        child_process_id: &SupervisedChildId,
+        now: MonotonicTick,
+    ) -> Result<SupervisionReceipt, SupervisionError> {
+        let child = self.child_mut(child_process_id)?;
+        child.wait_and_reap_at(now)
+    }
+
+    pub fn take_reaped_receipt(
+        &mut self,
+        child_process_id: &SupervisedChildId,
+    ) -> Option<SupervisionReceipt> {
+        self.children
+            .get(child_process_id)
+            .and_then(|child| child.completed_receipt.as_ref())?;
+        self.children
+            .remove(child_process_id)
+            .and_then(|mut child| child.completed_receipt.take())
+    }
+
+    fn child_mut(
+        &mut self,
+        child_process_id: &SupervisedChildId,
+    ) -> Result<&mut ManagedPiChild, SupervisionError> {
+        self.children
+            .get_mut(child_process_id)
+            .ok_or(SupervisionError::InvalidLifecycle)
+    }
+}
+
+struct ManagedPiChild {
+    request: PiSpawnRequest,
+    child: Child,
+    host_process_id: HostProcessId,
+    process_group_id: OwnedProcessGroupId,
+    stdin: Option<ChildStdin>,
+    stdout: BufReader<ChildStdout>,
+    stderr_capture: Option<StderrCaptureTask>,
+    peer: BoundaryPeer,
+    lifecycle: ChildLifecycle,
+    next_inbound_sequence: u64,
+    stdin_capture: StreamCapture,
+    admitted_control_capture: StreamCapture,
+    stdout_capture: StreamCapture,
+    stdout_partial_record: Vec<u8>,
+    pending_control: Option<PendingControlWrite>,
+    physically_delivered_inbound_frame_count: u64,
+    cancellation: Option<CancellationProgress>,
+    deliveries: Vec<SignalReceipt>,
+    completed_receipt: Option<SupervisionReceipt>,
+}
+
+enum OutboundRead {
+    NotReady,
+    Observation(Option<PeerObservation>),
+}
+
+/// The Rust peer has admitted these exact bytes, but the native pipe has not
+/// necessarily accepted all of them. The bytes stay private/transient and are
+/// never rewritten, coalesced with another frame, or overtaken.
+struct PendingControlWrite {
+    bytes: Vec<u8>,
+    next_byte_offset: usize,
+    deadline: ControlWriteDeadline,
+    command: PendingControlCommand,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PendingControlCommand {
+    CreateSession,
+    Abort,
+    Dispose,
+}
+
+/// The reader updates a shared transient snapshot after every read. If an
+/// escaped descendant keeps stderr open, completion never waits indefinitely
+/// for that foreign process; it returns the snapshot as bounded partial input
+/// for later kernel sealing.
+struct StderrCaptureTask {
+    snapshot: Arc<Mutex<StreamCapture>>,
+    worker: JoinHandle<io::Result<()>>,
+}
+
+struct CancellationProgress {
+    explicit_request: Option<CancellationRequest>,
+    origin: CancellationOrigin,
+    mode: CancellationMode,
+    mode_revisions: Vec<CancellationModeRevision>,
+    abort_deadline: MonotonicTick,
+    kill_deadline: MonotonicTick,
+    abort_control_written: bool,
+    /// Whether a TERM/KILL attempt was completed (including a negative
+    /// absence/inaccessibility observation) so escalation cannot loop.
+    term_sent: bool,
+    term_delivered: bool,
+    kill_sent: bool,
+    kill_delivered: bool,
+}
+
+impl CancellationProgress {
+    fn quiesce(request: CancellationRequest) -> Self {
+        Self {
+            explicit_request: Some(request),
+            origin: CancellationOrigin::ExplicitRequest,
+            mode: CancellationMode::Quiesce,
+            mode_revisions: Vec::new(),
+            abort_deadline: MonotonicTick::ZERO,
+            kill_deadline: MonotonicTick::ZERO,
+            abort_control_written: false,
+            term_sent: false,
+            term_delivered: false,
+            kill_sent: false,
+            kill_delivered: false,
+        }
+    }
+
+    fn automatic_boundary_containment(now: MonotonicTick) -> Result<Self, SupervisionError> {
+        let deadlines = CancellationDeadlines::for_mode(CancellationMode::EmergencyStop)
+            .ok_or(SupervisionError::InvalidLifecycle)?;
+        let abort_deadline = now.checked_add(deadlines.cooperative_abort_wait)?;
+        Ok(Self {
+            explicit_request: None,
+            origin: CancellationOrigin::AutomaticBoundaryContainment,
+            mode: CancellationMode::EmergencyStop,
+            mode_revisions: Vec::new(),
+            abort_deadline,
+            kill_deadline: abort_deadline.checked_add(deadlines.terminate_wait)?,
+            abort_control_written: false,
+            term_sent: false,
+            term_delivered: false,
+            kill_sent: false,
+            kill_delivered: false,
+        })
+    }
+}
+
+impl ManagedPiChild {
+    fn inert_facts(&self) -> InertChildFacts {
+        InertChildFacts {
+            child_process_id: self.request.child_process_id.clone(),
+            session_identity: self.request.session_identity.clone(),
+            host_process_id: self.host_process_id,
+            process_group_id: self.process_group_id,
+            workspace_identity: self.request.workspace.identity().clone(),
+            workspace_directory: self.request.workspace.directory().clone(),
+            runtime: self.request.host_execution.runtime.clone(),
+            environment: self.request.environment,
+        }
+    }
+
+    fn next_frame(
+        &mut self,
+        correlation_identity: CorrelationIdentity,
+        command: InboundCommand,
+    ) -> Result<InboundFrame, SupervisionError> {
+        if self.pending_control.is_some() {
+            return Err(SupervisionError::InvalidLifecycle);
+        }
+        let sequence = BoundarySequence::parse(self.next_inbound_sequence)?;
+        self.next_inbound_sequence = self
+            .next_inbound_sequence
+            .checked_add(1)
+            .ok_or(SupervisionError::InvalidLifecycle)?;
+        Ok(InboundFrame {
+            sequence,
+            session_identity: self.request.session_identity.clone(),
+            correlation_identity,
+            command,
+        })
+    }
+
+    fn stage_inbound(
+        &mut self,
+        frame: InboundFrame,
+        command: PendingControlCommand,
+        now: MonotonicTick,
+        deadline: ControlWriteDeadline,
+    ) -> Result<ControlWriteProgress, SupervisionError> {
+        let line = encode_inbound_jsonl(&frame)?;
+        self.peer.admit_inbound_jsonl_bytes(line.as_bytes())?;
+        // Peer admission is a logical fact. It stays separate from native
+        // pipe evidence: a partial write/cancellation must not make physical
+        // stdin bytes appear to contain a complete frame.
+        self.admitted_control_capture.observe(line.as_bytes());
+        self.admitted_control_capture.observe(b"\n");
+        let mut bytes = line.into_bytes();
+        bytes.push(b'\n');
+        self.pending_control = Some(PendingControlWrite {
+            bytes,
+            next_byte_offset: 0,
+            deadline,
+            command,
+        });
+        self.flush_pending_control(now)
+    }
+
+    fn flush_pending_control(
+        &mut self,
+        now: MonotonicTick,
+    ) -> Result<ControlWriteProgress, SupervisionError> {
+        let deadline = self
+            .pending_control
+            .as_ref()
+            .ok_or(SupervisionError::InvalidLifecycle)?
+            .deadline;
+        if now >= deadline.expires_at() {
+            return Err(SupervisionError::ControlWriteDeadlineExpired);
+        }
+        loop {
+            let (next_byte_offset, byte_count) = {
+                let pending = self
+                    .pending_control
+                    .as_ref()
+                    .ok_or(SupervisionError::InvalidLifecycle)?;
+                (pending.next_byte_offset, pending.bytes.len())
+            };
+            if next_byte_offset == byte_count {
+                let pending = self
+                    .pending_control
+                    .take()
+                    .ok_or(SupervisionError::InvalidLifecycle)?;
+                self.physically_delivered_inbound_frame_count = self
+                    .physically_delivered_inbound_frame_count
+                    .checked_add(1)
+                    .ok_or(SupervisionError::InvalidLifecycle)?;
+                self.record_control_delivery(pending.command, now)?;
+                return Ok(ControlWriteProgress::Delivered);
+            }
+            let write_result = {
+                let pending = self
+                    .pending_control
+                    .as_ref()
+                    .ok_or(SupervisionError::InvalidLifecycle)?;
+                let stdin = self
+                    .stdin
+                    .as_mut()
+                    .ok_or(SupervisionError::InvalidLifecycle)?;
+                stdin.write(&pending.bytes[pending.next_byte_offset..])
+            };
+            match write_result {
+                Ok(0) => return Err(SupervisionError::ControlWriteZero),
+                Ok(written) => {
+                    let written_slice = {
+                        let pending = self
+                            .pending_control
+                            .as_ref()
+                            .ok_or(SupervisionError::InvalidLifecycle)?;
+                        pending.bytes[pending.next_byte_offset..pending.next_byte_offset + written]
+                            .to_vec()
+                    };
+                    self.stdin_capture.observe(&written_slice);
+                    let pending = self
+                        .pending_control
+                        .as_mut()
+                        .ok_or(SupervisionError::InvalidLifecycle)?;
+                    pending.next_byte_offset = pending
+                        .next_byte_offset
+                        .checked_add(written)
+                        .ok_or(SupervisionError::InvalidLifecycle)?;
+                }
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    return Ok(ControlWriteProgress::Pending);
+                }
+                Err(error) => {
+                    self.stdin.take();
+                    return Err(error.into());
+                }
+            }
+        }
+    }
+
+    fn record_control_delivery(
+        &mut self,
+        command: PendingControlCommand,
+        now: MonotonicTick,
+    ) -> Result<(), SupervisionError> {
+        if command != PendingControlCommand::Abort {
+            return Ok(());
+        }
+        let liveness = self.group_liveness()?;
+        let cancellation = self
+            .cancellation
+            .as_mut()
+            .ok_or(SupervisionError::InvalidLifecycle)?;
+        cancellation.abort_control_written = true;
+        self.deliveries.push(SignalReceipt {
+            delivery: SignalDelivery::AbortControlWritten,
+            observed_at: now,
+            group_liveness_after_attempt: liveness,
+        });
+        Ok(())
+    }
+
+    fn read_one_outbound(&mut self) -> Result<OutboundRead, SupervisionError> {
+        let record = read_bounded_record(
+            &mut self.stdout,
+            &mut self.stdout_capture,
+            &mut self.stdout_partial_record,
+        )?;
+        let record = match record {
+            StreamRead::NotReady => return Ok(OutboundRead::NotReady),
+            StreamRead::Eof => {
+                let _ = self.peer.observe_stdout_eof();
+                return Err(SupervisionError::OutputLost);
+            }
+            StreamRead::Frame(record) => record,
+        };
+        match self.peer.observe_outbound_jsonl_bytes(&record) {
+            Ok(observation) => Ok(OutboundRead::Observation(observation)),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    fn start_automatic_boundary_containment(
+        &mut self,
+        now: MonotonicTick,
+    ) -> Result<(), SupervisionError> {
+        if self.completed_receipt.is_some() || self.lifecycle == ChildLifecycle::Reaped {
+            return Ok(());
+        }
+        self.stdin.take();
+        self.pending_control.take();
+        if self.cancellation.as_ref().is_some_and(|progress| {
+            progress.origin == CancellationOrigin::AutomaticBoundaryContainment
+        }) {
+            self.lifecycle = ChildLifecycle::AwaitingCooperativeAbort;
+            return Ok(());
+        }
+        // A corrupt host is not allowed to inherit a harmless Quiesce or a
+        // longer graceful deadline. Preserve the prior mode only as a typed
+        // transition fact; the live physics becomes the fixed emergency path.
+        let prior_mode = self.cancellation.as_ref().map(|progress| progress.mode);
+        let mut automatic = CancellationProgress::automatic_boundary_containment(now)?;
+        if let Some(prior_mode) = prior_mode.filter(|mode| *mode != automatic.mode) {
+            automatic.mode_revisions.push(CancellationModeRevision {
+                from: prior_mode,
+                to: automatic.mode,
+                observed_at: now,
+            });
+        }
+        self.cancellation = Some(automatic);
+        self.lifecycle = ChildLifecycle::AwaitingCooperativeAbort;
+        Ok(())
+    }
+
+    fn discard_pending_control_before_cancellation(&mut self) {
+        if self.pending_control.is_some() {
+            self.pending_control.take();
+            self.stdin.take();
+        }
+    }
+
+    fn owns_expected_process_group(&self) -> Result<bool, SupervisionError> {
+        // SAFETY: `getpgid` only observes the direct child PID retained by
+        // `std::process::Child`; no signal is delivered. The PID has not been
+        // reaped, so it cannot be reused while this handle remains live.
+        let observed = unsafe { libc::getpgid(self.process_group_id.value()) };
+        if observed < 0 {
+            return match io::Error::last_os_error().raw_os_error() {
+                Some(libc::ESRCH) => Ok(false),
+                _ => Err(SupervisionError::ProcessGroup(io::Error::last_os_error())),
+            };
+        }
+        Ok(observed == self.process_group_id.value())
+    }
+
+    fn group_liveness(&self) -> Result<ProcessGroupLiveness, SupervisionError> {
+        // SAFETY: negative PGID targets only the process group this object
+        // created. Signal zero probes liveness without delivering a signal.
+        let result = unsafe { libc::kill(-self.process_group_id.value(), 0) };
+        if result == 0 {
+            return Ok(ProcessGroupLiveness::Present);
+        }
+        match io::Error::last_os_error().raw_os_error() {
+            Some(libc::ESRCH) => Ok(ProcessGroupLiveness::Absent),
+            Some(libc::EPERM) => Ok(ProcessGroupLiveness::Inaccessible),
+            _ => Err(SupervisionError::ProcessGroup(io::Error::last_os_error())),
+        }
+    }
+
+    fn signal_group(&self, signal: libc::c_int) -> Result<SignalGroupOutcome, SupervisionError> {
+        match self.group_liveness()? {
+            ProcessGroupLiveness::Absent => return Ok(SignalGroupOutcome::AbsentBeforeSignal),
+            ProcessGroupLiveness::Inaccessible => {
+                return Ok(SignalGroupOutcome::InaccessibleBeforeSignal);
+            }
+            ProcessGroupLiveness::Present => {}
+        }
+        // SAFETY: the negative PGID was derived from this direct child after a
+        // pre-exec `setpgid(0, 0)`, so it addresses only its owned group.
+        if unsafe { libc::kill(-self.process_group_id.value(), signal) } != 0 {
+            match io::Error::last_os_error().raw_os_error() {
+                Some(libc::ESRCH) => return Ok(SignalGroupOutcome::AbsentDuringSignal),
+                Some(libc::EPERM) => return Ok(SignalGroupOutcome::InaccessibleDuringSignal),
+                _ => return Err(SupervisionError::ProcessGroup(io::Error::last_os_error())),
+            }
+        }
+        Ok(SignalGroupOutcome::Delivered {
+            group_liveness_after_delivery: self.group_liveness()?,
+        })
+    }
+
+    fn try_reap(
+        &mut self,
+        now: MonotonicTick,
+    ) -> Result<Option<SupervisionReceipt>, SupervisionError> {
+        let Some(status) = self.child.try_wait()? else {
+            return Ok(None);
+        };
+        Ok(Some(self.complete_reap(status, now)?))
+    }
+
+    fn wait_and_reap_at(
+        &mut self,
+        now: MonotonicTick,
+    ) -> Result<SupervisionReceipt, SupervisionError> {
+        if let Some(receipt) = self.completed_receipt.clone() {
+            return Ok(receipt);
+        }
+        if self.cancellation.as_ref().is_some_and(|progress| {
+            progress.origin == CancellationOrigin::AutomaticBoundaryContainment
+        }) {
+            if let Some(receipt) = self.try_reap(now)? {
+                return Ok(receipt);
+            }
+            return Err(SupervisionError::ContainmentAwaitingDrive);
+        }
+        let status = self.child.wait()?;
+        self.complete_reap(status, now)
+    }
+
+    fn complete_reap(
+        &mut self,
+        status: ExitStatus,
+        now: MonotonicTick,
+    ) -> Result<SupervisionReceipt, SupervisionError> {
+        if let Some(receipt) = self.completed_receipt.clone() {
+            return Ok(receipt);
+        }
+        self.stdin.take();
+        // Do this before draining either pipe. A direct child can exit while
+        // a descendant still owns stdout/stderr; draining first would permit
+        // that descendant to block the single daemon supervisor forever.
+        let group_liveness_before_cleanup = self.group_liveness()?;
+        if group_liveness_before_cleanup != ProcessGroupLiveness::Absent {
+            let outcome = self.signal_group(libc::SIGKILL)?;
+            self.deliveries.push(signal_receipt(
+                outcome,
+                SignalDelivery::LingeringGroupKillSent,
+                now,
+            ));
+        }
+        let group_liveness_after_reap = self.group_liveness()?;
+        let stdout_contained = self.drain_stdout_after_exit()?;
+        // Closing stdin after a stale pre-Create recheck is the one expected
+        // inert EOF: no Pi session existed, so it cannot produce Disposed.
+        let expected_inert_control_eof = self.peer.phase() == PeerPhase::Inert
+            && self.lifecycle == ChildLifecycle::Quiescing
+            && self.cancellation.is_none();
+        let eof_contained = !expected_inert_control_eof && self.peer.observe_stdout_eof().is_err();
+        let stderr = self.take_stderr_snapshot_after_reap()?;
+        let inexact_transient_count = self.stdin_capture.count_overflowed
+            || self.stdout_capture.count_overflowed
+            || stderr.count_overflowed;
+        let forced_cancellation = self
+            .cancellation
+            .as_ref()
+            .is_some_and(|cancellation| cancellation.term_delivered || cancellation.kill_delivered);
+        let automatic_containment = self.cancellation.as_ref().is_some_and(|cancellation| {
+            cancellation.origin == CancellationOrigin::AutomaticBoundaryContainment
+        });
+        let terminal_disposition = if stdout_contained
+            || automatic_containment
+            || inexact_transient_count
+            || group_liveness_after_reap != ProcessGroupLiveness::Absent
+            || (eof_contained && !forced_cancellation)
+            || (self.peer.phase() == PeerPhase::Fatal && !forced_cancellation)
+        {
+            ChildTerminalDisposition::ContainmentFailed
+        } else {
+            terminal_disposition(
+                self.cancellation.as_ref(),
+                &status,
+                group_liveness_after_reap,
+            )
+        };
+        let reap = ReapReceipt {
+            child_process_id: self.request.child_process_id.clone(),
+            host_process_id: self.host_process_id,
+            process_group_id: self.process_group_id,
+            status: reap_status(status),
+            group_liveness_before_cleanup,
+            group_liveness_after_reap,
+        };
+        let receipt = SupervisionReceipt {
+            child_process_id: self.request.child_process_id.clone(),
+            session_identity: self.request.session_identity.clone(),
+            workspace_identity: self.request.workspace.identity().clone(),
+            workspace_directory: self.request.workspace.directory().clone(),
+            terminal_disposition,
+            reap: Some(reap),
+            cancellation_deliveries: self.deliveries.clone(),
+            cancellation_origin: self
+                .cancellation
+                .as_ref()
+                .map(|cancellation| cancellation.origin),
+            cancellation_mode_revisions: self
+                .cancellation
+                .as_ref()
+                .map_or_else(Vec::new, |cancellation| cancellation.mode_revisions.clone()),
+            canonical_session_file: self
+                .peer
+                .configuration()
+                .map(|configuration| configuration.session_file.clone()),
+            transient_evidence: TransientExecutionEvidence {
+                admitted_control: self.admitted_control_capture.transient_capture(),
+                stdin: self.stdin_capture.transient_capture(),
+                stdout: self.stdout_capture.transient_capture(),
+                stderr: stderr.transient_capture(),
+                logically_admitted_inbound_frame_count: self.peer.inbound_seals().len() as u64,
+                physically_delivered_inbound_frame_count: self
+                    .physically_delivered_inbound_frame_count,
+                outbound_frame_count: self.peer.outbound_seals().len() as u64,
+            },
+            peer_phase: self.peer.phase(),
+        };
+        self.lifecycle = if terminal_disposition == ChildTerminalDisposition::ContainmentFailed {
+            ChildLifecycle::Contained
+        } else {
+            ChildLifecycle::Reaped
+        };
+        self.completed_receipt = Some(receipt.clone());
+        Ok(receipt)
+    }
+
+    /// Returns whether the stream was protocol-contained. It never discards a
+    /// malformed raw record merely because the direct child has already
+    /// exited: the raw capture and peer phase remain evidence for the kernel.
+    fn drain_stdout_after_exit(&mut self) -> Result<bool, SupervisionError> {
+        let mut contained = false;
+        loop {
+            match read_bounded_record(
+                &mut self.stdout,
+                &mut self.stdout_capture,
+                &mut self.stdout_partial_record,
+            ) {
+                Ok(StreamRead::Frame(record)) => {
+                    if self.peer.observe_outbound_jsonl_bytes(&record).is_err() {
+                        contained = true;
+                    }
+                }
+                Ok(StreamRead::Eof) => break,
+                Ok(StreamRead::NotReady) => {
+                    // The direct child is reaped, so a foreign escaped
+                    // descendant must still own this pipe. Record the bounded
+                    // prefix and return rather than blocking its supervisor.
+                    self.stdout_capture.retention = TransientRetention::PrefixBounded;
+                    contained = true;
+                    break;
+                }
+                Err(SupervisionError::OutboundFrameTooLarge) => {
+                    self.lifecycle = ChildLifecycle::Contained;
+                    contained = true;
+                    break;
+                }
+                Err(SupervisionError::UnterminatedOutboundRecord) => {
+                    self.lifecycle = ChildLifecycle::Contained;
+                    contained = true;
+                    break;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(contained)
+    }
+
+    fn take_stderr_snapshot_after_reap(&mut self) -> Result<StreamCapture, SupervisionError> {
+        let task = self
+            .stderr_capture
+            .take()
+            .ok_or(SupervisionError::StderrCaptureFailed)?;
+        if task.worker.is_finished() {
+            task.worker
+                .join()
+                .map_err(|_| SupervisionError::StderrCaptureFailed)??;
+            return task
+                .snapshot
+                .lock()
+                .map_err(|_| SupervisionError::StderrCaptureFailed)
+                .map(|capture| capture.clone());
+        }
+        // Drop detaches the reader. It owns only an OS pipe and an Arc snapshot;
+        // an escaped process may keep it live, but it cannot block reaping or
+        // admit any successor from this supervisor.
+        let snapshot = task
+            .snapshot
+            .lock()
+            .map_err(|_| SupervisionError::StderrCaptureFailed)
+            .map(|capture| capture.clone())?;
+        drop(task.worker);
+        Ok(snapshot.with_prefix_bounded())
+    }
+}
+
+impl Drop for ManagedPiChild {
+    fn drop(&mut self) {
+        if self.completed_receipt.is_some()
+            || matches!(
+                self.lifecycle,
+                ChildLifecycle::Reaped | ChildLifecycle::Contained
+            )
+        {
+            return;
+        }
+        // There is deliberately no "detached" supervised child state. If a
+        // daemon control-path error drops this owner, close admissions and
+        // make the same conservative last-resort group kill before reaping
+        // the direct child. Crash recovery is still required after a process
+        // crash; Rust cannot restore a lost parent/wait status.
+        self.stdin.take();
+        // SAFETY: while `Child` remains unreaped its PID cannot be reused;
+        // this group was created by `pre_exec(setpgid(0, 0))` for this child.
+        let _ = unsafe { libc::kill(-self.process_group_id.value(), libc::SIGKILL) };
+        let _ = self.child.wait();
+    }
+}
+
+#[derive(Clone, Default)]
+struct StreamCapture {
+    observed_byte_count: u64,
+    count_overflowed: bool,
+    hasher: Sha256,
+    retained_bytes: Vec<u8>,
+    retention: TransientRetention,
+}
+
+impl StreamCapture {
+    fn observe(&mut self, bytes: &[u8]) {
+        match self.observed_byte_count.checked_add(bytes.len() as u64) {
+            Some(count) if !self.count_overflowed => self.observed_byte_count = count,
+            _ => {
+                self.count_overflowed = true;
+                self.retention = TransientRetention::CountOverflow;
+            }
+        }
+        self.hasher.update(bytes);
+        let remaining = MAX_TRANSIENT_STREAM_BYTES.saturating_sub(self.retained_bytes.len());
+        let retained = bytes.len().min(remaining);
+        self.retained_bytes.extend_from_slice(&bytes[..retained]);
+        if retained != bytes.len() {
+            self.retention = TransientRetention::PrefixBounded;
+        }
+    }
+
+    fn transient_capture(&self) -> TransientStreamCapture {
+        TransientStreamCapture {
+            observed_byte_count: if self.count_overflowed {
+                TransientByteCount::Overflowed
+            } else {
+                TransientByteCount::Exact(self.observed_byte_count)
+            },
+            sha256: digest_to_type(self.hasher.clone().finalize()),
+            retention: self.retention,
+            retained_bytes: self.retained_bytes.clone(),
+        }
+    }
+
+    fn with_prefix_bounded(mut self) -> Self {
+        if !self.count_overflowed {
+            self.retention = TransientRetention::PrefixBounded;
+        }
+        self
+    }
+}
+
+fn spawn_stderr_capture(mut stderr: ChildStderr) -> StderrCaptureTask {
+    let snapshot = Arc::new(Mutex::new(StreamCapture::default()));
+    let shared_snapshot = Arc::clone(&snapshot);
+    let worker = thread::spawn(move || {
+        let mut buffer = [0_u8; 8192];
+        loop {
+            let count = stderr.read(&mut buffer)?;
+            if count == 0 {
+                return Ok(());
+            }
+            let mut capture = shared_snapshot
+                .lock()
+                .map_err(|_| io::Error::other("stderr capture mutex poisoned"))?;
+            capture.observe(&buffer[..count]);
+        }
+    });
+    StderrCaptureTask { snapshot, worker }
+}
+
+enum StreamRead {
+    Frame(Vec<u8>),
+    NotReady,
+    Eof,
+}
+
+fn read_bounded_record(
+    reader: &mut BufReader<ChildStdout>,
+    capture: &mut StreamCapture,
+    partial: &mut Vec<u8>,
+) -> Result<StreamRead, SupervisionError> {
+    loop {
+        let available = match reader.fill_buf() {
+            Ok(available) => available,
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                return if partial.is_empty() {
+                    Ok(StreamRead::NotReady)
+                } else {
+                    // No complete record exists yet. Preserve what was read
+                    // in the BufReader until the next nonblocking poll.
+                    Ok(StreamRead::NotReady)
+                };
+            }
+            Err(error) => return Err(error.into()),
+        };
+        if available.is_empty() {
+            return if partial.is_empty() {
+                Ok(StreamRead::Eof)
+            } else {
+                Err(SupervisionError::UnterminatedOutboundRecord)
+            };
+        }
+        let take = available
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map_or(available.len(), |index| index + 1);
+        let bytes = &available[..take];
+        capture.observe(bytes);
+        let newline = bytes.last() == Some(&b'\n');
+        if partial.len().saturating_add(bytes.len()) > MAX_JSONL_FRAME_BYTES + 1 {
+            reader.consume(take);
+            partial.clear();
+            return Err(SupervisionError::OutboundFrameTooLarge);
+        }
+        partial.extend_from_slice(bytes);
+        reader.consume(take);
+        if newline {
+            partial.pop();
+            return Ok(StreamRead::Frame(std::mem::take(partial)));
+        }
+    }
+}
+
+fn set_nonblocking_stdout(stdout: &ChildStdout) -> Result<(), SupervisionError> {
+    set_nonblocking_file_descriptor(stdout.as_raw_fd())
+}
+
+fn set_nonblocking_stdin(stdin: &ChildStdin) -> Result<(), SupervisionError> {
+    set_nonblocking_file_descriptor(stdin.as_raw_fd())
+}
+
+fn set_nonblocking_file_descriptor(file_descriptor: libc::c_int) -> Result<(), SupervisionError> {
+    // SAFETY: fcntl reads/modifies only the status flags of this owned pipe
+    // descriptor. The descriptor remains owned by its Child stdio handle.
+    let flags = unsafe { libc::fcntl(file_descriptor, libc::F_GETFL) };
+    if flags < 0 {
+        return Err(SupervisionError::Io(io::Error::last_os_error()));
+    }
+    // SAFETY: as above; O_NONBLOCK is the only flag added.
+    if unsafe { libc::fcntl(file_descriptor, libc::F_SETFL, flags | libc::O_NONBLOCK) } != 0 {
+        return Err(SupervisionError::Io(io::Error::last_os_error()));
+    }
+    Ok(())
+}
+
+fn validate_spawn_request(request: &PiSpawnRequest) -> Result<(), SupervisionError> {
+    if request.create_session.cwd != *request.workspace.directory()
+        || !request
+            .create_session
+            .agent_directory
+            .is_strict_descendant_of(request.workspace.directory())
+        || !request
+            .create_session
+            .session_directory
+            .is_strict_descendant_of(request.workspace.directory())
+        || !request
+            .create_session
+            .auth_path
+            .is_strict_descendant_of(&request.create_session.agent_directory)
+        || !request
+            .create_session
+            .models_path
+            .is_strict_descendant_of(&request.create_session.agent_directory)
+        || request.create_session.model.provider != Provider::OpenRouter
+        || request.create_session.model.model_id != ModelId::DeepseekV4Flash0731
+        || request.create_session.model.thinking_level != ThinkingLevel::High
+        || digest_bytes(request.create_session.system_prompt.as_bytes())
+            != request.create_session.system_prompt_digest
+    {
+        return Err(SupervisionError::InvalidSpawnRequest);
+    }
+    request
+        .create_session
+        .model_catalog
+        .assert_vs001()
+        .map_err(SupervisionError::Protocol)?;
+    request
+        .create_session
+        .settings
+        .assert_vs001()
+        .map_err(SupervisionError::Protocol)?;
+    // The host receives ordinary native paths, so lexical containment alone
+    // is insufficient: a symlink could redirect auth/models outside the owned
+    // workspace between construction and Pi's ResourceLoader. Resolve each
+    // existing target immediately before spawn and require the same owned
+    // directory relation the protocol declares.
+    validate_existing_directory(request.workspace.directory(), request.workspace.directory())?;
+    validate_existing_directory(
+        &request.create_session.agent_directory,
+        request.workspace.directory(),
+    )?;
+    validate_existing_directory(
+        &request.create_session.session_directory,
+        request.workspace.directory(),
+    )?;
+    validate_existing_regular_file(
+        &request.create_session.auth_path,
+        &request.create_session.agent_directory,
+    )?;
+    validate_existing_regular_file(
+        &request.create_session.models_path,
+        &request.create_session.agent_directory,
+    )?;
+    if digest_file(request.create_session.models_path.as_path())?
+        != request.create_session.model_catalog.catalog_sha256
+    {
+        return Err(SupervisionError::InvalidSpawnRequest);
+    }
+    Ok(())
+}
+
+fn validate_existing_directory(
+    candidate: &AbsolutePath,
+    owned_base: &AbsolutePath,
+) -> Result<(), SupervisionError> {
+    let candidate = fs::canonicalize(candidate.as_path())?;
+    let owned_base = fs::canonicalize(owned_base.as_path())?;
+    let metadata = fs::metadata(&candidate)?;
+    let candidate = absolute_path_from_path(&candidate)?;
+    let owned_base = absolute_path_from_path(&owned_base)?;
+    if !metadata.is_dir()
+        || (candidate != owned_base && !candidate.is_strict_descendant_of(&owned_base))
+    {
+        return Err(SupervisionError::InvalidSpawnRequest);
+    }
+    Ok(())
+}
+
+fn validate_existing_regular_file(
+    candidate: &AbsolutePath,
+    owned_base: &AbsolutePath,
+) -> Result<(), SupervisionError> {
+    let candidate = fs::canonicalize(candidate.as_path())?;
+    let owned_base = fs::canonicalize(owned_base.as_path())?;
+    let metadata = fs::metadata(&candidate)?;
+    let candidate = absolute_path_from_path(&candidate)?;
+    let owned_base = absolute_path_from_path(&owned_base)?;
+    if !metadata.is_file() || !candidate.is_strict_descendant_of(&owned_base) {
+        return Err(SupervisionError::InvalidSpawnRequest);
+    }
+    Ok(())
+}
+
+fn abort_reason_for(reason: CancellationReason) -> AbortReason {
+    match reason {
+        CancellationReason::OperatorStop | CancellationReason::WallBudgetExpired => {
+            AbortReason::GracefulCancellation
+        }
+        CancellationReason::BudgetGuardrail => AbortReason::BudgetGuardrail,
+        CancellationReason::ProtocolContainment => AbortReason::EmergencyStop,
+        CancellationReason::DaemonRecovery => AbortReason::DaemonRecovery,
+    }
+}
+
+fn upgrade_or_replay_cancellation(
+    existing: &mut CancellationProgress,
+    incoming: CancellationRequest,
+    now: MonotonicTick,
+) -> Result<(), SupervisionError> {
+    let Some(previous) = existing.explicit_request.as_ref() else {
+        return Err(SupervisionError::InvalidLifecycle);
+    };
+    if previous == &incoming {
+        return Ok(());
+    }
+    if previous.cancellation_request_id != incoming.cancellation_request_id
+        || existing.mode != CancellationMode::GracefulCancel
+        || incoming.mode != CancellationMode::EmergencyStop
+    {
+        return Err(SupervisionError::InvalidLifecycle);
+    }
+    let deadlines = CancellationDeadlines::for_mode(CancellationMode::EmergencyStop)
+        .ok_or(SupervisionError::InvalidLifecycle)?;
+    let emergency_abort_deadline = now.checked_add(deadlines.cooperative_abort_wait)?;
+    let emergency_kill_deadline = emergency_abort_deadline.checked_add(deadlines.terminate_wait)?;
+    existing.mode_revisions.push(CancellationModeRevision {
+        from: existing.mode,
+        to: CancellationMode::EmergencyStop,
+        observed_at: now,
+    });
+    existing.mode = CancellationMode::EmergencyStop;
+    existing.explicit_request = Some(incoming);
+    if !existing.term_sent {
+        existing.abort_deadline = existing.abort_deadline.min(emergency_abort_deadline);
+    }
+    if !existing.kill_sent {
+        existing.kill_deadline = existing.kill_deadline.min(emergency_kill_deadline);
+    }
+    Ok(())
+}
+
+fn terminal_disposition(
+    cancellation: Option<&CancellationProgress>,
+    status: &ExitStatus,
+    liveness: ProcessGroupLiveness,
+) -> ChildTerminalDisposition {
+    if liveness != ProcessGroupLiveness::Absent {
+        return ChildTerminalDisposition::ContainmentFailed;
+    }
+    let Some(cancellation) = cancellation else {
+        return ChildTerminalDisposition::NotRunning;
+    };
+    if cancellation.kill_delivered {
+        return ChildTerminalDisposition::Killed;
+    }
+    if cancellation.term_delivered {
+        return ChildTerminalDisposition::Terminated;
+    }
+    if cancellation.abort_control_written && status.success() {
+        ChildTerminalDisposition::CooperativelyAborted
+    } else {
+        ChildTerminalDisposition::CompletedBeforeDelivery
+    }
+}
+
+fn signal_receipt(
+    outcome: SignalGroupOutcome,
+    delivered: SignalDelivery,
+    observed_at: MonotonicTick,
+) -> SignalReceipt {
+    let (delivery, group_liveness_after_attempt) = match outcome {
+        SignalGroupOutcome::AbsentBeforeSignal => (
+            SignalDelivery::AbsentBeforeSignal,
+            ProcessGroupLiveness::Absent,
+        ),
+        SignalGroupOutcome::InaccessibleBeforeSignal
+        | SignalGroupOutcome::InaccessibleDuringSignal => (
+            SignalDelivery::GroupInaccessible,
+            ProcessGroupLiveness::Inaccessible,
+        ),
+        SignalGroupOutcome::AbsentDuringSignal => (
+            SignalDelivery::AbsentDuringSignal,
+            ProcessGroupLiveness::Absent,
+        ),
+        SignalGroupOutcome::Delivered {
+            group_liveness_after_delivery,
+        } => (delivered, group_liveness_after_delivery),
+    };
+    SignalReceipt {
+        delivery,
+        observed_at,
+        group_liveness_after_attempt,
+    }
+}
+
+fn reap_status(status: ExitStatus) -> ReapStatus {
+    use std::os::unix::process::ExitStatusExt;
+
+    match (status.code(), status.signal()) {
+        (Some(code), _) => ReapStatus::Exited { code },
+        (None, Some(signal)) => ReapStatus::Signaled { signal },
+        (None, None) => ReapStatus::Unknown,
+    }
+}
+
+fn digest_file(path: &Path) -> Result<Sha256Digest, SupervisionError> {
+    let mut file = fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 8192];
+    loop {
+        let count = file.read(&mut buffer)?;
+        if count == 0 {
+            return Ok(digest_to_type(hasher.finalize()));
+        }
+        hasher.update(&buffer[..count]);
+    }
+}
+
+fn digest_bytes(bytes: &[u8]) -> Sha256Digest {
+    digest_to_type(Sha256::digest(bytes))
+}
+
+fn digest_to_type(digest: impl AsRef<[u8]>) -> Sha256Digest {
+    let mut output = String::with_capacity(64);
+    for byte in digest.as_ref() {
+        use std::fmt::Write as _;
+        let _ = write!(&mut output, "{byte:02x}");
+    }
+    Sha256Digest::parse(output).expect("SHA-256 formatter produces lowercase hex")
+}
+
+fn absolute_path_from_path(path: &Path) -> Result<AbsolutePath, SupervisionError> {
+    let value = path
+        .to_str()
+        .ok_or(SupervisionError::InvalidSpawnRequest)?
+        .to_owned();
+    AbsolutePath::parse(value).map_err(SupervisionError::Protocol)
+}
+
+fn is_domain_identifier(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    if bytes.is_empty()
+        || !bytes[0].is_ascii_alphanumeric()
+        || !bytes.last().is_some_and(u8::is_ascii_alphanumeric)
+    {
+        return false;
+    }
+    bytes
+        .iter()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(*byte, b'.' | b'_' | b'-'))
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    #[test]
+    fn cancellation_deadlines_are_fixed_by_closed_mode() {
+        let graceful = CancellationDeadlines::for_mode(CancellationMode::GracefulCancel).unwrap();
+        assert_eq!(graceful.cooperative_abort_wait.value(), 5_000);
+        assert_eq!(graceful.terminate_wait.value(), 5_000);
+        let emergency = CancellationDeadlines::for_mode(CancellationMode::EmergencyStop).unwrap();
+        assert_eq!(emergency.cooperative_abort_wait.value(), 1_000);
+        assert_eq!(emergency.terminate_wait.value(), 2_000);
+        assert_eq!(
+            CancellationDeadlines::for_mode(CancellationMode::Quiesce),
+            None
+        );
+    }
+
+    #[test]
+    fn opaque_identifiers_are_not_generic_empty_or_path_strings() {
+        assert!(SupervisedChildId::parse("child-001").is_ok());
+        assert!(SupervisedChildId::parse("../child").is_err());
+        assert!(NativeWorkspaceId::parse("workspace-001").is_ok());
+        assert!(CancellationRequestId::parse("cancel-001").is_ok());
+    }
+
+    #[test]
+    fn transient_count_overflow_is_never_saturated_into_exact_evidence() {
+        let mut capture = StreamCapture {
+            observed_byte_count: u64::MAX,
+            ..StreamCapture::default()
+        };
+        capture.observe(b"x");
+        let transient = capture.transient_capture();
+        assert_eq!(
+            transient.observed_byte_count,
+            TransientByteCount::Overflowed
+        );
+        assert_eq!(transient.retention, TransientRetention::CountOverflow);
+    }
+
+    #[test]
+    fn signal_receipts_distinguish_absence_from_a_delivered_signal_that_exited_fast() {
+        let delivered = signal_receipt(
+            SignalGroupOutcome::Delivered {
+                group_liveness_after_delivery: ProcessGroupLiveness::Absent,
+            },
+            SignalDelivery::TermSent,
+            MonotonicTick::ZERO,
+        );
+        assert_eq!(delivered.delivery, SignalDelivery::TermSent);
+        assert_eq!(
+            delivered.group_liveness_after_attempt,
+            ProcessGroupLiveness::Absent
+        );
+
+        let absent = signal_receipt(
+            SignalGroupOutcome::AbsentBeforeSignal,
+            SignalDelivery::TermSent,
+            MonotonicTick::ZERO,
+        );
+        assert_eq!(absent.delivery, SignalDelivery::AbsentBeforeSignal);
+
+        let inaccessible = signal_receipt(
+            SignalGroupOutcome::InaccessibleDuringSignal,
+            SignalDelivery::KillSent,
+            MonotonicTick::ZERO,
+        );
+        assert_eq!(inaccessible.delivery, SignalDelivery::GroupInaccessible);
+    }
+}

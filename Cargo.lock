@@ -288,7 +288,9 @@ name = "societyd"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "sha2",
  "society-kernel",
+ "society-pi",
  "thiserror",
  "tracing",
  "tracing-subscriber",
