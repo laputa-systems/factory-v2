@@ -57,6 +57,24 @@ identifier!(ReviewChallengeId);
 identifier!(PostmortemId);
 identifier!(PostmortemCausalClaimId);
 identifier!(PostmortemActionProposalId);
+identifier!(ActorConfigurationId);
+identifier!(ActorConfigurationRevisionId);
+identifier!(ActorInstanceId);
+identifier!(ExecutionProfileId);
+identifier!(ContextPackId);
+identifier!(WorkItemId);
+identifier!(WorkLeaseId);
+identifier!(ActorAttemptId);
+identifier!(OutcomeObligationId);
+
+impl ExecutionProfileId {
+    /// A provider-free process-double profile for deterministic fixture work.
+    /// It is neither native Pi SDK qualification nor live actor authority.
+    pub const DETERMINISTIC_PI_HOST_DOUBLE_V1: Self = Self(1);
+    /// The pinned native profile identity. M3 records it as Unqualified;
+    /// only the later PiSdkQualification path may make it live-admissible.
+    pub const NATIVE_PINNED_PI_SDK_V1: Self = Self(2);
+}
 
 impl PrincipalId {
     /// The compiled, local founding authority. It is installed by migration,
@@ -158,6 +176,9 @@ coordination_text!(ReviewFailureHypothesis);
 coordination_text!(ReviewResponseText);
 coordination_text!(PostmortemCausalClaimText);
 coordination_text!(PostmortemActionProposalText);
+coordination_text!(ActorConfigurationName);
+coordination_text!(WorkAssignmentText);
+coordination_text!(OutcomeObligationText);
 
 #[derive(Clone, Copy, Eq, Hash, PartialEq)]
 pub struct Sha256Digest([u8; 32]);
@@ -308,6 +329,21 @@ pub enum Capability {
     /// Kernel-owned assignment makes an adversarial finding attributable to
     /// the exact reviewer authorized for its Review, rather than to any actor.
     AssignAdversarialReviewer = 46,
+    RegisterActorConfiguration = 47,
+    RegisterContextPack = 48,
+    AdmitActorInstance = 49,
+    AdmitTicket = 50,
+    RegisterWorkItem = 51,
+    ClaimWorkItem = 52,
+    StartActorAttempt = 53,
+    AttestActorAttemptTerminal = 54,
+    ValidateTicketAttempt = 55,
+    RetryActorAttempt = 56,
+    CompleteTicket = 57,
+    ExpireWorkLease = 58,
+    CancelActorAttempt = 59,
+    RegisterOutcomeObligation = 60,
+    ResolveOutcomeObligation = 61,
 }
 
 impl Capability {
@@ -322,7 +358,7 @@ impl Capability {
         Self::AdmitOperatingCycle,
     ];
 
-    pub const GRAND_ARCHITECT: [Self; 32] = [
+    pub const GRAND_ARCHITECT: [Self; 42] = [
         Self::ProposeOperatingCycle,
         Self::AdmitOperatingCycle,
         Self::QuiesceOperatingCycle,
@@ -355,9 +391,19 @@ impl Capability {
         Self::RecordPostmortemCausalClaim,
         Self::ProposePostmortemAction,
         Self::ClosePostmortem,
+        Self::RegisterActorConfiguration,
+        Self::RegisterContextPack,
+        Self::AdmitActorInstance,
+        Self::AdmitTicket,
+        Self::RegisterWorkItem,
+        Self::StartActorAttempt,
+        Self::RetryActorAttempt,
+        Self::CompleteTicket,
+        Self::RegisterOutcomeObligation,
+        Self::ResolveOutcomeObligation,
     ];
 
-    pub const KERNEL_SERVICE: [Self; 8] = [
+    pub const KERNEL_SERVICE: [Self; 12] = [
         Self::RecordCycleDrained,
         Self::RecordOfficeSessionReady,
         Self::SettleOfficeTurn,
@@ -366,6 +412,10 @@ impl Capability {
         Self::RecordOfficeSessionTerminal,
         Self::SubmitReviewChallenge,
         Self::AssignAdversarialReviewer,
+        Self::AttestActorAttemptTerminal,
+        Self::ValidateTicketAttempt,
+        Self::ExpireWorkLease,
+        Self::CancelActorAttempt,
     ];
 
     pub const fn requires_consumption(self) -> bool {
@@ -423,6 +473,10 @@ impl OperatingCycleState {
 pub enum OperatingCycleTreatment {
     PiSdkQualificationV1 = 1,
     Vs001LiveV1 = 2,
+    /// Provider-free process-double treatment for trusted-kernel/supervisor
+    /// fixtures. It carries VS-001's logical envelope but denies provider
+    /// access and cannot stand in for the paid native qualification run.
+    Vs001DeterministicV1 = 3,
 }
 
 /// M2 contains the planning and closure-blocker portion of the Project
@@ -571,6 +625,213 @@ pub enum AdversarialReviewState {
     Escalated = 9,
 }
 
+/// The M3 execution foundation permits only the one pinned VS-001 model
+/// policy. A future policy mutation needs its own versioned, qualified path;
+/// a provider/model string may not quietly change an Actor's identity.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum ActorModelPolicy {
+    Vs001DeepseekV4FlashHigh = 1,
+}
+
+/// Developmental attractors are explicit treatment biases, never authority
+/// titles. M3 records one primary bias per configuration revision.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum DevelopmentalAttractor {
+    Explore = 1,
+    Build = 2,
+    Measure = 3,
+    Challenge = 4,
+    Synthesize = 5,
+    Integrate = 6,
+    Remember = 7,
+    Coordinate = 8,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum ActorConfigurationState {
+    Active = 1,
+    Retired = 2,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum ActorInstanceState {
+    Active = 1,
+    Retired = 2,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum ExecutionProfileKind {
+    DeterministicPiHostProcessDoubleV1 = 1,
+    NativePinnedPiSdkV1 = 2,
+}
+
+/// This is deliberately not a boolean "qualified" flag. The process-double
+/// has a narrow provider-free deterministic-fixture role, while the native Pi
+/// SDK identity remains unqualified until a future typed M8 fact exists.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum ExecutionProfileReadiness {
+    DeterministicFixtureOnly = 1,
+    Unqualified = 2,
+    QualifiedForLiveUse = 3,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum CapabilityGrantOrigin {
+    CompiledBootstrap = 1,
+    LedgerCommand = 2,
+    CompiledKernelService = 3,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum ContextPackPurpose {
+    TicketExecution = 1,
+    IndependentReview = 2,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum WorkItemKind {
+    TicketExecution = 1,
+    IndependentReview = 2,
+}
+
+impl WorkItemKind {
+    pub const fn required_context_purpose(self) -> ContextPackPurpose {
+        match self {
+            Self::TicketExecution => ContextPackPurpose::TicketExecution,
+            Self::IndependentReview => ContextPackPurpose::IndependentReview,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum WorkItemState {
+    Ready = 1,
+    Claimed = 2,
+    Running = 3,
+    Settled = 4,
+    Cancelled = 5,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum WorkLeaseState {
+    Active = 1,
+    Released = 2,
+    Expired = 3,
+    Cancelled = 4,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum ActorAttemptState {
+    Running = 1,
+    CancellationRequested = 2,
+    Succeeded = 3,
+    Failed = 4,
+    Cancelled = 5,
+    Expired = 6,
+    ProtocolFailed = 7,
+    SupervisorFailed = 8,
+    Validated = 9,
+}
+
+impl ActorAttemptState {
+    pub const fn is_live(self) -> bool {
+        matches!(self, Self::Running | Self::CancellationRequested)
+    }
+}
+
+/// This is a kernel-service terminal attestation, not a claim that Pi or a
+/// process receipt already exists. The supervisor/evidence tranche must later
+/// bind it to those independently normalized receipts.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum ActorAttemptTerminalKind {
+    Succeeded = 1,
+    Failed = 2,
+    Cancelled = 3,
+    Expired = 4,
+    ProtocolFailed = 5,
+    SupervisorFailed = 6,
+}
+
+impl ActorAttemptTerminalKind {
+    pub const fn state(self) -> ActorAttemptState {
+        match self {
+            Self::Succeeded => ActorAttemptState::Succeeded,
+            Self::Failed => ActorAttemptState::Failed,
+            Self::Cancelled => ActorAttemptState::Cancelled,
+            Self::Expired => ActorAttemptState::Expired,
+            Self::ProtocolFailed => ActorAttemptState::ProtocolFailed,
+            Self::SupervisorFailed => ActorAttemptState::SupervisorFailed,
+        }
+    }
+
+    pub const fn permits_validation(self) -> bool {
+        matches!(self, Self::Succeeded)
+    }
+
+    /// Cancellation is a control protocol, not a terminal label an attestor
+    /// may attach retrospectively. Ordinary terminal facts come directly from
+    /// `Running`; only a cancellation-requested Attempt may become
+    /// `Cancelled`.
+    pub const fn allowed_from(self, state: ActorAttemptState) -> bool {
+        matches!(
+            (state, self),
+            (
+                ActorAttemptState::Running,
+                Self::Succeeded
+                    | Self::Failed
+                    | Self::Expired
+                    | Self::ProtocolFailed
+                    | Self::SupervisorFailed
+            ) | (ActorAttemptState::CancellationRequested, Self::Cancelled)
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum ActorAttemptCancellationReason {
+    GrandArchitectRequested = 1,
+    CycleCancellation = 2,
+    LeaseContainment = 3,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum OutcomeObligationState {
+    Scheduled = 1,
+    Satisfied = 2,
+    Waived = 3,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum OutcomeObligationDisposition {
+    Satisfied = 1,
+    Waived = 2,
+}
+
+impl OutcomeObligationDisposition {
+    pub const fn state(self) -> OutcomeObligationState {
+        match self {
+            Self::Satisfied => OutcomeObligationState::Satisfied,
+            Self::Waived => OutcomeObligationState::Waived,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(i64)]
 pub enum ReviewChallengeSeverity {
@@ -629,7 +890,7 @@ impl OperatingCycleTreatment {
     pub const fn budget_ceiling(self) -> UsdMicros {
         match self {
             Self::PiSdkQualificationV1 => UsdMicros::VS001_QUALIFICATION_CEILING,
-            Self::Vs001LiveV1 => UsdMicros::VS001_CYCLE_CEILING,
+            Self::Vs001LiveV1 | Self::Vs001DeterministicV1 => UsdMicros::VS001_CYCLE_CEILING,
         }
     }
 }
@@ -931,6 +1192,8 @@ pub enum CommandBody {
         operating_cycle_id: OperatingCycleId,
         adversarial_review_id: AdversarialReviewId,
         reviewer_principal_id: PrincipalId,
+        reviewer_actor_instance_id: ActorInstanceId,
+        reviewer_actor_attempt_id: ActorAttemptId,
     },
     SubmitReviewChallenge {
         operating_cycle_id: OperatingCycleId,
@@ -975,6 +1238,77 @@ pub enum CommandBody {
     ClosePostmortem {
         operating_cycle_id: OperatingCycleId,
         postmortem_id: PostmortemId,
+    },
+    RegisterActorConfiguration {
+        configuration_name: ActorConfigurationName,
+        model_policy: ActorModelPolicy,
+        primary_attractor: DevelopmentalAttractor,
+    },
+    RegisterContextPack {
+        operating_cycle_id: OperatingCycleId,
+        purpose: ContextPackPurpose,
+        rendering_digest: Sha256Digest,
+    },
+    AdmitActorInstance {
+        operating_cycle_id: OperatingCycleId,
+        actor_configuration_revision_id: ActorConfigurationRevisionId,
+        execution_profile_id: ExecutionProfileId,
+        actor_display_name: PrincipalDisplayName,
+    },
+    AdmitTicket {
+        operating_cycle_id: OperatingCycleId,
+        ticket_id: TicketId,
+    },
+    RegisterWorkItem {
+        operating_cycle_id: OperatingCycleId,
+        ticket_id: TicketId,
+        actor_instance_id: ActorInstanceId,
+        context_pack_id: ContextPackId,
+        work_kind: WorkItemKind,
+        adversarial_review_id: Option<AdversarialReviewId>,
+        assignment: WorkAssignmentText,
+    },
+    ClaimWorkItem {
+        operating_cycle_id: OperatingCycleId,
+        work_item_id: WorkItemId,
+    },
+    StartActorAttempt {
+        operating_cycle_id: OperatingCycleId,
+        work_item_id: WorkItemId,
+        reservation_amount: UsdMicros,
+    },
+    AttestActorAttemptTerminal {
+        actor_attempt_id: ActorAttemptId,
+        terminal_kind: ActorAttemptTerminalKind,
+    },
+    ValidateTicketAttempt {
+        operating_cycle_id: OperatingCycleId,
+        actor_attempt_id: ActorAttemptId,
+    },
+    RetryActorAttempt {
+        operating_cycle_id: OperatingCycleId,
+        actor_attempt_id: ActorAttemptId,
+    },
+    CompleteTicket {
+        operating_cycle_id: OperatingCycleId,
+        actor_attempt_id: ActorAttemptId,
+    },
+    ExpireWorkLease {
+        work_lease_id: WorkLeaseId,
+    },
+    CancelActorAttempt {
+        actor_attempt_id: ActorAttemptId,
+        reason: ActorAttemptCancellationReason,
+    },
+    RegisterOutcomeObligation {
+        operating_cycle_id: OperatingCycleId,
+        project_id: ProjectId,
+        obligation: OutcomeObligationText,
+    },
+    ResolveOutcomeObligation {
+        operating_cycle_id: OperatingCycleId,
+        outcome_obligation_id: OutcomeObligationId,
+        disposition: OutcomeObligationDisposition,
     },
 }
 
@@ -1029,6 +1363,21 @@ impl CommandBody {
             Self::RecordPostmortemCausalClaim { .. } => CommandKind::RecordPostmortemCausalClaim,
             Self::ProposePostmortemAction { .. } => CommandKind::ProposePostmortemAction,
             Self::ClosePostmortem { .. } => CommandKind::ClosePostmortem,
+            Self::RegisterActorConfiguration { .. } => CommandKind::RegisterActorConfiguration,
+            Self::RegisterContextPack { .. } => CommandKind::RegisterContextPack,
+            Self::AdmitActorInstance { .. } => CommandKind::AdmitActorInstance,
+            Self::AdmitTicket { .. } => CommandKind::AdmitTicket,
+            Self::RegisterWorkItem { .. } => CommandKind::RegisterWorkItem,
+            Self::ClaimWorkItem { .. } => CommandKind::ClaimWorkItem,
+            Self::StartActorAttempt { .. } => CommandKind::StartActorAttempt,
+            Self::AttestActorAttemptTerminal { .. } => CommandKind::AttestActorAttemptTerminal,
+            Self::ValidateTicketAttempt { .. } => CommandKind::ValidateTicketAttempt,
+            Self::RetryActorAttempt { .. } => CommandKind::RetryActorAttempt,
+            Self::CompleteTicket { .. } => CommandKind::CompleteTicket,
+            Self::ExpireWorkLease { .. } => CommandKind::ExpireWorkLease,
+            Self::CancelActorAttempt { .. } => CommandKind::CancelActorAttempt,
+            Self::RegisterOutcomeObligation { .. } => CommandKind::RegisterOutcomeObligation,
+            Self::ResolveOutcomeObligation { .. } => CommandKind::ResolveOutcomeObligation,
         }
     }
 
@@ -1082,6 +1431,21 @@ impl CommandBody {
             Self::RecordPostmortemCausalClaim { .. } => Capability::RecordPostmortemCausalClaim,
             Self::ProposePostmortemAction { .. } => Capability::ProposePostmortemAction,
             Self::ClosePostmortem { .. } => Capability::ClosePostmortem,
+            Self::RegisterActorConfiguration { .. } => Capability::RegisterActorConfiguration,
+            Self::RegisterContextPack { .. } => Capability::RegisterContextPack,
+            Self::AdmitActorInstance { .. } => Capability::AdmitActorInstance,
+            Self::AdmitTicket { .. } => Capability::AdmitTicket,
+            Self::RegisterWorkItem { .. } => Capability::RegisterWorkItem,
+            Self::ClaimWorkItem { .. } => Capability::ClaimWorkItem,
+            Self::StartActorAttempt { .. } => Capability::StartActorAttempt,
+            Self::AttestActorAttemptTerminal { .. } => Capability::AttestActorAttemptTerminal,
+            Self::ValidateTicketAttempt { .. } => Capability::ValidateTicketAttempt,
+            Self::RetryActorAttempt { .. } => Capability::RetryActorAttempt,
+            Self::CompleteTicket { .. } => Capability::CompleteTicket,
+            Self::ExpireWorkLease { .. } => Capability::ExpireWorkLease,
+            Self::CancelActorAttempt { .. } => Capability::CancelActorAttempt,
+            Self::RegisterOutcomeObligation { .. } => Capability::RegisterOutcomeObligation,
+            Self::ResolveOutcomeObligation { .. } => Capability::ResolveOutcomeObligation,
         }
     }
 }
@@ -1135,6 +1499,21 @@ pub enum CommandKind {
     ProposePostmortemAction = 44,
     ClosePostmortem = 45,
     AssignAdversarialReviewer = 46,
+    RegisterActorConfiguration = 47,
+    RegisterContextPack = 48,
+    AdmitActorInstance = 49,
+    AdmitTicket = 50,
+    RegisterWorkItem = 51,
+    ClaimWorkItem = 52,
+    StartActorAttempt = 53,
+    AttestActorAttemptTerminal = 54,
+    ValidateTicketAttempt = 55,
+    RetryActorAttempt = 56,
+    CompleteTicket = 57,
+    ExpireWorkLease = 58,
+    CancelActorAttempt = 59,
+    RegisterOutcomeObligation = 60,
+    ResolveOutcomeObligation = 61,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1192,6 +1571,15 @@ pub enum Rejection {
     ReviewDispositionIncomplete = 25,
     PostmortemCloseBlocked = 26,
     ReviewAssignmentNotIndependent = 27,
+    ActorJurisdictionDenied = 28,
+    WorkLeaseUnavailable = 29,
+    ActorAttemptNotTerminal = 30,
+    ActorAttemptNotValidatable = 31,
+    OutcomeObligationOpen = 32,
+    ReviewAssignmentEvidenceMissing = 33,
+    ExecutionProfileIneligible = 34,
+    TicketAcceptanceConditionUnsatisfied = 35,
+    QualificationTreatmentRestricted = 36,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1321,6 +1709,8 @@ pub enum EventBody {
     AdversarialReviewerAssigned {
         adversarial_review_id: AdversarialReviewId,
         reviewer_principal_id: PrincipalId,
+        reviewer_actor_instance_id: ActorInstanceId,
+        reviewer_actor_attempt_id: ActorAttemptId,
     },
     ReviewChallengeSubmitted {
         review_challenge_id: ReviewChallengeId,
@@ -1348,6 +1738,68 @@ pub enum EventBody {
     },
     PostmortemClosed {
         postmortem_id: PostmortemId,
+    },
+    ActorConfigurationRegistered {
+        actor_configuration_id: ActorConfigurationId,
+        actor_configuration_revision_id: ActorConfigurationRevisionId,
+    },
+    ContextPackRegistered {
+        context_pack_id: ContextPackId,
+    },
+    ActorInstanceAdmitted {
+        actor_instance_id: ActorInstanceId,
+        principal_id: PrincipalId,
+    },
+    TicketAdmitted {
+        ticket_id: TicketId,
+    },
+    WorkItemRegistered {
+        work_item_id: WorkItemId,
+        ticket_id: TicketId,
+        adversarial_review_id: Option<AdversarialReviewId>,
+    },
+    WorkItemClaimed {
+        work_item_id: WorkItemId,
+        work_lease_id: WorkLeaseId,
+        actor_instance_id: ActorInstanceId,
+    },
+    ActorAttemptStarted {
+        actor_attempt_id: ActorAttemptId,
+        work_item_id: WorkItemId,
+        budget_reservation_id: BudgetReservationId,
+    },
+    ActorAttemptTerminalAttested {
+        actor_attempt_id: ActorAttemptId,
+        terminal_kind: ActorAttemptTerminalKind,
+    },
+    TicketAttemptValidated {
+        actor_attempt_id: ActorAttemptId,
+        ticket_id: TicketId,
+    },
+    ActorAttemptRetryPrepared {
+        actor_attempt_id: ActorAttemptId,
+        work_item_id: WorkItemId,
+        ticket_id: TicketId,
+    },
+    TicketCompleted {
+        ticket_id: TicketId,
+        actor_attempt_id: ActorAttemptId,
+    },
+    WorkLeaseExpired {
+        work_lease_id: WorkLeaseId,
+        work_item_id: WorkItemId,
+    },
+    ActorAttemptCancellationRequested {
+        actor_attempt_id: ActorAttemptId,
+        reason: ActorAttemptCancellationReason,
+    },
+    OutcomeObligationRegistered {
+        outcome_obligation_id: OutcomeObligationId,
+        project_id: ProjectId,
+    },
+    OutcomeObligationResolved {
+        outcome_obligation_id: OutcomeObligationId,
+        state: OutcomeObligationState,
     },
 }
 
@@ -1393,6 +1845,21 @@ pub enum EventKind {
     PostmortemActionProposed = 37,
     PostmortemClosed = 38,
     AdversarialReviewerAssigned = 39,
+    ActorConfigurationRegistered = 40,
+    ContextPackRegistered = 41,
+    ActorInstanceAdmitted = 42,
+    TicketAdmitted = 43,
+    WorkItemRegistered = 44,
+    WorkItemClaimed = 45,
+    ActorAttemptStarted = 46,
+    ActorAttemptTerminalAttested = 47,
+    TicketAttemptValidated = 48,
+    ActorAttemptRetryPrepared = 49,
+    TicketCompleted = 50,
+    WorkLeaseExpired = 51,
+    ActorAttemptCancellationRequested = 52,
+    OutcomeObligationRegistered = 53,
+    OutcomeObligationResolved = 54,
 }
 
 impl EventBody {
@@ -1441,6 +1908,23 @@ impl EventBody {
             Self::PostmortemCausalClaimRecorded { .. } => EventKind::PostmortemCausalClaimRecorded,
             Self::PostmortemActionProposed { .. } => EventKind::PostmortemActionProposed,
             Self::PostmortemClosed { .. } => EventKind::PostmortemClosed,
+            Self::ActorConfigurationRegistered { .. } => EventKind::ActorConfigurationRegistered,
+            Self::ContextPackRegistered { .. } => EventKind::ContextPackRegistered,
+            Self::ActorInstanceAdmitted { .. } => EventKind::ActorInstanceAdmitted,
+            Self::TicketAdmitted { .. } => EventKind::TicketAdmitted,
+            Self::WorkItemRegistered { .. } => EventKind::WorkItemRegistered,
+            Self::WorkItemClaimed { .. } => EventKind::WorkItemClaimed,
+            Self::ActorAttemptStarted { .. } => EventKind::ActorAttemptStarted,
+            Self::ActorAttemptTerminalAttested { .. } => EventKind::ActorAttemptTerminalAttested,
+            Self::TicketAttemptValidated { .. } => EventKind::TicketAttemptValidated,
+            Self::ActorAttemptRetryPrepared { .. } => EventKind::ActorAttemptRetryPrepared,
+            Self::TicketCompleted { .. } => EventKind::TicketCompleted,
+            Self::WorkLeaseExpired { .. } => EventKind::WorkLeaseExpired,
+            Self::ActorAttemptCancellationRequested { .. } => {
+                EventKind::ActorAttemptCancellationRequested
+            }
+            Self::OutcomeObligationRegistered { .. } => EventKind::OutcomeObligationRegistered,
+            Self::OutcomeObligationResolved { .. } => EventKind::OutcomeObligationResolved,
         }
     }
 }

@@ -7,29 +7,35 @@ use rusqlite::{
 use thiserror::Error;
 
 use crate::{
-    AdmissionGeneration, AdversarialReviewId, AdversarialReviewState, BudgetEnvelopeId,
-    BudgetFreezeReason, BudgetReservationId, BudgetReservationState, CancellationMode,
-    CancellationRequestId, CancellationState, Capability, CausalEpisodeId, CommandBody,
-    CommandDisposition, CommandId, CommandKind, CommandReceipt, CommandRequest, CostObservation,
-    CostPostmortemCause, CostPostmortemId, CostPostmortemResolution, CostPostmortemState,
-    CostUnavailableReason, CostUnknownReason, EpisodeState, EventBody, EventId, EventKind,
-    ExpectedGeneration, GrandArchitectOfficeSessionId, GraphEdgeId, GraphEdgeKind, GraphObjectId,
-    GraphObjectKind, GraphRevisionBody, GraphRevisionId, GraphRevisionState,
-    HypothesisRevisionText, LedgerEvent, ObservationRevisionText, OfficeId, OfficeKind,
-    OfficeOccupancyId, OfficeSessionState, OfficeSessionTerminalState, OfficeTurnId,
-    OfficeTurnPurpose, OfficeTurnState, OperatingCycleId, OperatingCycleState,
-    OperatingCycleTreatment, PostmortemActionKind, PostmortemActionProposalId,
+    ActorAttemptCancellationReason, ActorAttemptId, ActorAttemptState, ActorAttemptTerminalKind,
+    ActorConfigurationId, ActorConfigurationRevisionId, ActorInstanceId, ActorInstanceState,
+    ActorModelPolicy, AdmissionGeneration, AdversarialReviewId, AdversarialReviewState,
+    BudgetEnvelopeId, BudgetFreezeReason, BudgetReservationId, BudgetReservationState,
+    CancellationMode, CancellationRequestId, CancellationState, Capability, CausalEpisodeId,
+    CommandBody, CommandDisposition, CommandId, CommandKind, CommandReceipt, CommandRequest,
+    ContextPackId, ContextPackPurpose, CostObservation, CostPostmortemCause, CostPostmortemId,
+    CostPostmortemResolution, CostPostmortemState, CostUnavailableReason, CostUnknownReason,
+    DevelopmentalAttractor, EpisodeState, EventBody, EventId, EventKind, ExecutionProfileId,
+    ExecutionProfileKind, ExecutionProfileReadiness, ExpectedGeneration,
+    GrandArchitectOfficeSessionId, GraphEdgeId, GraphEdgeKind, GraphObjectId, GraphObjectKind,
+    GraphRevisionBody, GraphRevisionId, GraphRevisionState, HypothesisRevisionText, LedgerEvent,
+    ObservationRevisionText, OfficeId, OfficeKind, OfficeOccupancyId, OfficeSessionState,
+    OfficeSessionTerminalState, OfficeTurnId, OfficeTurnPurpose, OfficeTurnState, OperatingCycleId,
+    OperatingCycleState, OperatingCycleTreatment, OutcomeObligationDisposition,
+    OutcomeObligationId, OutcomeObligationState, PostmortemActionKind, PostmortemActionProposalId,
     PostmortemCausalClaimId, PostmortemCausalClaimKind, PostmortemId, PostmortemState, PrincipalId,
     PrincipalKind, ProjectId, ProjectMilestoneId, ProjectMilestoneState, ProjectState, Rejection,
     ReviewChallengeId, ReviewChallengeResponseState, ReviewChallengeSeverity,
     ReviewDispositionKind, ReviewResolutionKind, Sha256Digest, SocietyId, SocietyName, TicketId,
-    TicketState, UniverseSeedId, UsdMicros,
+    TicketState, UniverseSeedId, UsdMicros, WorkItemId, WorkItemKind, WorkItemState, WorkLeaseId,
+    WorkLeaseState,
 };
 
 const MIGRATION_1: &str = include_str!("../../../migrations/0001_kernel.sql");
 const MIGRATION_2: &str = include_str!("../../../migrations/0002_coordination_graph.sql");
+const MIGRATION_3: &str = include_str!("../../../migrations/0003_execution_foundation.sql");
 
-const COMMAND_BODY_TABLES: [&str; 46] = [
+const COMMAND_BODY_TABLES: [&str; 61] = [
     "command_create_society_identity",
     "command_install_grand_architect_office",
     "command_install_founding_universe_seed",
@@ -76,9 +82,24 @@ const COMMAND_BODY_TABLES: [&str; 46] = [
     "command_propose_postmortem_action",
     "command_close_postmortem",
     "command_assign_adversarial_reviewer",
+    "command_register_actor_configuration",
+    "command_register_context_pack",
+    "command_admit_actor_instance",
+    "command_admit_ticket",
+    "command_register_work_item",
+    "command_claim_work_item",
+    "command_start_actor_attempt",
+    "command_attest_actor_attempt_terminal",
+    "command_validate_ticket_attempt",
+    "command_retry_actor_attempt",
+    "command_complete_ticket",
+    "command_expire_work_lease",
+    "command_cancel_actor_attempt",
+    "command_register_outcome_obligation",
+    "command_resolve_outcome_obligation",
 ];
 
-const EVENT_BODY_TABLES: [&str; 39] = [
+const EVENT_BODY_TABLES: [&str; 54] = [
     "event_society_identity_created",
     "event_grand_architect_office_installed",
     "event_founding_universe_seed_installed",
@@ -118,6 +139,21 @@ const EVENT_BODY_TABLES: [&str; 39] = [
     "event_postmortem_action_proposed",
     "event_postmortem_closed",
     "event_adversarial_reviewer_assigned",
+    "event_actor_configuration_registered",
+    "event_context_pack_registered",
+    "event_actor_instance_admitted",
+    "event_ticket_admitted",
+    "event_work_item_registered",
+    "event_work_item_claimed",
+    "event_actor_attempt_started",
+    "event_actor_attempt_terminal_attested",
+    "event_ticket_attempt_validated",
+    "event_actor_attempt_retry_prepared",
+    "event_ticket_completed",
+    "event_work_lease_expired",
+    "event_actor_attempt_cancellation_requested",
+    "event_outcome_obligation_registered",
+    "event_outcome_obligation_resolved",
 ];
 
 const GRAPH_REVISION_BODY_TABLES: [&str; 2] = ["observation_revisions", "hypothesis_revisions"];
@@ -143,6 +179,13 @@ pub enum StoreError {
         command_count: i64,
         event_count: i64,
     },
+    #[error(
+        "refusing schema-v2 upgrade with a nonempty ledger ({command_count} commands, {event_count} events)"
+    )]
+    NonemptySchemaV2LedgerUpgradeRefused {
+        command_count: i64,
+        event_count: i64,
+    },
     #[error("command id was already used with a different typed request")]
     IdempotencyConflict,
     #[error("ledger corruption: {0}")]
@@ -161,10 +204,24 @@ struct CycleRow {
     generation: AdmissionGeneration,
 }
 
+/// The exact immutable assignment/context binding of a WorkItem. The tuple is
+/// private to the store because callers must not fabricate an execution
+/// context outside the typed command path.
+type WorkItemRow = (
+    TicketId,
+    ActorInstanceId,
+    ContextPackId,
+    WorkItemKind,
+    Option<AdversarialReviewId>,
+    WorkItemState,
+    Option<ActorAttemptId>,
+);
+
 enum CapabilityGrantLookup {
     Active {
         grant_id: i64,
         office_occupancy_id: Option<OfficeOccupancyId>,
+        actor_instance_id: Option<ActorInstanceId>,
     },
     Inactive,
 }
@@ -184,12 +241,13 @@ impl KernelStore {
             connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
         match schema_version {
             0 => {
-                // A fresh database crosses two ordered commit boundaries, not
-                // one fictional atomic 0 -> 2 boundary. Each migration either
+                // A fresh database crosses ordered versioned commit boundaries,
+                // not one fictional atomic 0 -> 3 boundary. Each migration either
                 // commits its own version or rolls back so reopening can retry
                 // that exact version step.
                 apply_migration_1(&connection)?;
                 apply_migration_2(&connection)?;
+                apply_migration_3(&connection)?;
             }
             1 => {
                 let (command_count, event_count) = schema_v1_ledger_counts(&connection)?;
@@ -203,8 +261,19 @@ impl KernelStore {
                     });
                 }
                 apply_migration_2(&connection)?;
+                apply_migration_3(&connection)?;
             }
-            2 => {}
+            2 => {
+                let (command_count, event_count) = schema_v1_ledger_counts(&connection)?;
+                if command_count != 0 || event_count != 0 {
+                    return Err(StoreError::NonemptySchemaV2LedgerUpgradeRefused {
+                        command_count,
+                        event_count,
+                    });
+                }
+                apply_migration_3(&connection)?;
+            }
+            3 => {}
             other => return Err(StoreError::UnsupportedSchemaVersion(other)),
         }
         let foreign_key_violations: i64 =
@@ -483,6 +552,269 @@ fn schema_v1_ledger_counts(connection: &Connection) -> Result<(i64, i64), StoreE
     ))
 }
 
+/// `PiSdkQualificationV1` is a bootstrap-only native lab treatment. It has
+/// no Grand Architect office work, discovery, or Actor execution surface: the
+/// future qualification command may be added only as a kernel-owned typed
+/// fact. This guard is intentionally centralized before command dispatch so
+/// a newly added cycle-scoped command cannot accidentally turn the paid lab
+/// into an ordinary Operating Cycle.
+fn qualification_treatment_fences_request(
+    transaction: &Transaction<'_>,
+    principal_id: PrincipalId,
+    body: &CommandBody,
+) -> Result<bool, StoreError> {
+    if matches!(
+        body,
+        CommandBody::ProposeOperatingCycle {
+            treatment: OperatingCycleTreatment::PiSdkQualificationV1
+        }
+    ) {
+        return Ok(principal_id != PrincipalId::BOOTSTRAP);
+    }
+
+    if matches!(body, CommandBody::RegisterActorConfiguration { .. }) {
+        let qualification_cycle_exists: i64 = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM operating_cycles
+             WHERE treatment = ?1 AND lifecycle_state NOT IN (7, 10, 11))",
+            [OperatingCycleTreatment::PiSdkQualificationV1 as i64],
+            |row| row.get(0),
+        )?;
+        return Ok(qualification_cycle_exists != 0
+            && principal_id != PrincipalId::BOOTSTRAP
+            && principal_id != PrincipalId::KERNEL);
+    }
+
+    let Some(cycle_id) = command_operating_cycle_for_treatment(transaction, body)? else {
+        return Ok(false);
+    };
+    let treatment: Option<i64> = transaction
+        .query_row(
+            "SELECT treatment FROM operating_cycles WHERE operating_cycle_id = ?1",
+            [cycle_id.value()],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if treatment != Some(OperatingCycleTreatment::PiSdkQualificationV1 as i64) {
+        return Ok(false);
+    }
+
+    let permitted = match principal_id {
+        PrincipalId::BOOTSTRAP => matches!(body, CommandBody::AdmitOperatingCycle { .. }),
+        PrincipalId::KERNEL => matches!(
+            body,
+            CommandBody::RecordCycleDrained { .. }
+                | CommandBody::RecordOfficeSessionReady { .. }
+                | CommandBody::RecordOfficeSessionTerminal { .. }
+                | CommandBody::SettleOfficeTurn { .. }
+                | CommandBody::ReconcileBudget { .. }
+                | CommandBody::ReconcileCancellation { .. }
+                | CommandBody::AttestActorAttemptTerminal { .. }
+                | CommandBody::ExpireWorkLease { .. }
+                | CommandBody::CancelActorAttempt { .. }
+        ),
+        _ => false,
+    };
+    Ok(!permitted)
+}
+
+fn command_operating_cycle_for_treatment(
+    transaction: &Transaction<'_>,
+    body: &CommandBody,
+) -> Result<Option<OperatingCycleId>, StoreError> {
+    let direct = match body {
+        CommandBody::AdmitOperatingCycle { cycle_id }
+        | CommandBody::StartGrandArchitectOfficeSession { cycle_id }
+        | CommandBody::QuiesceOperatingCycle { cycle_id }
+        | CommandBody::RecordCycleDrained { cycle_id }
+        | CommandBody::ResumeOperatingCycle { cycle_id }
+        | CommandBody::ReconcileOperatingCycle { cycle_id }
+        | CommandBody::CloseOperatingCycle { cycle_id }
+        | CommandBody::ReserveBudget { cycle_id, .. }
+        | CommandBody::RequestCancellation { cycle_id, .. } => Some(*cycle_id),
+        CommandBody::CreateProject {
+            operating_cycle_id, ..
+        }
+        | CommandBody::CharterProject {
+            operating_cycle_id, ..
+        }
+        | CommandBody::TransitionProject {
+            operating_cycle_id, ..
+        }
+        | CommandBody::CompleteProjectMilestone {
+            operating_cycle_id, ..
+        }
+        | CommandBody::ReopenProject {
+            operating_cycle_id, ..
+        }
+        | CommandBody::CreateTicket {
+            operating_cycle_id, ..
+        }
+        | CommandBody::TransitionTicket {
+            operating_cycle_id, ..
+        }
+        | CommandBody::AddGraphObjectRevision {
+            operating_cycle_id, ..
+        }
+        | CommandBody::CommitGraphRevision {
+            operating_cycle_id, ..
+        }
+        | CommandBody::AddGraphEdge {
+            operating_cycle_id, ..
+        }
+        | CommandBody::CreateEpisode {
+            operating_cycle_id, ..
+        }
+        | CommandBody::TransitionEpisode {
+            operating_cycle_id, ..
+        }
+        | CommandBody::ReopenEpisode {
+            operating_cycle_id, ..
+        }
+        | CommandBody::RequestAdversarialReview {
+            operating_cycle_id, ..
+        }
+        | CommandBody::AssignAdversarialReviewer {
+            operating_cycle_id, ..
+        }
+        | CommandBody::SubmitReviewChallenge {
+            operating_cycle_id, ..
+        }
+        | CommandBody::RespondToReviewChallenge {
+            operating_cycle_id, ..
+        }
+        | CommandBody::DispositionReviewChallenge {
+            operating_cycle_id, ..
+        }
+        | CommandBody::ResolveAdversarialReview {
+            operating_cycle_id, ..
+        }
+        | CommandBody::TriggerPostmortem {
+            operating_cycle_id, ..
+        }
+        | CommandBody::RecordPostmortemCausalClaim {
+            operating_cycle_id, ..
+        }
+        | CommandBody::ProposePostmortemAction {
+            operating_cycle_id, ..
+        }
+        | CommandBody::ClosePostmortem {
+            operating_cycle_id, ..
+        }
+        | CommandBody::RegisterContextPack {
+            operating_cycle_id, ..
+        }
+        | CommandBody::AdmitActorInstance {
+            operating_cycle_id, ..
+        }
+        | CommandBody::AdmitTicket {
+            operating_cycle_id, ..
+        }
+        | CommandBody::RegisterWorkItem {
+            operating_cycle_id, ..
+        }
+        | CommandBody::ClaimWorkItem {
+            operating_cycle_id, ..
+        }
+        | CommandBody::StartActorAttempt {
+            operating_cycle_id, ..
+        }
+        | CommandBody::ValidateTicketAttempt {
+            operating_cycle_id, ..
+        }
+        | CommandBody::RetryActorAttempt {
+            operating_cycle_id, ..
+        }
+        | CommandBody::CompleteTicket {
+            operating_cycle_id, ..
+        }
+        | CommandBody::RegisterOutcomeObligation {
+            operating_cycle_id, ..
+        }
+        | CommandBody::ResolveOutcomeObligation {
+            operating_cycle_id, ..
+        } => Some(*operating_cycle_id),
+        _ => None,
+    };
+    if direct.is_some() {
+        return Ok(direct);
+    }
+
+    let cycle_id: Option<i64> = match body {
+        CommandBody::RecordOfficeSessionReady { session_id }
+        | CommandBody::RecordOfficeSessionTerminal { session_id, .. }
+        | CommandBody::OpenOfficeTurn { session_id, .. } => transaction
+            .query_row(
+                "SELECT operating_cycle_id FROM grand_architect_office_sessions
+                 WHERE grand_architect_office_session_id = ?1",
+                [session_id.value()],
+                |row| row.get(0),
+            )
+            .optional()?,
+        CommandBody::SettleOfficeTurn { turn_id } => transaction
+            .query_row(
+                "SELECT s.operating_cycle_id FROM office_turns t
+                 JOIN grand_architect_office_sessions s
+                   ON s.grand_architect_office_session_id = t.grand_architect_office_session_id
+                 WHERE t.office_turn_id = ?1",
+                [turn_id.value()],
+                |row| row.get(0),
+            )
+            .optional()?,
+        CommandBody::ReconcileBudget {
+            reservation_id, ..
+        } => transaction
+            .query_row(
+                "SELECT operating_cycle_id FROM budget_reservations WHERE budget_reservation_id = ?1",
+                [reservation_id.value()],
+                |row| row.get(0),
+            )
+            .optional()?,
+        CommandBody::ReconcileCancellation {
+            cancellation_request_id,
+        } => transaction
+            .query_row(
+                "SELECT operating_cycle_id FROM cancellation_requests
+                 WHERE cancellation_request_id = ?1",
+                [cancellation_request_id.value()],
+                |row| row.get(0),
+            )
+            .optional()?,
+        CommandBody::CloseCostPostmortem { postmortem_id, .. } => transaction
+            .query_row(
+                "SELECT operating_cycle_id FROM cost_postmortems WHERE postmortem_id = ?1",
+                [postmortem_id.value()],
+                |row| row.get(0),
+            )
+            .optional()?,
+        CommandBody::AttestActorAttemptTerminal {
+            actor_attempt_id, ..
+        }
+        | CommandBody::CancelActorAttempt {
+            actor_attempt_id, ..
+        } => transaction
+            .query_row(
+                "SELECT operating_cycle_id FROM attempts WHERE actor_attempt_id = ?1",
+                [actor_attempt_id.value()],
+                |row| row.get(0),
+            )
+            .optional()?,
+        CommandBody::ExpireWorkLease { work_lease_id } => transaction
+            .query_row(
+                "SELECT a.operating_cycle_id FROM leases l
+                 JOIN actor_instances a ON a.actor_instance_id = l.actor_instance_id
+                 WHERE l.work_lease_id = ?1",
+                [work_lease_id.value()],
+                |row| row.get(0),
+            )
+            .optional()?,
+        _ => None,
+    };
+    cycle_id
+        .map(OperatingCycleId::try_from)
+        .transpose()
+        .map_err(|_| StoreError::InvalidStoredValue)
+}
+
 fn apply_migration_1(connection: &Connection) -> Result<(), StoreError> {
     connection.execute_batch("BEGIN IMMEDIATE")?;
     if let Err(error) = connection.execute_batch(MIGRATION_1) {
@@ -499,6 +831,18 @@ fn apply_migration_1(connection: &Connection) -> Result<(), StoreError> {
 /// can then retry version 2 from a complete version-1 database.
 fn apply_migration_2(connection: &Connection) -> Result<(), StoreError> {
     if let Err(error) = connection.execute_batch(MIGRATION_2) {
+        let _ = connection.execute_batch("ROLLBACK");
+        let _ = connection.pragma_update(None, "foreign_keys", "ON");
+        return Err(error.into());
+    }
+    Ok(())
+}
+
+/// M3 is an atomic version step but intentionally has no historical ledger
+/// transform: `from_connection` fences nonempty M2 ledgers before this script
+/// can rebuild its command/event ranges and reviewer body shape.
+fn apply_migration_3(connection: &Connection) -> Result<(), StoreError> {
+    if let Err(error) = connection.execute_batch(MIGRATION_3) {
         let _ = connection.execute_batch("ROLLBACK");
         let _ = connection.pragma_update(None, "foreign_keys", "ON");
         return Err(error.into());
@@ -551,11 +895,22 @@ fn apply_command(
             | CommandBody::RecordPostmortemCausalClaim { .. }
             | CommandBody::ProposePostmortemAction { .. }
             | CommandBody::ClosePostmortem { .. }
+            | CommandBody::RegisterContextPack { .. }
+            | CommandBody::AdmitActorInstance { .. }
+            | CommandBody::AdmitTicket { .. }
+            | CommandBody::RegisterWorkItem { .. }
+            | CommandBody::ClaimWorkItem { .. }
+            | CommandBody::StartActorAttempt { .. }
+            | CommandBody::ValidateTicketAttempt { .. }
+            | CommandBody::RetryActorAttempt { .. }
+            | CommandBody::CompleteTicket { .. }
+            | CommandBody::RegisterOutcomeObligation { .. }
+            | CommandBody::ResolveOutcomeObligation { .. }
     ) != matches!(request.expected_generation, ExpectedGeneration::Exact(_))
     {
         return Ok(Err(Rejection::InvalidExpectedGeneration));
     }
-    let (grant_id, office_occupancy_id) = match capability_grant(
+    let (grant_id, office_occupancy_id, actor_instance_id) = match capability_grant(
         transaction,
         request.principal_id,
         request.capability,
@@ -564,17 +919,23 @@ fn apply_command(
         Some(CapabilityGrantLookup::Active {
             grant_id,
             office_occupancy_id,
-        }) => (grant_id, office_occupancy_id),
+            actor_instance_id,
+        }) => (grant_id, office_occupancy_id, actor_instance_id),
         Some(CapabilityGrantLookup::Inactive) => {
             return Ok(Err(Rejection::CapabilityNoLongerActive));
         }
         None => return Ok(Err(Rejection::CapabilityNotGranted)),
     };
-    if request.principal_id != PrincipalId::BOOTSTRAP
-        && request.principal_id != PrincipalId::KERNEL
-        && !grant_has_active_occupancy(transaction, grant_id)?
+    if request.principal_id != PrincipalId::BOOTSTRAP && request.principal_id != PrincipalId::KERNEL
     {
-        return Ok(Err(Rejection::CapabilityNoLongerActive));
+        let active = match (office_occupancy_id, actor_instance_id) {
+            (Some(_), None) => grant_has_active_occupancy(transaction, grant_id)?,
+            (None, Some(_)) => grant_has_active_actor_instance(transaction, grant_id)?,
+            _ => false,
+        };
+        if !active {
+            return Ok(Err(Rejection::CapabilityNoLongerActive));
+        }
     }
     if request.principal_id != PrincipalId::BOOTSTRAP && request.principal_id != PrincipalId::KERNEL
     {
@@ -587,6 +948,9 @@ fn apply_command(
         {
             return Ok(Err(Rejection::CapabilityNoLongerActive));
         }
+    }
+    if qualification_treatment_fences_request(transaction, request.principal_id, &request.body)? {
+        return Ok(Err(Rejection::QualificationTreatmentRestricted));
     }
 
     let result = match &request.body {
@@ -888,6 +1252,8 @@ fn apply_command(
             operating_cycle_id,
             adversarial_review_id,
             reviewer_principal_id,
+            reviewer_actor_instance_id,
+            reviewer_actor_attempt_id,
         } => assign_adversarial_reviewer(
             transaction,
             command_row_id,
@@ -895,6 +1261,8 @@ fn apply_command(
             *operating_cycle_id,
             *adversarial_review_id,
             *reviewer_principal_id,
+            *reviewer_actor_instance_id,
+            *reviewer_actor_attempt_id,
         ),
         CommandBody::SubmitReviewChallenge {
             operating_cycle_id,
@@ -1000,6 +1368,166 @@ fn apply_command(
             request.expected_generation,
             *operating_cycle_id,
             *postmortem_id,
+        ),
+        CommandBody::RegisterActorConfiguration {
+            configuration_name,
+            model_policy,
+            primary_attractor,
+        } => register_actor_configuration(
+            transaction,
+            command_row_id,
+            configuration_name.as_str(),
+            *model_policy,
+            *primary_attractor,
+        ),
+        CommandBody::RegisterContextPack {
+            operating_cycle_id,
+            purpose,
+            rendering_digest,
+        } => register_context_pack(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *operating_cycle_id,
+            *purpose,
+            *rendering_digest,
+        ),
+        CommandBody::AdmitActorInstance {
+            operating_cycle_id,
+            actor_configuration_revision_id,
+            execution_profile_id,
+            actor_display_name,
+        } => admit_actor_instance(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *operating_cycle_id,
+            *actor_configuration_revision_id,
+            *execution_profile_id,
+            actor_display_name.as_str(),
+        ),
+        CommandBody::AdmitTicket {
+            operating_cycle_id,
+            ticket_id,
+        } => admit_ticket(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *operating_cycle_id,
+            *ticket_id,
+        ),
+        CommandBody::RegisterWorkItem {
+            operating_cycle_id,
+            ticket_id,
+            actor_instance_id,
+            context_pack_id,
+            work_kind,
+            adversarial_review_id,
+            assignment,
+        } => register_work_item(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *operating_cycle_id,
+            *ticket_id,
+            *actor_instance_id,
+            *context_pack_id,
+            *work_kind,
+            *adversarial_review_id,
+            assignment.as_str(),
+        ),
+        CommandBody::ClaimWorkItem {
+            operating_cycle_id,
+            work_item_id,
+        } => claim_work_item(
+            transaction,
+            command_row_id,
+            request.principal_id,
+            request.expected_generation,
+            *operating_cycle_id,
+            *work_item_id,
+        ),
+        CommandBody::StartActorAttempt {
+            operating_cycle_id,
+            work_item_id,
+            reservation_amount,
+        } => start_actor_attempt(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *operating_cycle_id,
+            *work_item_id,
+            *reservation_amount,
+        ),
+        CommandBody::AttestActorAttemptTerminal {
+            actor_attempt_id,
+            terminal_kind,
+        } => attest_actor_attempt_terminal(
+            transaction,
+            command_row_id,
+            *actor_attempt_id,
+            *terminal_kind,
+        ),
+        CommandBody::ValidateTicketAttempt {
+            operating_cycle_id,
+            actor_attempt_id,
+        } => validate_ticket_attempt(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *operating_cycle_id,
+            *actor_attempt_id,
+        ),
+        CommandBody::RetryActorAttempt {
+            operating_cycle_id,
+            actor_attempt_id,
+        } => retry_actor_attempt(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *operating_cycle_id,
+            *actor_attempt_id,
+        ),
+        CommandBody::CompleteTicket {
+            operating_cycle_id,
+            actor_attempt_id,
+        } => complete_ticket(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *operating_cycle_id,
+            *actor_attempt_id,
+        ),
+        CommandBody::ExpireWorkLease { work_lease_id } => {
+            expire_work_lease(transaction, command_row_id, *work_lease_id)
+        }
+        CommandBody::CancelActorAttempt {
+            actor_attempt_id,
+            reason,
+        } => cancel_actor_attempt(transaction, command_row_id, *actor_attempt_id, *reason),
+        CommandBody::RegisterOutcomeObligation {
+            operating_cycle_id,
+            project_id,
+            obligation,
+        } => register_outcome_obligation(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *operating_cycle_id,
+            *project_id,
+            obligation.as_str(),
+        ),
+        CommandBody::ResolveOutcomeObligation {
+            operating_cycle_id,
+            outcome_obligation_id,
+            disposition,
+        } => resolve_outcome_obligation(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *operating_cycle_id,
+            *outcome_obligation_id,
+            *disposition,
         ),
     };
 
@@ -1113,8 +1641,8 @@ fn appoint_initial_grand_architect(
         transaction
             .execute(
                 "INSERT INTO capability_grants(principal_id, capability_kind, office_occupancy_id,
-                                                grant_state, granted_by_command_id, consumed_by_command_id)
-                 VALUES (?1, ?2, ?3, 1, ?4, NULL)",
+                                                grant_state, grant_origin, granted_by_command_id, consumed_by_command_id)
+                 VALUES (?1, ?2, ?3, 1, 2, ?4, NULL)",
                 params![actor_principal.value(), capability as i64, occupancy_id.value(), command_row_id],
             )
             .map_err(|_| Rejection::FoundingInvariant)?;
@@ -1460,6 +1988,8 @@ fn record_cycle_drained(
     let cycle = cycle_row(transaction, cycle_id)?;
     if cycle.state != OperatingCycleState::Quiescing
         || active_office_turn_count(transaction, cycle_id)? != 0
+        || live_actor_attempt_count(transaction, cycle_id)? != 0
+        || active_work_lease_count(transaction, cycle_id)? != 0
     {
         return Err(Rejection::InvalidLifecycleTransition);
     }
@@ -1502,6 +2032,8 @@ fn resume_cycle(
     // before the same cycle may reopen admission.
     if unreconciled_reservation_count(transaction, cycle_id)? != 0
         || active_cancellation_count(transaction, cycle_id)? != 0
+        || live_actor_attempt_count(transaction, cycle_id)? != 0
+        || active_work_lease_count(transaction, cycle_id)? != 0
     {
         return Err(Rejection::IncompleteCycleReconciliation);
     }
@@ -1560,6 +2092,8 @@ fn close_cycle(
         || live_office_session_count(transaction, cycle_id)? != 0
         || unreconciled_reservation_count(transaction, cycle_id)? != 0
         || active_cancellation_count(transaction, cycle_id)? != 0
+        || live_actor_attempt_count(transaction, cycle_id)? != 0
+        || active_work_lease_count(transaction, cycle_id)? != 0
     {
         return Err(Rejection::IncompleteCycleReconciliation);
     }
@@ -2217,10 +2751,33 @@ fn project_close_blocked(
             |row| row.get(0),
         )
         .map_err(|_| Rejection::SubjectNotFound)?;
+    let live_attempts: i64 = transaction.query_row(
+        "SELECT COUNT(*) FROM attempts a JOIN attempt_budget_reservations r ON r.actor_attempt_id = a.actor_attempt_id
+         WHERE r.project_id = ?1 AND a.lifecycle_state IN (1, 2)",
+        [project_id.value()], |row| row.get(0),
+    ).map_err(|_| Rejection::SubjectNotFound)?;
+    let active_leases: i64 = transaction.query_row(
+        "SELECT COUNT(*) FROM leases l JOIN work_items w ON w.work_item_id = l.work_item_id
+         JOIN tickets t ON t.ticket_id = w.ticket_id WHERE t.project_id = ?1 AND l.lifecycle_state = 1",
+        [project_id.value()], |row| row.get(0),
+    ).map_err(|_| Rejection::SubjectNotFound)?;
+    let unreconciled_attempt_reservations: i64 = transaction.query_row(
+        "SELECT COUNT(*) FROM attempt_budget_reservations a JOIN budget_reservations b ON b.budget_reservation_id = a.budget_reservation_id
+         WHERE a.project_id = ?1 AND b.reservation_state != ?2",
+        params![project_id.value(), BudgetReservationState::Reconciled as i64], |row| row.get(0),
+    ).map_err(|_| Rejection::SubjectNotFound)?;
+    let open_outcomes: i64 = transaction.query_row(
+        "SELECT COUNT(*) FROM outcome_obligations WHERE project_id = ?1 AND lifecycle_state = 1",
+        [project_id.value()], |row| row.get(0),
+    ).map_err(|_| Rejection::SubjectNotFound)?;
     Ok(incomplete_milestones != 0
         || incomplete_tickets != 0
         || open_reviews != 0
-        || open_postmortems != 0)
+        || open_postmortems != 0
+        || live_attempts != 0
+        || active_leases != 0
+        || unreconciled_attempt_reservations != 0
+        || open_outcomes != 0)
 }
 
 fn project_transition_allowed(from: ProjectState, to: ProjectState) -> bool {
@@ -2245,10 +2802,10 @@ fn project_transition_allowed(from: ProjectState, to: ProjectState) -> bool {
     )
 }
 
-/// This M2 planning/blocker-only transition layer expresses charter and
-/// closure control, not product execution or delivery. Ticket execution and
-/// complete Review resolution remain unavailable until typed Actor, WorkItem,
-/// and Attempt commands establish their own authority and evidence.
+/// Project transitions remain narrow charter/closure control. M3's specific
+/// Actor, WorkItem, and Attempt commands own execution state; this generic
+/// Project transition never bypasses their live lease, reservation, outcome,
+/// or independent-review close blockers.
 fn transition_project(
     transaction: &Transaction<'_>,
     command_row_id: i64,
@@ -2433,47 +2990,18 @@ fn transition_ticket(
     ticket_id: TicketId,
     target: TicketState,
 ) -> Result<EventBody, Rejection> {
-    let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
-    let (project_id, state) = ticket_row(transaction, ticket_id)?;
-    project_is_active(transaction, project_id)?;
-    // This M2 planning/blocker-only layer can prepare a Ticket, but it cannot
-    // smuggle execution through a generic transition. Ticket execution states
-    // require later typed Actor, WorkItem, and Attempt commands with their
-    // own assignment, lease, configuration, and budget evidence.
-    let allowed = match (state, target) {
-        (TicketState::Draft, TicketState::Admitted)
-        | (
-            TicketState::Draft | TicketState::Admitted | TicketState::Ready,
-            TicketState::Cancelled,
-        )
-        | (TicketState::Cancelled, TicketState::Admitted) => true,
-        (TicketState::Admitted, TicketState::Ready) => {
-            ticket_prerequisites_complete(transaction, ticket_id)?
-        }
-        _ => false,
-    };
-    if !allowed {
-        return if state == TicketState::Admitted && target == TicketState::Ready {
-            Err(Rejection::TicketPrerequisiteIncomplete)
-        } else {
-            Err(Rejection::InvalidLifecycleTransition)
-        };
-    }
-    transaction.execute(
-        "UPDATE tickets SET lifecycle_state = ?1, last_transition_command_id = ?2 WHERE ticket_id = ?3",
-        params![target as i64, command_row_id, ticket_id.value()],
-    ).map_err(|_| Rejection::SubjectNotFound)?;
-    record_coordination_provenance(
+    // M3 deliberately retires this broad M2 transition surface. Admission,
+    // readiness, claiming, terminal settlement, validation, retry, and
+    // completion each require their own Actor/WorkItem/Lease/Attempt command.
+    let _ = (
         transaction,
         command_row_id,
-        cycle,
+        expected_generation,
         operating_cycle_id,
-        Some(project_id),
-    )?;
-    Ok(EventBody::TicketStateChanged {
         ticket_id,
-        state: target,
-    })
+        target,
+    );
+    Err(Rejection::InvalidLifecycleTransition)
 }
 
 fn graph_revision_row(
@@ -2873,6 +3401,7 @@ fn request_adversarial_review(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn assign_adversarial_reviewer(
     transaction: &Transaction<'_>,
     command_row_id: i64,
@@ -2880,6 +3409,8 @@ fn assign_adversarial_reviewer(
     operating_cycle_id: OperatingCycleId,
     adversarial_review_id: AdversarialReviewId,
     reviewer_principal_id: PrincipalId,
+    reviewer_actor_instance_id: ActorInstanceId,
+    reviewer_actor_attempt_id: ActorAttemptId,
 ) -> Result<EventBody, Rejection> {
     let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
     let (project_id, _, review_state) = review_row(transaction, adversarial_review_id)?;
@@ -2895,6 +3426,41 @@ fn assign_adversarial_reviewer(
         .map_err(|_| Rejection::SubjectNotFound)?;
     if reviewer_principal_id.value() == cycle_grand_architect {
         return Err(Rejection::ReviewAssignmentNotIndependent);
+    }
+    let (actor_principal, _, _, actor_cycle, actor_state) =
+        actor_instance_row(transaction, reviewer_actor_instance_id)?;
+    if actor_principal != reviewer_principal_id
+        || actor_cycle != operating_cycle_id
+        || actor_state != ActorInstanceState::Active
+    {
+        return Err(Rejection::ReviewAssignmentEvidenceMissing);
+    }
+    let (attempt_cycle, ticket_id, work_item_id, _, attempt_actor, attempt_state) =
+        actor_attempt_row(transaction, reviewer_actor_attempt_id)?;
+    let (ticket_project, _) = ticket_row(transaction, ticket_id)?;
+    let (_, _, context_pack_id, work_kind, bound_review_id, _, _) =
+        work_item_row(transaction, work_item_id)?;
+    let context_purpose: i64 = transaction
+        .query_row(
+            "SELECT purpose FROM context_packs WHERE context_pack_id = ?1",
+            [context_pack_id.value()],
+            |row| row.get(0),
+        )
+        .map_err(|_| Rejection::ReviewAssignmentEvidenceMissing)?;
+    if attempt_cycle != operating_cycle_id
+        || attempt_actor != reviewer_actor_instance_id
+        || ticket_project != project_id
+        || work_kind != WorkItemKind::IndependentReview
+        || bound_review_id != Some(adversarial_review_id)
+        || context_pack_purpose_from_i64(context_purpose)
+            .map_err(|_| Rejection::ReviewAssignmentEvidenceMissing)?
+            != ContextPackPurpose::IndependentReview
+        || !matches!(
+            attempt_state,
+            ActorAttemptState::Succeeded | ActorAttemptState::Validated
+        )
+    {
+        return Err(Rejection::ReviewAssignmentEvidenceMissing);
     }
     // The service assigns a named, active Actor. The author check at finding
     // submission compares against this durable assignment; Principal kind is
@@ -2912,10 +3478,12 @@ fn assign_adversarial_reviewer(
     }
     transaction
         .execute(
-            "UPDATE adversarial_reviews SET lifecycle_state = ?1, assigned_reviewer_principal_id = ?2 WHERE adversarial_review_id = ?3",
+            "UPDATE adversarial_reviews SET lifecycle_state = ?1, assigned_reviewer_principal_id = ?2, assigned_reviewer_actor_instance_id = ?3, reviewer_actor_attempt_id = ?4 WHERE adversarial_review_id = ?5",
             params![
                 AdversarialReviewState::Assigned as i64,
                 reviewer_principal_id.value(),
+                reviewer_actor_instance_id.value(),
+                reviewer_actor_attempt_id.value(),
                 adversarial_review_id.value()
             ],
         )
@@ -2930,13 +3498,15 @@ fn assign_adversarial_reviewer(
     Ok(EventBody::AdversarialReviewerAssigned {
         adversarial_review_id,
         reviewer_principal_id,
+        reviewer_actor_instance_id,
+        reviewer_actor_attempt_id,
     })
 }
 
-/// Review records are a planning/blocker institution in M2. Their durable
-/// assignment and finding lineage prevent false self-review, but complete
-/// Review resolution requires later typed Actor, WorkItem, and Attempt
-/// commands to provision an independent reviewer and its execution evidence.
+/// A Review finding is submitted by the kernel service on behalf of the exact
+/// independently provisioned Actor named by assignment evidence. M3 provides
+/// the minimum WorkItem/Attempt foundation for resolution; Pi/process evidence
+/// remains outside the trusted claim until the supervisor receipt tranche.
 #[allow(clippy::too_many_arguments)]
 fn submit_review_challenge(
     transaction: &Transaction<'_>,
@@ -2951,17 +3521,31 @@ fn submit_review_challenge(
 ) -> Result<EventBody, Rejection> {
     let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
     let (project_id, review_target, review_state) = review_row(transaction, adversarial_review_id)?;
-    let assigned_reviewer: Option<i64> = transaction
+    let assigned_reviewer: (Option<i64>, Option<i64>) = transaction
         .query_row(
-            "SELECT assigned_reviewer_principal_id FROM adversarial_reviews WHERE adversarial_review_id = ?1",
+            "SELECT assigned_reviewer_principal_id, assigned_reviewer_actor_instance_id FROM adversarial_reviews WHERE adversarial_review_id = ?1",
             [adversarial_review_id.value()],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()
         .map_err(|_| Rejection::SubjectNotFound)?
         .ok_or(Rejection::SubjectNotFound)?;
-    if assigned_reviewer != Some(author_principal_id.value()) {
+    if assigned_reviewer.0 != Some(author_principal_id.value()) {
         return Err(Rejection::CapabilityNotGranted);
+    }
+    let Some(assigned_actor_instance_id) = assigned_reviewer.1 else {
+        return Err(Rejection::ReviewAssignmentEvidenceMissing);
+    };
+    let (assigned_principal, _, _, assigned_cycle, assigned_state) = actor_instance_row(
+        transaction,
+        ActorInstanceId::try_from(assigned_actor_instance_id)
+            .map_err(|_| Rejection::ReviewAssignmentEvidenceMissing)?,
+    )?;
+    if assigned_principal != author_principal_id
+        || assigned_cycle != operating_cycle_id
+        || assigned_state != ActorInstanceState::Active
+    {
+        return Err(Rejection::ReviewAssignmentEvidenceMissing);
     }
     if review_target != target_graph_revision_id
         || !matches!(
@@ -3282,6 +3866,735 @@ fn close_postmortem(
     Ok(EventBody::PostmortemClosed { postmortem_id })
 }
 
+/// M3 is the first executable, but deliberately receipt-free, task boundary.
+/// Its kernel-service terminal attestations are atomic trusted facts only; the
+/// later supervisor tranche must bind them to Pi/process/evidence receipts.
+fn register_actor_configuration(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    configuration_name: &str,
+    model_policy: ActorModelPolicy,
+    primary_attractor: DevelopmentalAttractor,
+) -> Result<EventBody, Rejection> {
+    transaction.execute(
+        "INSERT INTO actor_configurations(configuration_name, lifecycle_state, created_by_command_id) VALUES (?1, 1, ?2)",
+        params![configuration_name, command_row_id],
+    ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
+    let actor_configuration_id = id_from_last_insert::<ActorConfigurationId>(transaction)?;
+    transaction.execute(
+        "INSERT INTO actor_configuration_revisions(actor_configuration_id, revision_ordinal, model_policy, primary_attractor, created_by_command_id) VALUES (?1, 1, ?2, ?3, ?4)",
+        params![actor_configuration_id.value(), model_policy as i64, primary_attractor as i64, command_row_id],
+    ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
+    Ok(EventBody::ActorConfigurationRegistered {
+        actor_configuration_id,
+        actor_configuration_revision_id: id_from_last_insert::<ActorConfigurationRevisionId>(
+            transaction,
+        )?,
+    })
+}
+
+fn register_context_pack(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    operating_cycle_id: OperatingCycleId,
+    purpose: ContextPackPurpose,
+    rendering_digest: Sha256Digest,
+) -> Result<EventBody, Rejection> {
+    let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
+    transaction.execute(
+        "INSERT INTO context_packs(universe_seed_id, purpose, rendering_digest, created_by_command_id) VALUES (?1, ?2, ?3, ?4)",
+        params![cycle.seed_id.value(), purpose as i64, rendering_digest.as_bytes(), command_row_id],
+    ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
+    let context_pack_id = id_from_last_insert::<ContextPackId>(transaction)?;
+    record_coordination_provenance(transaction, command_row_id, cycle, operating_cycle_id, None)?;
+    Ok(EventBody::ContextPackRegistered { context_pack_id })
+}
+
+fn admit_actor_instance(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    operating_cycle_id: OperatingCycleId,
+    actor_configuration_revision_id: ActorConfigurationRevisionId,
+    execution_profile_id: ExecutionProfileId,
+    actor_display_name: &str,
+) -> Result<EventBody, Rejection> {
+    let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
+    let configuration_active: bool = transaction.query_row(
+        "SELECT EXISTS(SELECT 1 FROM actor_configuration_revisions r JOIN actor_configurations c ON c.actor_configuration_id = r.actor_configuration_id WHERE r.actor_configuration_revision_id = ?1 AND c.lifecycle_state = 1)",
+        [actor_configuration_revision_id.value()], |row| row.get::<_, i64>(0),
+    ).map_err(|_| Rejection::SubjectNotFound)? != 0;
+    let profile: Option<(i64, i64)> = transaction
+        .query_row(
+            "SELECT profile_kind, readiness FROM execution_profiles WHERE execution_profile_id = ?1",
+            [execution_profile_id.value()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(|_| Rejection::SubjectNotFound)?;
+    let profile_is_admissible = match profile {
+        Some((kind, readiness)) => matches!(
+            (
+                cycle._treatment,
+                execution_profile_kind_from_i64(kind),
+                execution_profile_readiness_from_i64(readiness),
+            ),
+            (
+                OperatingCycleTreatment::Vs001DeterministicV1,
+                Ok(ExecutionProfileKind::DeterministicPiHostProcessDoubleV1),
+                Ok(ExecutionProfileReadiness::DeterministicFixtureOnly),
+            ) | (
+                OperatingCycleTreatment::Vs001LiveV1,
+                Ok(ExecutionProfileKind::NativePinnedPiSdkV1),
+                Ok(ExecutionProfileReadiness::QualifiedForLiveUse),
+            )
+        ),
+        None => false,
+    };
+    if !configuration_active {
+        return Err(Rejection::SubjectNotFound);
+    }
+    if !profile_is_admissible {
+        return Err(Rejection::ExecutionProfileIneligible);
+    }
+    transaction
+        .execute(
+            "INSERT INTO principals(principal_kind, display_name, active) VALUES (?1, ?2, 1)",
+            params![PrincipalKind::Actor as i64, actor_display_name],
+        )
+        .map_err(|_| Rejection::InvalidLifecycleTransition)?;
+    let principal_id = id_from_last_insert::<PrincipalId>(transaction)?;
+    transaction.execute(
+        "INSERT INTO actor_instances(principal_id, actor_configuration_revision_id, execution_profile_id, operating_cycle_id, lifecycle_state, admitted_by_command_id) VALUES (?1, ?2, ?3, ?4, 1, ?5)",
+        params![principal_id.value(), actor_configuration_revision_id.value(), execution_profile_id.value(), operating_cycle_id.value(), command_row_id],
+    ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
+    let actor_instance_id = id_from_last_insert::<ActorInstanceId>(transaction)?;
+    transaction.execute(
+        "INSERT INTO capability_grants(principal_id, capability_kind, office_occupancy_id, actor_instance_id, grant_state, grant_origin, granted_by_command_id, consumed_by_command_id) VALUES (?1, ?2, NULL, ?3, 1, 2, ?4, NULL)",
+        params![principal_id.value(), Capability::ClaimWorkItem as i64, actor_instance_id.value(), command_row_id],
+    ).map_err(|_| Rejection::ActorJurisdictionDenied)?;
+    record_coordination_provenance(transaction, command_row_id, cycle, operating_cycle_id, None)?;
+    Ok(EventBody::ActorInstanceAdmitted {
+        actor_instance_id,
+        principal_id,
+    })
+}
+
+fn admit_ticket(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    operating_cycle_id: OperatingCycleId,
+    ticket_id: TicketId,
+) -> Result<EventBody, Rejection> {
+    let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
+    let (project_id, state) = ticket_row(transaction, ticket_id)?;
+    project_is_active(transaction, project_id)?;
+    if state != TicketState::Draft {
+        return Err(Rejection::InvalidLifecycleTransition);
+    }
+    transaction.execute(
+        "UPDATE tickets SET lifecycle_state = ?1, last_transition_command_id = ?2 WHERE ticket_id = ?3",
+        params![TicketState::Admitted as i64, command_row_id, ticket_id.value()],
+    ).map_err(|_| Rejection::SubjectNotFound)?;
+    record_coordination_provenance(
+        transaction,
+        command_row_id,
+        cycle,
+        operating_cycle_id,
+        Some(project_id),
+    )?;
+    Ok(EventBody::TicketAdmitted { ticket_id })
+}
+
+fn actor_instance_row(
+    transaction: &Transaction<'_>,
+    actor_instance_id: ActorInstanceId,
+) -> Result<
+    (
+        PrincipalId,
+        ActorConfigurationRevisionId,
+        ExecutionProfileId,
+        OperatingCycleId,
+        ActorInstanceState,
+    ),
+    Rejection,
+> {
+    let row: (i64, i64, i64, i64, i64) = transaction.query_row(
+        "SELECT principal_id, actor_configuration_revision_id, execution_profile_id, operating_cycle_id, lifecycle_state FROM actor_instances WHERE actor_instance_id = ?1",
+        [actor_instance_id.value()], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+    ).optional().map_err(|_| Rejection::SubjectNotFound)?.ok_or(Rejection::SubjectNotFound)?;
+    Ok((
+        PrincipalId::try_from(row.0).map_err(|_| Rejection::SubjectNotFound)?,
+        ActorConfigurationRevisionId::try_from(row.1).map_err(|_| Rejection::SubjectNotFound)?,
+        ExecutionProfileId::try_from(row.2).map_err(|_| Rejection::SubjectNotFound)?,
+        OperatingCycleId::try_from(row.3).map_err(|_| Rejection::SubjectNotFound)?,
+        actor_instance_state_from_i64(row.4).map_err(|_| Rejection::SubjectNotFound)?,
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn register_work_item(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    operating_cycle_id: OperatingCycleId,
+    ticket_id: TicketId,
+    actor_instance_id: ActorInstanceId,
+    context_pack_id: ContextPackId,
+    work_kind: WorkItemKind,
+    adversarial_review_id: Option<AdversarialReviewId>,
+    assignment: &str,
+) -> Result<EventBody, Rejection> {
+    let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
+    let (project_id, ticket_state) = ticket_row(transaction, ticket_id)?;
+    project_is_active(transaction, project_id)?;
+    if ticket_state != TicketState::Admitted
+        || !ticket_prerequisites_complete(transaction, ticket_id)?
+    {
+        return Err(Rejection::TicketPrerequisiteIncomplete);
+    }
+    let (_, _, _, actor_cycle, actor_state) = actor_instance_row(transaction, actor_instance_id)?;
+    if actor_cycle != operating_cycle_id || actor_state != ActorInstanceState::Active {
+        return Err(Rejection::ActorJurisdictionDenied);
+    }
+    let context: (i64, i64) = transaction
+        .query_row(
+            "SELECT universe_seed_id, purpose FROM context_packs WHERE context_pack_id = ?1",
+            [context_pack_id.value()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(|_| Rejection::SubjectNotFound)?
+        .ok_or(Rejection::SubjectNotFound)?;
+    if context.0 != cycle.seed_id.value()
+        || context_pack_purpose_from_i64(context.1).map_err(|_| Rejection::SubjectNotFound)?
+            != work_kind.required_context_purpose()
+    {
+        return Err(Rejection::ActorJurisdictionDenied);
+    }
+    match (work_kind, adversarial_review_id) {
+        (WorkItemKind::TicketExecution, None) => {}
+        (WorkItemKind::IndependentReview, Some(review_id)) => {
+            let (review_project_id, target_revision_id, review_state) =
+                review_row(transaction, review_id)?;
+            let (_, revision_project_id, _, revision_state) =
+                graph_revision_row(transaction, target_revision_id)?;
+            if review_project_id != project_id
+                || review_state != AdversarialReviewState::Requested
+                || revision_project_id != project_id
+                || revision_state != GraphRevisionState::Committed
+            {
+                return Err(Rejection::ReviewAssignmentEvidenceMissing);
+            }
+        }
+        _ => return Err(Rejection::ReviewAssignmentEvidenceMissing),
+    }
+    transaction.execute(
+        "INSERT INTO work_items(ticket_id, actor_instance_id, context_pack_id, work_kind, adversarial_review_id, assignment_text, lifecycle_state, retry_of_actor_attempt_id, created_by_command_id, last_transition_command_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, NULL, ?7, ?7)",
+        params![ticket_id.value(), actor_instance_id.value(), context_pack_id.value(), work_kind as i64, adversarial_review_id.map(AdversarialReviewId::value), assignment, command_row_id],
+    ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
+    let work_item_id = id_from_last_insert::<WorkItemId>(transaction)?;
+    transaction.execute(
+        "UPDATE tickets SET lifecycle_state = ?1, last_transition_command_id = ?2 WHERE ticket_id = ?3",
+        params![TicketState::Ready as i64, command_row_id, ticket_id.value()],
+    ).map_err(|_| Rejection::SubjectNotFound)?;
+    record_coordination_provenance(
+        transaction,
+        command_row_id,
+        cycle,
+        operating_cycle_id,
+        Some(project_id),
+    )?;
+    Ok(EventBody::WorkItemRegistered {
+        work_item_id,
+        ticket_id,
+        adversarial_review_id,
+    })
+}
+
+fn work_item_row(
+    transaction: &Transaction<'_>,
+    work_item_id: WorkItemId,
+) -> Result<WorkItemRow, Rejection> {
+    let row: (i64, i64, i64, i64, Option<i64>, i64, Option<i64>) = transaction.query_row(
+        "SELECT ticket_id, actor_instance_id, context_pack_id, work_kind, adversarial_review_id, lifecycle_state, retry_of_actor_attempt_id FROM work_items WHERE work_item_id = ?1",
+        [work_item_id.value()], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?)),
+    ).optional().map_err(|_| Rejection::SubjectNotFound)?.ok_or(Rejection::SubjectNotFound)?;
+    Ok((
+        TicketId::try_from(row.0).map_err(|_| Rejection::SubjectNotFound)?,
+        ActorInstanceId::try_from(row.1).map_err(|_| Rejection::SubjectNotFound)?,
+        ContextPackId::try_from(row.2).map_err(|_| Rejection::SubjectNotFound)?,
+        work_item_kind_from_i64(row.3).map_err(|_| Rejection::SubjectNotFound)?,
+        row.4
+            .map(AdversarialReviewId::try_from)
+            .transpose()
+            .map_err(|_| Rejection::SubjectNotFound)?,
+        work_item_state_from_i64(row.5).map_err(|_| Rejection::SubjectNotFound)?,
+        row.6
+            .map(ActorAttemptId::try_from)
+            .transpose()
+            .map_err(|_| Rejection::SubjectNotFound)?,
+    ))
+}
+
+fn claim_work_item(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    principal_id: PrincipalId,
+    expected_generation: ExpectedGeneration,
+    operating_cycle_id: OperatingCycleId,
+    work_item_id: WorkItemId,
+) -> Result<EventBody, Rejection> {
+    let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
+    let (ticket_id, actor_instance_id, _, _, _, state, _) =
+        work_item_row(transaction, work_item_id)?;
+    let (actor_principal, _, _, actor_cycle, actor_state) =
+        actor_instance_row(transaction, actor_instance_id)?;
+    let (project_id, ticket_state) = ticket_row(transaction, ticket_id)?;
+    project_is_active(transaction, project_id)?;
+    if principal_id != actor_principal
+        || actor_cycle != operating_cycle_id
+        || actor_state != ActorInstanceState::Active
+    {
+        return Err(Rejection::ActorJurisdictionDenied);
+    }
+    if state != WorkItemState::Ready || ticket_state != TicketState::Ready {
+        return Err(Rejection::WorkLeaseUnavailable);
+    }
+    transaction.execute(
+        "INSERT INTO leases(work_item_id, actor_instance_id, lifecycle_state, claimed_by_command_id, terminal_by_command_id) VALUES (?1, ?2, 1, ?3, NULL)",
+        params![work_item_id.value(), actor_instance_id.value(), command_row_id],
+    ).map_err(|_| Rejection::WorkLeaseUnavailable)?;
+    let work_lease_id = id_from_last_insert::<WorkLeaseId>(transaction)?;
+    transaction.execute("UPDATE work_items SET lifecycle_state = 2, last_transition_command_id = ?1 WHERE work_item_id = ?2", params![command_row_id, work_item_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    transaction.execute("UPDATE tickets SET lifecycle_state = ?1, last_transition_command_id = ?2 WHERE ticket_id = ?3", params![TicketState::Claimed as i64, command_row_id, ticket_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    record_coordination_provenance(
+        transaction,
+        command_row_id,
+        cycle,
+        operating_cycle_id,
+        Some(project_id),
+    )?;
+    Ok(EventBody::WorkItemClaimed {
+        work_item_id,
+        work_lease_id,
+        actor_instance_id,
+    })
+}
+
+fn reserve_attempt_budget(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    cycle: CycleRow,
+    cycle_id: OperatingCycleId,
+    amount: UsdMicros,
+) -> Result<BudgetReservationId, Rejection> {
+    // M3 reserves only the governing society and Operating Cycle envelopes.
+    // It is a provisional execution-boundary reservation, not a claim that
+    // every future VS-001 accounting dimension has been modeled.
+    if amount == UsdMicros::ZERO {
+        return Err(Rejection::BudgetCeilingExceeded);
+    }
+    let (society_budget, cycle_budget) =
+        budget_envelopes_for_cycle(transaction, cycle.society_id, cycle_id)?;
+    for budget_id in [society_budget, cycle_budget] {
+        let (ceiling, reserved, spent) = budget_amounts(transaction, budget_id)?;
+        let Some(next_reserved) = reserved.checked_add(amount) else {
+            return Err(Rejection::BudgetCeilingExceeded);
+        };
+        if next_reserved
+            .checked_add(spent)
+            .is_none_or(|value| value > ceiling)
+        {
+            return Err(Rejection::BudgetCeilingExceeded);
+        }
+    }
+    transaction.execute("INSERT INTO budget_reservations(operating_cycle_id, amount_micros, reservation_state, reserved_by_command_id, reconciled_by_command_id) VALUES (?1, ?2, 1, ?3, NULL)", params![cycle_id.value(), amount.value(), command_row_id]).map_err(|_| Rejection::BudgetCeilingExceeded)?;
+    let reservation_id = id_from_last_insert::<BudgetReservationId>(transaction)?;
+    for budget_id in [society_budget, cycle_budget] {
+        transaction.execute("UPDATE budget_envelopes SET reserved_micros = reserved_micros + ?1 WHERE budget_envelope_id = ?2", params![amount.value(), budget_id.value()]).map_err(|_| Rejection::BudgetCeilingExceeded)?;
+        transaction.execute("INSERT INTO budget_reservation_charges(budget_reservation_id, budget_envelope_id, amount_micros) VALUES (?1, ?2, ?3)", params![reservation_id.value(), budget_id.value(), amount.value()]).map_err(|_| Rejection::BudgetCeilingExceeded)?;
+    }
+    Ok(reservation_id)
+}
+
+fn start_actor_attempt(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    operating_cycle_id: OperatingCycleId,
+    work_item_id: WorkItemId,
+    reservation_amount: UsdMicros,
+) -> Result<EventBody, Rejection> {
+    let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
+    let (
+        ticket_id,
+        actor_instance_id,
+        context_pack_id,
+        _,
+        _,
+        work_state,
+        retry_of_actor_attempt_id,
+    ) = work_item_row(transaction, work_item_id)?;
+    let (_, configuration_revision_id, execution_profile_id, actor_cycle, actor_state) =
+        actor_instance_row(transaction, actor_instance_id)?;
+    let (project_id, ticket_state) = ticket_row(transaction, ticket_id)?;
+    project_is_active(transaction, project_id)?;
+    if work_state != WorkItemState::Claimed
+        || ticket_state != TicketState::Claimed
+        || actor_cycle != operating_cycle_id
+        || actor_state != ActorInstanceState::Active
+    {
+        return Err(Rejection::WorkLeaseUnavailable);
+    }
+    let lease_id: i64 = transaction.query_row("SELECT work_lease_id FROM leases WHERE work_item_id = ?1 AND actor_instance_id = ?2 AND lifecycle_state = 1", params![work_item_id.value(), actor_instance_id.value()], |row| row.get(0)).optional().map_err(|_| Rejection::WorkLeaseUnavailable)?.ok_or(Rejection::WorkLeaseUnavailable)?;
+    let work_lease_id =
+        WorkLeaseId::try_from(lease_id).map_err(|_| Rejection::WorkLeaseUnavailable)?;
+    let reservation_id = reserve_attempt_budget(
+        transaction,
+        command_row_id,
+        cycle,
+        operating_cycle_id,
+        reservation_amount,
+    )?;
+    transaction.execute("INSERT INTO attempts(operating_cycle_id, ticket_id, work_item_id, work_lease_id, actor_instance_id, actor_configuration_revision_id, execution_profile_id, context_pack_id, retry_of_actor_attempt_id, lifecycle_state, started_by_command_id, terminal_by_command_id, validated_by_command_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1, ?10, NULL, NULL)", params![operating_cycle_id.value(), ticket_id.value(), work_item_id.value(), work_lease_id.value(), actor_instance_id.value(), configuration_revision_id.value(), execution_profile_id.value(), context_pack_id.value(), retry_of_actor_attempt_id.map(ActorAttemptId::value), command_row_id]).map_err(|_| Rejection::InvalidLifecycleTransition)?;
+    let actor_attempt_id = id_from_last_insert::<ActorAttemptId>(transaction)?;
+    transaction.execute("INSERT INTO attempt_budget_reservations(actor_attempt_id, budget_reservation_id, project_id, ticket_id) VALUES (?1, ?2, ?3, ?4)", params![actor_attempt_id.value(), reservation_id.value(), project_id.value(), ticket_id.value()]).map_err(|_| Rejection::InvalidLifecycleTransition)?;
+    transaction.execute("UPDATE work_items SET lifecycle_state = 3, last_transition_command_id = ?1 WHERE work_item_id = ?2", params![command_row_id, work_item_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    record_coordination_provenance(
+        transaction,
+        command_row_id,
+        cycle,
+        operating_cycle_id,
+        Some(project_id),
+    )?;
+    Ok(EventBody::ActorAttemptStarted {
+        actor_attempt_id,
+        work_item_id,
+        budget_reservation_id: reservation_id,
+    })
+}
+
+fn actor_attempt_row(
+    transaction: &Transaction<'_>,
+    actor_attempt_id: ActorAttemptId,
+) -> Result<
+    (
+        OperatingCycleId,
+        TicketId,
+        WorkItemId,
+        WorkLeaseId,
+        ActorInstanceId,
+        ActorAttemptState,
+    ),
+    Rejection,
+> {
+    let row: (i64, i64, i64, i64, i64, i64) = transaction.query_row("SELECT operating_cycle_id, ticket_id, work_item_id, work_lease_id, actor_instance_id, lifecycle_state FROM attempts WHERE actor_attempt_id = ?1", [actor_attempt_id.value()], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?))).optional().map_err(|_| Rejection::SubjectNotFound)?.ok_or(Rejection::SubjectNotFound)?;
+    Ok((
+        OperatingCycleId::try_from(row.0).map_err(|_| Rejection::SubjectNotFound)?,
+        TicketId::try_from(row.1).map_err(|_| Rejection::SubjectNotFound)?,
+        WorkItemId::try_from(row.2).map_err(|_| Rejection::SubjectNotFound)?,
+        WorkLeaseId::try_from(row.3).map_err(|_| Rejection::SubjectNotFound)?,
+        ActorInstanceId::try_from(row.4).map_err(|_| Rejection::SubjectNotFound)?,
+        actor_attempt_state_from_i64(row.5).map_err(|_| Rejection::SubjectNotFound)?,
+    ))
+}
+
+fn attest_actor_attempt_terminal(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    actor_attempt_id: ActorAttemptId,
+    terminal_kind: ActorAttemptTerminalKind,
+) -> Result<EventBody, Rejection> {
+    let (operating_cycle_id, ticket_id, work_item_id, work_lease_id, _, state) =
+        actor_attempt_row(transaction, actor_attempt_id)?;
+    if !terminal_kind.allowed_from(state) {
+        return Err(Rejection::ActorAttemptNotTerminal);
+    }
+    transaction.execute("INSERT INTO actor_attempt_terminal_facts(actor_attempt_id, terminal_kind, attested_by_command_id) VALUES (?1, ?2, ?3)", params![actor_attempt_id.value(), terminal_kind as i64, command_row_id]).map_err(|_| Rejection::ActorAttemptNotTerminal)?;
+    transaction.execute("UPDATE attempts SET lifecycle_state = ?1, terminal_by_command_id = ?2 WHERE actor_attempt_id = ?3", params![terminal_kind.state() as i64, command_row_id, actor_attempt_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    let lease_state = if terminal_kind == ActorAttemptTerminalKind::Cancelled {
+        WorkLeaseState::Cancelled
+    } else {
+        WorkLeaseState::Released
+    };
+    transaction.execute("UPDATE leases SET lifecycle_state = ?1, terminal_by_command_id = ?2 WHERE work_lease_id = ?3 AND lifecycle_state = 1", params![lease_state as i64, command_row_id, work_lease_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    transaction.execute("UPDATE work_items SET lifecycle_state = 4, last_transition_command_id = ?1 WHERE work_item_id = ?2", params![command_row_id, work_item_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    let ticket_state = match terminal_kind {
+        ActorAttemptTerminalKind::Succeeded => TicketState::Submitted,
+        ActorAttemptTerminalKind::Cancelled => TicketState::Cancelled,
+        ActorAttemptTerminalKind::Expired => TicketState::Ready,
+        ActorAttemptTerminalKind::Failed
+        | ActorAttemptTerminalKind::ProtocolFailed
+        | ActorAttemptTerminalKind::SupervisorFailed => TicketState::Failed,
+    };
+    transaction.execute("UPDATE tickets SET lifecycle_state = ?1, last_transition_command_id = ?2 WHERE ticket_id = ?3", params![ticket_state as i64, command_row_id, ticket_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    let (project_id, _) = ticket_row(transaction, ticket_id)?;
+    let cycle = cycle_row(transaction, operating_cycle_id)?;
+    record_coordination_provenance(
+        transaction,
+        command_row_id,
+        cycle,
+        operating_cycle_id,
+        Some(project_id),
+    )?;
+    Ok(EventBody::ActorAttemptTerminalAttested {
+        actor_attempt_id,
+        terminal_kind,
+    })
+}
+
+fn validate_ticket_attempt(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    operating_cycle_id: OperatingCycleId,
+    actor_attempt_id: ActorAttemptId,
+) -> Result<EventBody, Rejection> {
+    // This M3 kernel-service command is a receipt-free atomic fixture
+    // attestation: it records that this exact Ticket acceptance condition was
+    // satisfied. It is not VS evidence validation; a later evidence receipt
+    // must refine this boundary rather than letting the Grand Architect
+    // self-attest acceptance.
+    let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
+    let (attempt_cycle, ticket_id, _, _, _, state) =
+        actor_attempt_row(transaction, actor_attempt_id)?;
+    let (project_id, ticket_state) = ticket_row(transaction, ticket_id)?;
+    if attempt_cycle != operating_cycle_id
+        || state != ActorAttemptState::Succeeded
+        || ticket_state != TicketState::Submitted
+    {
+        return Err(Rejection::ActorAttemptNotValidatable);
+    }
+    transaction.execute("UPDATE attempts SET lifecycle_state = 9, validated_by_command_id = ?1 WHERE actor_attempt_id = ?2", params![command_row_id, actor_attempt_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    transaction.execute("UPDATE ticket_acceptance_conditions SET lifecycle_state = 2, satisfied_by_command_id = ?1 WHERE ticket_id = ?2 AND lifecycle_state = 1", params![command_row_id, ticket_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    transaction.execute("UPDATE tickets SET lifecycle_state = ?1, last_transition_command_id = ?2 WHERE ticket_id = ?3", params![TicketState::Verified as i64, command_row_id, ticket_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    record_coordination_provenance(
+        transaction,
+        command_row_id,
+        cycle,
+        operating_cycle_id,
+        Some(project_id),
+    )?;
+    Ok(EventBody::TicketAttemptValidated {
+        actor_attempt_id,
+        ticket_id,
+    })
+}
+
+fn retry_actor_attempt(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    operating_cycle_id: OperatingCycleId,
+    actor_attempt_id: ActorAttemptId,
+) -> Result<EventBody, Rejection> {
+    let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
+    let (attempt_cycle, ticket_id, work_item_id, _, _, state) =
+        actor_attempt_row(transaction, actor_attempt_id)?;
+    let (project_id, _) = ticket_row(transaction, ticket_id)?;
+    project_is_active(transaction, project_id)?;
+    if attempt_cycle != operating_cycle_id
+        || !matches!(
+            state,
+            ActorAttemptState::Failed
+                | ActorAttemptState::Cancelled
+                | ActorAttemptState::Expired
+                | ActorAttemptState::ProtocolFailed
+                | ActorAttemptState::SupervisorFailed
+        )
+    {
+        return Err(Rejection::InvalidLifecycleTransition);
+    }
+    let (_, _, _, _, _, work_state, _) = work_item_row(transaction, work_item_id)?;
+    if work_state != WorkItemState::Settled {
+        return Err(Rejection::WorkLeaseUnavailable);
+    }
+    transaction.execute("UPDATE work_items SET lifecycle_state = 1, retry_of_actor_attempt_id = ?1, last_transition_command_id = ?2 WHERE work_item_id = ?3", params![actor_attempt_id.value(), command_row_id, work_item_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    transaction.execute("UPDATE tickets SET lifecycle_state = ?1, last_transition_command_id = ?2 WHERE ticket_id = ?3", params![TicketState::Ready as i64, command_row_id, ticket_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    record_coordination_provenance(
+        transaction,
+        command_row_id,
+        cycle,
+        operating_cycle_id,
+        Some(project_id),
+    )?;
+    Ok(EventBody::ActorAttemptRetryPrepared {
+        actor_attempt_id,
+        work_item_id,
+        ticket_id,
+    })
+}
+
+fn complete_ticket(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    operating_cycle_id: OperatingCycleId,
+    actor_attempt_id: ActorAttemptId,
+) -> Result<EventBody, Rejection> {
+    let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
+    let (attempt_cycle, ticket_id, _, _, _, state) =
+        actor_attempt_row(transaction, actor_attempt_id)?;
+    let (project_id, ticket_state) = ticket_row(transaction, ticket_id)?;
+    if attempt_cycle != operating_cycle_id
+        || state != ActorAttemptState::Validated
+        || ticket_state != TicketState::Verified
+    {
+        return Err(Rejection::ActorAttemptNotValidatable);
+    }
+    let unsatisfied_condition_count: i64 = transaction
+        .query_row(
+            "SELECT COUNT(*) FROM ticket_acceptance_conditions
+         WHERE ticket_id = ?1 AND lifecycle_state = 1",
+            [ticket_id.value()],
+            |row| row.get(0),
+        )
+        .map_err(|_| Rejection::SubjectNotFound)?;
+    if unsatisfied_condition_count != 0 {
+        return Err(Rejection::TicketAcceptanceConditionUnsatisfied);
+    }
+    transaction.execute("UPDATE tickets SET lifecycle_state = ?1, last_transition_command_id = ?2 WHERE ticket_id = ?3", params![TicketState::Completed as i64, command_row_id, ticket_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    record_coordination_provenance(
+        transaction,
+        command_row_id,
+        cycle,
+        operating_cycle_id,
+        Some(project_id),
+    )?;
+    Ok(EventBody::TicketCompleted {
+        ticket_id,
+        actor_attempt_id,
+    })
+}
+
+fn expire_work_lease(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    work_lease_id: WorkLeaseId,
+) -> Result<EventBody, Rejection> {
+    let row: (i64, i64, i64, i64) = transaction.query_row("SELECT l.work_item_id, l.lifecycle_state, w.ticket_id, a.operating_cycle_id FROM leases l JOIN work_items w ON w.work_item_id = l.work_item_id JOIN actor_instances a ON a.actor_instance_id = l.actor_instance_id WHERE l.work_lease_id = ?1", [work_lease_id.value()], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))).optional().map_err(|_| Rejection::SubjectNotFound)?.ok_or(Rejection::SubjectNotFound)?;
+    if row.1 != WorkLeaseState::Active as i64 {
+        return Err(Rejection::WorkLeaseUnavailable);
+    }
+    let attempt_count: i64 = transaction
+        .query_row(
+            "SELECT COUNT(*) FROM attempts WHERE work_lease_id = ?1",
+            [work_lease_id.value()],
+            |row| row.get(0),
+        )
+        .map_err(|_| Rejection::SubjectNotFound)?;
+    if attempt_count != 0 {
+        return Err(Rejection::WorkLeaseUnavailable);
+    }
+    let work_item_id = WorkItemId::try_from(row.0).map_err(|_| Rejection::SubjectNotFound)?;
+    let ticket_id = TicketId::try_from(row.2).map_err(|_| Rejection::SubjectNotFound)?;
+    let operating_cycle_id =
+        OperatingCycleId::try_from(row.3).map_err(|_| Rejection::SubjectNotFound)?;
+    transaction.execute("UPDATE leases SET lifecycle_state = 3, terminal_by_command_id = ?1 WHERE work_lease_id = ?2", params![command_row_id, work_lease_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    transaction.execute("UPDATE work_items SET lifecycle_state = 1, last_transition_command_id = ?1 WHERE work_item_id = ?2", params![command_row_id, work_item_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    transaction.execute("UPDATE tickets SET lifecycle_state = ?1, last_transition_command_id = ?2 WHERE ticket_id = ?3", params![TicketState::Ready as i64, command_row_id, ticket_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    let (project_id, _) = ticket_row(transaction, ticket_id)?;
+    record_coordination_provenance(
+        transaction,
+        command_row_id,
+        cycle_row(transaction, operating_cycle_id)?,
+        operating_cycle_id,
+        Some(project_id),
+    )?;
+    Ok(EventBody::WorkLeaseExpired {
+        work_lease_id,
+        work_item_id,
+    })
+}
+
+fn cancel_actor_attempt(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    actor_attempt_id: ActorAttemptId,
+    reason: ActorAttemptCancellationReason,
+) -> Result<EventBody, Rejection> {
+    let (operating_cycle_id, ticket_id, _, _, _, state) =
+        actor_attempt_row(transaction, actor_attempt_id)?;
+    if state != ActorAttemptState::Running {
+        return Err(Rejection::InvalidLifecycleTransition);
+    }
+    transaction
+        .execute(
+            "UPDATE attempts SET lifecycle_state = 2 WHERE actor_attempt_id = ?1",
+            [actor_attempt_id.value()],
+        )
+        .map_err(|_| Rejection::SubjectNotFound)?;
+    let (project_id, _) = ticket_row(transaction, ticket_id)?;
+    record_coordination_provenance(
+        transaction,
+        command_row_id,
+        cycle_row(transaction, operating_cycle_id)?,
+        operating_cycle_id,
+        Some(project_id),
+    )?;
+    Ok(EventBody::ActorAttemptCancellationRequested {
+        actor_attempt_id,
+        reason,
+    })
+}
+
+fn register_outcome_obligation(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    operating_cycle_id: OperatingCycleId,
+    project_id: ProjectId,
+    obligation: &str,
+) -> Result<EventBody, Rejection> {
+    let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
+    project_is_active(transaction, project_id)?;
+    transaction.execute("INSERT INTO outcome_obligations(project_id, obligation_text, lifecycle_state, scheduled_by_command_id, resolved_by_command_id) VALUES (?1, ?2, 1, ?3, NULL)", params![project_id.value(), obligation, command_row_id]).map_err(|_| Rejection::InvalidLifecycleTransition)?;
+    let outcome_obligation_id = id_from_last_insert::<OutcomeObligationId>(transaction)?;
+    record_coordination_provenance(
+        transaction,
+        command_row_id,
+        cycle,
+        operating_cycle_id,
+        Some(project_id),
+    )?;
+    Ok(EventBody::OutcomeObligationRegistered {
+        outcome_obligation_id,
+        project_id,
+    })
+}
+
+fn resolve_outcome_obligation(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    operating_cycle_id: OperatingCycleId,
+    outcome_obligation_id: OutcomeObligationId,
+    disposition: OutcomeObligationDisposition,
+) -> Result<EventBody, Rejection> {
+    let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
+    let row: (i64, i64) = transaction.query_row("SELECT project_id, lifecycle_state FROM outcome_obligations WHERE outcome_obligation_id = ?1", [outcome_obligation_id.value()], |row| Ok((row.get(0)?, row.get(1)?))).optional().map_err(|_| Rejection::SubjectNotFound)?.ok_or(Rejection::SubjectNotFound)?;
+    if row.1 != OutcomeObligationState::Scheduled as i64 {
+        return Err(Rejection::OutcomeObligationOpen);
+    }
+    let project_id = ProjectId::try_from(row.0).map_err(|_| Rejection::SubjectNotFound)?;
+    let state = disposition.state();
+    transaction.execute("UPDATE outcome_obligations SET lifecycle_state = ?1, resolved_by_command_id = ?2 WHERE outcome_obligation_id = ?3", params![state as i64, command_row_id, outcome_obligation_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    record_coordination_provenance(
+        transaction,
+        command_row_id,
+        cycle,
+        operating_cycle_id,
+        Some(project_id),
+    )?;
+    Ok(EventBody::OutcomeObligationResolved {
+        outcome_obligation_id,
+        state,
+    })
+}
+
 fn capability_grant(
     transaction: &Transaction<'_>,
     principal_id: PrincipalId,
@@ -3290,24 +4603,36 @@ fn capability_grant(
 ) -> Result<Option<CapabilityGrantLookup>, StoreError> {
     let grant = transaction
         .query_row(
-            "SELECT grant_state, office_occupancy_id FROM capability_grants
+            "SELECT grant_state, office_occupancy_id, actor_instance_id FROM capability_grants
              WHERE capability_grant_id = ?1 AND principal_id = ?2 AND capability_kind = ?3",
             params![
                 capability_grant_id.value(),
                 principal_id.value(),
                 capability as i64
             ],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?)),
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, Option<i64>>(1)?,
+                    row.get::<_, Option<i64>>(2)?,
+                ))
+            },
         )
         .optional()?;
     match grant {
-        Some((1, office_occupancy_id)) => Ok(Some(CapabilityGrantLookup::Active {
-            grant_id: capability_grant_id.value(),
-            office_occupancy_id: office_occupancy_id
-                .map(OfficeOccupancyId::try_from)
-                .transpose()
-                .map_err(|_| StoreError::InvalidStoredValue)?,
-        })),
+        Some((1, office_occupancy_id, actor_instance_id)) => {
+            Ok(Some(CapabilityGrantLookup::Active {
+                grant_id: capability_grant_id.value(),
+                office_occupancy_id: office_occupancy_id
+                    .map(OfficeOccupancyId::try_from)
+                    .transpose()
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                actor_instance_id: actor_instance_id
+                    .map(ActorInstanceId::try_from)
+                    .transpose()
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }))
+        }
         Some(_) => Ok(Some(CapabilityGrantLookup::Inactive)),
         None => Ok(None),
     }
@@ -3325,6 +4650,28 @@ fn grant_has_active_occupancy(
              WHERE g.capability_grant_id = ?1
                AND o.active = 1
                AND o.principal_id = g.principal_id
+         )",
+            [grant_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|value| value != 0)
+        .map_err(StoreError::from)
+}
+
+fn grant_has_active_actor_instance(
+    transaction: &Transaction<'_>,
+    grant_id: i64,
+) -> Result<bool, StoreError> {
+    transaction
+        .query_row(
+            "SELECT EXISTS(
+             SELECT 1 FROM capability_grants g
+             JOIN actor_instances a ON a.actor_instance_id = g.actor_instance_id
+             JOIN principals p ON p.principal_id = a.principal_id
+             WHERE g.capability_grant_id = ?1
+               AND a.lifecycle_state = 1
+               AND p.active = 1
+               AND p.principal_id = g.principal_id
          )",
             [grant_id],
             |row| row.get::<_, i64>(0),
@@ -3443,6 +4790,36 @@ fn command_target_occupancy(
             operating_cycle_id, ..
         }
         | CommandBody::ClosePostmortem {
+            operating_cycle_id, ..
+        }
+        | CommandBody::RegisterContextPack {
+            operating_cycle_id, ..
+        }
+        | CommandBody::AdmitActorInstance {
+            operating_cycle_id, ..
+        }
+        | CommandBody::AdmitTicket {
+            operating_cycle_id, ..
+        }
+        | CommandBody::RegisterWorkItem {
+            operating_cycle_id, ..
+        }
+        | CommandBody::StartActorAttempt {
+            operating_cycle_id, ..
+        }
+        | CommandBody::ValidateTicketAttempt {
+            operating_cycle_id, ..
+        }
+        | CommandBody::RetryActorAttempt {
+            operating_cycle_id, ..
+        }
+        | CommandBody::CompleteTicket {
+            operating_cycle_id, ..
+        }
+        | CommandBody::RegisterOutcomeObligation {
+            operating_cycle_id, ..
+        }
+        | CommandBody::ResolveOutcomeObligation {
             operating_cycle_id, ..
         } => Ok(Some(
             cycle_row(transaction, *operating_cycle_id)?.occupancy_id,
@@ -3759,6 +5136,41 @@ fn active_cancellation_count(
         .map_err(|_| Rejection::SubjectNotFound)
 }
 
+/// Work execution is not represented by an Office turn. These independent
+/// actor-owned children must therefore drain before a cycle can be resumed or
+/// closed; a lease with no budget reservation is still a material obligation.
+fn active_work_lease_count(
+    transaction: &Transaction<'_>,
+    cycle_id: OperatingCycleId,
+) -> Result<i64, Rejection> {
+    transaction
+        .query_row(
+            "SELECT COUNT(*) FROM leases l
+             JOIN actor_instances a ON a.actor_instance_id = l.actor_instance_id
+             WHERE a.operating_cycle_id = ?1 AND l.lifecycle_state = ?2",
+            params![cycle_id.value(), WorkLeaseState::Active as i64],
+            |row| row.get(0),
+        )
+        .map_err(|_| Rejection::SubjectNotFound)
+}
+
+fn live_actor_attempt_count(
+    transaction: &Transaction<'_>,
+    cycle_id: OperatingCycleId,
+) -> Result<i64, Rejection> {
+    transaction
+        .query_row(
+            "SELECT COUNT(*) FROM attempts WHERE operating_cycle_id = ?1 AND lifecycle_state IN (?2, ?3)",
+            params![
+                cycle_id.value(),
+                ActorAttemptState::Running as i64,
+                ActorAttemptState::CancellationRequested as i64,
+            ],
+            |row| row.get(0),
+        )
+        .map_err(|_| Rejection::SubjectNotFound)
+}
+
 fn active_cancellation_for_cycle(
     transaction: &Transaction<'_>,
     cycle_id: OperatingCycleId,
@@ -4034,10 +5446,14 @@ fn request_fingerprint(request: &CommandRequest) -> Sha256Digest {
             operating_cycle_id,
             adversarial_review_id,
             reviewer_principal_id,
+            reviewer_actor_instance_id,
+            reviewer_actor_attempt_id,
         } => {
             put_i64(&mut bytes, operating_cycle_id.value());
             put_i64(&mut bytes, adversarial_review_id.value());
             put_i64(&mut bytes, reviewer_principal_id.value());
+            put_i64(&mut bytes, reviewer_actor_instance_id.value());
+            put_i64(&mut bytes, reviewer_actor_attempt_id.value());
         }
         CommandBody::SubmitReviewChallenge {
             operating_cycle_id,
@@ -4118,6 +5534,128 @@ fn request_fingerprint(request: &CommandRequest) -> Sha256Digest {
         } => {
             put_i64(&mut bytes, operating_cycle_id.value());
             put_i64(&mut bytes, postmortem_id.value());
+        }
+        CommandBody::RegisterActorConfiguration {
+            configuration_name,
+            model_policy,
+            primary_attractor,
+        } => {
+            put_bytes(&mut bytes, configuration_name.as_str().as_bytes());
+            put_i64(&mut bytes, *model_policy as i64);
+            put_i64(&mut bytes, *primary_attractor as i64);
+        }
+        CommandBody::RegisterContextPack {
+            operating_cycle_id,
+            purpose,
+            rendering_digest,
+        } => {
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, *purpose as i64);
+            put_bytes(&mut bytes, &rendering_digest.as_bytes());
+        }
+        CommandBody::AdmitActorInstance {
+            operating_cycle_id,
+            actor_configuration_revision_id,
+            execution_profile_id,
+            actor_display_name,
+        } => {
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, actor_configuration_revision_id.value());
+            put_i64(&mut bytes, execution_profile_id.value());
+            put_bytes(&mut bytes, actor_display_name.as_str().as_bytes());
+        }
+        CommandBody::AdmitTicket {
+            operating_cycle_id,
+            ticket_id,
+        } => {
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, ticket_id.value());
+        }
+        CommandBody::RegisterWorkItem {
+            operating_cycle_id,
+            ticket_id,
+            actor_instance_id,
+            context_pack_id,
+            work_kind,
+            adversarial_review_id,
+            assignment,
+        } => {
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, ticket_id.value());
+            put_i64(&mut bytes, actor_instance_id.value());
+            put_i64(&mut bytes, context_pack_id.value());
+            put_i64(&mut bytes, *work_kind as i64);
+            put_optional_i64(
+                &mut bytes,
+                adversarial_review_id.map(AdversarialReviewId::value),
+            );
+            put_bytes(&mut bytes, assignment.as_str().as_bytes());
+        }
+        CommandBody::ClaimWorkItem {
+            operating_cycle_id,
+            work_item_id,
+        } => {
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, work_item_id.value());
+        }
+        CommandBody::StartActorAttempt {
+            operating_cycle_id,
+            work_item_id,
+            reservation_amount,
+        } => {
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, work_item_id.value());
+            put_i64(&mut bytes, reservation_amount.value());
+        }
+        CommandBody::AttestActorAttemptTerminal {
+            actor_attempt_id,
+            terminal_kind,
+        } => {
+            put_i64(&mut bytes, actor_attempt_id.value());
+            put_i64(&mut bytes, *terminal_kind as i64);
+        }
+        CommandBody::ValidateTicketAttempt {
+            operating_cycle_id,
+            actor_attempt_id,
+        }
+        | CommandBody::RetryActorAttempt {
+            operating_cycle_id,
+            actor_attempt_id,
+        }
+        | CommandBody::CompleteTicket {
+            operating_cycle_id,
+            actor_attempt_id,
+        } => {
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, actor_attempt_id.value());
+        }
+        CommandBody::ExpireWorkLease { work_lease_id } => {
+            put_i64(&mut bytes, work_lease_id.value())
+        }
+        CommandBody::CancelActorAttempt {
+            actor_attempt_id,
+            reason,
+        } => {
+            put_i64(&mut bytes, actor_attempt_id.value());
+            put_i64(&mut bytes, *reason as i64);
+        }
+        CommandBody::RegisterOutcomeObligation {
+            operating_cycle_id,
+            project_id,
+            obligation,
+        } => {
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, project_id.value());
+            put_bytes(&mut bytes, obligation.as_str().as_bytes());
+        }
+        CommandBody::ResolveOutcomeObligation {
+            operating_cycle_id,
+            outcome_obligation_id,
+            disposition,
+        } => {
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, outcome_obligation_id.value());
+            put_i64(&mut bytes, *disposition as i64);
         }
     }
     Sha256Digest::of_bytes(&bytes)
@@ -4328,9 +5866,13 @@ fn event_fingerprint(event_id: EventId, command_id: &CommandId, body: &EventBody
         EventBody::AdversarialReviewerAssigned {
             adversarial_review_id,
             reviewer_principal_id,
+            reviewer_actor_instance_id,
+            reviewer_actor_attempt_id,
         } => {
             put_i64(&mut bytes, adversarial_review_id.value());
             put_i64(&mut bytes, reviewer_principal_id.value());
+            put_i64(&mut bytes, reviewer_actor_instance_id.value());
+            put_i64(&mut bytes, reviewer_actor_attempt_id.value());
         }
         EventBody::AdversarialReviewResolved {
             adversarial_review_id,
@@ -4366,6 +5908,109 @@ fn event_fingerprint(event_id: EventId, command_id: &CommandId, body: &EventBody
         EventBody::PostmortemActionProposed {
             postmortem_action_proposal_id,
         } => put_i64(&mut bytes, postmortem_action_proposal_id.value()),
+        EventBody::ActorConfigurationRegistered {
+            actor_configuration_id,
+            actor_configuration_revision_id,
+        } => {
+            put_i64(&mut bytes, actor_configuration_id.value());
+            put_i64(&mut bytes, actor_configuration_revision_id.value());
+        }
+        EventBody::ContextPackRegistered { context_pack_id } => {
+            put_i64(&mut bytes, context_pack_id.value())
+        }
+        EventBody::ActorInstanceAdmitted {
+            actor_instance_id,
+            principal_id,
+        } => {
+            put_i64(&mut bytes, actor_instance_id.value());
+            put_i64(&mut bytes, principal_id.value());
+        }
+        EventBody::TicketAdmitted { ticket_id } => put_i64(&mut bytes, ticket_id.value()),
+        EventBody::WorkItemRegistered {
+            work_item_id,
+            ticket_id,
+            adversarial_review_id,
+        } => {
+            put_i64(&mut bytes, work_item_id.value());
+            put_i64(&mut bytes, ticket_id.value());
+            put_optional_i64(
+                &mut bytes,
+                adversarial_review_id.map(AdversarialReviewId::value),
+            );
+        }
+        EventBody::WorkItemClaimed {
+            work_item_id,
+            work_lease_id,
+            actor_instance_id,
+        } => {
+            put_i64(&mut bytes, work_item_id.value());
+            put_i64(&mut bytes, work_lease_id.value());
+            put_i64(&mut bytes, actor_instance_id.value());
+        }
+        EventBody::ActorAttemptStarted {
+            actor_attempt_id,
+            work_item_id,
+            budget_reservation_id,
+        } => {
+            put_i64(&mut bytes, actor_attempt_id.value());
+            put_i64(&mut bytes, work_item_id.value());
+            put_i64(&mut bytes, budget_reservation_id.value());
+        }
+        EventBody::ActorAttemptTerminalAttested {
+            actor_attempt_id,
+            terminal_kind,
+        } => {
+            put_i64(&mut bytes, actor_attempt_id.value());
+            put_i64(&mut bytes, *terminal_kind as i64);
+        }
+        EventBody::TicketAttemptValidated {
+            actor_attempt_id,
+            ticket_id,
+        }
+        | EventBody::TicketCompleted {
+            actor_attempt_id,
+            ticket_id,
+        } => {
+            put_i64(&mut bytes, actor_attempt_id.value());
+            put_i64(&mut bytes, ticket_id.value());
+        }
+        EventBody::ActorAttemptRetryPrepared {
+            actor_attempt_id,
+            work_item_id,
+            ticket_id,
+        } => {
+            put_i64(&mut bytes, actor_attempt_id.value());
+            put_i64(&mut bytes, work_item_id.value());
+            put_i64(&mut bytes, ticket_id.value());
+        }
+        EventBody::WorkLeaseExpired {
+            work_lease_id,
+            work_item_id,
+        } => {
+            put_i64(&mut bytes, work_lease_id.value());
+            put_i64(&mut bytes, work_item_id.value());
+        }
+        EventBody::ActorAttemptCancellationRequested {
+            actor_attempt_id,
+            reason,
+        } => {
+            put_i64(&mut bytes, actor_attempt_id.value());
+            put_i64(&mut bytes, *reason as i64);
+        }
+        EventBody::OutcomeObligationRegistered {
+            outcome_obligation_id,
+            project_id,
+        } => {
+            put_i64(&mut bytes, outcome_obligation_id.value());
+            put_i64(&mut bytes, project_id.value());
+        }
+        EventBody::OutcomeObligationResolved {
+            outcome_obligation_id,
+            state,
+        } => {
+            put_i64(&mut bytes, outcome_obligation_id.value());
+            put_i64(&mut bytes, *state as i64);
+        }
     }
     Sha256Digest::of_bytes(&bytes)
 }
@@ -4503,6 +6148,214 @@ fn insert_command_body(
                     command_row_id,
                     operating_cycle_id.value(),
                     project_name.as_str()
+                ],
+            )?;
+        }
+        CommandBody::RegisterActorConfiguration {
+            configuration_name,
+            model_policy,
+            primary_attractor,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_register_actor_configuration VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    command_row_id,
+                    configuration_name.as_str(),
+                    *model_policy as i64,
+                    *primary_attractor as i64
+                ],
+            )?;
+        }
+        CommandBody::RegisterContextPack {
+            operating_cycle_id,
+            purpose,
+            rendering_digest,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_register_context_pack VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    command_row_id,
+                    operating_cycle_id.value(),
+                    *purpose as i64,
+                    rendering_digest.as_bytes().as_slice()
+                ],
+            )?;
+        }
+        CommandBody::AdmitActorInstance {
+            operating_cycle_id,
+            actor_configuration_revision_id,
+            execution_profile_id,
+            actor_display_name,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_admit_actor_instance VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    command_row_id,
+                    operating_cycle_id.value(),
+                    actor_configuration_revision_id.value(),
+                    execution_profile_id.value(),
+                    actor_display_name.as_str()
+                ],
+            )?;
+        }
+        CommandBody::AdmitTicket {
+            operating_cycle_id,
+            ticket_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_admit_ticket VALUES (?1, ?2, ?3)",
+                params![
+                    command_row_id,
+                    operating_cycle_id.value(),
+                    ticket_id.value()
+                ],
+            )?;
+        }
+        CommandBody::RegisterWorkItem {
+            operating_cycle_id,
+            ticket_id,
+            actor_instance_id,
+            context_pack_id,
+            work_kind,
+            adversarial_review_id,
+            assignment,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_register_work_item VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    command_row_id,
+                    operating_cycle_id.value(),
+                    ticket_id.value(),
+                    actor_instance_id.value(),
+                    context_pack_id.value(),
+                    *work_kind as i64,
+                    adversarial_review_id.map(AdversarialReviewId::value),
+                    assignment.as_str()
+                ],
+            )?;
+        }
+        CommandBody::ClaimWorkItem {
+            operating_cycle_id,
+            work_item_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_claim_work_item VALUES (?1, ?2, ?3)",
+                params![
+                    command_row_id,
+                    operating_cycle_id.value(),
+                    work_item_id.value()
+                ],
+            )?;
+        }
+        CommandBody::StartActorAttempt {
+            operating_cycle_id,
+            work_item_id,
+            reservation_amount,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_start_actor_attempt VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    command_row_id,
+                    operating_cycle_id.value(),
+                    work_item_id.value(),
+                    reservation_amount.value()
+                ],
+            )?;
+        }
+        CommandBody::AttestActorAttemptTerminal {
+            actor_attempt_id,
+            terminal_kind,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_attest_actor_attempt_terminal VALUES (?1, ?2, ?3)",
+                params![
+                    command_row_id,
+                    actor_attempt_id.value(),
+                    *terminal_kind as i64
+                ],
+            )?;
+        }
+        CommandBody::ValidateTicketAttempt {
+            operating_cycle_id,
+            actor_attempt_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_validate_ticket_attempt VALUES (?1, ?2, ?3)",
+                params![
+                    command_row_id,
+                    operating_cycle_id.value(),
+                    actor_attempt_id.value()
+                ],
+            )?;
+        }
+        CommandBody::RetryActorAttempt {
+            operating_cycle_id,
+            actor_attempt_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_retry_actor_attempt VALUES (?1, ?2, ?3)",
+                params![
+                    command_row_id,
+                    operating_cycle_id.value(),
+                    actor_attempt_id.value()
+                ],
+            )?;
+        }
+        CommandBody::CompleteTicket {
+            operating_cycle_id,
+            actor_attempt_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_complete_ticket VALUES (?1, ?2, ?3)",
+                params![
+                    command_row_id,
+                    operating_cycle_id.value(),
+                    actor_attempt_id.value()
+                ],
+            )?;
+        }
+        CommandBody::ExpireWorkLease { work_lease_id } => {
+            transaction.execute(
+                "INSERT INTO command_expire_work_lease VALUES (?1, ?2)",
+                params![command_row_id, work_lease_id.value()],
+            )?;
+        }
+        CommandBody::CancelActorAttempt {
+            actor_attempt_id,
+            reason,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_cancel_actor_attempt VALUES (?1, ?2, ?3)",
+                params![command_row_id, actor_attempt_id.value(), *reason as i64],
+            )?;
+        }
+        CommandBody::RegisterOutcomeObligation {
+            operating_cycle_id,
+            project_id,
+            obligation,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_register_outcome_obligation VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    command_row_id,
+                    operating_cycle_id.value(),
+                    project_id.value(),
+                    obligation.as_str()
+                ],
+            )?;
+        }
+        CommandBody::ResolveOutcomeObligation {
+            operating_cycle_id,
+            outcome_obligation_id,
+            disposition,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_resolve_outcome_obligation VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    command_row_id,
+                    operating_cycle_id.value(),
+                    outcome_obligation_id.value(),
+                    *disposition as i64
                 ],
             )?;
         }
@@ -4724,14 +6577,18 @@ fn insert_command_body(
             operating_cycle_id,
             adversarial_review_id,
             reviewer_principal_id,
+            reviewer_actor_instance_id,
+            reviewer_actor_attempt_id,
         } => {
             transaction.execute(
-                "INSERT INTO command_assign_adversarial_reviewer VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO command_assign_adversarial_reviewer VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 params![
                     command_row_id,
                     operating_cycle_id.value(),
                     adversarial_review_id.value(),
-                    reviewer_principal_id.value()
+                    reviewer_principal_id.value(),
+                    reviewer_actor_instance_id.value(),
+                    reviewer_actor_attempt_id.value()
                 ],
             )?;
         }
@@ -5119,13 +6976,17 @@ fn insert_event_body(
         EventBody::AdversarialReviewerAssigned {
             adversarial_review_id,
             reviewer_principal_id,
+            reviewer_actor_instance_id,
+            reviewer_actor_attempt_id,
         } => {
             transaction.execute(
-                "INSERT INTO event_adversarial_reviewer_assigned VALUES (?1, ?2, ?3)",
+                "INSERT INTO event_adversarial_reviewer_assigned VALUES (?1, ?2, ?3, ?4, ?5)",
                 params![
                     event_id.value(),
                     adversarial_review_id.value(),
-                    reviewer_principal_id.value()
+                    reviewer_principal_id.value(),
+                    reviewer_actor_instance_id.value(),
+                    reviewer_actor_attempt_id.value()
                 ],
             )?;
         }
@@ -5202,6 +7063,191 @@ fn insert_event_body(
             transaction.execute(
                 "INSERT INTO event_postmortem_closed VALUES (?1, ?2)",
                 params![event_id.value(), postmortem_id.value()],
+            )?;
+        }
+        EventBody::ActorConfigurationRegistered {
+            actor_configuration_id,
+            actor_configuration_revision_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_actor_configuration_registered VALUES (?1, ?2, ?3)",
+                params![
+                    event_id.value(),
+                    actor_configuration_id.value(),
+                    actor_configuration_revision_id.value()
+                ],
+            )?;
+        }
+        EventBody::ContextPackRegistered { context_pack_id } => {
+            transaction.execute(
+                "INSERT INTO event_context_pack_registered VALUES (?1, ?2)",
+                params![event_id.value(), context_pack_id.value()],
+            )?;
+        }
+        EventBody::ActorInstanceAdmitted {
+            actor_instance_id,
+            principal_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_actor_instance_admitted VALUES (?1, ?2, ?3)",
+                params![
+                    event_id.value(),
+                    actor_instance_id.value(),
+                    principal_id.value()
+                ],
+            )?;
+        }
+        EventBody::TicketAdmitted { ticket_id } => {
+            transaction.execute(
+                "INSERT INTO event_ticket_admitted VALUES (?1, ?2)",
+                params![event_id.value(), ticket_id.value()],
+            )?;
+        }
+        EventBody::WorkItemRegistered {
+            work_item_id,
+            ticket_id,
+            adversarial_review_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_work_item_registered VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    event_id.value(),
+                    work_item_id.value(),
+                    ticket_id.value(),
+                    adversarial_review_id.map(AdversarialReviewId::value)
+                ],
+            )?;
+        }
+        EventBody::WorkItemClaimed {
+            work_item_id,
+            work_lease_id,
+            actor_instance_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_work_item_claimed VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    event_id.value(),
+                    work_item_id.value(),
+                    work_lease_id.value(),
+                    actor_instance_id.value()
+                ],
+            )?;
+        }
+        EventBody::ActorAttemptStarted {
+            actor_attempt_id,
+            work_item_id,
+            budget_reservation_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_actor_attempt_started VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    event_id.value(),
+                    actor_attempt_id.value(),
+                    work_item_id.value(),
+                    budget_reservation_id.value()
+                ],
+            )?;
+        }
+        EventBody::ActorAttemptTerminalAttested {
+            actor_attempt_id,
+            terminal_kind,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_actor_attempt_terminal_attested VALUES (?1, ?2, ?3)",
+                params![
+                    event_id.value(),
+                    actor_attempt_id.value(),
+                    *terminal_kind as i64
+                ],
+            )?;
+        }
+        EventBody::TicketAttemptValidated {
+            actor_attempt_id,
+            ticket_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_ticket_attempt_validated VALUES (?1, ?2, ?3)",
+                params![
+                    event_id.value(),
+                    actor_attempt_id.value(),
+                    ticket_id.value()
+                ],
+            )?;
+        }
+        EventBody::ActorAttemptRetryPrepared {
+            actor_attempt_id,
+            work_item_id,
+            ticket_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_actor_attempt_retry_prepared VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    event_id.value(),
+                    actor_attempt_id.value(),
+                    work_item_id.value(),
+                    ticket_id.value()
+                ],
+            )?;
+        }
+        EventBody::TicketCompleted {
+            ticket_id,
+            actor_attempt_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_ticket_completed VALUES (?1, ?2, ?3)",
+                params![
+                    event_id.value(),
+                    ticket_id.value(),
+                    actor_attempt_id.value()
+                ],
+            )?;
+        }
+        EventBody::WorkLeaseExpired {
+            work_lease_id,
+            work_item_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_work_lease_expired VALUES (?1, ?2, ?3)",
+                params![
+                    event_id.value(),
+                    work_lease_id.value(),
+                    work_item_id.value()
+                ],
+            )?;
+        }
+        EventBody::ActorAttemptCancellationRequested {
+            actor_attempt_id,
+            reason,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_actor_attempt_cancellation_requested VALUES (?1, ?2, ?3)",
+                params![event_id.value(), actor_attempt_id.value(), *reason as i64],
+            )?;
+        }
+        EventBody::OutcomeObligationRegistered {
+            outcome_obligation_id,
+            project_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_outcome_obligation_registered VALUES (?1, ?2, ?3)",
+                params![
+                    event_id.value(),
+                    outcome_obligation_id.value(),
+                    project_id.value()
+                ],
+            )?;
+        }
+        EventBody::OutcomeObligationResolved {
+            outcome_obligation_id,
+            state,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_outcome_obligation_resolved VALUES (?1, ?2, ?3)",
+                params![
+                    event_id.value(),
+                    outcome_obligation_id.value(),
+                    *state as i64
+                ],
             )?;
         }
     }
@@ -5494,12 +7540,18 @@ fn decode_event_body(
             )?,
         },
         EventKind::AdversarialReviewerAssigned => {
-            let (review, reviewer) =
-                query_event_pair(connection, "event_adversarial_reviewer_assigned", event_id)?;
+            let (review, reviewer, actor, attempt): (i64, i64, i64, i64) = connection.query_row(
+                "SELECT adversarial_review_id, reviewer_principal_id, reviewer_actor_instance_id, reviewer_actor_attempt_id FROM event_adversarial_reviewer_assigned WHERE event_id = ?1",
+                [event_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            ).optional()?.ok_or(StoreError::LedgerCorruption("missing reviewer assignment event body"))?;
             EventBody::AdversarialReviewerAssigned {
                 adversarial_review_id: AdversarialReviewId::try_from(review)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
                 reviewer_principal_id: PrincipalId::try_from(reviewer)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                reviewer_actor_instance_id: ActorInstanceId::try_from(actor)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                reviewer_actor_attempt_id: ActorAttemptId::try_from(attempt)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
             }
         }
@@ -5571,6 +7623,163 @@ fn decode_event_body(
                 event_id_typed,
             )?,
         },
+        EventKind::ActorConfigurationRegistered => {
+            let (configuration, revision) =
+                query_event_pair(connection, "event_actor_configuration_registered", event_id)?;
+            EventBody::ActorConfigurationRegistered {
+                actor_configuration_id: ActorConfigurationId::try_from(configuration)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                actor_configuration_revision_id: ActorConfigurationRevisionId::try_from(revision)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        EventKind::ContextPackRegistered => EventBody::ContextPackRegistered {
+            context_pack_id: query_event_id(
+                connection,
+                "event_context_pack_registered",
+                "context_pack_id",
+                event_id_typed,
+            )?,
+        },
+        EventKind::ActorInstanceAdmitted => {
+            let (actor, principal) =
+                query_event_pair(connection, "event_actor_instance_admitted", event_id)?;
+            EventBody::ActorInstanceAdmitted {
+                actor_instance_id: ActorInstanceId::try_from(actor)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                principal_id: PrincipalId::try_from(principal)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        EventKind::TicketAdmitted => EventBody::TicketAdmitted {
+            ticket_id: query_event_id(
+                connection,
+                "event_ticket_admitted",
+                "ticket_id",
+                event_id_typed,
+            )?,
+        },
+        EventKind::WorkItemRegistered => {
+            let (work, ticket, review): (i64, i64, Option<i64>) = connection.query_row(
+                "SELECT work_item_id, ticket_id, adversarial_review_id FROM event_work_item_registered WHERE event_id = ?1",
+                [event_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            ).optional()?.ok_or(StoreError::LedgerCorruption("missing work item event body"))?;
+            EventBody::WorkItemRegistered {
+                work_item_id: WorkItemId::try_from(work)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                ticket_id: TicketId::try_from(ticket)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                adversarial_review_id: review
+                    .map(AdversarialReviewId::try_from)
+                    .transpose()
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        EventKind::WorkItemClaimed => {
+            let (work, lease, actor): (i64, i64, i64) = connection.query_row("SELECT work_item_id, work_lease_id, actor_instance_id FROM event_work_item_claimed WHERE event_id = ?1", [event_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing work item claim event body"))?;
+            EventBody::WorkItemClaimed {
+                work_item_id: WorkItemId::try_from(work)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                work_lease_id: WorkLeaseId::try_from(lease)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                actor_instance_id: ActorInstanceId::try_from(actor)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        EventKind::ActorAttemptStarted => {
+            let (attempt, work, reservation): (i64, i64, i64) = connection.query_row("SELECT actor_attempt_id, work_item_id, budget_reservation_id FROM event_actor_attempt_started WHERE event_id = ?1", [event_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing actor attempt started event body"))?;
+            EventBody::ActorAttemptStarted {
+                actor_attempt_id: ActorAttemptId::try_from(attempt)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                work_item_id: WorkItemId::try_from(work)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                budget_reservation_id: BudgetReservationId::try_from(reservation)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        EventKind::ActorAttemptTerminalAttested => {
+            let (attempt, terminal) = query_event_pair(
+                connection,
+                "event_actor_attempt_terminal_attested",
+                event_id,
+            )?;
+            EventBody::ActorAttemptTerminalAttested {
+                actor_attempt_id: ActorAttemptId::try_from(attempt)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                terminal_kind: actor_attempt_terminal_kind_from_i64(terminal)?,
+            }
+        }
+        EventKind::TicketAttemptValidated => {
+            let (attempt, ticket) =
+                query_event_pair(connection, "event_ticket_attempt_validated", event_id)?;
+            EventBody::TicketAttemptValidated {
+                actor_attempt_id: ActorAttemptId::try_from(attempt)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                ticket_id: TicketId::try_from(ticket)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        EventKind::ActorAttemptRetryPrepared => {
+            let (attempt, work, ticket): (i64, i64, i64) = connection.query_row("SELECT actor_attempt_id, work_item_id, ticket_id FROM event_actor_attempt_retry_prepared WHERE event_id = ?1", [event_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing retry event body"))?;
+            EventBody::ActorAttemptRetryPrepared {
+                actor_attempt_id: ActorAttemptId::try_from(attempt)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                work_item_id: WorkItemId::try_from(work)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                ticket_id: TicketId::try_from(ticket)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        EventKind::TicketCompleted => {
+            let (ticket, attempt) =
+                query_event_pair(connection, "event_ticket_completed", event_id)?;
+            EventBody::TicketCompleted {
+                ticket_id: TicketId::try_from(ticket)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                actor_attempt_id: ActorAttemptId::try_from(attempt)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        EventKind::WorkLeaseExpired => {
+            let (lease, work) = query_event_pair(connection, "event_work_lease_expired", event_id)?;
+            EventBody::WorkLeaseExpired {
+                work_lease_id: WorkLeaseId::try_from(lease)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                work_item_id: WorkItemId::try_from(work)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        EventKind::ActorAttemptCancellationRequested => {
+            let (attempt, reason) = query_event_pair(
+                connection,
+                "event_actor_attempt_cancellation_requested",
+                event_id,
+            )?;
+            EventBody::ActorAttemptCancellationRequested {
+                actor_attempt_id: ActorAttemptId::try_from(attempt)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                reason: actor_attempt_cancellation_reason_from_i64(reason)?,
+            }
+        }
+        EventKind::OutcomeObligationRegistered => {
+            let (obligation, project) =
+                query_event_pair(connection, "event_outcome_obligation_registered", event_id)?;
+            EventBody::OutcomeObligationRegistered {
+                outcome_obligation_id: OutcomeObligationId::try_from(obligation)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                project_id: ProjectId::try_from(project)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        EventKind::OutcomeObligationResolved => {
+            let (obligation, state) =
+                query_event_pair(connection, "event_outcome_obligation_resolved", event_id)?;
+            EventBody::OutcomeObligationResolved {
+                outcome_obligation_id: OutcomeObligationId::try_from(obligation)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                state: outcome_obligation_state_from_i64(state)?,
+            }
+        }
     };
     let stored_fingerprint: Vec<u8> = connection.query_row(
         "SELECT event_fingerprint FROM events WHERE event_id = ?1",
@@ -5759,7 +7968,7 @@ fn replay_command_requests(
     Ok(commands)
 }
 
-const MATERIALIZED_TABLES: [&str; 40] = [
+const MATERIALIZED_TABLES: [&str; 51] = [
     "principals",
     "societies",
     "office_contracts",
@@ -5800,6 +8009,17 @@ const MATERIALIZED_TABLES: [&str; 40] = [
     "postmortem_causal_claims",
     "postmortem_action_proposals",
     "coordination_command_provenance",
+    "execution_profiles",
+    "actor_configurations",
+    "actor_configuration_revisions",
+    "context_packs",
+    "actor_instances",
+    "work_items",
+    "leases",
+    "attempts",
+    "attempt_budget_reservations",
+    "actor_attempt_terminal_facts",
+    "outcome_obligations",
 ];
 
 fn materialized_state_digest(connection: &Connection) -> Result<Sha256Digest, StoreError> {
@@ -6277,17 +8497,20 @@ fn decode_command_body(
             }
         }
         CommandKind::AssignAdversarialReviewer => {
-            let (cycle, review, reviewer) = query_command_three(
-                connection,
-                "command_assign_adversarial_reviewer",
-                command_row_id,
-            )?;
+            let (cycle, review, reviewer, actor, attempt): (i64, i64, i64, i64, i64) = connection.query_row(
+                "SELECT operating_cycle_id, adversarial_review_id, reviewer_principal_id, reviewer_actor_instance_id, reviewer_actor_attempt_id FROM command_assign_adversarial_reviewer WHERE command_row_id = ?1",
+                [command_row_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            ).optional()?.ok_or(StoreError::LedgerCorruption("missing reviewer assignment command body"))?;
             CommandBody::AssignAdversarialReviewer {
                 operating_cycle_id: OperatingCycleId::try_from(cycle)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
                 adversarial_review_id: AdversarialReviewId::try_from(review)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
                 reviewer_principal_id: PrincipalId::try_from(reviewer)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                reviewer_actor_instance_id: ActorInstanceId::try_from(actor)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                reviewer_actor_attempt_id: ActorAttemptId::try_from(attempt)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
             }
         }
@@ -6400,6 +8623,175 @@ fn decode_command_body(
                     .map_err(|_| StoreError::InvalidStoredValue)?,
                 postmortem_id: PostmortemId::try_from(postmortem)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::RegisterActorConfiguration => {
+            let (name, model, attractor): (String, i64, i64) = connection.query_row("SELECT configuration_name, model_policy, primary_attractor FROM command_register_actor_configuration WHERE command_row_id = ?1", [command_row_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing actor configuration command body"))?;
+            CommandBody::RegisterActorConfiguration {
+                configuration_name: crate::ActorConfigurationName::parse(name)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                model_policy: actor_model_policy_from_i64(model)?,
+                primary_attractor: developmental_attractor_from_i64(attractor)?,
+            }
+        }
+        CommandKind::RegisterContextPack => {
+            let (cycle, purpose, digest): (i64, i64, Vec<u8>) = connection.query_row("SELECT operating_cycle_id, purpose, rendering_digest FROM command_register_context_pack WHERE command_row_id = ?1", [command_row_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing context pack command body"))?;
+            CommandBody::RegisterContextPack {
+                operating_cycle_id: OperatingCycleId::try_from(cycle)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                purpose: context_pack_purpose_from_i64(purpose)?,
+                rendering_digest: digest_from_stored_bytes(&digest)?,
+            }
+        }
+        CommandKind::AdmitActorInstance => {
+            let (cycle, revision, profile, display): (i64, i64, i64, String) = connection.query_row("SELECT operating_cycle_id, actor_configuration_revision_id, execution_profile_id, actor_display_name FROM command_admit_actor_instance WHERE command_row_id = ?1", [command_row_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing actor admission command body"))?;
+            CommandBody::AdmitActorInstance {
+                operating_cycle_id: OperatingCycleId::try_from(cycle)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                actor_configuration_revision_id: ActorConfigurationRevisionId::try_from(revision)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                execution_profile_id: ExecutionProfileId::try_from(profile)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                actor_display_name: crate::PrincipalDisplayName::parse(display)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::AdmitTicket => {
+            let (cycle, ticket) =
+                query_command_pair(connection, "command_admit_ticket", command_row_id)?;
+            CommandBody::AdmitTicket {
+                operating_cycle_id: OperatingCycleId::try_from(cycle)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                ticket_id: TicketId::try_from(ticket)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::RegisterWorkItem => {
+            let (cycle, ticket, actor, context, kind, review, assignment): (i64, i64, i64, i64, i64, Option<i64>, String) = connection.query_row("SELECT operating_cycle_id, ticket_id, actor_instance_id, context_pack_id, work_kind, adversarial_review_id, assignment_text FROM command_register_work_item WHERE command_row_id = ?1", [command_row_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing work item command body"))?;
+            CommandBody::RegisterWorkItem {
+                operating_cycle_id: OperatingCycleId::try_from(cycle)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                ticket_id: TicketId::try_from(ticket)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                actor_instance_id: ActorInstanceId::try_from(actor)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                context_pack_id: ContextPackId::try_from(context)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                work_kind: work_item_kind_from_i64(kind)?,
+                adversarial_review_id: review
+                    .map(AdversarialReviewId::try_from)
+                    .transpose()
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                assignment: crate::WorkAssignmentText::parse(assignment)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::ClaimWorkItem => {
+            let (cycle, work) =
+                query_command_pair(connection, "command_claim_work_item", command_row_id)?;
+            CommandBody::ClaimWorkItem {
+                operating_cycle_id: OperatingCycleId::try_from(cycle)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                work_item_id: WorkItemId::try_from(work)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::StartActorAttempt => {
+            let (cycle, work, amount): (i64, i64, i64) = connection.query_row("SELECT operating_cycle_id, work_item_id, reservation_micros FROM command_start_actor_attempt WHERE command_row_id = ?1", [command_row_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing actor attempt command body"))?;
+            CommandBody::StartActorAttempt {
+                operating_cycle_id: OperatingCycleId::try_from(cycle)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                work_item_id: WorkItemId::try_from(work)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                reservation_amount: UsdMicros::try_from(amount)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::AttestActorAttemptTerminal => {
+            let (attempt, terminal) = query_command_pair(
+                connection,
+                "command_attest_actor_attempt_terminal",
+                command_row_id,
+            )?;
+            CommandBody::AttestActorAttemptTerminal {
+                actor_attempt_id: ActorAttemptId::try_from(attempt)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                terminal_kind: actor_attempt_terminal_kind_from_i64(terminal)?,
+            }
+        }
+        CommandKind::ValidateTicketAttempt => {
+            let (cycle, attempt) = query_command_pair(
+                connection,
+                "command_validate_ticket_attempt",
+                command_row_id,
+            )?;
+            CommandBody::ValidateTicketAttempt {
+                operating_cycle_id: OperatingCycleId::try_from(cycle)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                actor_attempt_id: ActorAttemptId::try_from(attempt)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::RetryActorAttempt => {
+            let (cycle, attempt) =
+                query_command_pair(connection, "command_retry_actor_attempt", command_row_id)?;
+            CommandBody::RetryActorAttempt {
+                operating_cycle_id: OperatingCycleId::try_from(cycle)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                actor_attempt_id: ActorAttemptId::try_from(attempt)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::CompleteTicket => {
+            let (cycle, attempt) =
+                query_command_pair(connection, "command_complete_ticket", command_row_id)?;
+            CommandBody::CompleteTicket {
+                operating_cycle_id: OperatingCycleId::try_from(cycle)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                actor_attempt_id: ActorAttemptId::try_from(attempt)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::ExpireWorkLease => CommandBody::ExpireWorkLease {
+            work_lease_id: query_command_id(
+                connection,
+                "command_expire_work_lease",
+                "work_lease_id",
+                command_row_id,
+            )?,
+        },
+        CommandKind::CancelActorAttempt => {
+            let (attempt, reason) =
+                query_command_pair(connection, "command_cancel_actor_attempt", command_row_id)?;
+            CommandBody::CancelActorAttempt {
+                actor_attempt_id: ActorAttemptId::try_from(attempt)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                reason: actor_attempt_cancellation_reason_from_i64(reason)?,
+            }
+        }
+        CommandKind::RegisterOutcomeObligation => {
+            let (cycle, project, obligation): (i64, i64, String) = connection.query_row("SELECT operating_cycle_id, project_id, obligation_text FROM command_register_outcome_obligation WHERE command_row_id = ?1", [command_row_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing outcome obligation command body"))?;
+            CommandBody::RegisterOutcomeObligation {
+                operating_cycle_id: OperatingCycleId::try_from(cycle)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                project_id: ProjectId::try_from(project)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                obligation: crate::OutcomeObligationText::parse(obligation)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::ResolveOutcomeObligation => {
+            let (cycle, obligation, disposition) = query_command_three(
+                connection,
+                "command_resolve_outcome_obligation",
+                command_row_id,
+            )?;
+            CommandBody::ResolveOutcomeObligation {
+                operating_cycle_id: OperatingCycleId::try_from(cycle)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                outcome_obligation_id: OutcomeObligationId::try_from(obligation)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                disposition: outcome_obligation_disposition_from_i64(disposition)?,
             }
         }
     };
@@ -6753,6 +9145,21 @@ fn command_kind_from_i64(value: i64) -> Result<CommandKind, StoreError> {
         44 => Ok(CommandKind::ProposePostmortemAction),
         45 => Ok(CommandKind::ClosePostmortem),
         46 => Ok(CommandKind::AssignAdversarialReviewer),
+        47 => Ok(CommandKind::RegisterActorConfiguration),
+        48 => Ok(CommandKind::RegisterContextPack),
+        49 => Ok(CommandKind::AdmitActorInstance),
+        50 => Ok(CommandKind::AdmitTicket),
+        51 => Ok(CommandKind::RegisterWorkItem),
+        52 => Ok(CommandKind::ClaimWorkItem),
+        53 => Ok(CommandKind::StartActorAttempt),
+        54 => Ok(CommandKind::AttestActorAttemptTerminal),
+        55 => Ok(CommandKind::ValidateTicketAttempt),
+        56 => Ok(CommandKind::RetryActorAttempt),
+        57 => Ok(CommandKind::CompleteTicket),
+        58 => Ok(CommandKind::ExpireWorkLease),
+        59 => Ok(CommandKind::CancelActorAttempt),
+        60 => Ok(CommandKind::RegisterOutcomeObligation),
+        61 => Ok(CommandKind::ResolveOutcomeObligation),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }
@@ -6805,6 +9212,21 @@ fn capability_from_i64(value: i64) -> Result<Capability, StoreError> {
         44 => Ok(Capability::ProposePostmortemAction),
         45 => Ok(Capability::ClosePostmortem),
         46 => Ok(Capability::AssignAdversarialReviewer),
+        47 => Ok(Capability::RegisterActorConfiguration),
+        48 => Ok(Capability::RegisterContextPack),
+        49 => Ok(Capability::AdmitActorInstance),
+        50 => Ok(Capability::AdmitTicket),
+        51 => Ok(Capability::RegisterWorkItem),
+        52 => Ok(Capability::ClaimWorkItem),
+        53 => Ok(Capability::StartActorAttempt),
+        54 => Ok(Capability::AttestActorAttemptTerminal),
+        55 => Ok(Capability::ValidateTicketAttempt),
+        56 => Ok(Capability::RetryActorAttempt),
+        57 => Ok(Capability::CompleteTicket),
+        58 => Ok(Capability::ExpireWorkLease),
+        59 => Ok(Capability::CancelActorAttempt),
+        60 => Ok(Capability::RegisterOutcomeObligation),
+        61 => Ok(Capability::ResolveOutcomeObligation),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }
@@ -6908,6 +9330,15 @@ fn rejection_from_i64(value: i64) -> Result<Rejection, StoreError> {
         25 => Ok(Rejection::ReviewDispositionIncomplete),
         26 => Ok(Rejection::PostmortemCloseBlocked),
         27 => Ok(Rejection::ReviewAssignmentNotIndependent),
+        28 => Ok(Rejection::ActorJurisdictionDenied),
+        29 => Ok(Rejection::WorkLeaseUnavailable),
+        30 => Ok(Rejection::ActorAttemptNotTerminal),
+        31 => Ok(Rejection::ActorAttemptNotValidatable),
+        32 => Ok(Rejection::OutcomeObligationOpen),
+        33 => Ok(Rejection::ReviewAssignmentEvidenceMissing),
+        34 => Ok(Rejection::ExecutionProfileIneligible),
+        35 => Ok(Rejection::TicketAcceptanceConditionUnsatisfied),
+        36 => Ok(Rejection::QualificationTreatmentRestricted),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }
@@ -6953,6 +9384,21 @@ fn event_kind_from_i64(value: i64) -> Result<EventKind, StoreError> {
         37 => Ok(EventKind::PostmortemActionProposed),
         38 => Ok(EventKind::PostmortemClosed),
         39 => Ok(EventKind::AdversarialReviewerAssigned),
+        40 => Ok(EventKind::ActorConfigurationRegistered),
+        41 => Ok(EventKind::ContextPackRegistered),
+        42 => Ok(EventKind::ActorInstanceAdmitted),
+        43 => Ok(EventKind::TicketAdmitted),
+        44 => Ok(EventKind::WorkItemRegistered),
+        45 => Ok(EventKind::WorkItemClaimed),
+        46 => Ok(EventKind::ActorAttemptStarted),
+        47 => Ok(EventKind::ActorAttemptTerminalAttested),
+        48 => Ok(EventKind::TicketAttemptValidated),
+        49 => Ok(EventKind::ActorAttemptRetryPrepared),
+        50 => Ok(EventKind::TicketCompleted),
+        51 => Ok(EventKind::WorkLeaseExpired),
+        52 => Ok(EventKind::ActorAttemptCancellationRequested),
+        53 => Ok(EventKind::OutcomeObligationRegistered),
+        54 => Ok(EventKind::OutcomeObligationResolved),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }
@@ -6978,6 +9424,7 @@ fn operating_cycle_treatment_from_i64(value: i64) -> Result<OperatingCycleTreatm
     match value {
         1 => Ok(OperatingCycleTreatment::PiSdkQualificationV1),
         2 => Ok(OperatingCycleTreatment::Vs001LiveV1),
+        3 => Ok(OperatingCycleTreatment::Vs001DeterministicV1),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }
@@ -7153,6 +9600,127 @@ fn ticket_state_from_i64(value: i64) -> Result<TicketState, StoreError> {
         9 => Ok(TicketState::Expired),
         10 => Ok(TicketState::Cancelled),
         11 => Ok(TicketState::Failed),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+fn actor_model_policy_from_i64(value: i64) -> Result<ActorModelPolicy, StoreError> {
+    match value {
+        1 => Ok(ActorModelPolicy::Vs001DeepseekV4FlashHigh),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+fn developmental_attractor_from_i64(value: i64) -> Result<DevelopmentalAttractor, StoreError> {
+    match value {
+        1 => Ok(DevelopmentalAttractor::Explore),
+        2 => Ok(DevelopmentalAttractor::Build),
+        3 => Ok(DevelopmentalAttractor::Measure),
+        4 => Ok(DevelopmentalAttractor::Challenge),
+        5 => Ok(DevelopmentalAttractor::Synthesize),
+        6 => Ok(DevelopmentalAttractor::Integrate),
+        7 => Ok(DevelopmentalAttractor::Remember),
+        8 => Ok(DevelopmentalAttractor::Coordinate),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+fn execution_profile_kind_from_i64(value: i64) -> Result<ExecutionProfileKind, StoreError> {
+    match value {
+        1 => Ok(ExecutionProfileKind::DeterministicPiHostProcessDoubleV1),
+        2 => Ok(ExecutionProfileKind::NativePinnedPiSdkV1),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+fn execution_profile_readiness_from_i64(
+    value: i64,
+) -> Result<ExecutionProfileReadiness, StoreError> {
+    match value {
+        1 => Ok(ExecutionProfileReadiness::DeterministicFixtureOnly),
+        2 => Ok(ExecutionProfileReadiness::Unqualified),
+        3 => Ok(ExecutionProfileReadiness::QualifiedForLiveUse),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+fn actor_instance_state_from_i64(value: i64) -> Result<ActorInstanceState, StoreError> {
+    match value {
+        1 => Ok(ActorInstanceState::Active),
+        2 => Ok(ActorInstanceState::Retired),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+fn context_pack_purpose_from_i64(value: i64) -> Result<ContextPackPurpose, StoreError> {
+    match value {
+        1 => Ok(ContextPackPurpose::TicketExecution),
+        2 => Ok(ContextPackPurpose::IndependentReview),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+fn work_item_kind_from_i64(value: i64) -> Result<WorkItemKind, StoreError> {
+    match value {
+        1 => Ok(WorkItemKind::TicketExecution),
+        2 => Ok(WorkItemKind::IndependentReview),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+fn work_item_state_from_i64(value: i64) -> Result<WorkItemState, StoreError> {
+    match value {
+        1 => Ok(WorkItemState::Ready),
+        2 => Ok(WorkItemState::Claimed),
+        3 => Ok(WorkItemState::Running),
+        4 => Ok(WorkItemState::Settled),
+        5 => Ok(WorkItemState::Cancelled),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+fn actor_attempt_state_from_i64(value: i64) -> Result<ActorAttemptState, StoreError> {
+    match value {
+        1 => Ok(ActorAttemptState::Running),
+        2 => Ok(ActorAttemptState::CancellationRequested),
+        3 => Ok(ActorAttemptState::Succeeded),
+        4 => Ok(ActorAttemptState::Failed),
+        5 => Ok(ActorAttemptState::Cancelled),
+        6 => Ok(ActorAttemptState::Expired),
+        7 => Ok(ActorAttemptState::ProtocolFailed),
+        8 => Ok(ActorAttemptState::SupervisorFailed),
+        9 => Ok(ActorAttemptState::Validated),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+fn actor_attempt_terminal_kind_from_i64(
+    value: i64,
+) -> Result<ActorAttemptTerminalKind, StoreError> {
+    match value {
+        1 => Ok(ActorAttemptTerminalKind::Succeeded),
+        2 => Ok(ActorAttemptTerminalKind::Failed),
+        3 => Ok(ActorAttemptTerminalKind::Cancelled),
+        4 => Ok(ActorAttemptTerminalKind::Expired),
+        5 => Ok(ActorAttemptTerminalKind::ProtocolFailed),
+        6 => Ok(ActorAttemptTerminalKind::SupervisorFailed),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+fn actor_attempt_cancellation_reason_from_i64(
+    value: i64,
+) -> Result<ActorAttemptCancellationReason, StoreError> {
+    match value {
+        1 => Ok(ActorAttemptCancellationReason::GrandArchitectRequested),
+        2 => Ok(ActorAttemptCancellationReason::CycleCancellation),
+        3 => Ok(ActorAttemptCancellationReason::LeaseContainment),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+fn outcome_obligation_state_from_i64(value: i64) -> Result<OutcomeObligationState, StoreError> {
+    match value {
+        1 => Ok(OutcomeObligationState::Scheduled),
+        2 => Ok(OutcomeObligationState::Satisfied),
+        3 => Ok(OutcomeObligationState::Waived),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+fn outcome_obligation_disposition_from_i64(
+    value: i64,
+) -> Result<OutcomeObligationDisposition, StoreError> {
+    match value {
+        1 => Ok(OutcomeObligationDisposition::Satisfied),
+        2 => Ok(OutcomeObligationDisposition::Waived),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }

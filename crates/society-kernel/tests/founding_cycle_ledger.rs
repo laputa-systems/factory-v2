@@ -535,6 +535,8 @@ fn project_charter_activation_and_close_blocker_are_typed_and_replayable() {
             operating_cycle_id: cycle_id,
             adversarial_review_id: review_id,
             reviewer_principal_id: grand_architect,
+            reviewer_actor_instance_id: society_kernel::ActorInstanceId::new(1).unwrap(),
+            reviewer_actor_attempt_id: society_kernel::ActorAttemptId::new(1).unwrap(),
         },
         Rejection::ReviewAssignmentNotIndependent,
     );
@@ -644,7 +646,7 @@ fn project_charter_activation_and_close_blocker_are_typed_and_replayable() {
 }
 
 #[test]
-fn empty_schema_one_upgrades_as_an_atomic_version_two_step() {
+fn empty_schema_one_upgrades_as_atomic_version_steps() {
     let path = std::env::temp_dir().join(format!(
         "xsh-society-m2-upgrade-{}-{}.sqlite",
         std::process::id(),
@@ -670,7 +672,7 @@ fn empty_schema_one_upgrades_as_an_atomic_version_two_step() {
         upgraded
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        2
+        3
     );
     assert_eq!(
         upgraded
@@ -777,6 +779,147 @@ fn nonempty_schema_one_ledger_is_refused_without_mutation() {
         1
     );
     drop(reopened);
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn nonempty_schema_two_ledger_is_refused_before_migration_three_mutates_it() {
+    let path = std::env::temp_dir().join(format!(
+        "xsh-society-m2-ledger-refusal-{}-{}.sqlite",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch(include_str!("../../../migrations/0001_kernel.sql"))
+        .unwrap();
+    connection
+        .execute_batch(include_str!(
+            "../../../migrations/0002_coordination_graph.sql"
+        ))
+        .unwrap();
+    // KernelStore deliberately exposes no schema-v2 constructor. This is the
+    // smallest structurally accepted M2 receipt, used only to prove that M3
+    // refuses rather than rewriting an unprovable historical fingerprint.
+    connection
+        .execute_batch(
+            "
+            INSERT INTO societies(society_id, name, lifecycle_state)
+                VALUES (1, 'm2 historical society', 1);
+            INSERT INTO commands(command_row_id, command_id, principal_id,
+                capability_grant_id, capability_kind, expected_generation,
+                command_kind, request_fingerprint, command_status,
+                rejection_code, accepted_event_id)
+                VALUES (1, 'm2-create-society', 1, 1, 1, NULL, 1,
+                        zeroblob(32), 1, NULL, 1);
+            INSERT INTO events(event_id, command_row_id, event_kind,
+                event_sequence, event_fingerprint)
+                VALUES (1, 1, 1, 1, zeroblob(32));
+            INSERT INTO command_create_society_identity(command_row_id, name)
+                VALUES (1, 'm2 historical society');
+            INSERT INTO event_society_identity_created(event_id, society_id)
+                VALUES (1, 1);
+            ",
+        )
+        .unwrap();
+    drop(connection);
+    let before = fs::read(&path).unwrap();
+
+    assert!(matches!(
+        KernelStore::open(&path),
+        Err(StoreError::NonemptySchemaV2LedgerUpgradeRefused {
+            command_count: 1,
+            event_count: 1,
+        })
+    ));
+    assert_eq!(fs::read(&path).unwrap(), before);
+    let reopened = Connection::open(&path).unwrap();
+    assert_eq!(
+        reopened
+            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        reopened
+            .query_row(
+                "SELECT COUNT(*) FROM command_create_society_identity",
+                [],
+                |row| { row.get::<_, i64>(0) }
+            )
+            .unwrap(),
+        1
+    );
+    drop(reopened);
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn failed_migration_three_rolls_back_its_version_step_and_a_reopen_retries() {
+    let path = std::env::temp_dir().join(format!(
+        "xsh-society-m3-atomic-step-{}-{}.sqlite",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch(include_str!("../../../migrations/0001_kernel.sql"))
+        .unwrap();
+    connection
+        .execute_batch(include_str!(
+            "../../../migrations/0002_coordination_graph.sql"
+        ))
+        .unwrap();
+    let injected_failure = include_str!("../../../migrations/0003_execution_foundation.sql")
+        .replacen(
+            "CREATE TABLE execution_profiles (",
+            "SELECT missing_migration_three_fault();\nCREATE TABLE execution_profiles (",
+            1,
+        );
+    assert!(connection.execute_batch(&injected_failure).is_err());
+    connection
+        .execute_batch("ROLLBACK; PRAGMA foreign_keys = ON;")
+        .unwrap();
+    assert_eq!(
+        connection
+            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        2
+    );
+    let profile_table_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'table' AND name = 'execution_profiles'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(profile_table_count, 0);
+    assert_eq!(
+        connection
+            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap(),
+        0
+    );
+    drop(connection);
+
+    drop(KernelStore::open(&path).unwrap());
+    let retried = Connection::open(&path).unwrap();
+    assert_eq!(
+        retried
+            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        3
+    );
+    drop(retried);
     fs::remove_file(path).unwrap();
 }
 
@@ -953,8 +1096,8 @@ fn actor_grant_must_match_the_cycle_pinned_office_occupancy() {
     fixture
         .execute(
             "INSERT INTO capability_grants(principal_id, capability_kind, office_occupancy_id,
-                                              grant_state, granted_by_command_id, consumed_by_command_id)
-             VALUES (4, 9, 2, 1, 1, NULL)",
+                                              grant_state, grant_origin, granted_by_command_id, consumed_by_command_id)
+             VALUES (4, 9, 2, 1, 2, 1, NULL)",
             [],
         )
         .unwrap();
@@ -996,8 +1139,8 @@ fn forged_grant_principal_cannot_borrow_an_active_occupancy() {
     assert!(fixture
         .execute(
             "INSERT INTO capability_grants(principal_id, capability_kind, office_occupancy_id,
-                                              grant_state, granted_by_command_id, consumed_by_command_id)
-             VALUES (4, 9, 1, 1, 1, NULL)",
+                                              grant_state, grant_origin, granted_by_command_id, consumed_by_command_id)
+             VALUES (4, 9, 1, 1, 2, 1, NULL)",
             [],
         )
         .is_err());
@@ -1013,8 +1156,8 @@ fn forged_grant_principal_cannot_borrow_an_active_occupancy() {
     fixture
         .execute(
             "INSERT INTO capability_grants(principal_id, capability_kind, office_occupancy_id,
-                                              grant_state, granted_by_command_id, consumed_by_command_id)
-             VALUES (4, 9, 1, 1, 1, NULL)",
+                                              grant_state, grant_origin, granted_by_command_id, consumed_by_command_id)
+             VALUES (4, 9, 1, 1, 2, 1, NULL)",
             [],
         )
         .unwrap();
