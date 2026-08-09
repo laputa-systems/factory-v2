@@ -394,6 +394,19 @@ private-root custody, or workspace creation; the still-unintegrated resident
 driver must establish those physical facts. A native workspace is not a
 security sandbox against a hostile same-UID process.
 
+### Negative-control observation
+
+A closed evaluator output recording that one named counterexample was rejected
+for its exact expected reason. `NegativeControlObservationV1` currently fixes
+the C01-C05 identities, order, disposition, and reason vocabulary: it does not
+accept an arbitrary test name or free-form failure message. C03 uses a task-
+shaped implementation which never starts its assigned child and must fail both
+the owned-lifecycle check and varied-output comparison. C05 builds a detached
+candidate whose runtime default really discards inherited stderr while the
+evaluator expectation remains immutable. Parsing this report proves only its
+canonical shape; it does not authenticate the evaluator or build, seal their
+inputs or outputs, establish process ownership, or admit evidence.
+
 ### North-star alignment
 
 The operational test derived from the mission. A project, ticket, decision,
