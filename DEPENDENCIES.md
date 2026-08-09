@@ -1,9 +1,11 @@
-# Dependency contract
+# Generic dependency contract
 
-This file records the complete dependency allowance for the VS-001 trusted
+This file records the complete dependency allowance for the generic trusted
 implementation. A version appearing here is permission to use it only in the
-named boundary; it is not a reason to add it to every crate. Adding another
-direct dependency requires an explicit contract decision and an update here.
+named boundary; it is not a reason to add it to every crate. An application
+records any additional dependency decision beneath `applications/<product>/`.
+Adding another direct dependency requires an explicit contract decision and an
+update here.
 
 ## Rust workspace
 
@@ -27,13 +29,13 @@ SQLite feature/version drift, and does not enable Rusqlite's JSON support. Rust
 crate sources are registry-resolved and lockfile-pinned, not copied into this
 repository.
 
-`society-content` is a root-workspace member. The application-owned
-`society-xsh-circuit` adapter lives in the isolated `applications/xsh`
-workspace and depends on `society-content` by path. Their
-physical sealing and observation-decoding contracts use separate lockfiles
-with the same exact dependency versions; the path edge grants no daemon or
-kernel authority. `society-product` is also an isolated exact-lock workspace
-while its product-materialization receipt has no resident authority binding.
+`society-content` and `society-product` are root-workspace members.
+`society-content` provides physical byte seals; `society-product` provides
+guarded local materialization mechanics, but does not yet bind a receipt to
+resident authority. Product-specific observation adapters belong in isolated
+application workspaces and may depend on the public content-identity boundary
+by path. Separate lockfiles with the same exact dependency versions grant no
+daemon or kernel authority.
 
 The workspace deliberately has no async runtime, ORM, workflow framework,
 process-control framework, tracing appender, UUID crate, time/date crate, or
@@ -72,8 +74,8 @@ Pi's package/model discovery dependencies, which this host disables, but it
 remains part of the admitted package graph.
 
 This does not authorize a silent transitive override or a move away from Pi
-0.83.0. Native qualification and every paid Attempt remain blocked until the
-Grand Architect explicitly chooses a dependency resolution, the lock delta is
+0.83.0. Native qualification and every paid attempt remain blocked until the
+authorized office explicitly chooses a dependency resolution, the lock delta is
 reviewed, and the full host/Rust-peer qualification suite is rerun. The known
 fixed transitive releases are `undici` 8.9.0 and `brace-expansion` 5.0.9; those
 versions are candidates for that decision, not current execution authority.

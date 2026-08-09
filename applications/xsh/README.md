@@ -26,3 +26,10 @@ cargo clippy -p society-xsh-circuit --all-targets -- -D warnings
 
 The application-owned evaluator invocation and its provider-free contracts are
 documented in `circuits/vs-001-spawn-stderr/README.md`.
+
+Application ownership is recorded in [`AGENTS.md`](AGENTS.md). The preserved
+application architecture, canonical vocabulary, executable VS-001 contract,
+and dependency boundary are [`ARCHITECTURE.md`](ARCHITECTURE.md),
+[`GLOSSARY.md`](GLOSSARY.md), [`VERTICAL-SLICE.md`](VERTICAL-SLICE.md), and
+[`DEPENDENCIES.md`](DEPENDENCIES.md). The root documents define only the
+generic authority and the still-unimplemented typed application port.
