@@ -1,0 +1,2 @@
+target_revision	lesson_revision	lesson_status	applicability_scope	supporting_episode	exclusions_ref
+t_stdout_capture_inquiry_r1	l1_spawn_stderr_method_r1	l1	stdout_capture_process_api	e_vs001_spawn_stderr_r1	x_vs001_c1_r1
