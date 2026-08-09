@@ -2,10 +2,14 @@
 
 ## Status and purpose
 
-This document is the architectural charter for the cleanroom successor to the
-XSH factory. It synthesizes the Factory V1 evidence and the recursive
+This document is the architectural charter for the successor to the XSH
+factory. It synthesizes the Factory V1 evidence and the recursive
 self-improvement research agenda in `RSI.md` into one system that can be built,
 tested, and amended.
+
+[`GLOSSARY.md`](GLOSSARY.md) is canonical for domain terms and spellings. This document owns
+their composition and behavior. In particular, “mission” and “north-star
+alignment” are two parts of one `UniverseSeed`, not independent authorities.
 
 “Factory V2” is retained only as lineage. The thing being designed is an **XSH
 society**: a persistent population of replaceable actors, durable institutions,
@@ -45,18 +49,135 @@ V2 therefore has a different primary artifact and a different unit of progress:
 Commits remain indispensable outcomes. They are neither a substitute for
 inquiry nor a cycle quota.
 
-## The charter
+## Origin purpose
 
-### Mission
+### Universe Seed: mission made executable
 
-The society exists to make XSH a practical, coherent, easy-to-learn,
-token-efficient, and trustworthy systems-glue language for humans and coding
-agents. It should increase XSH's ability to replace fragile layers of Unix
-sludge with typed paths, explicit process boundaries, structured data,
-structured errors, reproducible execution, and inspectable policy.
+The society begins from one first-class `UniverseSeed`, not from an ambient
+README convention and not from a mission paragraph copied opportunistically
+into prompts. The seed is the origin construct from which the first society,
+Grand Architect office occupancy, portfolio, projects, and actor attempts are
+derived. One society has exactly one active seed revision.
 
-The society may propose subordinate objectives. It may not autonomously replace
-this mission.
+Its philosophical source is XSH's `docs/CHAPTER-01-why-xsh.md`. XSH is a
+clean-slate systems scripting language for modern Linux userspace: the strong
+glue between processes, files, paths, byte streams, structured data, and system
+state. It aims to replace archaeological stacks of shell, Make, m4, Perl,
+Python, text filters, and private DSLs without reproducing their quoting,
+ambient-state, implicit-evaluation, or text-only boundary failures. It
+preserves Unix's coarse-grained composability, ordinary files, visible process
+boundaries, pipeline flow, and the ability for a script to grow into a tool. It
+is not a POSIX compatibility shell, an interactive terminal, or a claim to be
+the best general application runtime.
+
+The initial mission is therefore:
+
+> Make XSH a practical, coherent, easy-to-learn, token-efficient, and
+> trustworthy systems-glue language for humans and coding agents, capable of
+> replacing fragile Unix glue with typed paths, explicit process and effect
+> boundaries, structured streams and errors, reproducible execution, and
+> inspectable policy while preserving the composability that makes Unix
+> systems useful.
+
+The operational north star is the mission's alignment test. Every admitted
+Project, Ticket, consequential Decision, ReviewChallenge, Retrospective, and
+Postmortem answers:
+
+1. What XSH capability or actor behavior would change?
+2. What evidence distinguishes a general improvement from a local workaround,
+   movement of complexity, or noise?
+3. How does the change honor clarity, explicit boundaries, composability, and
+   XSH's systems-glue scope?
+4. At which review, replay, outcome horizon, or Grand Architect decision will
+   the claim be revisited?
+
+The mission supplies purpose; north-star alignment supplies a repeatable way
+to interrogate proposed action. They are stored in the same revision and may
+only diverge through a rejected or incomplete constitutional amendment.
+
+### `UniverseSeed` contract
+
+The durable contract is relational and strongly typed. Collections below are
+normalized child tables with closed enum kinds, not a JSON document:
+
+```text
+UniverseSeed {
+    universe_seed_id
+    society_id
+    revision
+    status: Proposed | Active | Superseded | Rejected
+    mission_statement
+    xsh_domain_scope
+    grand_architect_office_contract_revision
+    amendment_origin
+    ratification_decision_id
+}
+
+UniverseSeedPrinciple {
+    seed_revision
+    ordinal
+    kind: Preserve | Reject | Value | NonGoal | Beneficiary
+    statement
+}
+
+UniverseSeedAlignmentQuestion {
+    seed_revision
+    ordinal
+    question
+}
+
+UniverseSeedSource {
+    seed_revision
+    source_kind: XshChapter | FactoryNorthStar | ConstitutionalDecision
+    content_object_id
+    source_revision_or_commit
+    selected_scope
+}
+
+NorthStarAlignment {
+    north_star_alignment_id
+    universe_seed_revision
+    capability_or_behavior_change
+    general_improvement_discriminator
+    clarity_boundary_composability_treatment
+    revisit_horizon_or_decision
+}
+```
+
+The seed owns the canonical questions; each `NorthStarAlignment` stores one
+work object's four answers against the exact seed revision. Project, Ticket,
+Decision, ReviewChallenge, Retrospective, and Postmortem tables reference an
+alignment identity through named foreign keys rather than a polymorphic target
+or copied mission prose. Mission is stable purpose; alignment is its
+work-specific application.
+
+The first authoritative commands are:
+
+```text
+CreateSocietyIdentity
+InstallGrandArchitectOffice
+ProposeUniverseSeed
+RatifyUniverseSeed       # TheGrandArchitect capability
+BootstrapSociety        # consumes one active seed revision
+```
+
+`BootstrapSociety` fails unless the seed, office contract, active occupant, R0
+execution policy, and global budget ceiling are exact revisions. The resulting
+`SocietyBootstrap` records all five. Bootstrap is idempotent for those inputs
+and cannot silently pick “latest.”
+
+The canonical `UNIVERSE-SEED.md` rendering is the first prompt segment supplied
+to every actor attempt, including narrow task actors and adversarial reviewers.
+It is a projection of typed state, not durable state itself. The attempt records
+the exact seed revision and prompt-renderer revision; mission context is never
+removed as a token-saving optimization. Scoped assignment, disclosure frontier,
+and culture follow it in that order.
+
+Changing an XSH source chapter does not mutate the active seed by filesystem
+side effect. It creates a detectable source divergence and a C4 amendment
+candidate. The Grand Architect may ratify a descendant seed after the amendment
+process described below. The system preserves the old revision, challenges,
+predicted effects, dissent, and reason for continuity or change.
 
 ### Values
 
@@ -82,7 +203,7 @@ dissent, and the predicted consequences.
 The society has improved only when evidence supports at least one of these
 claims under an explicit scope:
 
-1. XSH or its ecosystem became better on one or more charter values without an
+1. XSH or its ecosystem became better on one or more Universe Seed values without an
    undisclosed or disqualifying regression.
 2. The society learned something that materially changes a future decision or
    eliminates a meaningful region of uncertainty.
@@ -105,7 +226,7 @@ The recursively improving entity is therefore not an agent and not an org
 chart. It is this complex:
 
 ```text
-                        charter
+                     Universe Seed
                            |
                     shared XSH world
                            |
@@ -123,9 +244,52 @@ chart. It is this complex:
                            +-----------------> shared XSH world
 ```
 
-Individual actors are replaceable. Continuity lives in the charter, verified
-history, knowledge, institutions, and executable artifacts. Better foundation
-models should enter as better citizens, not cause institutional amnesia.
+Individual actors are replaceable. Continuity lives in the Universe Seed,
+verified history, knowledge, offices, institutions, and executable artifacts.
+Better foundation models should enter as better citizens or office occupants,
+not cause institutional amnesia.
+
+### How far the society metaphor goes
+
+“Society” is an engineering abstraction, not a mandate to simulate a
+civilization. V2 adopts mechanisms where plural cognition, durable authority,
+institutional memory, checked communication, and scarce shared resources solve
+observed coordination problems better than one agent loop.
+
+The initial admission set is deliberately Pareto-oriented:
+
+| Keep | Engineering function |
+| --- | --- |
+| Constitution and a highest office | Durable purpose, coherent authority, succession, and accountable exceptions |
+| Institutions and circuits | Reusable boundaries, state transitions, specialization, and organizational experiments |
+| Projects, tickets, milestones, and coordination pulses | Practical planning, ownership, WIP control, and synchronization |
+| Dissent and adversarial review | Error discovery without requiring consensus or erasing minority arguments |
+| Professions and developmental attractors | Learned specialization when repeated demand demonstrates value |
+| Local demand signals and bounded influence | Decentralized sensing without unbounded broadcast or a universal planner score |
+| Curated culture and checked propagation | Accumulation, scope control, uptake measurement, and retraction |
+| Portfolio and resource treasury | Explicit scarcity, reserves, cost ceilings, and opportunity tradeoffs |
+| Retrospectives and postmortems | Routine learning plus structured response to failures and breaches |
+
+V2 explicitly does **not** model internal money, transferable credit, trade,
+auctions, synthetic property, consumer preferences, elections, political
+parties, prestige, emotions, friendship, demographic reproduction, autonomous
+population growth, or persistent fictional social lives. It does not pay
+agents to converse for realism, manufacture social conflict, or construct a
+market where a typed scheduler and budget reservation solve the actual
+problem. Contributions are not currency and office occupancy is not status.
+
+A new society-inspired mechanism is admitted only as a C3 hypothesis after:
+
+1. an observed coordination or epistemic bottleneck is named;
+2. the cheapest deterministic or ordinary software-engineering baseline is
+   implemented or credibly specified;
+3. the proposed mechanism identifies a discriminating benefit, resource cost,
+   failure modes, and removal condition;
+4. a replay, shadow, or canary comparison can observe the claimed benefit; and
+5. the Grand Architect authorizes the trial within a bounded envelope.
+
+This rule lets the system become more socially sophisticated where evidence
+demands it while keeping the initial apparatus comprehensible and affordable.
 
 ## Architectural thesis
 
@@ -167,6 +331,58 @@ the machinery which produces later lessons. Re-running a goal prompt, editing a
 worker prompt, or selecting the patch that passes the most tests is not by
 itself recursive self-improvement.
 
+## The dynamics of recursion
+
+The society is not defined only by its objects and institutions. It is defined
+by three coupled rates:
+
+```text
+discovery
+  decision-relevant uncertainty becomes warranted knowledge
+
+propagation
+  warranted knowledge changes relevant behavior in its valid scope
+
+metamorphosis
+  accumulated knowledge changes the machinery that produces later knowledge
+```
+
+These are vectors over problem classes and evidence strengths, not three
+universal counters. A deterministic soundness discovery and a provisional
+ergonomics lesson propagate at legitimately different speeds. A prompt edit and
+a replicated governance improvement are also not equivalent metamorphoses.
+
+Commit throughput is a fourth, downstream concern: delivery. A society can
+discover rapidly but propagate nothing, propagate doctrine without testing its
+effect, or deliver many patches while never improving how it learns. None of
+those is recursive institutional improvement.
+
+The rates form a constrained system:
+
+```text
+discovery outruns curation/evaluation
+  -> unresolved evidence congestion
+  -> narrower admission and more validation capacity
+
+propagation outruns warrant
+  -> contamination and correlated error
+  -> slower promotion and wider contradiction search
+
+propagation lags warrant
+  -> repeated rediscovery and inconsistent active work
+  -> more retrieval, transduction, and uptake capacity
+
+institutional evidence accumulates but metamorphosis stalls
+  -> organizational knowledge without organizational consequence
+  -> reserve trials for R2 mutations and held-out replication
+```
+
+The observatory exposes these imbalances; resource policy responds to them.
+The trusted substrate enforces the real scarcity involved but never invents a
+single combined RSI score. The governing question is which constrained rate is
+preventing warranted discoveries from changing XSH or the society, and what
+experiment could discriminate among explanations for that bottleneck.
+
 ## Constitutional topology
 
 The architecture has four layers with deliberately different mutation rules.
@@ -178,12 +394,12 @@ The architecture has four layers with deliberately different mutation rules.
                            |
   R2  mutable society
       actors, professions, circuits, institutions, policies, evaluators,
-      graph views, context assembly, propagation, organization genomes
+      graph views, context assembly, propagation, organization configurations
                            ^
                            |
   R1  amendable constitution
-      mission, reserved authorities, change classes, evidence standards,
-      promotion rules, autonomy envelope, human ratification
+      Universe Seed, TheGrandArchitect office, change classes,
+      evidence standards, promotion rules, succession
                            ^
                            |
   R0  trusted physics
@@ -194,16 +410,20 @@ The architecture has four layers with deliberately different mutation rules.
 ### R0: trusted physics
 
 R0 says what happened and what a principal was allowed to do. The society
-cannot rewrite it through ordinary commands. Kernel changes are external
-software changes, reviewed and deployed by the human operator under the most
-restrictive change class.
+cannot rewrite it through ordinary commands. Kernel changes are software
+changes outside the authority of the running kernel instance and enter through
+an explicit C5 deployment boundary. This is not a human-ratified layer: it is
+the unavoidable distinction between the state machine and replacement of the
+machine enforcing that state.
 
 ### R1: amendable constitution
 
-R1 says what the society is for and how authority may change. It is versioned,
-explicit, and human-ratified. The society may generate constitutional
-proposals and evidence, but cannot enact them by the same circuit that benefits
-from them.
+R1 says what the society is for and how highest authority may change. It is
+versioned and explicit. The Grand Architect may ratify a C4 amendment after the
+kernel verifies the required decision packet, independent challenge, dissent,
+cooling interval or documented urgency exception, predictions, rollback or
+succession treatment, and exact descendant revision. Challenge is mandatory;
+assent is not. There is no separate human veto or actor-species check.
 
 ### R2: mutable society
 
@@ -218,8 +438,11 @@ execution medium. Product mutations remain independently reviewable and
 revertible. Self-reference never grants additional authority.
 
 This topology resolves an otherwise dangerous ambiguity. “Immutable” does not
-mean every initial policy is frozen into Rust, and “self-improving” does not
-mean the system may redefine its mission or scoreboard.
+mean every initial policy is frozen into Rust, and “autonomous” does not mean a
+prompt can bypass transactions, budgets, or history. The society may redefine
+its active mission and constitutional scoreboard through an explicit Grand
+Architect amendment; it cannot pretend that the descendant seed governed its
+ancestors or erase the evidence used to amend it.
 
 ## Three forms of durable truth
 
@@ -228,7 +451,7 @@ The implementation must not collapse three different records into one.
 | Record | Meaning | Mutation rule |
 | --- | --- | --- |
 | Event ledger | Commands accepted, transitions made, resources spent, principals responsible | Append-only; replay-auditable |
-| Evidence store | Immutable bytes and observations produced in a named environment | Sealed; new evidence may contradict but not edit old evidence |
+| Content-object store | Immutable forensic bytes captured in a named environment | Sealed; new evidence may contradict but not edit old content |
 | Epistemic graph | What is claimed, believed, disputed, decided, and applicable now | Revisioned; status can change with provenance |
 
 The ledger is not the world model. An artifact is not an interpretation. A
@@ -239,12 +462,34 @@ The phrase “causal graph” is shorthand for a graph of **causal claims and
 decision provenance**. An edge which says an outcome supports an attribution
 does not make causality mechanically true.
 
+### Evidence is not automatically memory
+
+The evidence-to-culture path has four deliberately different depths:
+
+| Depth | Purpose | Default audience | Admission rule |
+| --- | --- | --- | --- |
+| Operational audit | Establish what command, process, tool, or transaction occurred | Kernel, runner, forensic inspection | Produced by trusted machinery |
+| Forensic evidence | Preserve source material which may later support or defeat a claim | Judges and explicit investigators | Sealed with capture method and origin |
+| Curated episode account | Preserve the few distinctions needed to understand a consequential choice | Deliberation and later replay | Selected with causal role, scope, omissions, and challenge path |
+| Cultural inheritance | Change how later citizens perceive or act | Matching future work only | Checked validation, promotion, delivery, and uptake evidence |
+
+Moving downward in that table is not copying. It is an accountable semantic
+transformation. Most audit events should never become graph nodes. Most sealed
+artifacts should never become institutional memory. Most episode conclusions
+should never become default culture.
+
+Conversely, the society must not discard inconvenient source evidence merely
+because it was not selected into the current account. A curated claim remains
+challengeable through its cited evidence boundary and stated exclusions. This
+separation permits a small epistemic commons without granting curators the
+ability to rewrite forensic reality.
+
 ## The trusted substrate
 
 ### Kernel responsibilities
 
 A small V2-owned Rust kernel initially owns one organization-wide SQLite
-database and one content-addressed artifact root. It is authoritative for:
+database and one digest-addressed content-object store. It is authoritative for:
 
 - object, revision, configuration, principal, actor, session, and episode
   identity;
@@ -277,7 +522,7 @@ Command {
     principal_id
     capability
     expected_generation
-    payload: ClosedCommandVariant
+    body: CommandBody
 }
 
 Command
@@ -288,10 +533,32 @@ Command
   -> return typed receipt or explicit conflict
 ```
 
-No XSH program, actor, projection, or operator helper writes arbitrary SQL,
+No XSH program, actor, projection, office helper, or host-admin helper writes arbitrary SQL,
 edits workflow state files, or infers completion by scanning a directory.
 Content-sensitive idempotency prevents one command identifier from being reused
 with different semantics.
+
+`CommandBody` is a closed Rust enum whose variants contain named structs with
+domain newtypes. The CLI exposes corresponding closed subcommands and typed
+flags; it does not serialize the enum into a generic command document. SQLite
+uses normalized tables, foreign keys, checked enum representations, unique
+constraints, and explicit nullable-state rules. V2 permits no JSON columns,
+generic `payload` or `metadata` columns, EAV tables, state files, workflow
+manifests, or machine JSON projections.
+
+Command and event headers use discriminants plus named one-to-one variant body
+tables. Rust exhaustively decodes the matching body and ledger replay treats a
+missing, duplicate, or mismatched body as corruption. Strong typing therefore
+survives persistence; it is not lost at the first database write.
+
+The sole JSON exception is the unavoidable Pi 0.83.0 boundary: Pi's JSONL event
+stream, v3 session transcript, external `auth.json`, and the actor's bounded
+`submission.json`. The native runner treats all four as untrusted boundary
+bytes, seals them, parses them into closed Rust types, validates settlement and
+submission separately, and only then issues typed commands. No JSON object
+becomes durable society state merely by parsing successfully. XSH itself may
+of course manipulate JSON as part of its systems-glue mission; that product
+capability does not relax V2's persistence contract.
 
 ### Identity and lineage
 
@@ -316,9 +583,21 @@ parents. A friendly name is a projection; the content identity is canonical.
 
 ### Artifact and execution contract
 
-An artifact reference includes a safe relative path, byte length, digest,
-media/schema type, producing attempt, closed role, and retention class.
-Execution evidence additionally pins:
+The content-object store identifies sealed bytes by digest. File length,
+storage path, ingest timestamp, and similar bookkeeping may be derived or
+retained inside the storage implementation for safety and repair, but they are
+not curated provenance and do not enter the epistemic graph merely because they
+are cheap to collect.
+
+An evidence admission reference instead records only facts with interpretive or
+reconstruction value: object digest, closed semantic role, producing attempt or
+command, capture/evaluator method, applicable scope, schema or media contract,
+and retention/access class. Its graph edge states *why* the evidence matters to
+a claim, experiment, decision, or challenge. Sealing an object never admits it
+as knowledge.
+
+Execution evidence pins the variables needed to reconstruct the declared
+world:
 
 ```text
 repository commits and dirty-state declaration
@@ -347,7 +626,7 @@ manifest.
 
 A working directory is an ownership and reproducibility boundary, not a
 security sandbox. A Pi actor with the `bash`, `read`, `edit`, or `write` tools
-can potentially reach other host paths allowed by the operator's OS account.
+can potentially reach other host paths allowed by the host OS account.
 The first implementation relies on explicit assignments, narrow Pi tool
 profiles where practical, process supervision, before/after workspace and Git
 checks, and forensic tool events. It must not claim that kernel graph
@@ -385,8 +664,8 @@ under authority, while the graph preserves incompatible interpretations.
 
 | Node kind | Durable meaning |
 | --- | --- |
-| CharterValue | A ratified value used to explain tradeoffs, never a hidden weight |
-| Objective | A scoped desired capability or condition derived from the charter |
+| UniverseSeedValue | An active-seed value used to explain tradeoffs, never a hidden weight |
+| Objective | A scoped desired capability or condition derived from the Universe Seed |
 | Question | A consequential uncertainty, with resolution and abandonment conditions |
 | Hypothesis | A falsifiable explanation with scope, confidence form, and alternatives |
 | Prediction | A pre-outcome expectation with measure, horizon, and failure condition |
@@ -402,8 +681,8 @@ under authority, while the graph preserves incompatible interpretations.
 | Lesson | A validated, scoped knowledge claim with propagation and revocation policy |
 | Invariant | An externally or constitutionally enforced condition and its executable judge |
 | OrganizationTrial | A controlled comparison of R2 configurations |
-| ActorConfiguration | A heritable actor genome revision |
-| OrganizationConfiguration | The heritable society-level genome active for specified work |
+| ActorConfiguration | A versioned policy for constructing bounded cognitive work |
+| OrganizationConfiguration | The exact R2 configuration active for specified work |
 
 This is the kernel vocabulary, not a promise that no node kinds will ever be
 added. Adding a kind which affects durable meaning is a schema and
@@ -484,8 +763,8 @@ objective
 
 An episode may finish without an implementation. It may not finish merely
 because an actor stopped. Abandonment requires a recorded reason such as low
-value, infeasibility, superseding evidence, exhausted budget, or explicit
-operator choice.
+value, infeasibility, superseding evidence, exhausted budget, or an explicit
+Grand Architect decision.
 
 ### Episode state contract
 
@@ -498,29 +777,49 @@ framed
 admitted
   -> investigating
 investigating
-  -> deliberating | blocked | abandoned
+  -> deliberating | abandoned
 deliberating
-  -> decided | investigating | preserved_conflict
+  -> decided | investigating | closed_preserved_conflict
 decided
-  -> implementing | observing | closed_no_change
+  -> implementing | observing | closed_no_change | investigating
 implementing
-  -> validating | reverted | failed
+  -> validating | observing_failed | reverted
 validating
-  -> observing | reverted | investigating
+  -> observing | implementing | reverted | investigating
 observing
-  -> learning | reopened
+  -> learning
 learning
-  -> closed | reopened
+  -> closed
+closed | closed_no_change | closed_preserved_conflict
+  -> reopened
+reopened
+  -> investigating
 ```
 
 Each transition has required nodes, evidence, authority, and outstanding
 obligations. A `closed` episode may still be reopened by a scheduled outcome or
 contradictory evidence. Operational state never deletes epistemic conflict.
 
+Blocking is an orthogonal operational condition, not a lifecycle bucket. A
+blocked episode records the lifecycle state it remains in, blocker, owner,
+expiry or escalation, and budget consequences. Removing the blocker resumes
+that same state. This prevents a generic `blocked -> active` transition from
+silently inventing which epistemic gate was satisfied.
+
+An episode may contain several decision revisions—for example authorization to
+prototype, then authorization to deliver. The generic `decided` state means one
+declared action is authorized; a circuit may refine it into multiple explicit
+gates. Later decisions descend from rather than overwrite earlier decisions.
+
 ## Curated provenance
 
-Raw traces and scalar rewards are opposite information failures. V2 preserves a
-layered compression path:
+Raw traces and scalar rewards are opposite information failures. Raw traces
+preserve incidental detail until relevant structure becomes difficult to find;
+scalar rewards preserve a verdict after destroying the argument which could
+later correct it. V2 therefore treats curation as a primary cognitive and
+institutional act.
+
+The compression path is:
 
 ```text
 sealed raw session and execution artifacts
@@ -534,15 +833,397 @@ episode retrospective and scoped lessons
 provisional guidance, policy, evaluator, or invariant
 ```
 
-Every compression points to its sources, identifies its curator and method,
-states excluded or unavailable information, and remains challengeable. Raw
-sessions are forensic evidence under retention policy, not the default memory
-shown to every actor. Summaries are navigation aids, not replacement evidence.
+Each arrow is a new warranted representation with a narrower purpose. It is not
+an automatic summary job.
 
-Trace curation is itself an evaluated institutional function. Historical
-episodes periodically test whether a curator omitted facts which later mattered,
-overstated attribution, erased dissent, or caused irrelevant context to flood
-future work.
+### Curation contract
+
+A `CuratedAccount` is a revisioned semantic object for a named use: preparing a
+decision, reconstructing an episode, training a profession, assembling future
+context, or testing an organization. It contains only consequential structure:
+
+```text
+CuratedAccount {
+    purpose_and_audience
+    question_and_episode_scope
+    epistemic_disclosure_frontier
+
+    selected_items[] {
+        source_revision_or_evidence
+        causal_or_argumentative_role
+        selection_reason
+        applicability_scope
+    }
+
+    preserved_conflicts_and_minorities[]
+    decision_relevant_unknowns[]
+    exclusions[] {
+        excluded_category_or_source
+        reason
+        risk_if_wrong
+    }
+
+    transformations[] {
+        input_references
+        method_or_policy_revision
+        output_claim
+        information_known_lost
+    }
+
+    curator_configuration_and_authority
+    challenges_and_superseding_accounts[]
+}
+```
+
+These fields record semantic choices, not every available measurement. Byte
+counts, filenames, token timestamps, streaming deltas, and tool chatter do not
+become provenance unless a particular claim makes them consequential. A tool
+timeout may matter; the number of bytes in an ordinary Markdown artifact almost
+never does.
+
+Every account names what it intentionally excludes. Negative space is part of
+the contract because later investigators need to distinguish “considered and
+excluded as irrelevant,” “unavailable at the time,” and “silently overlooked.”
+The account also preserves dissent in the strongest available form rather than
+compressing it into an averaged confidence.
+
+Exclusions are semantic categories and particular high-risk sources, not the
+set-theoretic complement of every captured file or event. The forensic manifest
+already answers what bytes existed. Repeating that inventory inside the account
+would recreate provenance bloat without explaining what the curator considered
+consequential.
+
+An account never replaces its sources. It gives later citizens a small default
+path and an explicit escalation path into admitted evidence or raw forensics.
+Accessing raw material for a decision is itself visible so repeated transcript
+archaeology can be diagnosed as curation failure.
+
+### Curation lifecycle
+
+```text
+proposed
+  -> challenged | accepted_for_scope
+challenged
+  -> revised_descendant | accepted_with_dissent | rejected
+accepted_for_scope
+  -> superseded | retracted | expired
+```
+
+Acceptance is purpose-specific. An account sufficient for a product decision
+may be unsuitable as a training case because it assumes expert context. A
+lesson derived from an accepted account still requires independent promotion;
+curation does not smuggle claims directly into culture.
+
+The curator may be an actor, a mixed deterministic/model circuit, or a human.
+The producer of a proposal may not be the sole curator of the evidence used to
+approve it for a consequential change. Curator identity means the exact
+configuration and policy revision, not a title such as “historian.”
+
+### Curation quality
+
+Curation is evaluated against later use, not against compression ratio alone.
+Historical and live probes ask:
+
+- **decision sufficiency:** could an authorized reader reconstruct the real
+  alternatives, constraints, evidence, and disagreement without raw-session
+  archaeology?
+- **relevance:** how much supplied material never affected a legitimate query
+  or decision?
+- **reversal sensitivity:** were facts later responsible for reversal preserved
+  or explicitly marked unavailable?
+- **dissent fidelity:** could the strongest minority argument be recovered
+  without relying on the majority's paraphrase?
+- **scope calibration:** did the account invite application outside the
+  evidence domain?
+- **causal honesty:** did it distinguish observation, attribution, choice, and
+  outcome?
+- **contamination:** did hindsight, descendant lessons, or unrelated episodes
+  leak across the declared disclosure frontier?
+- **escalation cost:** when raw evidence was genuinely necessary, could it be
+  located through the account's references?
+
+No single score certifies a curator. Different policies may occupy different
+Pareto regions: terse accounts for routine deterministic changes, richer
+accounts for semantic decisions with delayed consequences, and deliberately
+plural accounts where disagreement remains productive.
+
+### Curation is part of the mutable society
+
+Trace vocabulary, selection rules, compression prompts, independence policy,
+retention, and context assembly are R2 variables. A proposed curation mutation
+is a C3 institutional change. It must be compared on blinded historical or
+held-out decision worlds and cannot certify itself by changing the questions
+used to judge missing information.
+
+The trusted substrate protects source identity, chronology, disclosure
+boundaries, and lineage. It does not freeze one theory of relevance into the
+database. This is the deepest recursive seam: the society can improve the
+representations through which it understands its own improvement while being
+unable to rewrite the evidence from which those representations were made.
+
+## Provenance as active observability and bounded influence
+
+Provenance is not opaque storage awaiting an audit. It is the undercurrent from
+which context, review, scheduling, resource allocation, reopening, and
+institutional learning are continuously derived. The important boundary is not
+“active versus archived.” It is **which semantic transformation is allowed to
+produce which organizational effect**.
+
+The active path is:
+
+```text
+ledger events + sealed content + typed observations
+        |
+        | deterministic normalization; no organizational effect
+        v
+ProvenanceFact
+        |
+        | evidence admission and named curation policy
+        v
+eligible source set
+        |
+        | versioned SignalFamily derivation
+        v
+DerivedSignal
+        |
+        | scope, warrant, freshness, independence, and jurisdiction gates
+        v
+InfluenceCandidate
+        |
+        | bounded comparison, attention allocation, and authority check
+        v
+InfluenceDecision
+        |
+        +--> visible in a coordination pulse
+        +--> retrieved into matching context
+        +--> bids for inquiry, review, or portfolio attention
+        +--> requires a named review or outcome check
+        +--> reprioritizes within a comparable queue
+        +--> blocks a transition when an R1/R0 rule explicitly permits it
+```
+
+Each arrow produces a new durable type with source lineage and a policy
+revision. Raw telemetry cannot directly raise priority, enter an actor prompt,
+damage an actor configuration's standing, or block delivery. A curated account
+does not automatically do those things either; it supplies eligible semantic
+inputs to a named signal family.
+
+### Provenance facts
+
+A `ProvenanceFact` is the smallest normalized statement the trusted machinery
+can make about origin or transformation:
+
+```text
+ProvenanceFact {
+    provenance_fact_id
+    source_event_id
+    subject: ClosedProvenanceSubject
+    relation: ProducedBy | Consumed | DerivedFrom | SelectedInto |
+              ExcludedFrom | ChallengedBy | AuthorizedBy | SpentUnder |
+              ObservedBy | SupersededBy | RetractedBy
+    object: ClosedProvenanceObject
+    policy_or_evaluator_revision
+    jurisdiction
+}
+```
+
+Facts are relational edges over existing typed identities. There is no
+free-form property bag and no duplicated byte length, path, timestamp, token
+delta, or message chatter merely because it is cheap to record. Storage and
+audit queries can recover physical facts from their owning tables. A semantic
+fact exists only because a named reconstruction, invariant, derivation, or
+decision query requires it.
+
+Operational audit facts may feed deterministic health alarms—such as a budget
+watcher detecting unknown cost—without first pretending to be epistemic
+evidence. They may not support a product or institutional conclusion until an
+evaluator admits their semantic role and scope.
+
+### Signal families are local mathematical contracts
+
+A `SignalFamilyRevision` defines one reference class in which mathematical
+comparison is meaningful:
+
+```text
+SignalFamilyRevision {
+    signal_family_revision_id
+    name
+    eligible_source_kinds
+    required_warrant
+    independence_rule
+    scope_rule
+    uncertainty_semantics
+    pressure_formula_revision
+    decay_rule
+    hysteresis_rule
+    attention_quota
+    allowed_effects
+    replay_evaluator_revision
+    authority_class
+}
+```
+
+Examples include `unresolved_contract_conflict`,
+`repeated_agent_discovery_failure`, `prediction_due`,
+`cost_reserve_at_risk`, `curation_escalation_hotspot`,
+`lesson_contradicted`, `integration_ready`, and
+`institutional_trial_regression`. These families have different evidence and
+uncertainty semantics. Their raw numeric values are not commensurable.
+
+For a family whose factors have calibrated meanings, a versioned pressure
+function may be:
+
+```text
+pressure(s, now) =
+    severity(s)
+  * affected_exposure(s)
+  * warrant_lower_bound(s)
+  * time_pressure(s, now)
+  * independence_factor(s)
+  -------------------------------------------------
+    estimated_response_cost(s)
+  * (1 + already_committed_capacity(s))
+```
+
+This is illustrative structure, not one formula frozen for every family.
+`severity`, `exposure`, and `warrant_lower_bound` must be defined and tested for
+that reference class. `time_pressure` may rise toward a prediction deadline but
+decay for a stale speculative opportunity. `independence_factor` prevents five
+cloned reports from appearing to be five confirmations. Denominators have
+typed floors so a zero estimate cannot create infinite priority.
+
+The result answers only: “within this signal family and policy revision, which
+eligible candidate exerts more pressure on this bounded consumer?” It does not
+answer whether a semantic conflict is more valuable than a security incident
+or a delayed outcome. Across families, constitutional precedence, explicit
+portfolio envelopes, Pareto dominance, due obligations, and reserved capacity
+govern. A deterministic tie-breaker applies only after that partial order.
+
+### Eligibility before arithmetic
+
+No signal bubbles by multiplying cheap measurements. Before pressure is
+computed, the kernel or a deterministic projector verifies:
+
+1. every source revision exists and is visible to the target jurisdiction;
+2. the source kind satisfies the family's evidence-admission and curation rule;
+3. required challenges, independence, or replication exist;
+4. applicability scope overlaps the proposed target;
+5. the source and its carriers are not retracted, expired, contaminated, or
+   superseded for this use;
+6. uncertainty is represented in the form required by the family;
+7. the derivation policy passed its replay tests; and
+8. the target has remaining family-specific attention capacity.
+
+An ineligible signal receives a typed reason and remains queryable. It does not
+get coerced to zero, because “not currently eligible,” “measured no effect,”
+and “lost a comparison” are different facts.
+
+### Influence is a scarce, recorded effect
+
+`DerivedSignal`, `InfluenceCandidate`, `InfluenceDecision`, and
+`InfluenceEffect` preserve the complete chain:
+
+```text
+DerivedSignal {
+    signal_id
+    signal_family_revision_id
+    source_set_revision
+    target_scope
+    typed_measurements
+    uncertainty
+    valid_from
+    expires_or_recompute_at
+}
+
+InfluenceCandidate {
+    influence_candidate_id
+    signal_id
+    target: Project | Ticket | Review | ContextSlot | OutcomeObligation |
+            PortfolioPartition | GrandArchitectBrief
+    requested_effect: Visible | RetrieveOnMatch | AttentionBid |
+                      ReviewRequired | Reprioritize | AdmissionBlock
+    comparison_class
+    pressure_inputs
+    pressure_formula_revision
+}
+
+InfluenceDecision {
+    influence_decision_id
+    candidate_id
+    disposition: Applied | Deferred | Rejected | Expired | Displaced
+    authority_or_policy_revision
+    reason
+    displaced_candidate_id
+    attention_consumed
+}
+
+InfluenceEffect {
+    influence_decision_id
+    target_revision_before
+    target_revision_after
+    observed_at
+    effect_status: Pending | Observed | Failed | Reverted
+}
+```
+
+Most signals should become `Visible`, `RetrieveOnMatch`, or an `AttentionBid`.
+`ReviewRequired` is reserved for a named governance contract.
+`AdmissionBlock` is rare and legal only when an exact R0 or R1 rule names the
+signal family, target transition, clearance condition, and authority. A model
+cannot invent a blocking signal by describing an issue as “critical.”
+
+Every consumer has an influence budget: context slots, open challenge count,
+project WIP, portfolio capacity, or Grand Architect brief length. Each signal
+family has a quota or reserve so a high-volume family cannot monopolize the
+surface. Diversity reserves protect minority hypotheses and under-observed
+niches. Hysteresis prevents repeated rank oscillation near a threshold. Decay
+and expiry remove stale pressure without deleting history. Reopening and
+retraction follow dependency edges rather than broadcast to everyone.
+
+### Active consumers
+
+The first consumers of curated provenance are concrete:
+
+- the Grand Architect brief shows constitutional conflicts, decisions due,
+  cost reserve, delivery blockers, dissent, and expired obligations with a
+  bounded top set plus queryable remainder;
+- portfolio admission and project chartering receive family-local attention
+  bids, never an unexplained universal priority;
+- ticket readiness derives from graph motivation, prerequisites, budget,
+  capability, and judge availability;
+- context assembly retrieves the active Universe Seed unconditionally and
+  lessons, accounts, conflicts, and source excerpts only on scoped matches;
+- adversarial-review assignment reacts to risk, ancestry, unresolved dissent,
+  and evidence weakness;
+- coordination pulses expose newly eligible, displaced, decayed, contradicted,
+  or budget-relevant signals;
+- outcome obligations and failed predictions reopen named dependents;
+- postmortems receive the ledger-derived event and cost timeline plus relevant
+  prior challenges; and
+- institutional science compares whether influence policies improved later
+  decisions under matched cost rather than celebrating signal volume.
+
+Every applied influence answers ordinary typed queries: Which source
+distinctions produced it? Which curation admitted them? Which family and
+formula revision compared them? Which other candidates were displaced? Which
+authority or policy applied the effect? What later outcome supported or
+defeated the intervention? If a result can only be explained from a model's
+summary prose, it is not an acceptable influence mechanism.
+
+### Influence policy can improve, but cannot self-certify
+
+Signal admission rules, formulas, decay, quotas, context retrieval, and
+cross-family portfolio policy are R2 institutional machinery. Changing one is
+C3. A proposed descendant is replayed against hindsight-sequestered decision
+worlds, then shadowed, then canaried under a fixed resource envelope. It is
+judged on decision sufficiency, missed reversals, contamination, attention
+cost, calibration, diversity, and downstream outcomes.
+
+The candidate policy cannot select its own evaluation cases, redefine its own
+success measure, conceal displaced signals, or promote itself. The Grand
+Architect authorizes promotion after the required challenge record; no human
+ratification is implied. The ancestral policy and non-dominated alternatives
+remain available for rollback and niche-specific use.
 
 ## Governance and legitimacy
 
@@ -559,8 +1240,63 @@ Jurisdiction limits where and under what risk class a capability applies.
 
 An actor may be excellent at semantic review and still have no authority to
 merge, allocate its own budget, promote its own lesson, or change its evaluator.
-No role name implies authority. The database records the exact delegation and
-its expiry.
+An informal role name in a prompt implies no authority. Occupancy of a typed
+Office does imply its exact capability bundle and jurisdiction. The database
+records the office contract, occupant, delegation, succession, and expiry.
+
+### The Grand Architect
+
+`TheGrandArchitect` is the highest constitutional Office and the sole final
+decision authority inside the running society. Its display name is **The Grand
+Architect**. The kernel does not ask whether its occupant is a human or a coding
+agent; it authenticates the occupant principal and current office grant.
+
+The office exists to concentrate coherent direction without making every
+subsystem a plebiscite. Its reserved powers are:
+
+```text
+ratify and amend the active UniverseSeed
+charter, pause, resume, terminate, and rank Projects
+allocate and reallocate resource envelopes within R0 hard ceilings
+appoint and remove occupants of subordinate Offices
+approve circuit and organization configurations
+authorize, reject, or accept risk for C2, C3, and C4 changes
+require an AdversarialReview, Postmortem, replay, or outcome observation
+resolve cross-institution conflicts and documented policy exceptions
+reopen any non-forensically-destroyed work or constitutional question
+designate a successor under the active succession contract
+```
+
+The office does not gain raw SQL, content-store mutation, secret access outside
+an execution profile, or the ability to forge evidence, alter old events,
+create unreserved spend, or force an invalid state transition. Those are not
+competing centers of political power; they are R0 physics. The Grand Architect
+may authorize a C5 replacement proposal, but the running kernel cannot deploy
+its own replacement through ordinary state commands.
+
+Concentration of decision authority is paired with concentration of
+accountability. Every reserved-power command cites an exact Decision and
+Universe Seed revision. C2–C4 decisions require a complete packet and the
+specified independent challenge. The Grand Architect may reject the challenge
+or accept the disclosed risk, but must answer it in a typed disposition. It
+cannot make dissent disappear, retrospectively change the decision frontier,
+or certify evidence by decree.
+
+The initial occupant is installed during society creation by the bootstrap
+principal. Later occupancy changes use `TransferGrandArchitectOffice`, which is
+atomic: there is never more than one active occupant, the predecessor and
+successor are explicit, in-flight capabilities are reconciled, and a sealed
+succession packet records the active seed, budget, projects, due decisions,
+open challenges, and emergency state. The office may be occupied directly by
+the user for hands-on operation or by one assigned coding agent for autonomous
+operation without changing any downstream contract.
+
+The Grand Architect reads curated decision surfaces by default: the active
+seed, portfolio, coordination pulse, eligible influence, strongest dissent,
+and decision packets. Raw-session access is an explicit forensic escalation,
+recorded because repeated escalation indicates failed curation. If a coding
+agent occupies the office, its attempts use the same pinned model and cost
+policy as every other paid actor unless a later C3 policy change is authorized.
 
 ### Decision packet
 
@@ -569,7 +1305,7 @@ Every consequential decision preserves:
 ```text
 question and decision authority
 eligible alternatives, including no change
-applicable charter values and hard constraints
+applicable Universe Seed values and hard constraints
 evidence and its limitations
 arguments for and against each alternative
 unresolved unknowns and named dissent
@@ -591,37 +1327,44 @@ decision that got lucky.
 | --- | --- | --- |
 | C0 observation | Run a read-only benchmark | Scoped capability, budget, sealed receipt |
 | C1 reversible inquiry | Prototype in an owned directory or Git worktree | Preregistered experiment and cleanup |
-| C2 product mutation | Merge an XSH fix or feature | Independent evidence, product review, tests, revert path, human authority initially |
+| C2 product mutation | Deliver an XSH fix or feature | Independent evidence, product review, tests, revert path, Grand Architect authorization |
 | C3 institutional mutation | Change routing, actor population, context, or evaluator policy | Organization trial, baseline, diversity guard, canary scope, rollback |
-| C4 constitutional amendment | Change values, reserved authority, or promotion standard | Explicit amendment episode and human ratification |
-| C5 trusted-kernel mutation | Change ledger, capability, accounting, or evidence physics | External implementation and review; society cannot deploy it |
+| C4 constitutional amendment | Change Universe Seed, reserved authority, succession, or promotion standard | Explicit amendment episode, independent challenge, cooling or urgency record, Grand Architect ratification |
+| C5 trusted-kernel mutation | Change ledger, capability, accounting, or evidence physics | External implementation and adversarial review; the running kernel cannot deploy its replacement |
 
 A change can only move inward through the authority rings by a stricter process.
 The proposer, beneficiary, implementer, evaluator, and promoter need not always
 be five actors, but independence requirements increase with the change class.
-No mutation certifies its own evaluator or grants itself wider authority.
+No mutation certifies its own evaluator or widens its own command authority.
+The Grand Architect may grant wider authority in a separate decision after the
+required evidence and challenge; the mutation itself cannot make that grant a
+side effect.
 
-### Human sovereignty and graduated autonomy
+### Holder-agnostic autonomy
 
-Initially, a human operator ratifies the charter, controls C2-C5 promotion,
-defines external resource ceilings, and may pause, veto, or revert the society.
-The society should make human judgment higher leverage by delivering compact
-decision packets, not conceal judgment behind automation.
+Autonomy is determined by who currently occupies the Grand Architect office
+and which bounded capabilities it delegates, not by a system-wide “human in the
+loop” flag. A user occupant may personally exercise each reserved power. An
+agent occupant may exercise the same powers through supervised, budgeted
+attempts. Subordinate circuits remain autonomous only within their delegated
+class, scope, resource envelope, and expiry.
 
-Autonomy is a capability granted for a defined class, scope, budget, and expiry
-after observed calibration. It is not a global maturity level. The system might
-earn autonomous low-risk documentation integration while semantic changes
-remain human-controlled indefinitely.
+Emergency stop and C5 deployment controls may remain available to the host
+administrator because no process can remove the authority of its operating
+environment. They are recorded as external interventions, never credited to
+the society, and do not form a standing ratification tier. Evaluation of
+autonomous performance reports those interventions, failed attempts, cost, and
+changed external conditions explicitly.
 
 ## Actors, culture, and professions
 
-### Actor configuration is a genome, not a job title
+### Actor configuration is a developmental policy, not a job title
 
 An actor is a versioned policy for creating bounded cognitive work, not a
 persistent chat persona. Its heritable configuration may include:
 
 ```text
-ActorGenome {
+ActorConfiguration {
     model_and_inference_policy
     cognitive_and_epistemic_biases
     exploration_exploitation_bias
@@ -631,15 +1374,19 @@ ActorGenome {
     communication_edges_and_bandwidth
     authority_and_budget_ceiling
     demand_signal_response_policy
+    developmental_attractor_biases
+    differentiation_and_dedifferentiation_policy
     persistence_and_retirement_policy
-    reproduction_recombination_and_mutation_policy
+    branching_recombination_and_mutation_policy
 }
 ```
 
-The genome identifies predisposition. The phenotype is observed behavior on a
-problem distribution: what the actor notices, which work it selects, how well
-calibrated it is, how it interacts, and what downstream effects its
-contributions have.
+The configuration identifies predisposition. The phenotype is observed
+behavior on a problem distribution: what the actor notices, which work it
+selects, how well calibrated it is, how it interacts, and what downstream
+effects its contributions have. Biological language is explanatory shorthand,
+not a schema design: configuration, lineage, branch, and retirement are the
+canonical terms.
 
 “Researcher,” “challenger,” and “integrator” are initial developmental
 attractors. They are not hard-coded classes. Useful starting biases are:
@@ -649,6 +1396,56 @@ explore  build  measure  challenge  synthesize  integrate  remember  coordinate
 ```
 
 These name basic functions rather than human management ranks.
+
+### Development is an interaction, not configuration lookup
+
+An attractor is a broad basin toward which behavior may stabilize under
+particular conditions. It is neither a prompt template nor a row named
+`reviewer`. An actor configuration expresses sensitivities and possible
+developmental responses along several axes:
+
+```text
+AttractorBias {
+    functional_axis
+    initial_strength
+    demand_signal_sensitivity
+    activation_and_decay_policy
+    compatible_and_antagonistic_axes
+    context_and_tool_affinities
+    evidence_needed_to_stabilize
+}
+```
+
+The realized phenotype depends on the whole developmental context:
+
+```text
+actor predisposition
+  × current demand gradients
+  × admitted cultural material
+  × tools and authority
+  × collaborators and opponents
+  × resource history and time horizon
+  × reinforcement from downstream consequences
+  -> observed phenotype
+```
+
+The same configuration may become a proof-oriented skeptic in a semantic
+episode, a failure-minimizing test designer in a runtime episode, or remain
+undifferentiated when no matching niche exists. Conversely, several different
+lineages may converge on similar useful behavior. This is why neither actor
+configuration nor model identity is a profession.
+
+Early experiments may deliberately instantiate named treatments such as
+“contract cartographer” or “product adversary.” Those names describe the
+assignment and experimental condition. They do not establish durable species
+in the ontology. Only repeated phenotype evidence across episodes can justify a
+learned social compression.
+
+Development itself is observable. The society records which signals an actor
+responded to, which work it claimed or ignored, how its behavior changed across
+bounded sessions, which practices it adopted from culture or peers, and which
+downstream contributions made the apparent specialization useful. It does not
+infer an inner trait merely from fluent self-description.
 
 ### Culture is separate heredity
 
@@ -727,6 +1524,51 @@ This produces a hybrid nervous system:
 - explicit escalation handles conflicts or reallocations which local policy
   cannot resolve.
 
+The kernel does not issue semantic work merely because a signal is strong.
+Signals advertise conditions; actor policies express interest; the scheduler
+checks capability, dependencies, WIP, diversity, and budget; governance may
+reserve or redirect scarce capacity. This separates ecological attraction from
+authorization.
+
+### Ecological state and homeostasis
+
+A demand signal is derived from named source facts and has:
+
+```text
+kind and problem scope
+source revisions and projection policy
+strength or ordering evidence
+birth, decay, saturation, and expiry rules
+capacity already responding
+neglect and over-response indicators
+```
+
+Strength need not be a scalar shared across signal kinds. “Three unresolved
+soundness contradictions” and “integration latency above its historical band”
+can both attract work without pretending to be commensurable.
+
+The society observes ecological failures:
+
+- **starvation:** a persistent warranted need attracts no capable lineage;
+- **swarming:** many correlated actors respond to the same visible signal while
+  other needs are neglected;
+- **herding:** shared culture or ancestry causes apparently independent actors
+  to make the same selection;
+- **predation:** a phenotype consumes scarce evaluation or integration capacity
+  while externalizing cleanup;
+- **signal gaming:** actors create or amplify demand facts which preferentially
+  allocate resources back to them;
+- **ossification:** an established profession monopolizes a niche despite
+  cheaper or more accurate variants; and
+- **ecological collapse:** diversity or downstream capacity falls below the
+  level needed to test upstream production.
+
+Homeostatic responses are governed policies: WIP reduction, capacity reserve,
+novelty admission, signal dampening, independent challenge, actor dormancy, or
+a deliberate profession-birth experiment. They are not evidence that the
+underlying epistemic claim is true. The institution must be able to alter its
+coordination field without altering the observations from which it was derived.
+
 ### Endogenous professions
 
 A profession is a learned compression over useful phenotypes, methods,
@@ -748,6 +1590,41 @@ and limited authority. The label never becomes proof of competence.
 This permits professions with no human equivalent—for example a counterfactual
 lineage auditor or epistemic contamination investigator—while avoiding a
 permanent CEO/manager/engineer ontology.
+
+A recognized profession is therefore a small social institution, not a model
+alias. Its revision may include:
+
+```text
+recognized_niche_and_failure_history
+phenotype_cluster_and_lineage_diversity
+shared_method_and_training_cases
+interfaces_with_other_professions
+qualification_and_calibration_evidence
+bounded_jurisdiction_and_authority
+professional_norms_and_dissent_duties
+resource_claim_and_expected_externalities
+review, fork, dissolution, and succession rules
+```
+
+Formalization is useful when it compresses a recurring coordination pattern:
+others know what evidence to supply, what output to expect, which authority is
+legitimate, and how to challenge malpractice. Formalization is harmful when it
+turns one early implementation into a protected caste.
+
+Profession birth consequently needs more than repeated task success. Evidence
+must show a persistent need, a behavior cluster which transfers across cases, a
+predictable interface, benefit after coordination cost, and no simpler cultural
+or tooling intervention that solves the need. Recognition begins with expiry
+and narrow jurisdiction. Profession death is equally ordinary when the niche
+disappears, its method becomes infrastructure, or another phenotype dominates
+within the same constraints.
+
+Knowledge can move between hereditary layers during this process. A useful
+personal technique may become professional culture; a professional checklist
+may become an evaluator; an evaluator may become an XSH invariant; after that,
+the original profession may shrink because its former expertise is now part of
+the environment. Society-level development includes this continual movement of
+cognition into institutions and infrastructure.
 
 ### Diversity is infrastructure
 
@@ -775,11 +1652,21 @@ services. Institutions are mutable R2 configurations, not Rust subclasses.
 V2 preseeds the following functional institutions because the need for their
 separation is already supported by V1 and ordinary scientific practice.
 
-### Charter stewardship
+### Grand Architect office
 
-Maintains the ratified mission, values, reserved powers, risk classes, and
-amendment history. It accepts challenges and constitutional proposals but
-cannot self-ratify them.
+Maintains one accountable apex for purpose, portfolio direction, allocation,
+cross-institution resolution, C2–C4 authorization, and succession. The office
+contract and occupancy are R1 state; its staff circuit, context policy, and
+coordination surface are R2 and may improve through bounded trials. The office
+does not own evidence or implementation merely because it owns the final
+decision.
+
+### Constitutional stewardship
+
+Maintains Universe Seed revisions, values, reserved powers, risk classes,
+succession terms, source divergence, and amendment history. It prepares
+constitutional proposals and challenges; only the Grand Architect ratifies an
+active descendant.
 
 ### Observatory
 
@@ -842,6 +1729,338 @@ These institutions are seed constitutional organs, not a final social anatomy.
 Their boundaries may split, compose, or be replaced through C3 trials, provided
 the required functions and independence constraints remain satisfied.
 
+## Corporate operating system
+
+The epistemic graph is the society's account of reality; corporate structures
+are its durable means of coordinating action. V1 was right that tickets,
+projects, review, leadership, budgets, and postmortems reduce ambiguity. Its
+mistake was allowing a ticket pipeline to stand in for inquiry. V2 preserves
+both layers and links them with typed references.
+
+```text
+UniverseSeed
+    |
+    v
+TheGrandArchitect -----> Portfolio envelopes and Decisions
+    |                           |
+    +---- charters ------------+
+                |
+             Projects
+          /       |       \
+   Episodes    Tickets    Milestones
+      |           |
+   knowledge   Attempts -> Submissions -> Judges
+          \       |       /
+           ProductChanges
+                |
+       Outcomes and obligations
+
+CoordinationPulse observes the whole operating surface.
+AdversarialReview can challenge any named revision.
+Retrospective learns routinely; Postmortem responds to a trigger.
+```
+
+A Project or Ticket may cite graph motivation; it never becomes the only place
+where that motivation exists. A Question does not become actionable simply by
+having a ticket. Conversely, deterministic maintenance need not manufacture a
+grand Hypothesis when a reproduced condition, acceptance judge, and product
+contract are sufficient.
+
+### Projects
+
+A `Project` is a Grand-Architect-chartered portfolio container for a coherent
+objective and resource/risk envelope:
+
+```text
+Project {
+    project_id
+    project_revision
+    universe_seed_revision
+    title
+    purpose
+    north_star_alignment_id
+    portfolio_partition
+    steward_principal_or_office
+    risk_class
+    integration_jurisdiction
+    resource_envelope_id
+    start_condition
+    stop_conditions
+    outcome_obligation_policy
+    status
+}
+
+ProjectObjective {
+    project_revision
+    objective_revision_id
+    ordinal
+}
+
+ProjectMilestone {
+    milestone_id
+    project_revision
+    acceptance_judge_revision
+    due_condition_or_horizon
+    status
+}
+```
+
+The state machine is:
+
+```text
+proposed -> challenged -> chartered -> active -> observing -> closed
+proposed | challenged -> rejected
+chartered | active | observing -> paused -> active
+chartered | active | paused | observing -> terminated
+closed | terminated -> reopened -> active
+```
+
+`blocked` is an orthogonal condition with owner, cause, escalation horizon, and
+budget consequence. `closed` requires milestone dispositions, Ticket and
+Episode dispositions, budget reconciliation, due outcome obligations, and a
+Retrospective. `terminated` preserves unfinished obligations and requires a
+reason; it is not a successful close.
+
+The Grand Architect charters, pauses, terminates, or reopens a Project through
+a Decision. A Project steward may plan and allocate only within its envelope.
+An actor cannot enlarge its own project or convert unspent budget into a new
+purpose without a charter revision.
+
+### Tickets
+
+A `Ticket` is a typed operational work order inside one Project:
+
+```text
+Ticket {
+    ticket_id
+    ticket_revision
+    project_revision
+    universe_seed_revision
+    graph_motivation
+    title
+    requested_change_or_observation
+    bounded_scope
+    non_goals
+    acceptance_judge_revision
+    required_capability
+    resource_reservation_id
+    risk_and_reversibility
+    independence_requirement
+    owner
+    status
+}
+
+TicketAcceptance {
+    ticket_revision
+    ordinal
+    observable_condition
+    evidence_kind
+}
+```
+
+Its lifecycle is:
+
+```text
+draft -> admitted -> ready -> claimed -> submitted -> verified -> completed
+draft | admitted -> rejected
+admitted | ready | claimed -> cancelled
+claimed -> expired -> ready
+submitted -> changes_requested -> claimed
+submitted | verified -> failed
+completed | failed | cancelled -> reopened -> admitted
+```
+
+Readiness is a kernel derivation over prerequisite graph revisions, Project
+state, reserved cost, required capability, workspace availability, and judge
+availability. A worker may not mark its own ticket `verified` unless the ticket
+contract explicitly names a deterministic self-verifiable judge. Product
+implementation and product delivery remain separate tickets or gates when
+their authorities differ.
+
+Ticket text is a projection. Rust command variants and normalized SQLite rows
+are authoritative. There is no `ticket.json`, generic payload, label-driven
+transition, or completion inferred from a directory. Revisions preserve scope
+changes instead of editing acceptance after seeing a weak result.
+
+### Adversarial reviews
+
+An `AdversarialReview` is scheduled work with a target, challenge budget,
+independence rule, and required disposition. Review kinds are closed and may be
+combined deliberately:
+
+```text
+Assumption
+EvidenceAndProvenance
+CurationAndDisclosure
+ProductAndApi
+CompatibilityAndMigration
+SafetyAndSecurity
+CostAndEfficiency
+InstitutionAndGovernance
+```
+
+The review output is not “approve/reject” prose. It is zero or more typed
+`ReviewChallenge` revisions:
+
+```text
+ReviewChallenge {
+    challenge_id
+    review_id
+    challenged_object_revision
+    kind
+    failure_hypothesis
+    applicability_scope
+    evidence_or_reproducer
+    severity
+    falsification_condition
+    requested_disposition:
+        Correct | AddEvidence | NarrowScope | AcceptRisk | Revert | Escalate
+    reviewer_configuration_and_ancestry
+    disclosure_frontier
+    status
+}
+```
+
+Review lifecycle:
+
+```text
+requested -> assigned -> active -> findings_submitted -> responses_due
+responses_due -> resolved | accepted_risk | superseded | escalated
+requested | assigned -> cancelled
+active -> failed | expired
+resolved | accepted_risk -> reopened
+```
+
+The challenged owner responds to each finding with evidence, correction, scope
+narrowing, or a reasoned rejection. For C2–C4, the Grand Architect issues the
+final disposition. The reviewer cannot edit the target, allocate itself more
+time, or create a generic veto. Only an exact R1/R0 rule can make an unresolved
+challenge block a transition. Review independence considers actor and
+organization ancestry, shared context, source authorship, and evaluator
+ownership; two labels over the same configuration are not independent.
+
+Adversarial review is itself costed and challenge capacity is scarce. Risk,
+uncertainty, reversibility, blast radius, weak evidence, lineage correlation,
+and unresolved minority arguments determine its depth. Routine deterministic
+changes use a fast review path. Review theater is measured as coordination cost
+and findings that never discriminate a decision.
+
+### Coordination pulses (standups without theater)
+
+The useful core of a standup is common situational awareness. The default V2
+implementation is a deterministic `CoordinationPulse` generated at an event or
+time boundary, not a paid multi-agent meeting:
+
+```text
+CoordinationPulse {
+    pulse_id
+    scope: Society | Portfolio | Project | Circuit
+    source_event_cursor
+    changed_projects_and_tickets
+    active_blockers_and_escalations
+    decisions_and_reviews_due
+    cost_spent_reserved_remaining_unknown
+    worker_slots_and_wip
+    new_displaced_decayed_and_contradicted_signals
+    deliveries_and_outcome_obligations_due
+    next_committed_actions_and_owners
+    generated_at
+}
+```
+
+The pulse contains typed references and rebuilds from authority; Markdown is
+only its view. It cannot declare progress, resolve conflict, or invent a next
+action. The Grand Architect and Project stewards acknowledge the pulse or issue
+commands in response. A model-synthesized briefing is optional, separately
+budgeted, cites the exact pulse, and gains no authority from eloquence.
+
+Pulse triggers include start-of-operation, material state transition, new
+blocker, cost threshold, decision horizon, delivery, failed prediction,
+retraction, and a bounded quiet interval. Coalescing prevents event spam while
+urgent constitutional, safety, and budget conditions bypass ordinary batching.
+Repeated unchanged pulses do not consume actor calls.
+
+### Postmortems
+
+A `Postmortem` is mandatory after any configured trigger:
+
+```text
+cost cap breach or unknown-cost forced stop
+security or process-boundary escape
+delivered regression or revert
+trusted invariant or evidence-physics failure
+lost, duplicated, or irreconstructible durable state
+constitutional process violation
+repeated Project milestone miss beyond policy threshold
+Grand Architect order with a stated trigger
+```
+
+The contract is:
+
+```text
+Postmortem {
+    postmortem_id
+    trigger_kind
+    affected_scope
+    universe_seed_revision
+    incident_start_and_detection_events
+    immediate_containment
+    current_impact
+    owner
+    independent_challenger
+    status
+}
+
+PostmortemCausalClaim {
+    postmortem_id
+    claim_revision
+    kind: Proximate | Contributing | Systemic | Detection | Recovery
+    evidence
+    confidence_form
+    competing_claim
+    falsification_or_followup
+}
+
+PostmortemActionProposal {
+    postmortem_id
+    proposed_project_ticket_lesson_or_invariant
+    expected_prevention_or_detection_effect
+    judge
+    cost
+    owner
+}
+```
+
+Lifecycle:
+
+```text
+triggered -> contained -> evidence_collecting -> causal_review
+causal_review -> actions_proposed -> Grand_Architect_disposition -> observing
+observing -> closed | reopened
+```
+
+The event and cost timeline is derived from the ledger, not reconstructed from
+participant memory. Participant accounts and dissent are additional evidence.
+The review distinguishes triggering condition, root-enabling conditions,
+detection latency, containment quality, and recovery. It records
+counterfactuals without pretending one story is proven merely because it is
+coherent.
+
+Corrective proposals do not take effect from the postmortem document. They
+become separately admitted Tickets, Lessons, Invariants, Project revisions, or
+C3/C4 proposals with their own authority and evaluation. The Grand Architect
+may accept residual risk but must state horizon and reopen trigger. Blame,
+punitive reputation, and ritual “action items” with no judge are excluded.
+
+### Retrospectives
+
+Every completed Episode and Project receives a routine `Retrospective` covering
+prediction accuracy, decision sufficiency, curation, circuit fit, cost,
+delivery, propagation, and remaining uncertainty. A Retrospective may propose
+work but carries no incident or containment semantics. The distinction matters:
+if every ordinary lesson becomes a postmortem, failure response becomes noise;
+if every breach becomes a retrospective, accountability and containment vanish.
+
 ## Organizational circuits
 
 A circuit is a versioned composition of institutions, actors, transitions,
@@ -865,6 +2084,35 @@ information gain, reversibility, novelty, ecosystem reach, and evaluator
 quality affect selection. A fast circuit must be available for routine fixes so
 that scientific ceremony does not consume deterministic work. A semantic
 change must not enter that circuit merely to improve throughput.
+
+### Circuit ecology rather than one evolving workflow
+
+The society does not search for a globally optimal organization. It learns a
+repertoire of circuits whose usefulness is conditional on problem distribution,
+resource regime, and maturity of the relevant evidence. A circuit is closer to
+a reusable physiological or legal process than a department hierarchy.
+
+Circuits may:
+
+- compete on matched cases;
+- compose, with one circuit producing an obligation consumed by another;
+- fork when the same name hides behaviorally distinct variants;
+- share actors or cultural methods without sharing authority;
+- lie dormant until a matching signal recurs;
+- transfer a successful subcircuit into another problem class; and
+- dissolve when their function becomes an evaluator, policy, or XSH primitive.
+
+Selection records both the chosen circuit and plausible rejected alternatives.
+The observatory later conditions outcomes on problem features instead of
+concluding that one circuit “wins.” Repeated routing errors are evidence about
+the classifier, the repertoire, or the observed problem description—not
+permission to make the most elaborate circuit universal.
+
+A useful organizational mutation may therefore change the map from conditions
+to circuits rather than any circuit internally. Another may alter the balance
+between deliberate institutional reasoning and cheap speculative leaves. Both
+are society-level heredity and require the same blinded, held-out evidence as a
+topology mutation.
 
 ## Work, scarcity, and backpressure
 
@@ -891,7 +2139,7 @@ capacity can be temporarily loaned with a recorded recall rule.
 A candidate obligation is admitted when it has:
 
 ```text
-charter relevance
+Universe Seed relevance and north-star alignment
 explicit uncertainty or actionable reproduced condition
 expected outcome or information value
 required prerequisites and judges
@@ -941,6 +2189,97 @@ Scheduling combines:
 The resulting allocation and rejected alternatives are recorded for costly
 work. There is no universal scalar priority. Deterministic tie-breaking may be
 used after the governing partial order leaves candidates equivalent.
+
+### Paid actor and cost policy
+
+The initial society has one mandatory model policy for **every** paid actor
+attempt, including the Grand Architect when occupied by an agent, inquiry,
+curation, implementation, paired probes, adversarial review, and postmortem
+analysis:
+
+```text
+ActorModelPolicyV1 {
+    pi_version: 0.83.0
+    provider: openrouter
+    model: deepseek/deepseek-v4-flash-0731
+    thinking: high
+    fallback: None
+}
+```
+
+There is no quiet provider fallback, model alias, lowered thinking level, or
+role-specific exception. Each `ActorConfiguration` references this exact policy
+revision. A change is a C3 model-policy mutation with cost, capability,
+contamination, and comparison consequences; it does not happen because a local
+Pi default changed.
+
+Money is stored and calculated as integer micro-US-dollars:
+
+```text
+UsdMicros(u64)
+
+CostObservation =
+    Known { cumulative: UsdMicros, source_event_identity }
+  | Unknown { reason: ClosedUnknownCostReason }
+  | Unavailable { reason: ClosedUnavailableCostReason }
+
+BudgetEnvelope {
+    budget_id
+    parent_budget_id
+    scope_kind
+    scope_id
+    hard_cap: UsdMicros
+    reserved: UsdMicros
+    observed: UsdMicros
+    status: Open | Exhausted | Frozen | Reconciled
+}
+```
+
+Floating point does not cross the durable accounting boundary. Provider values
+are parsed once with an exact, versioned rounding policy. `Unknown` and
+`Unavailable` are states, never zero. Duplicate Pi usage events are
+idempotently normalized by session and source-event identity so assistant,
+tool, retry, and compaction costs are not double counted.
+
+Budget control is hierarchical and precommitted:
+
+```text
+society hard ceiling
+  -> portfolio envelope
+     -> Project envelope
+        -> circuit or Episode envelope
+           -> Ticket reservation
+              -> ActorAttempt hard cap
+```
+
+Before `StartAttempt`, the kernel transactionally reserves the attempt cap
+against every ancestor. Insufficient unreserved capacity rejects the command;
+“probably cheap” is not a budget. Completion reconciles known actual cost and
+returns the unused reservation. A retry, forensic re-read by a model, extended
+review, or follow-up is a new reservation. Unused money is not a mandate to run
+more agents.
+
+The native supervisor watches the Pi session and event stream continuously. On
+per-attempt or ancestor-cap breach, malformed cumulative cost, cost regression,
+or cost becoming unknown/unavailable after paid work begins, it stops admission,
+cancels descendants, terminates the owned process group, seals partial
+evidence, and emits a typed budget incident. Provider accounting arrives after
+responses, so the hard cap limits authorized continuation rather than claiming
+physically impossible zero overshoot. Turn and wall limits bound additional
+exposure.
+
+Any aggregate breach or unknown-cost forced stop triggers a Postmortem. The
+cost ledger records reservation, known spend, possible unobserved exposure,
+cancellation latency, and responsible policy. A provider outage or missing cost
+field is not charged as successful agent productivity. The Grand Architect may
+lower an envelope or spend explicitly reserved contingency; raising the society
+hard ceiling requires a separate budget-ceiling decision through the bootstrap
+authority boundary, so an agent cannot fund its own continued deliberation.
+
+Deterministic Rust/XSH judges, projection rebuilds, transaction tests, cached
+fixtures, and Pi doubles are the default development path. Paid calls are used
+only for preregistered actor work that a deterministic service cannot supply.
+Coordination pulses and ordinary status queries never invoke a model.
 
 ### Resource and contribution accounting
 
@@ -1043,6 +2382,40 @@ delivery and behavior-change policy
 expiry, revalidation, downgrade, and revocation rules
 ```
 
+### Knowledge changes media
+
+Propagation is not movement of one immutable document. A warranted distinction
+can be transduced through increasingly consequential carriers:
+
+```text
+observation
+  -> scoped claim
+  -> curated lesson or worked example
+  -> retrieval/context rule
+  -> professional method or qualification case
+  -> circuit or governance policy
+  -> deterministic evaluator
+  -> XSH API, type, effect, or enforced invariant
+```
+
+Each conversion has its own authority, scope, evidence standard, rollback, and
+failure mode. The source claim remains linked, but the representations need not
+have the same shape. “A reviewer should remember to check process ownership” is
+weak cultural inheritance; a typed API which makes unowned process lifetime
+explicit is technical inheritance of the same underlying knowledge.
+
+This movement from culture into infrastructure is one of the society's
+strongest forms of cumulative evolution. It can also remove a former niche: if
+an evaluator or language construct cheaply enforces what once required expert
+attention, that attention should migrate to unresolved work rather than defend
+the old profession.
+
+Transduction is not automatically monotonic. A rigid evaluator may overfit a
+provisional lesson; a context rule may contaminate unrelated inquiries; a type
+system may encode the wrong causal account. Every target representation names
+the lesson revision and scope it operationalizes so contradictory evidence can
+find and challenge the derived machinery.
+
 ### Propagation ladder
 
 | Level | Meaning | Permitted effect |
@@ -1074,6 +2447,30 @@ observation
 Notification is not propagation success. The system measures whether relevant
 work received the correct revision and whether the intended decision or judge
 changed. It also samples non-target work to estimate contamination.
+
+The propagation record distinguishes increasingly strong observations:
+
+| State | What is established |
+| --- | --- |
+| Targeted | A declared audience or machine dependent should receive the knowledge |
+| Delivered | The exact revision reached the target representation or context |
+| Encountered | A target actor, circuit, or judge actually processed that representation |
+| Applied | The expected distinction is visible in one relevant behavior or decision |
+| Causally supported | A matched or otherwise discriminating comparison supports attribution to the propagation |
+| Institutionalized | The behavior persists across target cases, citizens, and time within scope |
+
+These are observations about a target, not promotion levels of the lesson
+itself. A high-confidence L3 policy can be delivered but not yet encountered; an
+L1 lesson can be explicitly encountered in a research probe without becoming
+default guidance. The database must not turn delivery acknowledgement into
+behavior change through a generic `completed` flag.
+
+Propagation latency is measured from the warrant or promotion event to each of
+these boundaries, with censored targets left visible. Precision asks whether
+targets were relevant; recall asks which relevant targets were missed;
+contamination asks whether non-target behavior changed; impact asks whether the
+knowledge altered a consequential decision or invariant. Fast delivery with low
+warrant or indiscriminate scope is a failure, not an optimization victory.
 
 ### Retraction is symmetric
 
@@ -1166,15 +2563,15 @@ history.
 
 ## Organizational heredity and experimentation
 
-### The society-level genome
+### Organization configuration
 
 An `OrganizationConfiguration` pins the R2 variables which could affect an
 episode:
 
 ```text
-OrganizationGenome {
+OrganizationConfiguration {
     actor_population_and_diversity_policy
-    actor_genomes_and_model_assignments
+    actor_configurations_and_model_assignments
     institutions_and_circuits
     communication_and_context_topology
     jurisdiction_and_escalation_rules
@@ -1183,7 +2580,7 @@ OrganizationGenome {
     memory_retrieval_and_trace_curation
     propagation_and_retraction_policy
     outcome_followup_policy
-    reproduction_mutation_and_retirement_policy
+    branching_mutation_and_retirement_policy
 }
 ```
 
@@ -1212,6 +2609,67 @@ cluster around assumptions made before implementation; insert an independent
 assumption challenge for C2 semantic work.” Blind mutations are also useful in
 bounded search spaces. Both share lineage and evaluation requirements.
 
+### Decision worlds and epistemic disclosure frontiers
+
+Every consequential episode should be capable of yielding a historical
+decision world. A decision world is not a transcript replay. It reconstructs
+the actionable reality at one legitimate knowledge boundary:
+
+```text
+DecisionWorld {
+    source_episode_and_decision
+    frontier_event_and_time
+    allowed_object_revisions
+    admitted_source_and_repository_snapshots
+    organization_and_execution_configuration
+    culture_and_policy_available_as_of_frontier
+    unresolved_unknowns_and_conflicts
+    authority_and_resource_envelope
+    explicitly_sequestered_descendant_material
+}
+```
+
+The authoritative registry may link the world to its source episode and
+decision so an independent judge can later open the aftermath. The replay
+principal receives a frontier-local opaque world identity; source names or
+identifiers which reveal the decision are not members of its view.
+
+The `EpistemicDisclosureFrontier` is an enforceable allowlist derived from
+source chronology and explicit exceptions. It excludes later outcomes,
+retrospectives, reversals, lessons derived from the case, current source which
+embodies the answer, and indirect identifiers which trivially reveal the
+aftermath. A replay context is assembled only from frontier members. Any raw
+forensic access outside the frontier contaminates the attempt and remains
+visible rather than being repaired after the fact.
+
+The frontier captures availability, not truth. It can contain a stale proposal,
+an unresolved conflict, or evidence later shown misleading if those were
+legitimately part of the original world. Hindsight must not make the ancestor
+look irrational or the descendant clairvoyant.
+
+The aftermath is retained separately:
+
+```text
+decision world W at frontier F
+  -> original action and rationale
+  -> immediate observations
+  -> delayed, censored, or confounded outcomes
+  -> reversals and later lessons
+```
+
+This split makes historical reality an expanding experimental environment. It
+supports tests of judgment, routing, curation, profession candidates,
+propagation policies, and entire organization configurations without requiring
+a universal quality function or waiting for every new variant to accumulate
+years of live consequences.
+
+Counterfactual output never edits the historical episode. It creates a new
+attempt linked by `replays_world`, with its own proposed decision and cost.
+Comparison asks which relevant distinctions the variant recovered, which
+outcomes its predictions anticipated, what it would have changed, which new
+errors it introduced, and which resources it consumed. The original decision
+is evidence, not an answer key.
+
 ### Experimental ladder
 
 Organization variants advance through increasingly realistic but risky worlds:
@@ -1231,6 +2689,19 @@ Organization variants advance through increasingly realistic but risky worlds:
 Historical replays must sequester later outcomes, retrospectives, current
 lessons derived from the case, and other leakage. A replay is a test of behavior
 under a reconstructed information set, not an opportunity to recite history.
+
+The historical corpus is stratified by problem class, risk, ambiguity, outcome
+horizon, and known institutional failure—not optimized into one leaderboard.
+Cases used to hypothesize or train a mutation cannot certify it. Held-out worlds
+remain sealed until the organization configuration and predictions are fixed.
+As model families, XSH revisions, and external conditions change, live shadow
+and canary evidence determine whether historical performance still transfers.
+
+Profession formation uses the same machinery. A recurring failure pattern may
+justify several candidate phenotypes, but a profession is recognized only when
+one or more variants recover useful distinctions across blinded worlds and
+later work at acceptable coordination cost. Thus the fossil record creates
+niches without allowing hindsight to manufacture expertise.
 
 ### Selection preserves an archive
 
@@ -1276,8 +2747,40 @@ semantics do not belong in the kernel. Initial XSH-owned surfaces include:
 - the society's own native behavior tests at the XSH boundary.
 
 Rust owns SQLite, transactions, migrations, access enforcement, leases,
-artifact sealing, ledger replay, and crash recovery. XSH never becomes a
+content sealing, ledger replay, and crash recovery. XSH never becomes a
 database DSL or an alternate durable workflow engine.
+
+### XSH is cognitive and social technology
+
+An XSH construct changes more than executable programs. It changes which
+distinctions are cheap to express, visible to tools, enforceable by evaluators,
+recoverable from source, and transmissible between citizens. The language is
+therefore part of the society's developmental environment.
+
+Examples include:
+
+- explicit process ownership making cancellation and reaping available to both
+  static checks and review actors;
+- typed paths eliminating a class of shell-quoting folklore from cultural
+  memory;
+- stable semantic identities enabling transformations and decisions to refer to
+  meaning rather than source coordinates;
+- structured errors making failure observations comparable across episodes;
+- effect declarations creating new niches for effect auditors, transformation
+  tools, or local scheduling policies; and
+- executable invariants moving fragile professional knowledge into durable
+  technical heredity.
+
+A language change may also destroy social capacity: obscure a distinction,
+force agents into shell escape hatches, make historical programs unreadable,
+or centralize expertise in a costly profession. Product evaluation must
+therefore consider the institutions and phenotypes a feature enables, changes,
+or makes obsolete—not only runtime and surface syntax.
+
+The society must not prefer self-use for its own sake. XSH remains a language
+for humans and real systems-glue workloads. Institutional leverage is one
+Universe Seed value whose trade with simplicity, compatibility, performance, and
+human legibility remains explicit.
 
 ### The closed-loop opportunity
 
@@ -1340,10 +2843,59 @@ society using XSH revision A -> decision quality, delivery, cost, failures
 society using XSH revision B -> decision quality, delivery, cost, failures
 ```
 
-Such trials need multiple tasks and contamination controls. A result can justify
-a feature whose local runtime cost is outweighed by a demonstrated gain in
-correct modification, review, or institutional expressiveness. The trade stays
-visible rather than becoming one self-improvement score.
+This is **lineage utility**, distinct from local product utility. A feature can
+be locally awkward yet lineage-positive if it makes later changes safer,
+creates better experiments, or enables a valuable institutional form. It can
+also be locally elegant yet lineage-negative if it hides effects or makes
+future transformation brittle. Neither claim is licensed by intuition alone.
+
+An improvement-productivity trial defines:
+
+```text
+target problem distribution and held-out tasks
+baseline and candidate XSH worlds
+matched models, actor configurations, tools, authority, and budgets
+learning/wash-in period and contamination barriers
+circuits permitted to adapt versus variables deliberately held fixed
+product, discovery, propagation, and coordination observations
+failure severity and external assistance or override
+delayed follow-up and ancestral compatibility
+```
+
+The observations remain multidimensional:
+
+- correct task completion and surviving delivered changes;
+- time and scarce evaluation/integration attention per warranted change;
+- ability to explain and review effects without transcript archaeology;
+- prediction calibration and reversal frequency;
+- shell escape hatches, workaround complexity, and hidden host assumptions;
+- lesson uptake and the cost of moving a discovery into an evaluator or
+  invariant;
+- maximum safe change scope achieved under the same authority envelope;
+- new useful circuits or phenotypes made practicable; and
+- regressions for human users, external workloads, and bootstrap lineage.
+
+The society first uses microprobes—for example, matched actors implementing the
+same process-supervision task against two API/reference worlds. Those probes
+generate hypotheses and evaluator evidence; they do not establish general
+lineage fitness. Promotion needs several held-out tasks and delayed evidence.
+
+Organization adaptation creates a special experimental choice. Holding the
+organization fixed estimates whether a language world is immediately easier to
+use. Allowing bounded adaptation estimates the larger question: which new
+social forms become possible in that world? Both are valuable and must not be
+mixed into one result.
+
+A demonstrated gain can justify a visible trade, such as a small local runtime
+or syntax cost in exchange for materially safer modification and review. It
+cannot make the trade disappear into a self-improvement score. The decision
+still exposes whose work improved, whose worsened, over what horizon, and under
+which society configuration.
+
+This is the strongest closure available to V2: XSH improves the society's
+capacity to produce warranted XSH improvements, and the society evaluates that
+claim without allowing XSH or the organization to rewrite the historical worlds
+or standards used to judge it.
 
 ## External world and ecosystem
 
@@ -1429,8 +2981,8 @@ At minimum, deterministic tests prove that:
 
 ## Interfaces and projections
 
-The database and artifact store are authoritative; people and actors interact
-through typed commands and rebuildable projections.
+The database and content-object store are authoritative; people and actors
+interact through typed commands and rebuildable projections.
 
 ### Required views
 
@@ -1446,14 +2998,14 @@ Initial projections include:
 - an organization-lineage view comparing configurations and trial outcomes;
 - an actor ecology view showing niche demand, phenotype evidence, ancestry, and
   diversity coverage;
-- a constitutional view showing effective charter, delegations, amendments,
+- a constitutional view showing the active Universe Seed, delegations, amendments,
   and reserved powers; and
-- a human review packet that links every summary claim to graph revisions and
+- a Grand Architect review packet that links every summary claim to graph revisions and
   sealed evidence.
 
-Markdown is an excellent human projection and XSH is an excellent policy and
-query client. Neither is durable truth. All projections carry the source event
-cursor and can be discarded and rebuilt.
+Markdown is an excellent human-or-actor projection and XSH is an excellent
+policy and query client. Neither is durable truth. All projections carry the
+source event cursor and can be discarded and rebuilt.
 
 ### Questions the system must answer
 
@@ -1476,6 +3028,60 @@ The architecture is successful only if ordinary typed queries can answer:
 If these require transcript archaeology or manager memory, the institutional
 memory has failed.
 
+## RSI primitive coverage audit
+
+`RSI.md` is a research conversation, not a requirements checklist, but its
+innovative primitives are too central to leave implicit. This audit names the
+architectural home, first executable evidence, and threshold beyond which V2
+may claim the primitive works. “Represented in schema” is deliberately weaker
+than “demonstrated.”
+
+| RSI primitive | Durable V2 contract | First vertical evidence | Demonstrated only when |
+| --- | --- | --- | --- |
+| Purpose before recursion | `UniverseSeed`, active revision, canonical actor prompt, north-star fields, C4 lineage | VS bootstraps from one seed and every durable work object and attempt cites it | A descendant seed can be challenged, ratified by the Grand Architect, adopted, audited, and compared without rewriting ancestral purpose |
+| Curated provenance | Content/evidence/account separation, semantic selection and exclusions, source escalation, curation lineage | C1 and C2 curated accounts preserve decisive evidence, unknowns, dissent, and excluded categories | Historical and later reversals show accounts retain decision-sufficient distinctions at lower retrieval cost than raw traces |
+| Epistemic graph | Closed graph kinds, typed revisions and endpoint-checked relations, separate operational state | One complete objective-to-outcome causal episode with a preserved conflict | Ordinary queries reconstruct decisions, dependencies, dissent, and reopen consequences across many episodes without ontology escape hatches |
+| Active provenance and bounded influence | `SignalFamilyRevision`, `DerivedSignal`, `InfluenceCandidate`, eligibility, quotas, effect lineage | Two scoped demand families and one cost or contradiction signal alter a bounded surface with an explanation | Influence improves decisions or attention under matched cost without high-volume capture, contamination, or hidden scalar ranking |
+| Checked propagation | Lesson scope/status, carrier transformations, target ladder, uptake observation, symmetric retraction | One lesson is delivered, encountered, and applied once; no causal claim is made | Matched or randomized evidence supports behavior change, irrelevant scopes remain uncontaminated, and contradiction reopens every dependent carrier |
+| Backpressure and resource accounting | Integer cost, hierarchical reservations, leases, WIP, queue projections, upstream pressure, circuit breakers | Aggregate and per-attempt hard caps, unknown-cost stop, no-action validity, durable outcome capacity | Sustained work avoids unbounded evidence/integration/follow-up queues and allocation changes are attributable to real congestion |
+| Multidimensional evaluation | Charter values, hard gates, typed uncertainty, partial orders, Pareto archive, decision process | Behavior, product, discovery, agent-fluency, cost, and propagation evidence remain separate | Later outcomes calibrate tradeoffs and preserve non-dominated alternatives better than a scalar baseline |
+| Reproducible execution | Pinned snapshot, assignment, model policy, profile, Pi session, evaluator, content digests, retry lineage | Native Pi and deterministic runs replay from exact inputs; hindsight frontier is enforced | Independent re-execution reproduces relevant observations and organizational comparisons across environment upgrades |
+| Organizational polymorphism | Versioned circuits selected by problem class; Projects and Tickets are generic coordination, not one forced workflow | VS instantiates a semantic/inquiry-product circuit with two decision gates | Multiple circuit families show different non-dominated scopes under matched cases and resources |
+| Organizational heredity | Exact organization and actor configurations on attempts, decisions, products, outcomes, and influence | VS records the full configuration and produces one replayable decision world | Descendant performance can be attributed to named differences, ancestry is preserved, and failed/non-dominated branches remain reproducible |
+| Meta-experimentation | C3 hypotheses, baseline, disclosure frontier, replay/shadow/canary ladder, independent promotion | The historical seed proves outcome-sequestered replay mechanics, not an organization win | A canaried organizational mutation improves held-out or later work and survives rollback and replication criteria |
+| Trusted substrate | Rust types, normalized SQLite, ledger, capabilities, budget physics, content identity, state machines, Git lineage | Kernel tests and VS execute without JSON workflow state or direct SQL mutation | Audit reconstructs state; fault injection defeats forgery, stale writes, authority escalation, overspend, contamination, and history editing |
+| Governance as evaluation process | Grand Architect Office, Decision packets, typed dissent/challenge, C0–C5 classes, revisit triggers | C1 and C2 decisions answer independent challenges and retain no-change paths | Calibration and later outcomes improve without consensus erasure or a hidden actor-species veto |
+| Directed intelligence plus evolutionary search | Deliberative trunks allocate bounded speculative branches; branch width is resource policy | VS uses independent inquiry and paired candidates but makes no selection-system claim | Deterministic domains benefit from broader tournaments while ambiguous domains benefit from deliberation under comparable total cost |
+| Developmental attractors and local niches | Attractor biases, demand signals, observed phenotype evidence, profession-recognition lifecycle | Initial labels are preregistered treatment biases only | A phenotype transfers across tasks, answers stable demand cheaply, and can be recognized or dissolved without hard-coded title authority |
+| Diversity and minority preservation | Ancestry-aware independence, lineage and behavior reserves, preserved conflicts, portfolio exploration | Skeptic/adversary branches and minority arguments remain visible through C2 | Diversity prevents a later correlated failure at acceptable coordination cost and does not reduce to cloned prompt labels |
+| Scarcity-shaped corporate intelligence | Grand Architect, Projects, Tickets, pulses, reviews, postmortems, portfolio envelopes | VS runs as one budgeted Project with durable tickets and a zero-cost pulse | The structure improves coherent throughput and recovery relative to a simpler baseline without bureaucratic model-call overhead |
+| Historical replay and epistemic disclosure | Immutable positive frontier, contamination probes, `DecisionWorld` export | C1 world excludes candidate, aftermath, lessons, and current source | Organizational variants can be compared on stratified histories without direct or indirect hindsight leakage |
+| XSH/product/society co-evolution | XSH product boundary, self-hosting ladder, improvement-productivity experiments | VS ships an XSH invariant and uses XSH for bounded policy/runner work | An XSH revision improves held-out society modification capacity under fixed and adaptive organization comparisons |
+| Discovery/propagation/metamorphosis rates | Separate vectors, obligations, congestion signals, and strict institutional-improvement criterion | VS measures discovery, delivery, and `applied_once`; metamorphosis remains explicitly unproven | A warranted institutional lesson changes later machinery and improves later work under a comparable envelope |
+
+The philosophical principles are also guarded explicitly:
+
+- **evaluation is a process, not a function:** Decision and review institutions
+  own judgment under uncertainty;
+- **preserve disagreement:** Conflict, dissent, competing causal claims, and
+  accepted risk remain durable;
+- **optimize information gain as well as immediate product movement:** honest
+  no-action and failed experiments can resolve valuable uncertainty;
+- **intelligence is cumulative institutional memory:** promotion requires
+  provenance, carrier, uptake, and outcome rather than transcript storage;
+- **scarcity creates structure:** money, tokens, context, evaluation,
+  integration, and follow-up are enforced constraints;
+- **directed reasoning and search are complementary:** deliberation chooses
+  valuable search regions and deterministic judges support wider leaves;
+- **organizational structure is mutable:** configurations and influence policy
+  are testable R2 artifacts; and
+- **recursion requires a trusted boundary:** the system may improve its
+  representation and governance without editing the history used to judge it.
+
+This audit is maintained with architecture changes. A primitive is not removed
+by omission; removing or merging one requires an explicit architectural
+decision that states which invariant and experiment replace it.
+
 ## Physical implementation map
 
 The architecture should remain logically modular even if the first deployment
@@ -1488,13 +3094,22 @@ The first Rust workspace should expose narrow components for:
 ```text
 protocol        closed commands, receipts, errors, version negotiation
 identity        principals, configurations, revisions, sessions, episodes
+purpose         Universe Seed revisions, sources, renderings and bootstrap
 authority       capabilities, jurisdiction, delegation, expiry
+offices         office contracts, occupancy, succession and reserved powers
 graph           node/edge contracts and revision validation
 workflow        operational state machines and readiness facts
+corporate       Projects, Tickets, milestones and coordination pulses
 ledger          events, generations, idempotency, replay audit
-artifacts       content addressing, sealing, role and retention
-resources       budgets, leases, claims, cancellation, accounting
+content_objects content addressing, sealing, access and retention
+evidence        semantic admission, capture method and claim relations
+curation        accounts, exclusions, challenges and disclosure frontiers
+influence       signal families, derivation, eligibility, quotas and effects
+review          adversarial reviews, challenge dispositions and postmortems
+resources       integer budgets, reservations, leases, cancellation, accounting
 execution       manifests, attempt lineage, supervisor and workspace receipts
+ecology         derived demand signals, response bids and diversity facts
+propagation     target, delivery, encounter, application and retraction state
 projections     cursors, outbox, rebuild contracts
 repository      Git/worktree identity and product-delivery receipts
 ```
@@ -1509,13 +3124,15 @@ Initial XSH modules should own:
 
 ```text
 society.client       typed protocol invocation and error handling
+society.purpose      Universe Seed query, rendering and source divergence
 society.experiment   manifest construction and bounded execution requests
 society.policy       circuit, admission, and scheduling variants
 society.context      declared graph/context projections
 society.evaluate     deterministic and sampled evaluator composition
 society.product      isolated XSH change and verification workflows
 society.observe      scheduled outcome and ecosystem probes
-society.review       human-readable decision and evidence packets
+society.review       decision, challenge, postmortem and evidence projections
+society.coordinate   Project, Ticket and coordination-pulse projections
 ```
 
 These are domain targets, not prematurely frozen names. They use typed paths,
@@ -1541,12 +3158,14 @@ The society should be built in stages which each close a meaningful evidence
 loop. Later-stage vocabulary may exist in the schema before autonomous machinery
 uses it.
 
-### Stage 0: ratify the laboratory contract
+### Stage 0: install the origin contract
 
-Write the initial charter, node and relation schemas, command protocol, change
-classes, capability lattice, episode transitions, artifact manifest, and V1
-import contract. Define which clauses are R0, R1, or R2 before implementation
-makes the answer expensive.
+Create the society identity, install and occupy the Grand Architect office,
+propose and ratify the initial Universe Seed, then write the node and relation
+schemas, command protocol, change classes, capability lattice, episode
+transitions, evidence-admission and curation contracts, disclosure-frontier
+rules, and V1 import contract. Define which clauses are R0, R1, or R2 before
+implementation makes the answer expensive.
 
 Exit evidence:
 
@@ -1557,15 +3176,16 @@ Exit evidence:
 
 ### Stage 1: build trusted physics
 
-Implement the Rust kernel, SQLite migrations, content store, ledger, authority,
-resources, execution receipts, worktree lineage, projections, and replay audit.
+Implement the Rust kernel, SQLite migrations, content-object store, ledger,
+authority, resources, execution receipts, worktree lineage, projections, and
+replay audit.
 Use deterministic transaction, state-machine, concurrency, recovery, and
 fault-injection tests. No paid model work is necessary.
 
 Exit evidence:
 
 - an interrupted attempt recovers without duplicated work or lost evidence;
-- forged identity, stale generation, authority escalation, artifact mismatch,
+- forged identity, stale generation, authority escalation, content mismatch,
   and resource overrun are rejected;
 - all projections rebuild from authoritative data; and
 - an independent audit reconstructs the materialized state from the ledger.
@@ -1587,24 +3207,32 @@ The episode must include:
 2. three competing hypotheses: missing behavior, culturally stale records, and
    split or accidental behavior;
 3. curated V1 usage as historical evidence without importing its controller;
-4. a deterministic behavior/documentation matrix plus a paired native-Pi
-   baseline/candidate task probe;
-5. a preserved conflict if the evidence is underdetermined;
-6. a decision packet with no-change option, predictions, dissent, and revisit
+4. an explicit curated account which selects consequential evidence, preserves
+   dissent, and states exclusions;
+5. a deterministic behavior/documentation matrix plus a paired native-Pi
+   baseline/candidate task microprobe;
+6. a preserved conflict if the evidence is underdetermined;
+7. a decision packet with no-change option, predictions, dissent, and revisit
    triggers;
-7. one bounded XSH reconciliation commit if authorized;
-8. short- and delayed-horizon outcomes; and
-9. a retrospective on both the XSH decision and the circuit used.
+8. one bounded XSH reconciliation commit if authorized;
+9. short- and delayed-horizon outcomes;
+10. one L1 lesson delivered to, encountered by, and applied once in a fresh
+    matching inquiry, without overclaiming causal behavior change;
+11. an epistemic disclosure frontier which exports the episode as a future
+    blinded decision world; and
+12. a retrospective on the XSH decision, curation, and circuit used.
 
 Exit evidence:
 
 - a new actor can reconstruct the decision without raw transcript archaeology;
 - replay reproduces deterministic observations from sealed inputs;
-- contradictory test evidence can reopen the episode; and
-- the complete episode is queryable by configuration, cost, prediction, and
-  product lineage; and
+- contradictory test evidence can reopen the episode;
+- the complete episode is queryable by configuration, cost, prediction,
+  curation, knowledge-uptake state, and product lineage;
 - the exact validated commit reaches the local XSH target only after explicit
-  human confirmation.
+  Grand Architect authorization; and
+- the first measurements distinguish discovery, delivery, propagation uptake,
+  and the intentionally unproven metamorphosis rate.
 
 ### Stage 3: establish product metabolism
 
@@ -1621,25 +3249,31 @@ Exit evidence:
 
 ### Stage 4: establish cumulative culture
 
-Promote a supported lesson through L0-L2, inject it into a matching context,
-measure a relevant behavior change, then introduce contradictory evidence and
-exercise downgrade or retraction.
+Promote a supported lesson through L0-L2, transduce it through at least two
+carriers such as context plus evaluator or policy, measure delivery,
+encounter, application, and a matched behavioral effect, then introduce
+contradictory evidence and exercise downgrade or retraction.
 
 Exit evidence:
 
-- relevant active work receives the correct revision;
+- relevant active work receives and encounters the correct revision;
+- a discriminating comparison supports or defeats the claimed behavior change;
 - irrelevant work is sampled for contamination; and
-- dependents reopen or acknowledge the retraction without history edits.
+- dependents and derived carriers reopen, downgrade, or acknowledge the
+  retraction without history edits.
 
 ### Stage 5: compare organizational circuits
 
-Create a small stratified corpus of historical and held-out XSH episodes.
-Compare at least two circuits under matched capability and resource envelopes,
-with outcome sequestration and an explicit Pareto analysis.
+Create a small stratified corpus of historical and held-out XSH decision worlds
+with tested disclosure frontiers. Compare at least two circuits under matched
+capability and resource envelopes, with outcome sequestration, contamination
+detection, and an explicit Pareto analysis.
 
 Exit evidence:
 
 - a variant has a demonstrated scope rather than a universal win claim;
+- no replay actor can retrieve aftermath through source, culture, identifiers,
+  or raw-artifact access;
 - the organization archive retains non-dominated and behaviorally distinct
   configurations; and
 - the trial can be rerun from its configuration and evidence manifests.
@@ -1647,15 +3281,19 @@ Exit evidence:
 ### Stage 6: permit bounded metamorphosis
 
 Promote one organization mutation into a narrow canary jurisdiction, observe
-later work, and either retain or roll it back. Begin actor variation and local
-demand signaling only after attribution is credible enough to tell population
+later work, and either retain or roll it back. Early stages may derive bounded
+local demand signals and instantiate seeded attractor treatments; this stage
+begins selection, differentiation, recombination, and profession-recognition
+experiments only after attribution is credible enough to tell developmental
 change from noise.
 
 Exit evidence:
 
 - the mutation satisfies the strict RSI criterion or is honestly reported as a
-  failed organizational hypothesis; and
-- population diversity and reserved authority survive the trial.
+  failed organizational hypothesis;
+- population diversity and reserved authority survive the trial; and
+- a proposed profession either demonstrates a transferable niche and interface
+  or remains an episode-local phenotype label.
 
 ### Stage 7: measure XSH-society co-evolution
 
@@ -1666,16 +3304,28 @@ matched envelope.
 Exit evidence:
 
 - local product tradeoffs and institutional productivity effects are both
-  visible; and
+  visible;
+- fixed-organization and bounded-adaptation results remain separate, including
+  any new circuit or phenotype enabled by the candidate language world; and
 - the result can revise either the language feature or the institution which
   selected it.
 
-### Stage 8: expand autonomy by evidence
+### Stage 8: transfer and exercise the Grand Architect office
 
-Grant narrow, expiring C2 or C3 capabilities only where the prior stages show
-calibration, containment, rollback, and human review leverage. There is no
-milestone called “fully autonomous society.” Authority remains decomposable and
-revocable.
+Replay a complete succession from a user occupant to an assigned coding-agent
+occupant, then let that occupant exercise C2 and one bounded C3 decision under
+the same constitutional contract, cost ceiling, challenge requirements, and
+rollback physics. Transfer the office back or to a successor without losing
+open decisions, dissent, budgets, or outcome obligations.
+
+Exit evidence:
+
+- actor species does not change command legality or durable decision shape;
+- the agent occupant can direct useful work without an ambient human
+  ratification gate;
+- every external host intervention remains visible and excluded from claims of
+  autonomous performance; and
+- succession, pause, revocation, and recovery are independently replayable.
 
 ## V1 migration
 
@@ -1687,7 +3337,8 @@ Each imported episode records:
 - immutable source paths and content hashes;
 - the V1 run, evaluator, worker, report, ticket, replay, and product commits
   which actually exist;
-- the curator and mapping from V1 artifacts into V2 node revisions;
+- the curator and mapping from selected V1 material into V2 forensic objects,
+  evidence admissions, and graph revisions;
 - which hypotheses, alternatives, predictions, dissent, or delayed outcomes
   were never captured; and
 - why the episode was selected and what future comparisons may use it for.
@@ -1704,6 +3355,8 @@ V2 rejects:
 - a universal goal loop over `score(candidate)`;
 - a fixed CEO/planner/coder/reviewer hierarchy presented as final architecture;
 - raw transcripts as memory or summaries as evidence replacements;
+- cheap storage and telemetry fields presented as curated provenance merely
+  because they are easy to collect;
 - tickets, files, or queues as the world model;
 - one generic node or job table with meaning hidden in JSON;
 - confidence numbers without evidence type and reference class;
@@ -1720,8 +3373,8 @@ V2 rejects:
 - XSH self-use used to evade its systems-glue scope or the Rust durability
   boundary;
 - a mutable evaluator certifying itself, a circuit granting itself authority,
-  or a society rewriting its charter; and
-- claims of autonomous improvement that omit human interventions, failed
+  or a seed amendment rewriting the purpose attributed to ancestral work; and
+- claims of autonomous improvement that omit external interventions, failed
   descendants, cost, or changed external conditions.
 
 ## Open research program
@@ -1754,8 +3407,23 @@ should investigate:
     reliability while remaining excellent systems-glue design for humans?
 13. How should the society value long-term optionality without allowing vague
     future claims to dominate present evidence?
-14. What is the minimum human constitutional role compatible with honest,
-    bounded recursive institutional improvement?
+14. What evidence and challenge surface lets an agent occupy the Grand
+    Architect office autonomously without fragmenting authority or concealing
+    catastrophic error?
+15. Which semantic distinctions deserve curated retention, and which cheap
+    metadata merely creates the appearance of provenance richness?
+16. How can excluded information and curator uncertainty be represented without
+    turning every account back into a raw-trace swamp?
+17. What disclosure-frontier tests detect indirect hindsight leakage through
+    current source, identifiers, cultural lessons, or model familiarity?
+18. Which developmental attractor axes transfer across XSH problem classes, and
+    which are disguised job prompts with no stable phenotype evidence?
+19. When does formalizing a phenotype as a profession reduce coordination cost,
+    and when does it create authority-seeking institutional ossification?
+20. Which knowledge is best inherited as context, professional method,
+    evaluator, policy, XSH construct, or several linked carriers?
+21. How should homeostatic policy respond when discovery, warranted propagation,
+    delivery, and metamorphosis are constrained by different scarce resources?
 
 The society should ingest its own answers as scoped lessons, not quietly bake
 the first plausible answer into infrastructure.
@@ -1764,13 +3432,13 @@ the first plausible answer into infrastructure.
 
 The architecture can be summarized as follows:
 
-> Build a constitutional machine society whose replaceable actors use a shared,
-> typed epistemic commons to investigate and improve XSH; whose institutions
-> turn disagreement and scarce resources into reproducible decisions and
-> shipped artifacts; whose checked culture carries warranted discoveries into
-> future behavior; and whose organizational variants can be compared, selected,
-> and revoked without changing the trusted history, mission, or scoreboard that
-> makes improvement meaningful.
+> Bootstrap a constitutional machine society from one Universe Seed; let a
+> holder-agnostic Grand Architect direct replaceable actors through a shared,
+> typed epistemic commons; let institutions turn disagreement and scarce
+> resources into reproducible decisions and shipped artifacts; let checked
+> culture carry warranted discoveries into future behavior; and let product,
+> organization, influence policy, and even constitutional purpose evolve
+> without changing the trusted history that makes those changes intelligible.
 
 If V2 can do that at small scale, it is already more than a higher-throughput
 software factory. It is a contained experiment in cumulative machine culture,

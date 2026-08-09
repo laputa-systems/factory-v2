@@ -1,0 +1,429 @@
+# XSH Society canonical glossary
+
+## Status and use
+
+This file is the canonical vocabulary for Factory V2.
+[`ARCHITECTURE.md`](ARCHITECTURE.md) defines how these concepts compose;
+[`VERTICAL-SLICE.md`](VERTICAL-SLICE.md) defines the first executable proof.
+Rust types, SQLite tables, XSH commands, tests, projections, and prompts use the
+spellings here. A synonym in prose does not create a new domain concept.
+
+Terms are intentionally narrower than their ordinary-language meanings. When
+a proposed implementation cannot name which term it realizes, the contract is
+not yet clear enough to persist.
+
+## Terms
+
+### Actor configuration
+
+A versioned policy for constructing bounded cognitive work: model policy,
+system instructions, tool profile, context policy, developmental attractors,
+resource envelope, and lineage. It is not a job title or a persistent persona.
+
+### Actor instance
+
+A principal admitted from one exact actor configuration for a bounded scope and
+lifetime. An actor instance receives authority only through explicit capability
+grants or through an office it is authorized to occupy.
+
+### Actor attempt
+
+One supervised execution of an actor instance against a sealed assignment,
+context pack, execution profile, and budget reservation. A retry is a new
+attempt with lineage; it never overwrites the failed attempt.
+
+### Admitted evidence
+
+A typed observation or sealed content object assigned a semantic role under a
+named experiment, evaluator revision, scope, and admitting authority. Sealing
+bytes proves identity; admission makes an evidence claim. Admission alone does
+not make the claim true or decision-relevant.
+
+### Adversarial review
+
+A bounded institution for producing explicit failure hypotheses and
+`ReviewChallenge` records against a named revision. It preserves disagreement
+and tests evidence, product, cost, compatibility, security, or institutional
+claims. It is neither free-form hostility nor a generic veto.
+
+### Attention bid
+
+A versioned, explainable request for a scarce consumer—such as a project,
+review, context slot, or inquiry—to consider an eligible derived signal. A bid
+can lose without the underlying evidence disappearing.
+
+### Budget envelope and reservation
+
+A `BudgetEnvelope` is a hard integer-micro-dollar ceiling over one society,
+portfolio, Project, Episode/circuit, Ticket, or ActorAttempt scope. A
+`BudgetReservation` transactionally commits part of every ancestor envelope
+before paid work begins. Unknown cost is not zero; unused reservation is not a
+target to spend.
+
+### Capability
+
+A narrow durable permission to execute a named command over a named
+jurisdiction. Capability, jurisdiction, expiry, and current office occupancy—not
+titles in prompts—determine authority.
+
+### Causal episode
+
+A durable chain from objective and question through hypotheses, experiment,
+observation, arguments, decision, action, outcome, retrospective, and lessons.
+Its graph contains causal claims and decision provenance; it does not assert
+that recorded edges mechanically prove causality.
+
+### Change class
+
+The governance class assigned to a mutation: C0 observation, C1 reversible
+inquiry, C2 product mutation, C3 institutional mutation, C4 constitutional
+amendment, or C5 trusted-kernel mutation. Higher class means stronger evidence,
+challenge, rollback, and authority requirements—not necessarily more prose.
+
+### Checked propagation
+
+The process by which warranted knowledge changes carrier, reaches only a valid
+scope, is encountered, is applied, is evaluated for effect, and can be
+retracted. Delivery is not uptake; uptake is not causal support; causal support
+is not institutionalization.
+
+### Circuit
+
+A versioned composition of institutions, actor configurations, transitions,
+context edges, and judges for a problem class. A circuit is a reusable workflow
+contract, not the sole ontology of the work it processes.
+
+### Constitutional inheritance
+
+The exact `UniverseSeed` revision, constitutional rules, and Grand Architect
+office contract inherited by a society run. This term is preferred over
+“DNA” or “genome” when discussing durable purpose and authority.
+
+### Content object
+
+Immutable bytes sealed under a digest with a media or schema contract,
+retention class, and capture provenance. Content objects are forensic material;
+they do not become graph knowledge merely because they exist.
+
+### Coordination pulse
+
+A cheap, usually deterministic projection of changed work, blockers, decisions
+due, budget burn and reserve, signal movement, outcome obligations, and next
+actions. It provides the useful function of a standup without requiring a paid
+meeting or treating narrative status as truth.
+
+### Cost observation
+
+A typed provider-accounting state: known integer micro-US-dollars with source
+identity, unknown with a closed reason, or unavailable with a closed reason.
+Unknown and unavailable states freeze paid admission under the initial policy;
+they never silently coerce to zero.
+
+### Curated account
+
+A revisioned, purpose-specific representation selecting consequential admitted
+evidence, arguments, unknowns, conflicts, transformations, and exclusions for a
+named audience. It is a small default path into provenance, never a replacement
+for its sources.
+
+### Curation
+
+The accountable semantic transformation from a larger evidence boundary into
+a smaller representation for decision, replay, learning, or context. Curation
+is judged by later sufficiency, reversal sensitivity, dissent fidelity, scope,
+and escalation cost—not byte or token compression alone.
+
+### Decision packet
+
+The complete, revisioned input to a consequential Grand Architect choice:
+authority, alternatives including no change, active Universe Seed values,
+evidence and limits, arguments, dissent, unknowns, cost, reversibility, blast
+radius, predictions, revisit/rollback triggers, and organization configuration.
+It supports a decision; it does not mathematically force one.
+
+### Decision world
+
+A historical decision boundary exported under an epistemic disclosure
+frontier. It contains exactly what was available then and excludes outcomes and
+descendant knowledge, permitting honest replay of organizational alternatives.
+
+### Demand signal
+
+A rebuildable local indication that a named scope needs attention, such as an
+unresolved contract conflict or missing behavioral evidence. It is evidence
+for allocation, not an order and not epistemic truth.
+
+### Derived signal
+
+A typed, versioned projection from eligible provenance and current operational
+state. It records its signal family, derivation policy, source lineage, scope,
+uncertainty, decay, and current validity. Raw telemetry never becomes influence
+without this derivation boundary.
+
+### Developmental attractor
+
+A heritable bias in how an actor notices, questions, experiments, checks, or
+communicates. Its realized behavior depends on local demand, culture, tools,
+peers, and resources. It is not a disguised corporate title.
+
+### Disclosure frontier
+
+An immutable positive allowlist of revisions, evidence, snapshots, culture,
+and policy visible at a named historical decision boundary. Anything absent is
+sequestered; contamination attempts are recorded.
+
+### Epistemic graph
+
+The typed, revisioned account of what is claimed, observed, disputed, decided,
+and currently applicable. It differs from the immutable event ledger and the
+content-object store.
+
+### Event ledger
+
+The append-only record of accepted commands, state transitions, resources,
+authority, and responsible principals. It establishes operational history; it
+is not by itself the society's world model.
+
+### Forensic evidence
+
+Sealed source material preserved so a later judge can support, defeat, or
+reinterpret a claim. It remains available through controlled escalation even
+when no curator selects it.
+
+### Grand Architect
+
+The display name of the highest constitutional office, represented in code as
+`TheGrandArchitect`. Its current occupant may be the user or an assigned coding
+agent. The office can ratify and amend the Universe Seed, charter and terminate
+projects, allocate resources within kernel ceilings, appoint subordinate
+offices, authorize C2–C4 changes, accept risk, and require review or
+postmortems. Mandatory challenge and provenance constrain the quality and
+visibility of its choices; they do not smuggle in a human-only veto.
+
+### Grand Architect brief
+
+A bounded, rebuildable projection of the active Universe Seed, portfolio,
+coordination pulse, decisions due, strongest eligible influence and dissent,
+cost reserve, delivery blocks, and overdue outcomes. It is the office's default
+attention surface, not a model-written source of truth.
+
+### Graph object
+
+A durable semantic identity with typed revisions, such as a Question,
+Hypothesis, Observation, Decision, Lesson, or ReviewChallenge. A `GraphObject`
+and a `ContentObject` are different types even when ordinary prose calls both
+artifacts.
+
+### Influence
+
+A recorded consequence of eligible, curated, scoped information: visibility,
+matched retrieval, an attention bid, required review, reprioritization, or a
+kernel-enforced block. Influence is allocated under bounded attention and must
+remain explainable back to sources. It is not a global reputation score.
+
+### Influence candidate
+
+A derived signal that passed eligibility gates and requested one specific
+effect on one target. It carries the comparison class, pressure inputs, policy
+revision, expiry, and full source lineage. A separate `InfluenceDecision`
+records whether and why it took effect.
+
+### Institution
+
+A durable protocol combining jurisdiction, admission, required records,
+authority, state transitions, and exit conditions. Institutions outlive actor
+instances and may be mutated through C3 evidence.
+
+### Invariant
+
+A mechanically enforceable rule with a named scope, owner, evaluator, evidence
+lineage, and revocation path. An invariant is the strongest cultural carrier;
+it must not be inferred from prose guidance alone.
+
+### Lesson
+
+A scoped, revisable claim that a discovery should alter future behavior. Its
+promotion level and carrier are separate from its epistemic status, and it has
+explicit contradiction, expiry, downgrade, and retraction paths.
+
+### Mission
+
+The purpose and worldview content inside the Universe Seed: why XSH exists,
+who it serves, what domain it claims, what it preserves, what it rejects, and
+what it refuses to optimize away.
+
+### North-star alignment
+
+The operational test derived from the mission. A project, ticket, decision,
+review, or postmortem states how it affects XSH capability or actor behavior,
+what evidence would distinguish general improvement from noise, how it honors
+explicit boundaries and composability, and when the claim will be revisited.
+The canonical questions live in the Universe Seed; each work object cites a
+typed `NorthStarAlignment` containing its answers. Mission and north star are
+not separate competing authorities.
+
+### Office
+
+A durable bundle of jurisdiction and capabilities that can have one explicitly
+recorded occupant at a time. Office authority is independent of whether its
+occupant is human or model-based. An office differs from an actor configuration
+(how cognition is produced), a profession (a learned social interface), and a
+project role (a bounded responsibility within one project).
+
+### Operational audit
+
+Kernel- or runner-produced facts establishing which command, tool, process,
+transaction, or cost event occurred. Audit data is continuously available to
+deterministic projections and forensics, but does not directly gain epistemic
+or organizational influence.
+
+### Outcome obligation
+
+A durable commitment to observe a prediction, delivery, lesson, or
+institutional mutation at a named horizon. Closing immediate work does not
+delete it.
+
+### Pi boundary
+
+The only V2 protocol boundary allowed to use JSON. Pi 0.83.0 emits a JSONL event
+stream and session transcript, while a bounded actor emits one closed-schema
+`submission.json`. V2 seals and parses those bytes into typed Rust values before
+they can affect SQLite state. No other durable V2 workflow uses JSON payloads,
+columns, manifests, or projections.
+
+### Portfolio
+
+The Grand-Architect-governed set of stewardship, frontier, measurement,
+institutional, and resilience obligations under explicit resource envelopes
+and reserves. It is a partial-order allocation surface, not one scalar backlog.
+
+### Postmortem
+
+A triggered, structured investigation of an incident, cost breach, revert,
+process escape, invariant failure, or repeated project miss. It preserves a
+ledger-derived timeline, competing causal claims, containment, contributing
+conditions, counterfactuals, and separately admitted corrective actions. It is
+not a blame ritual and cannot silently enact its recommendations.
+
+### Principal
+
+An authenticated source of commands or office occupancy. User principals,
+actor principals, deterministic-service principals, and bootstrap principals
+obey the same capability and jurisdiction machinery.
+
+### Profession
+
+A learned, durable social interface recognized only after a repeated phenotype
+serves a stable niche with a predictable contract at acceptable coordination
+cost. A profession may dissolve when demand disappears. It is not predeclared
+by giving an actor a familiar title.
+
+### Project
+
+A durable portfolio container chartered by the Grand Architect for a coherent
+objective, risk and resource envelope, milestones, stop conditions, outcome
+obligations, episodes, and tickets. A project coordinates work; it is not a
+claim about reality.
+
+### Project steward
+
+A principal or subordinate Office delegated to plan and coordinate one Project
+within its charter and resource envelope. Stewardship does not imply authority
+to amend the Universe Seed, enlarge the Project's purpose, accept C2–C4 risk, or
+deliver XSH.
+
+### Provenance
+
+The curated, queryable chain explaining where a consequential claim, signal,
+decision, product, or institution came from, under what authority and scope,
+through which transformations and dissent. Provenance is the undercurrent of
+observability: always available for derivation and explanation, but only
+semantically admitted and curated distinctions may acquire actionable
+influence.
+
+### Retrospective
+
+A routine account of what an episode, project, or circuit learned. Unlike a
+postmortem, it does not imply a triggering failure or containment duty.
+
+### Review challenge
+
+The typed output of adversarial review: target revision, failure hypothesis,
+scope, evidence or reproducer, severity, falsification condition, requested
+disposition, author lineage, and response state. It cannot edit the challenged
+object.
+
+### Signal family
+
+A versioned definition of one comparable class of derived signals, including
+eligibility, uncertainty semantics, pressure formula, decay, hysteresis,
+allowed influence effects, and replay tests. Values from different families
+are not assumed to share a universal scale.
+
+### Society
+
+The XSH-directed complex of constitutional purpose, the Grand Architect office,
+replaceable actors, institutions, projects, circuits, epistemic memory,
+checked culture, scarce resources, and product artifacts. The term licenses
+only mechanisms with demonstrated engineering value; it does not imply money,
+trade, electoral politics, simulated emotions, autonomous demography, or a
+general social world simulator.
+
+### Ticket
+
+A typed operational work order inside a project, linked to its graph motivation,
+acceptance judge, budget, capability need, and completion evidence. A ticket is
+useful corporate machinery, not the society's ontology or a substitute for
+inquiry.
+
+### Trusted physics
+
+The small Rust/SQLite substrate that makes identity, authority, transactions,
+budgets, content identity, state transitions, Git lineage, and replay real.
+Trusted physics is not a human governance tier. The Grand Architect governs
+through it and cannot cause an invalid transition by writing a persuasive
+prompt.
+
+### Universe Seed
+
+The human-readable name of the first-class `UniverseSeed` construct: the
+versioned origin purpose from which a society is bootstrapped. It combines the
+XSH mission with north-star alignment, domain commitments, preserve/reject
+principles, non-goals, amendment provenance, and the Grand Architect office
+contract. Its canonical rendering is the first prompt supplied to every actor
+attempt. One society has exactly one active revision at a time.
+
+## Required distinctions
+
+These pairs must not collapse in schemas or prose:
+
+| Do not collapse | Distinction |
+| --- | --- |
+| Mission / north-star alignment | Purpose and worldview / operational alignment questions derived from it |
+| Grand Architect / actor | Constitutional office / whichever principal currently occupies it |
+| Office / profession / project role | Durable authority / learned interface / bounded responsibility |
+| Event / evidence / curated account / lesson | Occurrence / semantic admission / decision representation / proposed inheritance |
+| Content object / graph object | Immutable bytes / revisioned meaning |
+| Demand signal / command | Local need indication / authorized state mutation |
+| Derived signal / influence | Explainable input / recorded organizational consequence |
+| Delivery / encounter / application / causal support | Carrier arrived / actor saw it / behavior matched it / comparison supports effect |
+| Project / causal episode / ticket | Coordination envelope / knowledge-and-action chain / operational work order |
+| Retrospective / postmortem | Routine learning / triggered failure investigation and containment |
+| Legitimacy / correctness | Authorized process / later outcome judgment |
+| Budget / target | Maximum authorized spend / desired expenditure; V2 has only the former |
+| Model stop / attempt success | Pi stopped normally / protocol and judges accepted the attempt |
+
+## Retired or discouraged vocabulary
+
+| Retired term | Use instead | Reason |
+| --- | --- | --- |
+| CTO | The Grand Architect / `TheGrandArchitect` | V2's highest office is constitutional and holder-agnostic |
+| human approval or human ratification | Grand Architect authorization or ratification | Authority follows office occupancy, not actor species |
+| actor genome | actor configuration | Avoid overstating biological metaphor |
+| society genome | organization configuration or constitutional inheritance | Name the actual mutable layer |
+| fitness score | health vector, Pareto relation, or named evaluator | There is no universal scalar objective |
+| artifact | `ContentObject`, `ProductArtifact`, or named graph object | The bare word hides byte/meaning/product distinctions |
+| worker | actor instance, deterministic service, or task owner | Name the kind of work producer |
+| cleanroom boolean | execution profile with explicit fields | Isolation is multidimensional |
+| `VS-001.json` | typed SQLite state plus `VS-001.md` projection | JSON is restricted to the Pi boundary |
+| standup meeting | coordination pulse | Default status synchronization is deterministic and cheap |
