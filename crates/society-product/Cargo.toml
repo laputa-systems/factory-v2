@@ -1,28 +1,13 @@
 [package]
 name = "society-product"
-version = "0.1.0"
-edition = "2024"
-license = "MIT"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 description = "Provider-free guarded Git materialization primitives"
 
-# This crate is intentionally its own temporary workspace.  The root workspace
-# is integrated by the owning tranche only after this narrow Git boundary has
-# passed its isolated contract tests.
-[workspace]
-
 [dependencies]
-sha2 = "=0.11.0"
-thiserror = "=2.0.20"
+sha2.workspace = true
+thiserror.workspace = true
 
-# Product materialization is trusted process and filesystem physics.  These
-# lints make the narrow safety posture visible even before root integration.
-[lints.rust]
-unsafe_code = "deny"
-unused_must_use = "deny"
-
-[lints.clippy]
-dbg_macro = "deny"
-todo = "deny"
-unwrap_used = "deny"
-expect_used = "deny"
-panic = "deny"
+[lints]
+workspace = true
