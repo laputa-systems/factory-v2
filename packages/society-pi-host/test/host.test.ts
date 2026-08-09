@@ -71,7 +71,7 @@ test("host: remains inert through AdapterReady and creates exactly one session o
 
 test("host: serializes command admission while allowing office controls to reach a live Prompt", async () => {
 	const { frames, runtime, host } = makeHost();
-	await host.accept(decodeCommand(1, "CreateSession", createSessionPayload("GrandArchitectOffice")));
+	await host.accept(decodeCommand(1, "CreateSession", createSessionPayload("RootAuthorityOffice")));
 	const session = runtime.session;
 	assert.ok(session);
 
@@ -125,7 +125,7 @@ test("host: serializes command admission while allowing office controls to reach
 
 test("host: terminal Pi evidence closes narrative mutation and late Abort cannot relabel completion", async () => {
 	const { frames, runtime, host } = makeHost();
-	await host.accept(decodeCommand(1, "CreateSession", createSessionPayload("GrandArchitectOffice")));
+	await host.accept(decodeCommand(1, "CreateSession", createSessionPayload("RootAuthorityOffice")));
 	const session = runtime.session;
 	assert.ok(session);
 	await host.accept(decodeCommand(2, "Prompt", { purpose: "OfficeTurn", text: "initial Office turn" }));
@@ -274,7 +274,7 @@ test("host: Dispose before a Prompt is a valid, evidenced terminal path", async 
 
 test("host: Office FollowUp and Steer wait for Pi to start the initial Prompt", async () => {
 	const { frames, runtime, host } = makeHost();
-	await host.accept(decodeCommand(1, "CreateSession", createSessionPayload("GrandArchitectOffice")));
+	await host.accept(decodeCommand(1, "CreateSession", createSessionPayload("RootAuthorityOffice")));
 	const session = runtime.session;
 	assert.ok(session);
 	session.setPromptStartDelayed();
@@ -473,7 +473,7 @@ test("host: outbound transport failure disposes the owned session and fences lat
 
 test("host: missing agent settlement is terminal evidence failure and fences a second Office Prompt", async () => {
 	const { frames, runtime, host } = makeHost();
-	await host.accept(decodeCommand(1, "CreateSession", createSessionPayload("GrandArchitectOffice")));
+	await host.accept(decodeCommand(1, "CreateSession", createSessionPayload("RootAuthorityOffice")));
 	const session = runtime.session;
 	assert.ok(session);
 	await host.accept(decodeCommand(2, "Prompt", { purpose: "OfficeTurn", text: "first" }));

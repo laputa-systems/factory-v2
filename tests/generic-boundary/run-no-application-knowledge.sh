@@ -39,6 +39,19 @@ then
     exit 1
 fi
 
+# The root governance vocabulary deliberately describes one generic root
+# authority and its founding mission.  Product constitutions must not revive
+# the former application institution under any casing or separator spelling.
+if rg -n -i 'grand[_ -]?architect|thegrandarchitect|universe[_ -]?seed' \
+    AGENTS.md ARCHITECTURE.md DEPENDENCIES.md GLOSSARY.md RSI.md VERTICAL-SLICE.md \
+    Cargo.toml crates migrations packages tests \
+    --glob '!generic-boundary/**' \
+    --glob '!tests/generic-boundary/**'
+then
+    echo 'generic boundary contains retired application governance vocabulary' >&2
+    exit 1
+fi
+
 # Tool admission is generic mechanism. Role names belong to the application
 # which selected the capability set, never to the Pi wire or resident kernel.
 if rg -n \

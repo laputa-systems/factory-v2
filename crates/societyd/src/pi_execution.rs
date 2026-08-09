@@ -12,16 +12,16 @@ use society_kernel::{
     AdmissionGeneration, Blake3Digest as KernelDigest, BudgetReservationId, CanonicalWorkspacePath,
     Capability, ChildProcessId, ChildStreamKind, ChildStreamSealCompleteness, CommandBody,
     CommandDisposition, CommandId, CommandRequest, ContentObjectId, DirectChildWaitStatus,
-    EventBody, EventId, ExecutionProfileId, ExpectedGeneration, GrandArchitectOfficeSessionId,
-    KernelStore, NativeChildPid, NativeWorkspaceId as KernelWorkspaceId, OfficeTurnId,
+    EventBody, EventId, ExecutionProfileId, ExpectedGeneration, KernelStore, NativeChildPid,
+    NativeWorkspaceId as KernelWorkspaceId, OfficeTurnId,
     OwnedProcessGroupId as KernelProcessGroupId, PiBoundarySessionIdentity, PiChildOwner,
     PiChildSpawnAdmissionId, PiCorrelationIdentity, PiCumulativeUsage,
     PiOfficeTurnAssistantOutcome, PiOfficeTurnDisposition, PiOfficeTurnTranscriptDisposition,
     PiOfficeTurnUsageFailure, PiOfficeTurnUsageUnavailableReason, PiOfficeTurnUsageUnknownReason,
     PiProtocolSequence, PiTokenCount, PrincipalId, ProcessExitCode,
     ProcessGroupLiveness as KernelLiveness, ProcessSignalNumber, ProviderCostBinary64,
-    SpawnNonce as KernelSpawnNonce, SupervisedChildIdentity, SupervisorEpochId,
-    SupervisorEpochIdentity,
+    RootAuthorityOfficeSessionId, SpawnNonce as KernelSpawnNonce, SupervisedChildIdentity,
+    SupervisorEpochId, SupervisorEpochIdentity,
 };
 use society_pi::{
     AssistantStopReason, BoundarySequence, CommandName, CommandResult, CorrelationIdentity,
@@ -218,7 +218,7 @@ const fn stream_seal_command(stream: ChildStreamKind) -> PiExecutionCommand {
 pub(crate) struct OfficePiExecutionStart {
     pub(crate) operation: PiExecutionOperationId,
     pub(crate) operating_cycle_id: society_kernel::OperatingCycleId,
-    pub(crate) office_session_id: GrandArchitectOfficeSessionId,
+    pub(crate) office_session_id: RootAuthorityOfficeSessionId,
     pub(crate) budget_reservation_id: BudgetReservationId,
     pub(crate) execution_profile_id: ExecutionProfileId,
     pub(crate) expected_generation: AdmissionGeneration,
@@ -273,7 +273,7 @@ pub(crate) struct OfficePiExecutionChild {
     operation: PiExecutionOperationId,
     supervised_child_id: SupervisedChildId,
     child_process_id: ChildProcessId,
-    office_session_id: GrandArchitectOfficeSessionId,
+    office_session_id: RootAuthorityOfficeSessionId,
     pi_session_identity: PiBoundarySessionIdentity,
     spawn_nonce: KernelSpawnNonce,
     expected_generation: AdmissionGeneration,
@@ -549,11 +549,11 @@ impl PiExecutionDriver {
         store: &mut KernelStore,
         start: OfficePiExecutionStart,
     ) -> Result<OfficePiSpawnRegistration, PiExecutionError> {
-        // A Grand Architect Office owner and an Office session must be the
+        // A Root Authority Office owner and an Office session must be the
         // same closed boundary. Reject this before any kernel admission,
         // native workspace action, or host process exists; a TaskAttempt
         // payload cannot borrow the Office budget/session authority.
-        if start.spawn_request.create_session.session_kind != SessionKind::GrandArchitectOffice {
+        if start.spawn_request.create_session.session_kind != SessionKind::RootAuthorityOffice {
             return Err(PiExecutionError::OfficeSessionKindRequired);
         }
         // This is deliberately before `AdmitPiChildSpawn`: malformed native
@@ -581,7 +581,7 @@ impl PiExecutionDriver {
             expected_generation,
             CommandBody::AdmitPiChildSpawn {
                 operating_cycle_id: start.operating_cycle_id,
-                owner: PiChildOwner::GrandArchitectOfficeSession(start.office_session_id),
+                owner: PiChildOwner::RootAuthorityOfficeSession(start.office_session_id),
                 budget_reservation_id: start.budget_reservation_id,
                 execution_profile_id: start.execution_profile_id,
                 native_workspace_id: workspace_id,
@@ -595,7 +595,7 @@ impl PiExecutionDriver {
         let admission_id = match admitted {
             EventBody::PiChildSpawnAdmitted {
                 pi_child_spawn_admission_id,
-                owner: PiChildOwner::GrandArchitectOfficeSession(session_id),
+                owner: PiChildOwner::RootAuthorityOfficeSession(session_id),
                 budget_reservation_id,
             } if session_id == start.office_session_id
                 && budget_reservation_id == start.budget_reservation_id =>
@@ -997,7 +997,7 @@ impl PiExecutionDriver {
             },
         );
         match office_ready {
-            Ok(EventBody::GrandArchitectOfficeSessionStateChanged {
+            Ok(EventBody::RootAuthorityOfficeSessionStateChanged {
                 session_id,
                 state: society_kernel::OfficeSessionState::Ready,
             }) if session_id == child.office_session_id => {
@@ -2564,7 +2564,7 @@ pub(crate) enum PiExecutionError {
     UnexpectedKernelEvent,
     #[error("Office Pi child transition is invalid in its current phase")]
     InvalidLifecycle,
-    #[error("an Office Pi child requires the exact GrandArchitectOffice session kind")]
+    #[error("an Office Pi child requires the exact RootAuthorityOffice session kind")]
     OfficeSessionKindRequired,
     #[error("the supplied Office prompt text is empty or differs from its sealed digest")]
     PromptContentDigestMismatch,
@@ -2635,13 +2635,13 @@ mod tests {
         AdmissionGeneration, ApplicationIdentity, ApplicationMissionInput, ApplicationName,
         ApplicationRevisionOrdinal, Blake3Digest as KernelDigest, BudgetReservationId, Capability,
         CommandBody, CommandDisposition, CommandId, CommandRequest, ExpectedGeneration,
-        GrandArchitectOfficeSessionId, KernelStore, MissionPrinciple, MissionPrincipleKind,
-        MissionPrincipleText, MissionPrinciples, MissionStatement,
-        NorthStarBoundaryCommitmentQuestion, NorthStarChangeQuestion,
-        NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet, NorthStarRevisitQuestion,
-        OfficeTurnId, OfficeTurnPurpose, OperatingCycleId, OperatingCycleTreatment,
-        PiProtocolSequence, PrincipalDisplayName, PrincipalId, Rejection, SocietyName,
-        SupervisorEpochId, SupervisorEpochIdentity, UsdMicros,
+        KernelStore, MissionPrinciple, MissionPrincipleKind, MissionPrincipleText,
+        MissionPrinciples, MissionStatement, NorthStarBoundaryCommitmentQuestion,
+        NorthStarChangeQuestion, NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet,
+        NorthStarRevisitQuestion, OfficeTurnId, OfficeTurnPurpose, OperatingCycleId,
+        OperatingCycleTreatment, PiProtocolSequence, PrincipalDisplayName, PrincipalId, Rejection,
+        RootAuthorityOfficeSessionId, SocietyName, SupervisorEpochId, SupervisorEpochIdentity,
+        UsdMicros,
     };
     #[cfg(feature = "test-support")]
     use society_kernel::{CancellationMode, CancellationPropagationId, CancellationRequestId};
@@ -4433,7 +4433,7 @@ mod tests {
 
     struct OfficeStart {
         cycle_id: OperatingCycleId,
-        session_id: GrandArchitectOfficeSessionId,
+        session_id: RootAuthorityOfficeSessionId,
         epoch_identity: SupervisorEpochIdentity,
     }
 
@@ -4485,11 +4485,11 @@ mod tests {
         );
         accepted(
             store,
-            "found-seed",
+            "found-founding-mission",
             bootstrap,
-            Capability::InstallFoundingUniverseSeed,
+            Capability::InstallFoundingMission,
             ExpectedGeneration::NotApplicable,
-            CommandBody::InstallFoundingUniverseSeed {
+            CommandBody::InstallFoundingMission {
                 mission: office_bridge_application_mission(),
             },
         );
@@ -4497,18 +4497,18 @@ mod tests {
             store,
             "found-office",
             bootstrap,
-            Capability::InstallGrandArchitectOffice,
+            Capability::InstallRootAuthorityOffice,
             ExpectedGeneration::NotApplicable,
-            CommandBody::InstallGrandArchitectOffice,
+            CommandBody::InstallRootAuthorityOffice,
         );
         accepted(
             store,
-            "found-architect",
+            "found-root_authority",
             bootstrap,
-            Capability::AppointInitialGrandArchitect,
+            Capability::AppointInitialRootAuthority,
             ExpectedGeneration::NotApplicable,
-            CommandBody::AppointInitialGrandArchitect {
-                actor_display_name: PrincipalDisplayName::parse("Grand Architect").unwrap(),
+            CommandBody::AppointInitialRootAuthority {
+                actor_display_name: PrincipalDisplayName::parse("Root Authority").unwrap(),
             },
         );
         accepted(
@@ -4550,19 +4550,19 @@ mod tests {
             generation,
             CommandBody::AdmitOperatingCycle { cycle_id },
         );
-        let architect = PrincipalId::new(3).unwrap();
+        let root_authority = PrincipalId::new(3).unwrap();
         accepted(
             store,
             "office-start",
-            architect,
-            Capability::StartGrandArchitectOfficeSession,
+            root_authority,
+            Capability::StartRootAuthorityOfficeSession,
             generation,
-            CommandBody::StartGrandArchitectOfficeSession { cycle_id },
+            CommandBody::StartRootAuthorityOfficeSession { cycle_id },
         );
         accepted(
             store,
             "office-reserve",
-            architect,
+            root_authority,
             Capability::ReserveBudget,
             generation,
             CommandBody::ReserveBudget {
@@ -4584,7 +4584,7 @@ mod tests {
         );
         OfficeStart {
             cycle_id,
-            session_id: GrandArchitectOfficeSessionId::new(1).unwrap(),
+            session_id: RootAuthorityOfficeSessionId::new(1).unwrap(),
             epoch_identity,
         }
     }
@@ -4649,7 +4649,7 @@ mod tests {
 
     fn rejected_open_office_turn(
         store: &mut KernelStore,
-        session_id: GrandArchitectOfficeSessionId,
+        session_id: RootAuthorityOfficeSessionId,
         command_id: &str,
     ) {
         let capability = Capability::OpenOfficeTurn;
@@ -4748,7 +4748,7 @@ mod tests {
 
     fn open_office_turn(
         store: &mut KernelStore,
-        session_id: GrandArchitectOfficeSessionId,
+        session_id: RootAuthorityOfficeSessionId,
         command_id: &str,
     ) -> (OfficeTurnId, society_kernel::EventId) {
         let capability = Capability::OpenOfficeTurn;
@@ -4916,9 +4916,9 @@ mod tests {
                     pi_transitive_package_set_blake3: double_digest,
                 },
             };
-            let prompt = "Universe Seed\nM5 provider-free Office bootstrap".to_owned();
+            let prompt = "Founding Mission\nM5 provider-free Office bootstrap".to_owned();
             let create = CreateSessionPayload {
-                session_kind: SessionKind::GrandArchitectOffice,
+                session_kind: SessionKind::RootAuthorityOffice,
                 cwd: workspace.directory().clone(),
                 agent_directory: absolute(agent),
                 auth_path: absolute(auth),

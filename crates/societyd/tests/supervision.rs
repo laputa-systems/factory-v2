@@ -1147,9 +1147,9 @@ impl Fixture {
         let large_control_frame =
             label.contains("never-read-stdin") || label.contains("paused-reader");
         let system_prompt = if large_control_frame {
-            "Universe Seed\nM4 pending-control frame".to_owned()
+            "Founding Mission\nM4 pending-control frame".to_owned()
         } else {
-            "Universe Seed\nM4 provider-free fixture".to_owned()
+            "Founding Mission\nM4 provider-free fixture".to_owned()
         };
         let mut create_session = CreateSessionPayload {
             session_kind: SessionKind::TaskAttempt,

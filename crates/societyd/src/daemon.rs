@@ -748,7 +748,7 @@ impl Daemon {
                 correlation,
                 command,
             } => {
-                // The supervisor may authorize a founding or Grand Architect
+                // The supervisor may authorize a founding or Root Authority
                 // command, but no peer may claim the daemon-only kernel
                 // service identity or its lifecycle capabilities through this
                 // protocol. Those facts are constructed in this control loop.

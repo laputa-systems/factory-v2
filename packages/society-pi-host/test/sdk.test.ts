@@ -169,7 +169,7 @@ test("sdk: transcript receipt proves Pi persisted the exact first unexpanded Pro
 	const sessionFile = absolutePath(join(directory, "session.jsonl"));
 	const cwd = absolutePath(directory);
 	const identity = sessionIdentity("transcript-proof-001");
-	const rendering = "Universe Seed\n\nTask assignment: retain literal /template syntax.";
+	const rendering = "Founding Mission\n\nTask assignment: retain literal /template syntax.";
 	await writeFile(
 		sessionFile,
 		[

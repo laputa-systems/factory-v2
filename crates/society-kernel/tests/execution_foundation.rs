@@ -21,22 +21,22 @@ use society_kernel::{
     DeterministicEvaluationReceiptId, DeterministicExperimentId, DevelopmentalAttractor,
     DirectChildWaitStatus, EvaluatorRevisionId, EventBody, EventId, EvidenceApplicability,
     EvidenceLimitationText, EvidenceSemanticRole, ExecutionProfileId, ExpectedGeneration,
-    ForensicManifestCapturePolicy, ForensicManifestId, GrandArchitectOfficeSessionId,
-    GraphRevisionBody, GraphRevisionId, HypothesisRevisionText, InputManifestId, KernelStore,
-    MissionPrinciple, MissionPrincipleKind, MissionPrincipleText, MissionPrinciples,
-    MissionStatement, NativeChildPid, NativeWorkspaceId, NorthStarBoundaryCommitmentQuestion,
-    NorthStarChangeQuestion, NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet,
-    NorthStarRevisitQuestion, OfficeTurnPurpose, OperatingCycleId, OperatingCycleTreatment,
-    OutcomeObligationDisposition, OutcomeObligationId, OutcomeObligationText, OwnedProcessGroupId,
-    PiAbortControlWriteOutcome, PiBoundarySessionIdentity, PiChildOwner, PiChildSpawnAdmissionId,
-    PiCorrelationIdentity, PrincipalDisplayName, PrincipalId, ProcessExitCode,
-    ProcessGroupLiveness, ProcessSignalAction, ProcessSignalCause, ProcessSignalDelivery,
-    ProjectId, ProjectMilestoneId, ProjectMilestoneName, ProjectName, ProjectNorthStarAlignment,
-    ProjectNorthStarBoundaryCommitmentAnswer, ProjectNorthStarChangeAnswer,
-    ProjectNorthStarImprovementEvidenceAnswer, ProjectNorthStarRevisitAnswer, ProjectObjectiveText,
-    ProjectState, ProjectStopConditionText, Rejection, RetentionAccessClass, ReviewChallengeId,
-    ReviewChallengeSeverity, ReviewDispositionKind, ReviewFailureHypothesis, ReviewResolutionKind,
-    ReviewResponseText, SocietyName, SpawnNonce, StoreError, SupervisedChildIdentity,
+    ForensicManifestCapturePolicy, ForensicManifestId, GraphRevisionBody, GraphRevisionId,
+    HypothesisRevisionText, InputManifestId, KernelStore, MissionPrinciple, MissionPrincipleKind,
+    MissionPrincipleText, MissionPrinciples, MissionStatement, NativeChildPid, NativeWorkspaceId,
+    NorthStarBoundaryCommitmentQuestion, NorthStarChangeQuestion,
+    NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet, NorthStarRevisitQuestion,
+    OfficeTurnPurpose, OperatingCycleId, OperatingCycleTreatment, OutcomeObligationDisposition,
+    OutcomeObligationId, OutcomeObligationText, OwnedProcessGroupId, PiAbortControlWriteOutcome,
+    PiBoundarySessionIdentity, PiChildOwner, PiChildSpawnAdmissionId, PiCorrelationIdentity,
+    PrincipalDisplayName, PrincipalId, ProcessExitCode, ProcessGroupLiveness, ProcessSignalAction,
+    ProcessSignalCause, ProcessSignalDelivery, ProjectId, ProjectMilestoneId, ProjectMilestoneName,
+    ProjectName, ProjectNorthStarAlignment, ProjectNorthStarBoundaryCommitmentAnswer,
+    ProjectNorthStarChangeAnswer, ProjectNorthStarImprovementEvidenceAnswer,
+    ProjectNorthStarRevisitAnswer, ProjectObjectiveText, ProjectState, ProjectStopConditionText,
+    Rejection, RetentionAccessClass, ReviewChallengeId, ReviewChallengeSeverity,
+    ReviewDispositionKind, ReviewFailureHypothesis, ReviewResolutionKind, ReviewResponseText,
+    RootAuthorityOfficeSessionId, SocietyName, SpawnNonce, StoreError, SupervisedChildIdentity,
     SupervisorEpochId, SupervisorEpochIdentity, TicketAcceptanceConditionText, TicketId,
     TicketTitle, UsdMicros, WorkAssignmentText, WorkItemId, WorkItemKind, WorkLeaseId,
 };
@@ -169,11 +169,11 @@ fn founded_cycle(
     );
     accepted(
         store,
-        "m3-found-seed",
+        "m3-found-founding-mission",
         bootstrap,
-        Capability::InstallFoundingUniverseSeed,
+        Capability::InstallFoundingMission,
         ExpectedGeneration::NotApplicable,
-        CommandBody::InstallFoundingUniverseSeed {
+        CommandBody::InstallFoundingMission {
             mission: example_application_mission(),
         },
     );
@@ -181,18 +181,18 @@ fn founded_cycle(
         store,
         "m3-found-office",
         bootstrap,
-        Capability::InstallGrandArchitectOffice,
+        Capability::InstallRootAuthorityOffice,
         ExpectedGeneration::NotApplicable,
-        CommandBody::InstallGrandArchitectOffice,
+        CommandBody::InstallRootAuthorityOffice,
     );
     accepted(
         store,
-        "m3-found-architect",
+        "m3-found-root_authority",
         bootstrap,
-        Capability::AppointInitialGrandArchitect,
+        Capability::AppointInitialRootAuthority,
         ExpectedGeneration::NotApplicable,
-        CommandBody::AppointInitialGrandArchitect {
-            actor_display_name: PrincipalDisplayName::parse("Grand Architect").unwrap(),
+        CommandBody::AppointInitialRootAuthority {
+            actor_display_name: PrincipalDisplayName::parse("Root Authority").unwrap(),
         },
     );
     accepted(
@@ -238,22 +238,22 @@ fn founded_cycle(
 
 fn active_project(
     store: &mut KernelStore,
-    architect: PrincipalId,
+    root_authority: PrincipalId,
     cycle: OperatingCycleId,
 ) -> ProjectId {
     let generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
     accepted(
         store,
         "m3-project-office-session",
-        architect,
-        Capability::StartGrandArchitectOfficeSession,
+        root_authority,
+        Capability::StartRootAuthorityOfficeSession,
         generation,
-        CommandBody::StartGrandArchitectOfficeSession { cycle_id: cycle },
+        CommandBody::StartRootAuthorityOfficeSession { cycle_id: cycle },
     );
     accepted(
         store,
         "m3-project-create",
-        architect,
+        root_authority,
         Capability::CreateProject,
         generation,
         CommandBody::CreateProject {
@@ -266,7 +266,7 @@ fn active_project(
     rejected(
         store,
         "m3-project-charter-too-early",
-        architect,
+        root_authority,
         Capability::CharterProject,
         generation,
         CommandBody::CharterProject {
@@ -281,7 +281,7 @@ fn active_project(
     accepted(
         store,
         "m3-project-challenge",
-        architect,
+        root_authority,
         Capability::TransitionProject,
         generation,
         CommandBody::TransitionProject {
@@ -293,7 +293,7 @@ fn active_project(
     accepted(
         store,
         "m3-project-charter",
-        architect,
+        root_authority,
         Capability::CharterProject,
         generation,
         CommandBody::CharterProject {
@@ -307,7 +307,7 @@ fn active_project(
     accepted(
         store,
         "m3-project-activate",
-        architect,
+        root_authority,
         Capability::TransitionProject,
         generation,
         CommandBody::TransitionProject {
@@ -323,9 +323,9 @@ fn active_project(
 /// reservation, epoch, and Pi child admission. It stops before the OS spawn
 /// so each regression can establish its own physical receipt ordering.
 struct AdmittedPiOfficeFixture {
-    architect: PrincipalId,
+    root_authority: PrincipalId,
     cycle: OperatingCycleId,
-    office_session: GrandArchitectOfficeSessionId,
+    office_session: RootAuthorityOfficeSessionId,
     admission: PiChildSpawnAdmissionId,
     child: ChildProcessId,
     pi_session_identity: PiBoundarySessionIdentity,
@@ -334,15 +334,15 @@ struct AdmittedPiOfficeFixture {
 }
 
 fn admitted_pi_office_fixture(store: &mut KernelStore, label: &str) -> AdmittedPiOfficeFixture {
-    let (architect, cycle) =
+    let (root_authority, cycle) =
         founded_cycle(store, OperatingCycleTreatment::DeterministicPiHostFixtureV1);
-    let _project = active_project(store, architect, cycle);
+    let _project = active_project(store, root_authority, cycle);
     let generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
-    let office_session = GrandArchitectOfficeSessionId::new(1).unwrap();
+    let office_session = RootAuthorityOfficeSessionId::new(1).unwrap();
     accepted(
         store,
         &format!("{label}-reserve"),
-        architect,
+        root_authority,
         Capability::ReserveBudget,
         generation,
         CommandBody::ReserveBudget {
@@ -373,7 +373,7 @@ fn admitted_pi_office_fixture(store: &mut KernelStore, label: &str) -> AdmittedP
         generation,
         CommandBody::AdmitPiChildSpawn {
             operating_cycle_id: cycle,
-            owner: PiChildOwner::GrandArchitectOfficeSession(office_session),
+            owner: PiChildOwner::RootAuthorityOfficeSession(office_session),
             budget_reservation_id: BudgetReservationId::new(1).unwrap(),
             execution_profile_id: ExecutionProfileId::DETERMINISTIC_PI_HOST_DOUBLE_V1,
             native_workspace_id: NativeWorkspaceId::parse(format!("workspace-{label}")).unwrap(),
@@ -390,7 +390,7 @@ fn admitted_pi_office_fixture(store: &mut KernelStore, label: &str) -> AdmittedP
         CommandDisposition::Rejected(_) => unreachable!("accepted helper returned a rejection"),
     };
     AdmittedPiOfficeFixture {
-        architect,
+        root_authority,
         cycle,
         office_session,
         admission: PiChildSpawnAdmissionId::new(1).unwrap(),
@@ -593,7 +593,7 @@ fn ledger_event_reads_verified_pi_child_receipts_and_rejects_tampering() {
         admitted.body,
         EventBody::PiChildSpawnAdmitted {
             pi_child_spawn_admission_id,
-            owner: PiChildOwner::GrandArchitectOfficeSession(office_session),
+            owner: PiChildOwner::RootAuthorityOfficeSession(office_session),
             budget_reservation_id,
         } if pi_child_spawn_admission_id == fixture.admission
             && office_session == fixture.office_session
@@ -646,17 +646,17 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
         .as_nanos();
     let path = std::env::temp_dir().join(format!("society-execution-foundation-{nonce}.sqlite"));
     let mut store = KernelStore::open(&path).unwrap();
-    let (architect, cycle) = founded_cycle(
+    let (root_authority, cycle) = founded_cycle(
         &mut store,
         OperatingCycleTreatment::DeterministicPiHostFixtureV1,
     );
     let generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
-    let project = active_project(&mut store, architect, cycle);
+    let project = active_project(&mut store, root_authority, cycle);
 
     accepted(
         &mut store,
         "m3-ticket-create",
-        architect,
+        root_authority,
         Capability::CreateTicket,
         generation,
         CommandBody::CreateTicket {
@@ -674,7 +674,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
     accepted(
         &mut store,
         "m3-config-register",
-        architect,
+        root_authority,
         Capability::RegisterActorConfiguration,
         ExpectedGeneration::NotApplicable,
         CommandBody::RegisterActorConfiguration {
@@ -687,7 +687,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
     accepted(
         &mut store,
         "m3-context-register",
-        architect,
+        root_authority,
         Capability::RegisterContextPack,
         generation,
         CommandBody::RegisterContextPack {
@@ -700,7 +700,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
     accepted(
         &mut store,
         "m3-actor-admit",
-        architect,
+        root_authority,
         Capability::AdmitActorInstance,
         generation,
         CommandBody::AdmitActorInstance {
@@ -715,7 +715,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
     accepted(
         &mut store,
         "m3-graph-add",
-        architect,
+        root_authority,
         Capability::AddGraphObjectRevision,
         generation,
         CommandBody::AddGraphObjectRevision {
@@ -735,7 +735,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
     accepted(
         &mut store,
         "m3-graph-commit",
-        architect,
+        root_authority,
         Capability::CommitGraphRevision,
         generation,
         CommandBody::CommitGraphRevision {
@@ -746,7 +746,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
     accepted(
         &mut store,
         "m3-review-request",
-        architect,
+        root_authority,
         Capability::RequestAdversarialReview,
         generation,
         CommandBody::RequestAdversarialReview {
@@ -759,7 +759,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
     accepted(
         &mut store,
         "m3-ticket-admit",
-        architect,
+        root_authority,
         Capability::AdmitTicket,
         generation,
         CommandBody::AdmitTicket {
@@ -770,7 +770,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
     accepted(
         &mut store,
         "m3-work-register",
-        architect,
+        root_authority,
         Capability::RegisterWorkItem,
         generation,
         CommandBody::RegisterWorkItem {
@@ -800,7 +800,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
     accepted(
         &mut store,
         "m3-attempt-start-first",
-        architect,
+        root_authority,
         Capability::StartActorAttempt,
         generation,
         CommandBody::StartActorAttempt {
@@ -833,7 +833,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
         ExpectedGeneration::NotApplicable,
         CommandBody::CancelActorAttempt {
             actor_attempt_id: first_attempt,
-            reason: ActorAttemptCancellationReason::GrandArchitectRequested,
+            reason: ActorAttemptCancellationReason::RootAuthorityRequested,
         },
     );
     rejected(
@@ -873,7 +873,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
     accepted(
         &mut store,
         "m3-project-pause-before-retry",
-        architect,
+        root_authority,
         Capability::TransitionProject,
         generation,
         CommandBody::TransitionProject {
@@ -885,7 +885,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
     rejected(
         &mut store,
         "m3-attempt-retry-paused-project",
-        architect,
+        root_authority,
         Capability::RetryActorAttempt,
         generation,
         CommandBody::RetryActorAttempt {
@@ -897,7 +897,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
     accepted(
         &mut store,
         "m3-project-resume-before-retry",
-        architect,
+        root_authority,
         Capability::TransitionProject,
         generation,
         CommandBody::TransitionProject {
@@ -909,7 +909,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
     accepted(
         &mut store,
         "m3-attempt-retry",
-        architect,
+        root_authority,
         Capability::RetryActorAttempt,
         generation,
         CommandBody::RetryActorAttempt {
@@ -937,7 +937,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
     let first_start = accepted(
         &mut store,
         "m3-attempt-start-retry",
-        architect,
+        root_authority,
         Capability::StartActorAttempt,
         generation,
         start_retry_body.clone(),
@@ -945,7 +945,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
     let repeated_request = request(
         &mut store,
         "m3-attempt-start-retry",
-        architect,
+        root_authority,
         Capability::StartActorAttempt,
         generation,
         start_retry_body,
@@ -975,7 +975,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
         CommandBody::AssignAdversarialReviewer {
             operating_cycle_id: cycle,
             adversarial_review_id: review,
-            reviewer_principal_id: architect,
+            reviewer_principal_id: root_authority,
             reviewer_actor_instance_id: actor,
             reviewer_actor_attempt_id: second_attempt,
         },
@@ -1017,7 +1017,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
     accepted(
         &mut store,
         "m3-review-response",
-        architect,
+        root_authority,
         Capability::RespondToReviewChallenge,
         generation,
         CommandBody::RespondToReviewChallenge {
@@ -1032,7 +1032,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
     accepted(
         &mut store,
         "m3-review-disposition",
-        architect,
+        root_authority,
         Capability::DispositionReviewChallenge,
         generation,
         CommandBody::DispositionReviewChallenge {
@@ -1044,7 +1044,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
     accepted(
         &mut store,
         "m3-review-resolve",
-        architect,
+        root_authority,
         Capability::ResolveAdversarialReview,
         generation,
         CommandBody::ResolveAdversarialReview {
@@ -1116,7 +1116,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
     accepted(
         &mut store,
         "m4-experiment-register-first",
-        architect,
+        root_authority,
         Capability::RegisterDeterministicExperiment,
         generation,
         CommandBody::RegisterDeterministicExperiment {
@@ -1131,7 +1131,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
     accepted(
         &mut store,
         "m4-experiment-register-second",
-        architect,
+        root_authority,
         Capability::RegisterDeterministicExperiment,
         generation,
         CommandBody::RegisterDeterministicExperiment {
@@ -1350,10 +1350,10 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
         },
     );
     let self_validation = CommandRequest {
-        command_id: CommandId::parse("m3-attempt-validate-ga-self-attest").unwrap(),
-        principal_id: architect,
+        command_id: CommandId::parse("m3-attempt-validate-root-authority-self-attest").unwrap(),
+        principal_id: root_authority,
         capability_grant_id: store
-            .active_capability_grant(architect, Capability::CompleteTicket)
+            .active_capability_grant(root_authority, Capability::CompleteTicket)
             .unwrap()
             .unwrap(),
         capability: Capability::ValidateTicketAttempt,
@@ -1381,7 +1381,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
     accepted(
         &mut store,
         "m3-ticket-complete",
-        architect,
+        root_authority,
         Capability::CompleteTicket,
         generation,
         CommandBody::CompleteTicket {
@@ -1403,7 +1403,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
     accepted(
         &mut store,
         "m3-outcome-register",
-        architect,
+        root_authority,
         Capability::RegisterOutcomeObligation,
         generation,
         CommandBody::RegisterOutcomeObligation {
@@ -1418,7 +1418,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
     accepted(
         &mut store,
         "m3-milestone-complete",
-        architect,
+        root_authority,
         Capability::CompleteProjectMilestone,
         generation,
         CommandBody::CompleteProjectMilestone {
@@ -1429,7 +1429,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
     accepted(
         &mut store,
         "m3-project-observe",
-        architect,
+        root_authority,
         Capability::TransitionProject,
         generation,
         CommandBody::TransitionProject {
@@ -1441,7 +1441,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
     rejected(
         &mut store,
         "m3-project-close-open-outcome",
-        architect,
+        root_authority,
         Capability::TransitionProject,
         generation,
         CommandBody::TransitionProject {
@@ -1454,7 +1454,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
     accepted(
         &mut store,
         "m3-outcome-resolve",
-        architect,
+        root_authority,
         Capability::ResolveOutcomeObligation,
         generation,
         CommandBody::ResolveOutcomeObligation {
@@ -1466,7 +1466,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
     rejected(
         &mut store,
         "m4-project-close-open-experiment",
-        architect,
+        root_authority,
         Capability::TransitionProject,
         generation,
         CommandBody::TransitionProject {
@@ -1479,7 +1479,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
     accepted(
         &mut store,
         "m4-experiment-close",
-        architect,
+        root_authority,
         Capability::CloseDeterministicExperiment,
         generation,
         CommandBody::CloseDeterministicExperiment {
@@ -1490,7 +1490,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
     rejected(
         &mut store,
         "m4-project-close-second-experiment-still-open",
-        architect,
+        root_authority,
         Capability::TransitionProject,
         generation,
         CommandBody::TransitionProject {
@@ -1503,7 +1503,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
     accepted(
         &mut store,
         "m4-experiment-close-second",
-        architect,
+        root_authority,
         Capability::CloseDeterministicExperiment,
         generation,
         CommandBody::CloseDeterministicExperiment {
@@ -1514,7 +1514,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
     accepted(
         &mut store,
         "m3-project-close",
-        architect,
+        root_authority,
         Capability::TransitionProject,
         generation,
         CommandBody::TransitionProject {
@@ -1675,18 +1675,18 @@ fn pi_child_receipts_bind_epoch_treatment_cancellation_and_containment() {
         .as_nanos();
     let path = std::env::temp_dir().join(format!("society-m5-child-replay-{nonce}.sqlite"));
     let mut store = KernelStore::open(&path).unwrap();
-    let (architect, cycle) = founded_cycle(
+    let (root_authority, cycle) = founded_cycle(
         &mut store,
         OperatingCycleTreatment::DeterministicPiHostFixtureV1,
     );
     let generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
-    let _project = active_project(&mut store, architect, cycle);
-    let office_session = GrandArchitectOfficeSessionId::new(1).unwrap();
+    let _project = active_project(&mut store, root_authority, cycle);
+    let office_session = RootAuthorityOfficeSessionId::new(1).unwrap();
 
     accepted(
         &mut store,
         "m5-reserve-office-child-budget",
-        architect,
+        root_authority,
         Capability::ReserveBudget,
         generation,
         CommandBody::ReserveBudget {
@@ -1749,7 +1749,7 @@ fn pi_child_receipts_bind_epoch_treatment_cancellation_and_containment() {
         generation,
         CommandBody::AdmitPiChildSpawn {
             operating_cycle_id: cycle,
-            owner: PiChildOwner::GrandArchitectOfficeSession(office_session),
+            owner: PiChildOwner::RootAuthorityOfficeSession(office_session),
             budget_reservation_id: reservation,
             execution_profile_id: ExecutionProfileId::NATIVE_PINNED_PI_SDK_V1,
             native_workspace_id: workspace.clone(),
@@ -1769,7 +1769,7 @@ fn pi_child_receipts_bind_epoch_treatment_cancellation_and_containment() {
         generation,
         CommandBody::AdmitPiChildSpawn {
             operating_cycle_id: cycle,
-            owner: PiChildOwner::GrandArchitectOfficeSession(office_session),
+            owner: PiChildOwner::RootAuthorityOfficeSession(office_session),
             budget_reservation_id: reservation,
             execution_profile_id: ExecutionProfileId::DETERMINISTIC_PI_HOST_DOUBLE_V1,
             native_workspace_id: workspace,
@@ -1961,7 +1961,7 @@ fn pi_child_receipts_bind_epoch_treatment_cancellation_and_containment() {
     accepted(
         &mut store,
         "m5-request-cancellation",
-        architect,
+        root_authority,
         Capability::RequestCancellation,
         generation,
         CommandBody::RequestCancellation {
@@ -2086,14 +2086,14 @@ fn pi_child_receipts_bind_epoch_treatment_cancellation_and_containment() {
     // must not turn the schema-seeded, still-unqualified native profile into
     // an admissible live child merely because an Office has a reservation.
     let mut live = KernelStore::open_in_memory().unwrap();
-    let (live_architect, live_cycle) =
+    let (live_root_authority, live_cycle) =
         founded_cycle(&mut live, OperatingCycleTreatment::PinnedPiSdkLiveV1);
     let live_generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
-    let _live_project = active_project(&mut live, live_architect, live_cycle);
+    let _live_project = active_project(&mut live, live_root_authority, live_cycle);
     accepted(
         &mut live,
         "m5-live-reserve",
-        live_architect,
+        live_root_authority,
         Capability::ReserveBudget,
         live_generation,
         CommandBody::ReserveBudget {
@@ -2123,8 +2123,8 @@ fn pi_child_receipts_bind_epoch_treatment_cancellation_and_containment() {
         live_generation,
         CommandBody::AdmitPiChildSpawn {
             operating_cycle_id: live_cycle,
-            owner: PiChildOwner::GrandArchitectOfficeSession(
-                GrandArchitectOfficeSessionId::new(1).unwrap(),
+            owner: PiChildOwner::RootAuthorityOfficeSession(
+                RootAuthorityOfficeSessionId::new(1).unwrap(),
             ),
             budget_reservation_id: society_kernel::BudgetReservationId::new(1).unwrap(),
             execution_profile_id: ExecutionProfileId::NATIVE_PINNED_PI_SDK_V1,
@@ -2170,16 +2170,16 @@ fn pi_child_receipts_bind_epoch_treatment_cancellation_and_containment() {
 #[test]
 fn lingering_group_cleanup_requires_later_absence_before_finalization() {
     let mut store = KernelStore::open_in_memory().unwrap();
-    let (architect, cycle) = founded_cycle(
+    let (root_authority, cycle) = founded_cycle(
         &mut store,
         OperatingCycleTreatment::DeterministicPiHostFixtureV1,
     );
     let generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
-    let _project = active_project(&mut store, architect, cycle);
+    let _project = active_project(&mut store, root_authority, cycle);
     accepted(
         &mut store,
         "m5-linger-reserve",
-        architect,
+        root_authority,
         Capability::ReserveBudget,
         generation,
         CommandBody::ReserveBudget {
@@ -2210,8 +2210,8 @@ fn lingering_group_cleanup_requires_later_absence_before_finalization() {
         generation,
         CommandBody::AdmitPiChildSpawn {
             operating_cycle_id: cycle,
-            owner: PiChildOwner::GrandArchitectOfficeSession(
-                GrandArchitectOfficeSessionId::new(1).unwrap(),
+            owner: PiChildOwner::RootAuthorityOfficeSession(
+                RootAuthorityOfficeSessionId::new(1).unwrap(),
             ),
             budget_reservation_id: society_kernel::BudgetReservationId::new(1).unwrap(),
             execution_profile_id: ExecutionProfileId::DETERMINISTIC_PI_HOST_DOUBLE_V1,
@@ -2396,16 +2396,16 @@ fn lingering_group_cleanup_requires_later_absence_before_finalization() {
 #[test]
 fn cancellation_freezes_an_admitted_unspawned_child_until_a_typed_not_spawned_fact() {
     let mut store = KernelStore::open_in_memory().unwrap();
-    let (architect, cycle) = founded_cycle(
+    let (root_authority, cycle) = founded_cycle(
         &mut store,
         OperatingCycleTreatment::DeterministicPiHostFixtureV1,
     );
     let generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
-    let _project = active_project(&mut store, architect, cycle);
+    let _project = active_project(&mut store, root_authority, cycle);
     accepted(
         &mut store,
         "m5-unspawned-reserve",
-        architect,
+        root_authority,
         Capability::ReserveBudget,
         generation,
         CommandBody::ReserveBudget {
@@ -2433,8 +2433,8 @@ fn cancellation_freezes_an_admitted_unspawned_child_until_a_typed_not_spawned_fa
         generation,
         CommandBody::AdmitPiChildSpawn {
             operating_cycle_id: cycle,
-            owner: PiChildOwner::GrandArchitectOfficeSession(
-                GrandArchitectOfficeSessionId::new(1).unwrap(),
+            owner: PiChildOwner::RootAuthorityOfficeSession(
+                RootAuthorityOfficeSessionId::new(1).unwrap(),
             ),
             budget_reservation_id: society_kernel::BudgetReservationId::new(1).unwrap(),
             execution_profile_id: ExecutionProfileId::DETERMINISTIC_PI_HOST_DOUBLE_V1,
@@ -2452,7 +2452,7 @@ fn cancellation_freezes_an_admitted_unspawned_child_until_a_typed_not_spawned_fa
     accepted(
         &mut store,
         "m5-unspawned-cancel",
-        architect,
+        root_authority,
         Capability::RequestCancellation,
         generation,
         CommandBody::RequestCancellation {
@@ -2576,7 +2576,7 @@ fn supervised_office_turns_recheck_the_exact_live_pi_child() {
     rejected(
         &mut store,
         "m5-turn-reject-after-direct-reap",
-        fixture.architect,
+        fixture.root_authority,
         Capability::OpenOfficeTurn,
         zero,
         CommandBody::OpenOfficeTurn {
@@ -2642,7 +2642,7 @@ fn supervised_office_turns_recheck_the_exact_live_pi_child() {
     rejected(
         &mut store,
         "m5-turn-reject-after-finalize",
-        fixture.architect,
+        fixture.root_authority,
         Capability::OpenOfficeTurn,
         zero,
         CommandBody::OpenOfficeTurn {
@@ -2717,7 +2717,7 @@ fn supervised_office_turns_recheck_the_exact_live_pi_child() {
         rejected(
             &mut secondary,
             &format!("{label}-reject-turn"),
-            secondary_fixture.architect,
+            secondary_fixture.root_authority,
             Capability::OpenOfficeTurn,
             zero,
             CommandBody::OpenOfficeTurn {
@@ -2766,7 +2766,7 @@ fn buffered_pi_receipts_after_cancellation_are_attributed_without_reopening_work
     accepted(
         &mut store,
         "m5-buffered-request-cancel",
-        fixture.architect,
+        fixture.root_authority,
         Capability::RequestCancellation,
         zero,
         CommandBody::RequestCancellation {
@@ -2861,7 +2861,7 @@ fn adapter_ready_race_after_cancellation_preserves_receipt_but_rejects_create() 
     accepted(
         &mut store,
         "m5-adapter-race-request-cancel",
-        fixture.architect,
+        fixture.root_authority,
         Capability::RequestCancellation,
         zero,
         CommandBody::RequestCancellation {
@@ -2990,7 +2990,7 @@ fn partial_abort_is_a_durable_attempt_and_allows_cancellation_escalation() {
     accepted(
         &mut store,
         "m5-partial-abort-request-cancel",
-        fixture.architect,
+        fixture.root_authority,
         Capability::RequestCancellation,
         zero,
         CommandBody::RequestCancellation {
@@ -3106,7 +3106,7 @@ fn recovery_containment_and_liveness_reuse_remain_durable_close_blockers() {
     accepted(
         &mut store,
         "m5-recovery-request-cancel",
-        fixture.architect,
+        fixture.root_authority,
         Capability::RequestCancellation,
         zero,
         CommandBody::RequestCancellation {
@@ -3271,7 +3271,7 @@ fn pre_spawn_failure_and_raced_spawn_are_accounted_before_cancellation_reconcili
     accepted(
         &mut raced,
         "m5-raced-spawn-request-cancel",
-        raced_fixture.architect,
+        raced_fixture.root_authority,
         Capability::RequestCancellation,
         zero,
         CommandBody::RequestCancellation {
@@ -3330,16 +3330,16 @@ fn pre_spawn_failure_and_raced_spawn_are_accounted_before_cancellation_reconcili
 #[test]
 fn lease_expiry_requires_a_work_item_without_an_attempt() {
     let mut store = KernelStore::open_in_memory().unwrap();
-    let (architect, cycle) = founded_cycle(
+    let (root_authority, cycle) = founded_cycle(
         &mut store,
         OperatingCycleTreatment::DeterministicPiHostFixtureV1,
     );
     let generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
-    let project = active_project(&mut store, architect, cycle);
+    let project = active_project(&mut store, root_authority, cycle);
     accepted(
         &mut store,
         "expiry-ticket-create",
-        architect,
+        root_authority,
         Capability::CreateTicket,
         generation,
         CommandBody::CreateTicket {
@@ -3357,7 +3357,7 @@ fn lease_expiry_requires_a_work_item_without_an_attempt() {
     accepted(
         &mut store,
         "expiry-config",
-        architect,
+        root_authority,
         Capability::RegisterActorConfiguration,
         ExpectedGeneration::NotApplicable,
         CommandBody::RegisterActorConfiguration {
@@ -3369,7 +3369,7 @@ fn lease_expiry_requires_a_work_item_without_an_attempt() {
     accepted(
         &mut store,
         "expiry-context",
-        architect,
+        root_authority,
         Capability::RegisterContextPack,
         generation,
         CommandBody::RegisterContextPack {
@@ -3381,7 +3381,7 @@ fn lease_expiry_requires_a_work_item_without_an_attempt() {
     accepted(
         &mut store,
         "expiry-actor",
-        architect,
+        root_authority,
         Capability::AdmitActorInstance,
         generation,
         CommandBody::AdmitActorInstance {
@@ -3394,7 +3394,7 @@ fn lease_expiry_requires_a_work_item_without_an_attempt() {
     accepted(
         &mut store,
         "expiry-admit-ticket",
-        architect,
+        root_authority,
         Capability::AdmitTicket,
         generation,
         CommandBody::AdmitTicket {
@@ -3405,7 +3405,7 @@ fn lease_expiry_requires_a_work_item_without_an_attempt() {
     accepted(
         &mut store,
         "expiry-register-work",
-        architect,
+        root_authority,
         Capability::RegisterWorkItem,
         generation,
         CommandBody::RegisterWorkItem {
@@ -3421,7 +3421,7 @@ fn lease_expiry_requires_a_work_item_without_an_attempt() {
     accepted(
         &mut store,
         "expiry-pause-before-claim",
-        architect,
+        root_authority,
         Capability::TransitionProject,
         generation,
         CommandBody::TransitionProject {
@@ -3445,7 +3445,7 @@ fn lease_expiry_requires_a_work_item_without_an_attempt() {
     accepted(
         &mut store,
         "expiry-resume-before-claim",
-        architect,
+        root_authority,
         Capability::TransitionProject,
         generation,
         CommandBody::TransitionProject {
@@ -3468,7 +3468,7 @@ fn lease_expiry_requires_a_work_item_without_an_attempt() {
     accepted(
         &mut store,
         "expiry-pause-before-start",
-        architect,
+        root_authority,
         Capability::TransitionProject,
         generation,
         CommandBody::TransitionProject {
@@ -3480,7 +3480,7 @@ fn lease_expiry_requires_a_work_item_without_an_attempt() {
     rejected(
         &mut store,
         "expiry-start-paused-project",
-        architect,
+        root_authority,
         Capability::StartActorAttempt,
         generation,
         CommandBody::StartActorAttempt {
@@ -3526,16 +3526,16 @@ fn execution_profile_admission_is_closed_by_treatment_and_readiness() {
     ];
     for (index, treatment) in deterministic_cases.into_iter().enumerate() {
         let mut store = KernelStore::open_in_memory().unwrap();
-        let (architect, cycle) = founded_cycle(&mut store, treatment);
+        let (root_authority, cycle) = founded_cycle(&mut store, treatment);
         let generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
         if treatment != OperatingCycleTreatment::PiSdkQualificationV1 {
-            let _project = active_project(&mut store, architect, cycle);
+            let _project = active_project(&mut store, root_authority, cycle);
         }
         if treatment != OperatingCycleTreatment::PiSdkQualificationV1 {
             accepted(
                 &mut store,
                 "profile-double-config",
-                architect,
+                root_authority,
                 Capability::RegisterActorConfiguration,
                 ExpectedGeneration::NotApplicable,
                 CommandBody::RegisterActorConfiguration {
@@ -3549,7 +3549,7 @@ fn execution_profile_admission_is_closed_by_treatment_and_readiness() {
         rejected(
             &mut store,
             &format!("profile-double-rejected-{index}"),
-            architect,
+            root_authority,
             Capability::AdmitActorInstance,
             generation,
             CommandBody::AdmitActorInstance {
@@ -3573,16 +3573,16 @@ fn execution_profile_admission_is_closed_by_treatment_and_readiness() {
     ];
     for (index, treatment) in native_cases.into_iter().enumerate() {
         let mut store = KernelStore::open_in_memory().unwrap();
-        let (architect, cycle) = founded_cycle(&mut store, treatment);
+        let (root_authority, cycle) = founded_cycle(&mut store, treatment);
         let generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
         if treatment != OperatingCycleTreatment::PiSdkQualificationV1 {
-            let _project = active_project(&mut store, architect, cycle);
+            let _project = active_project(&mut store, root_authority, cycle);
         }
         if treatment != OperatingCycleTreatment::PiSdkQualificationV1 {
             accepted(
                 &mut store,
                 "profile-native-config",
-                architect,
+                root_authority,
                 Capability::RegisterActorConfiguration,
                 ExpectedGeneration::NotApplicable,
                 CommandBody::RegisterActorConfiguration {
@@ -3596,7 +3596,7 @@ fn execution_profile_admission_is_closed_by_treatment_and_readiness() {
         rejected(
             &mut store,
             &format!("profile-native-rejected-{index}"),
-            architect,
+            root_authority,
             Capability::AdmitActorInstance,
             generation,
             CommandBody::AdmitActorInstance {
@@ -3616,24 +3616,24 @@ fn execution_profile_admission_is_closed_by_treatment_and_readiness() {
 }
 
 #[test]
-fn paid_qualification_treatment_has_no_grand_architect_work_surface() {
+fn paid_qualification_treatment_has_no_root_authority_work_surface() {
     let mut store = KernelStore::open_in_memory().unwrap();
-    let (architect, cycle) =
+    let (root_authority, cycle) =
         founded_cycle(&mut store, OperatingCycleTreatment::PiSdkQualificationV1);
     let generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
     rejected(
         &mut store,
         "qualification-no-office-session",
-        architect,
-        Capability::StartGrandArchitectOfficeSession,
+        root_authority,
+        Capability::StartRootAuthorityOfficeSession,
         generation,
-        CommandBody::StartGrandArchitectOfficeSession { cycle_id: cycle },
+        CommandBody::StartRootAuthorityOfficeSession { cycle_id: cycle },
         Rejection::QualificationTreatmentRestricted,
     );
     rejected(
         &mut store,
         "qualification-no-project",
-        architect,
+        root_authority,
         Capability::CreateProject,
         generation,
         CommandBody::CreateProject {
@@ -3646,7 +3646,7 @@ fn paid_qualification_treatment_has_no_grand_architect_work_surface() {
     rejected(
         &mut store,
         "qualification-no-actor-admission",
-        architect,
+        root_authority,
         Capability::AdmitActorInstance,
         generation,
         CommandBody::AdmitActorInstance {
@@ -3664,16 +3664,16 @@ fn paid_qualification_treatment_has_no_grand_architect_work_surface() {
 #[test]
 fn reviewer_attempt_cannot_be_rebound_to_a_different_requested_review() {
     let mut store = KernelStore::open_in_memory().unwrap();
-    let (architect, cycle) = founded_cycle(
+    let (root_authority, cycle) = founded_cycle(
         &mut store,
         OperatingCycleTreatment::DeterministicPiHostFixtureV1,
     );
     let generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
-    let project = active_project(&mut store, architect, cycle);
+    let project = active_project(&mut store, root_authority, cycle);
     accepted(
         &mut store,
         "cross-review-ticket",
-        architect,
+        root_authority,
         Capability::CreateTicket,
         generation,
         CommandBody::CreateTicket {
@@ -3691,7 +3691,7 @@ fn reviewer_attempt_cannot_be_rebound_to_a_different_requested_review() {
         accepted(
             &mut store,
             &format!("cross-review-graph-add-{index}"),
-            architect,
+            root_authority,
             Capability::AddGraphObjectRevision,
             generation,
             CommandBody::AddGraphObjectRevision {
@@ -3707,7 +3707,7 @@ fn reviewer_attempt_cannot_be_rebound_to_a_different_requested_review() {
         accepted(
             &mut store,
             &format!("cross-review-graph-commit-{index}"),
-            architect,
+            root_authority,
             Capability::CommitGraphRevision,
             generation,
             CommandBody::CommitGraphRevision {
@@ -3718,7 +3718,7 @@ fn reviewer_attempt_cannot_be_rebound_to_a_different_requested_review() {
         accepted(
             &mut store,
             &format!("cross-review-request-{index}"),
-            architect,
+            root_authority,
             Capability::RequestAdversarialReview,
             generation,
             CommandBody::RequestAdversarialReview {
@@ -3733,7 +3733,7 @@ fn reviewer_attempt_cannot_be_rebound_to_a_different_requested_review() {
     accepted(
         &mut store,
         "cross-review-config",
-        architect,
+        root_authority,
         Capability::RegisterActorConfiguration,
         ExpectedGeneration::NotApplicable,
         CommandBody::RegisterActorConfiguration {
@@ -3745,7 +3745,7 @@ fn reviewer_attempt_cannot_be_rebound_to_a_different_requested_review() {
     accepted(
         &mut store,
         "cross-review-context",
-        architect,
+        root_authority,
         Capability::RegisterContextPack,
         generation,
         CommandBody::RegisterContextPack {
@@ -3757,7 +3757,7 @@ fn reviewer_attempt_cannot_be_rebound_to_a_different_requested_review() {
     accepted(
         &mut store,
         "cross-review-actor",
-        architect,
+        root_authority,
         Capability::AdmitActorInstance,
         generation,
         CommandBody::AdmitActorInstance {
@@ -3770,7 +3770,7 @@ fn reviewer_attempt_cannot_be_rebound_to_a_different_requested_review() {
     accepted(
         &mut store,
         "cross-review-ticket-admit",
-        architect,
+        root_authority,
         Capability::AdmitTicket,
         generation,
         CommandBody::AdmitTicket {
@@ -3781,7 +3781,7 @@ fn reviewer_attempt_cannot_be_rebound_to_a_different_requested_review() {
     rejected(
         &mut store,
         "cross-review-work-missing-binding",
-        architect,
+        root_authority,
         Capability::RegisterWorkItem,
         generation,
         CommandBody::RegisterWorkItem {
@@ -3798,7 +3798,7 @@ fn reviewer_attempt_cannot_be_rebound_to_a_different_requested_review() {
     accepted(
         &mut store,
         "cross-review-work",
-        architect,
+        root_authority,
         Capability::RegisterWorkItem,
         generation,
         CommandBody::RegisterWorkItem {
@@ -3825,7 +3825,7 @@ fn reviewer_attempt_cannot_be_rebound_to_a_different_requested_review() {
     accepted(
         &mut store,
         "cross-review-start",
-        architect,
+        root_authority,
         Capability::StartActorAttempt,
         generation,
         CommandBody::StartActorAttempt {
@@ -3871,7 +3871,7 @@ fn compiled_capability_grants_have_closed_origin_and_exact_service_set() {
         .as_nanos();
     let path = std::env::temp_dir().join(format!("society-capability-origin-{nonce}.sqlite"));
     let mut store = KernelStore::open(&path).unwrap();
-    let (architect, _) = founded_cycle(
+    let (root_authority, _) = founded_cycle(
         &mut store,
         OperatingCycleTreatment::DeterministicPiHostFixtureV1,
     );
@@ -3908,18 +3908,18 @@ fn compiled_capability_grants_have_closed_origin_and_exact_service_set() {
         .collect();
     expected_service_capabilities.sort_unstable();
     assert_eq!(service_capabilities, expected_service_capabilities);
-    let architect_ledger_grants: i64 = inspect
+    let root_authority_ledger_grants: i64 = inspect
         .query_row(
             "SELECT COUNT(*) FROM capability_grants
              WHERE principal_id = ?1 AND grant_origin = 2
                AND granted_by_command_id IS NOT NULL",
-            [architect.value()],
+            [root_authority.value()],
             |row| row.get(0),
         )
         .unwrap();
     assert_eq!(
-        architect_ledger_grants,
-        Capability::GRAND_ARCHITECT.len() as i64
+        root_authority_ledger_grants,
+        Capability::ROOT_AUTHORITY.len() as i64
     );
     assert!(
         inspect
@@ -3928,7 +3928,7 @@ fn compiled_capability_grants_have_closed_origin_and_exact_service_set() {
                                              actor_instance_id, grant_state, grant_origin,
                                              granted_by_command_id, consumed_by_command_id)
              VALUES (?1, 54, NULL, NULL, 1, 3, NULL, NULL)",
-                [architect.value()],
+                [root_authority.value()],
             )
             .is_err()
     );

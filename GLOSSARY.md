@@ -25,13 +25,27 @@ current digest is a caller attestation, not a physical content seal or
 provenance claim. Mission is durable input, not ambient documentation or a
 copied prompt fragment.
 
+### Founding mission
+
+The one installed `FoundingMission` record that binds bootstrap to its exact
+`ApplicationRevisionId`. It is a root-governance cross-link: the kernel does
+not interpret the application's mission prose or derive a product
+constitution from it.
+
+### Root authority office
+
+The current prototype's single `RootAuthorityOffice` and active occupancy.
+It grants the closed root-governance capability bundle and may open one
+bounded `RootAuthorityOfficeSession` per Operating Cycle. It is not an
+application office title or product-specific governance model.
+
 ### North-star alignment
 
 One work object's typed application of its exact mission revision. It has four
 named fields: intended capability or behavior change, improvement evidence,
 boundary commitment, and revisit condition. Mission supplies purpose;
 alignment tests an action. The current kernel requires this exact alignment on
-Project creation and rejects a revision other than the founded seed revision.
+Project creation and rejects a revision other than the founding mission revision.
 
 ### Capability
 

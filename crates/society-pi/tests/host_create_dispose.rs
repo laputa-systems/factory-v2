@@ -38,7 +38,7 @@ fn committed_host_create_then_dispose_is_sealed_without_a_provider_call() {
     let catalog = admitted_catalog();
     fs::write(&models, &catalog).unwrap();
 
-    let system_prompt = "Universe Seed\nProvider-free construction receipt";
+    let system_prompt = "Founding Mission\nProvider-free construction receipt";
     let catalog_blake3 = blake3(&catalog);
     let create = envelope(
         1,
@@ -167,7 +167,7 @@ fn committed_host_create_then_dispose_is_sealed_without_a_provider_call() {
 }
 
 fn envelope(sequence: u64, correlation: &str, command: &str, payload: serde_json::Value) -> String {
-    json!({ "protocolVersion":"society-pi-host/v3", "sequence":sequence, "sessionIdentity":SESSION, "correlationIdentity":correlation, "command":command, "payload":payload }).to_string()
+    json!({ "protocolVersion":"society-pi-host/v4", "sequence":sequence, "sessionIdentity":SESSION, "correlationIdentity":correlation, "command":command, "payload":payload }).to_string()
 }
 fn admitted_catalog() -> String {
     json!({ "providers": { "openrouter": { "baseUrl":"https://openrouter.ai/api/v1", "api":"openai-completions", "models":[{ "id":"deepseek/deepseek-v4-flash-0731", "name":"admitted", "reasoning":true, "input":["text"], "contextWindow":1_048_576, "maxTokens":384_000, "cost":{"input":0.00000009,"output":0.00000018,"cacheRead":0.000000018,"cacheWrite":0} }] } } }).to_string()

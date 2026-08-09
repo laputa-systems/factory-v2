@@ -54,7 +54,7 @@ purpose; north-star alignment tests a particular proposed action. Neither is a
 second authority and neither is an extensible document-shaped field.
 
 The current fresh schema normalizes this mission and requires every Project to
-persist the exact four-field alignment against its seed revision. Its source
+persist the exact four-field alignment against its founding-mission revision. Its source
 rendering field is presently a declared BLAKE3 byte identity, not a content
 seal or provenance claim. Binding that rendering to a daemon-sealed
 `ContentObjectId` remains the intended stronger boundary.
@@ -89,6 +89,14 @@ state determine authority. Prompts, titles, source repositories, and tool
 access do not grant it. Every admitted actor attempt belongs to one bounded
 Operating Cycle with a budget reservation, an admission generation, a
 cancellation root, and a named execution profile.
+
+The current fresh-schema prototype preserves one `RootAuthorityOffice` during
+bootstrap. Its active occupancy receives the closed root-authority capability
+bundle, and its `RootAuthorityOfficeSession` provides the bounded resident
+control session for an Operating Cycle. `FoundingMission` is the single
+installed application mission revision from which that bootstrap derives its
+generic cross-links. These are root-governance mechanics, not an
+application-owned office title, constitution, or prompt contract.
 
 The daemon owns child-process groups, direct-child reaping, control pipes, and
 the final recheck immediately before a paid session can be constructed.

@@ -1,7 +1,7 @@
 //! Fixed, redaction-safe operator rendering for the resident authority.
 //!
 //! The monitor is intentionally independent of ambient environment filters:
-//! a Grand Architect always receives `INFO`, `WARN`, and `ERROR` on stderr.
+//! a Root Authority always receives `INFO`, `WARN`, and `ERROR` on stderr.
 //! It is only a live rendering. It does not persist trace lines, interpret
 //! protocol bodies, or receive credentials, raw frames, or actor context.
 

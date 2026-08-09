@@ -30,7 +30,7 @@ use societyd::protocol::{
 use societyd::{Daemon, DaemonConfig, DaemonError, FaultInjection, ShutdownHandle, StartupMode};
 
 const BOOTSTRAP: PrincipalId = PrincipalId::BOOTSTRAP;
-const GRAND_ARCHITECT: PrincipalId = PrincipalId::new(3).expect("compiled principal id");
+const ROOT_AUTHORITY: PrincipalId = PrincipalId::new(3).expect("compiled principal id");
 
 fn resident_application_mission() -> ApplicationMissionInput {
     ApplicationMissionInput {
@@ -219,11 +219,11 @@ fn founding_commands(client: &mut SupervisorClient, start_correlation: u64) {
         execute_with_active_grant(
             client,
             correlation(start_correlation + 1),
-            "daemon-found-seed",
+            "daemon-found-founding-mission",
             BOOTSTRAP,
-            Capability::InstallFoundingUniverseSeed,
+            Capability::InstallFoundingMission,
             ExpectedGeneration::NotApplicable,
-            ClientCommandBody::InstallFoundingUniverseSeed {
+            ClientCommandBody::InstallFoundingMission {
                 mission: Box::new(resident_application_mission()),
             },
         )
@@ -235,9 +235,9 @@ fn founding_commands(client: &mut SupervisorClient, start_correlation: u64) {
             correlation(start_correlation + 2),
             "daemon-found-office",
             BOOTSTRAP,
-            Capability::InstallGrandArchitectOffice,
+            Capability::InstallRootAuthorityOffice,
             ExpectedGeneration::NotApplicable,
-            ClientCommandBody::InstallGrandArchitectOffice,
+            ClientCommandBody::InstallRootAuthorityOffice,
         )
         .unwrap(),
     );
@@ -245,12 +245,12 @@ fn founding_commands(client: &mut SupervisorClient, start_correlation: u64) {
         execute_with_active_grant(
             client,
             correlation(start_correlation + 3),
-            "daemon-found-architect",
+            "daemon-found-root_authority",
             BOOTSTRAP,
-            Capability::AppointInitialGrandArchitect,
+            Capability::AppointInitialRootAuthority,
             ExpectedGeneration::NotApplicable,
-            ClientCommandBody::AppointInitialGrandArchitect {
-                actor_display_name: PrincipalDisplayName::parse("daemon grand architect").unwrap(),
+            ClientCommandBody::AppointInitialRootAuthority {
+                actor_display_name: PrincipalDisplayName::parse("daemon root authority").unwrap(),
             },
         )
         .unwrap(),
@@ -295,7 +295,7 @@ fn admit_and_close_empty_cycle(
             client,
             correlation(correlation_start),
             &format!("daemon-propose-{}", cycle_id.value()),
-            GRAND_ARCHITECT,
+            ROOT_AUTHORITY,
             Capability::ProposeOperatingCycle,
             ExpectedGeneration::NotApplicable,
             ClientCommandBody::ProposeOperatingCycle {
@@ -310,7 +310,7 @@ fn admit_and_close_empty_cycle(
             client,
             correlation(correlation_start + 1),
             &format!("daemon-admit-{}", cycle_id.value()),
-            GRAND_ARCHITECT,
+            ROOT_AUTHORITY,
             Capability::AdmitOperatingCycle,
             ExpectedGeneration::Exact(AdmissionGeneration::INITIAL),
             ClientCommandBody::AdmitOperatingCycle { cycle_id },
@@ -322,7 +322,7 @@ fn admit_and_close_empty_cycle(
             client,
             correlation(correlation_start + 2),
             &format!("daemon-quiesce-{}", cycle_id.value()),
-            GRAND_ARCHITECT,
+            ROOT_AUTHORITY,
             Capability::QuiesceOperatingCycle,
             ExpectedGeneration::Exact(AdmissionGeneration::INITIAL),
             ClientCommandBody::QuiesceOperatingCycle { cycle_id },
@@ -335,7 +335,7 @@ fn admit_and_close_empty_cycle(
             client,
             correlation(correlation_start + 3),
             &format!("daemon-reconcile-{}", cycle_id.value()),
-            GRAND_ARCHITECT,
+            ROOT_AUTHORITY,
             Capability::ReconcileOperatingCycle,
             fenced,
             ClientCommandBody::ReconcileOperatingCycle { cycle_id },
@@ -347,7 +347,7 @@ fn admit_and_close_empty_cycle(
             client,
             correlation(correlation_start + 4),
             &format!("daemon-close-{}", cycle_id.value()),
-            GRAND_ARCHITECT,
+            ROOT_AUTHORITY,
             Capability::CloseOperatingCycle,
             fenced,
             ClientCommandBody::CloseOperatingCycle { cycle_id },
@@ -363,7 +363,7 @@ fn owns_one_runtime_root_and_exposes_a_user_only_socket() {
     let mode = fs::metadata(socket_path).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o600);
     assert!(!root.join("bootstrap.admission").exists());
-    assert!(!root.join("grand-architect.admission").exists());
+    assert!(!root.join("root-authority.admission").exists());
     assert!(matches!(
         Daemon::bind(DaemonConfig::new(&root)),
         Err(DaemonError::AlreadyRunning)
@@ -451,7 +451,7 @@ fn same_uid_public_peer_cannot_acquire_privileged_admission() {
     // the named monitor socket, while even a peer holding the test-only
     // supervisor endpoint cannot claim daemon-only kernel authority.
     assert!(!root.join("bootstrap.admission").exists());
-    assert!(!root.join("grand-architect.admission").exists());
+    assert!(!root.join("root-authority.admission").exists());
     let forged_command = command(
         "forged-kernel-service",
         PrincipalId::KERNEL,
@@ -485,7 +485,7 @@ fn same_uid_public_peer_cannot_acquire_privileged_admission() {
 
     let normal_command = command(
         "forged-daemon-only-capability",
-        GRAND_ARCHITECT,
+        ROOT_AUTHORITY,
         15,
         Capability::CreateSocietyIdentity,
         ExpectedGeneration::NotApplicable,
@@ -778,7 +778,7 @@ fn reconnect_is_idempotent_qualification_is_closed_and_empty_deterministic_then_
         &mut supervisor,
         correlation(30),
         "daemon-propose-disallowed-qualification",
-        GRAND_ARCHITECT,
+        ROOT_AUTHORITY,
         Capability::ProposeOperatingCycle,
         ExpectedGeneration::NotApplicable,
         ClientCommandBody::ProposeOperatingCycle {
@@ -852,9 +852,9 @@ fn restart_replays_receipts_but_refuses_new_work_until_kernel_recovery_exists() 
                 "restart-new-command-is-fenced",
                 BOOTSTRAP,
                 2,
-                Capability::InstallGrandArchitectOffice,
+                Capability::InstallRootAuthorityOffice,
                 ExpectedGeneration::NotApplicable,
-                ClientCommandBody::InstallGrandArchitectOffice,
+                ClientCommandBody::InstallRootAuthorityOffice,
             ),
         ),
         Err(SocietyctlError::Daemon(ProtocolErrorCode::RecoveryFenced))

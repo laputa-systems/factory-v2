@@ -7,7 +7,7 @@
 
 import { isAbsolute, normalize } from "node:path";
 
-export const ADAPTER_PROTOCOL_VERSION = "society-pi-host/v3" as const;
+export const ADAPTER_PROTOCOL_VERSION = "society-pi-host/v4" as const;
 export const ADAPTER_VERSION = "1" as const;
 export const PINNED_PI_SDK_VERSION = "0.83.0" as const;
 export const PINNED_PROVIDER = "openrouter" as const;
@@ -160,7 +160,7 @@ export function nodeRuntimeVersion(value: string): NodeRuntimeVersion {
 	return value as NodeRuntimeVersion;
 }
 
-export type SessionKind = "TaskAttempt" | "GrandArchitectOffice";
+export type SessionKind = "TaskAttempt" | "RootAuthorityOffice";
 export type ToolProfile = "read_execute_v1" | "read_write_v1" | "workspace_mutation_v1";
 export type PiToolName = "read" | "bash" | "edit" | "write" | "grep" | "find" | "ls";
 export type QueueMode = "all" | "one-at-a-time";
@@ -780,7 +780,7 @@ function decodeCreateSessionPayload(value: Record<string, unknown>): CreateSessi
 	const settings = requiredRecord(value.settings);
 	const modelCatalog = requiredRecord(value.modelCatalog);
 	return {
-		sessionKind: requiredOneOf(value, "sessionKind", ["TaskAttempt", "GrandArchitectOffice"] as const),
+		sessionKind: requiredOneOf(value, "sessionKind", ["TaskAttempt", "RootAuthorityOffice"] as const),
 		cwd: requiredAbsolutePath(value, "cwd"),
 		agentDirectory: requiredAbsolutePath(value, "agentDirectory"),
 		authPath: requiredAbsolutePath(value, "authPath"),

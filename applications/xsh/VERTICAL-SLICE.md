@@ -389,7 +389,7 @@ reported as VS-001 discovery work. If either boundary cannot qualify inside its
 reservation, qualification stops rather than reallocating product budget.
 
 Provider-free end-to-end execution uses a third closed treatment,
-`Vs001DeterministicV1`. It has the same `$1.00` logical envelope needed to
+`DeterministicPiHostFixtureV1`. It has the same `$1.00` logical envelope needed to
 exercise VS-001's reservations, fault injection, and closure rules, but model
 network access is denied and only the deterministic Pi-host process-double
 profile is eligible. It cannot emit `PiSdkQualificationV1`, cannot admit the
@@ -531,7 +531,7 @@ submission is still reauthorized command by command by `societyd`.
 
 If a host exits, loses protocol, exceeds cost, or is cancelled, its actor/Office
 identity remains visible but unavailable. No sibling host inherits authority or
-session memory. Resumption creates a descendant `GrandArchitectOfficeSession`
+session memory. Resumption creates a descendant `RootAuthorityOfficeSession`
 from a durable recovery packet, not from unsealed chat. A shared multi-session
 host is deferred because it would couple tool state, crashes, abort, evidence,
 and kill escalation across unrelated actors.
@@ -1150,7 +1150,7 @@ operating_cycles
 operating_cycle_resource_limits
 operating_cycle_admissions
 operating_cycle_reconciliations
-grand_architect_office_sessions
+root_authority_office_sessions
 office_turns
 office_turn_submissions
 child_processes
@@ -1293,7 +1293,7 @@ group, `AdapterReady`/`CreateSession` state, owner session or Attempt, and last 
 classification. `process_signal_receipts` and `cancellation_propagations` are
 append-only typed evidence of control delivery; neither claims a process died
 until a wait status or subsequent absence observation says so.
-`grand_architect_office_sessions` is a Pi execution identity, not an actor
+`root_authority_office_sessions` is a Pi execution identity, not an actor
 identity or Office occupancy. `office_turns` bound each model interaction and
 ledger frontier. Raw SDK-host frames remain sealed Pi evidence; normalized
 commands and results are typed rows keyed by correlation id.
@@ -1384,7 +1384,7 @@ an exact R0 state rule and required review remains an exact Project/C2 rule.
 This is intentional: the vertical slice proves curated information bubbling
 into bounded attention before it attempts learned blocking policy.
 
-Rust newtypes distinguish `UniverseSeedId`, `ProjectId`, `TicketId`,
+Rust newtypes distinguish `FoundingMissionId`, `ProjectId`, `TicketId`,
 `GraphObjectId`, `ContentObjectId`, `ActorAttemptId`, `BudgetId`, and
 `UsdMicros`; ordinary integers and strings do not cross those interfaces.
 Closed enums own every state and relation. Optional columns represent one named
@@ -1407,8 +1407,8 @@ The versioned protocol needs only these public commands for VS-001:
 
 ```text
 CreateSocietyIdentity
-InstallGrandArchitectOffice
-InstallFoundingUniverseSeed
+InstallRootAuthorityOffice
+InstallFoundingMission
 BootstrapSociety
 ProposeOperatingCycle
 AdmitOperatingCycle
@@ -1416,10 +1416,10 @@ QuiesceOperatingCycle
 ResumeOperatingCycle
 ReconcileOperatingCycle
 CloseOperatingCycle
-StartGrandArchitectOfficeSession
+StartRootAuthorityOfficeSession
 OpenOfficeTurn
 SubmitOfficeTurn
-RecoverGrandArchitectOfficeSession
+RecoverRootAuthorityOfficeSession
 CreateProject
 CharterProject
 TransitionProject
@@ -1709,7 +1709,7 @@ pretending to have L4 epistemic support.
 
 ```text
 bootstrap_principal:
-  create_society_identity, install_initial_grand_architect_office,
+  create_society_identity, install_root_authority_office,
   install_founding_universe_seed, appoint_initial_grand_architect,
   set_r0_hard_ceiling, bootstrap_society,
   admit_initial_pi_sdk_qualification, admit_initial_operating_cycle;
@@ -2717,7 +2717,7 @@ The expected subgraph is concrete:
 UniverseSeed U1 governs Society S1
 founding bootstrap installs U1 and actor occupancy GA1
 OperatingCycle OC1 pins U1, GA1, policies, budgets, and cancellation root CR1
-GrandArchitectOfficeSession GOS1 realizes GA1 through bounded OfficeTurns
+RootAuthorityOfficeSession GOS1 realizes GA1 through bounded OfficeTurns
 GA1 charters Project P1 from an authorized GOS1 submission
 P1 coordinates Tickets T00..T11 and Episode EP1
 T00 fault injection quiesces OC1, cancels/reaps child CP0,

@@ -31,7 +31,7 @@ macro_rules! identifier {
 }
 
 identifier!(SocietyId);
-identifier!(UniverseSeedId);
+identifier!(FoundingMissionId);
 identifier!(ApplicationId);
 identifier!(ApplicationRevisionId);
 identifier!(OfficeId);
@@ -43,7 +43,7 @@ identifier!(BudgetEnvelopeId);
 identifier!(BudgetReservationId);
 identifier!(CancellationRequestId);
 identifier!(CostPostmortemId);
-identifier!(GrandArchitectOfficeSessionId);
+identifier!(RootAuthorityOfficeSessionId);
 identifier!(OfficeTurnId);
 identifier!(EventId);
 identifier!(ProjectId);
@@ -737,9 +737,9 @@ pub enum PrincipalKind {
 #[repr(i64)]
 pub enum Capability {
     CreateSocietyIdentity = 1,
-    InstallGrandArchitectOffice = 2,
-    InstallFoundingUniverseSeed = 3,
-    AppointInitialGrandArchitect = 4,
+    InstallRootAuthorityOffice = 2,
+    InstallFoundingMission = 3,
+    AppointInitialRootAuthority = 4,
     SetR0HardCeiling = 5,
     BootstrapSociety = 6,
     ProposeOperatingCycle = 7,
@@ -748,7 +748,7 @@ pub enum Capability {
     ResumeOperatingCycle = 10,
     ReconcileOperatingCycle = 11,
     CloseOperatingCycle = 12,
-    StartGrandArchitectOfficeSession = 13,
+    StartRootAuthorityOfficeSession = 13,
     OpenOfficeTurn = 14,
     RequestCancellation = 15,
     ReserveBudget = 16,
@@ -842,23 +842,23 @@ pub enum Capability {
 impl Capability {
     pub const FOUNDING: [Self; 8] = [
         Self::CreateSocietyIdentity,
-        Self::InstallGrandArchitectOffice,
-        Self::InstallFoundingUniverseSeed,
-        Self::AppointInitialGrandArchitect,
+        Self::InstallRootAuthorityOffice,
+        Self::InstallFoundingMission,
+        Self::AppointInitialRootAuthority,
         Self::SetR0HardCeiling,
         Self::BootstrapSociety,
         Self::ProposeOperatingCycle,
         Self::AdmitOperatingCycle,
     ];
 
-    pub const GRAND_ARCHITECT: [Self; 44] = [
+    pub const ROOT_AUTHORITY: [Self; 44] = [
         Self::ProposeOperatingCycle,
         Self::AdmitOperatingCycle,
         Self::QuiesceOperatingCycle,
         Self::ResumeOperatingCycle,
         Self::ReconcileOperatingCycle,
         Self::CloseOperatingCycle,
-        Self::StartGrandArchitectOfficeSession,
+        Self::StartRootAuthorityOfficeSession,
         Self::OpenOfficeTurn,
         Self::RequestCancellation,
         Self::ReserveBudget,
@@ -945,9 +945,9 @@ impl Capability {
         matches!(
             self,
             Self::CreateSocietyIdentity
-                | Self::InstallGrandArchitectOffice
-                | Self::InstallFoundingUniverseSeed
-                | Self::AppointInitialGrandArchitect
+                | Self::InstallRootAuthorityOffice
+                | Self::InstallFoundingMission
+                | Self::AppointInitialRootAuthority
                 | Self::SetR0HardCeiling
                 | Self::BootstrapSociety
                 | Self::ProposeOperatingCycle
@@ -959,7 +959,7 @@ impl Capability {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(i64)]
 pub enum OfficeKind {
-    TheGrandArchitect = 1,
+    RootAuthorityOffice = 1,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1257,11 +1257,11 @@ pub enum WorkLeaseState {
 
 /// The only durable owners of a native child.  An owner is an exact union,
 /// never a polymorphic string: a child belongs either to one ActorAttempt or
-/// to the Grand Architect's Office session that initiated it.
+/// to the Root Authority's Office session that initiated it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PiChildOwner {
     ActorAttempt(ActorAttemptId),
-    GrandArchitectOfficeSession(GrandArchitectOfficeSessionId),
+    RootAuthorityOfficeSession(RootAuthorityOfficeSessionId),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1644,7 +1644,7 @@ impl ActorAttemptTerminalKind {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(i64)]
 pub enum ActorAttemptCancellationReason {
-    GrandArchitectRequested = 1,
+    RootAuthorityRequested = 1,
     CycleCancellation = 2,
     LeaseContainment = 3,
 }
@@ -1884,11 +1884,11 @@ pub enum CommandBody {
     CreateSocietyIdentity {
         name: SocietyName,
     },
-    InstallGrandArchitectOffice,
-    InstallFoundingUniverseSeed {
+    InstallRootAuthorityOffice,
+    InstallFoundingMission {
         mission: ApplicationMissionInput,
     },
-    AppointInitialGrandArchitect {
+    AppointInitialRootAuthority {
         actor_display_name: PrincipalDisplayName,
     },
     SetR0HardCeiling {
@@ -1902,18 +1902,18 @@ pub enum CommandBody {
     AdmitOperatingCycle {
         cycle_id: OperatingCycleId,
     },
-    StartGrandArchitectOfficeSession {
+    StartRootAuthorityOfficeSession {
         cycle_id: OperatingCycleId,
     },
     RecordOfficeSessionReady {
-        session_id: GrandArchitectOfficeSessionId,
+        session_id: RootAuthorityOfficeSessionId,
     },
     RecordOfficeSessionTerminal {
-        session_id: GrandArchitectOfficeSessionId,
+        session_id: RootAuthorityOfficeSessionId,
         terminal_state: OfficeSessionTerminalState,
     },
     OpenOfficeTurn {
-        session_id: GrandArchitectOfficeSessionId,
+        session_id: RootAuthorityOfficeSessionId,
         purpose: OfficeTurnPurpose,
     },
     SettleOfficeTurn {
@@ -2363,15 +2363,15 @@ impl CommandBody {
     pub const fn kind(&self) -> CommandKind {
         match self {
             Self::CreateSocietyIdentity { .. } => CommandKind::CreateSocietyIdentity,
-            Self::InstallGrandArchitectOffice => CommandKind::InstallGrandArchitectOffice,
-            Self::InstallFoundingUniverseSeed { .. } => CommandKind::InstallFoundingUniverseSeed,
-            Self::AppointInitialGrandArchitect { .. } => CommandKind::AppointInitialGrandArchitect,
+            Self::InstallRootAuthorityOffice => CommandKind::InstallRootAuthorityOffice,
+            Self::InstallFoundingMission { .. } => CommandKind::InstallFoundingMission,
+            Self::AppointInitialRootAuthority { .. } => CommandKind::AppointInitialRootAuthority,
             Self::SetR0HardCeiling { .. } => CommandKind::SetR0HardCeiling,
             Self::BootstrapSociety => CommandKind::BootstrapSociety,
             Self::ProposeOperatingCycle { .. } => CommandKind::ProposeOperatingCycle,
             Self::AdmitOperatingCycle { .. } => CommandKind::AdmitOperatingCycle,
-            Self::StartGrandArchitectOfficeSession { .. } => {
-                CommandKind::StartGrandArchitectOfficeSession
+            Self::StartRootAuthorityOfficeSession { .. } => {
+                CommandKind::StartRootAuthorityOfficeSession
             }
             Self::RecordOfficeSessionReady { .. } => CommandKind::RecordOfficeSessionReady,
             Self::RecordOfficeSessionTerminal { .. } => CommandKind::RecordOfficeSessionTerminal,
@@ -2475,15 +2475,15 @@ impl CommandBody {
     pub const fn required_capability(&self) -> Capability {
         match self {
             Self::CreateSocietyIdentity { .. } => Capability::CreateSocietyIdentity,
-            Self::InstallGrandArchitectOffice => Capability::InstallGrandArchitectOffice,
-            Self::InstallFoundingUniverseSeed { .. } => Capability::InstallFoundingUniverseSeed,
-            Self::AppointInitialGrandArchitect { .. } => Capability::AppointInitialGrandArchitect,
+            Self::InstallRootAuthorityOffice => Capability::InstallRootAuthorityOffice,
+            Self::InstallFoundingMission { .. } => Capability::InstallFoundingMission,
+            Self::AppointInitialRootAuthority { .. } => Capability::AppointInitialRootAuthority,
             Self::SetR0HardCeiling { .. } => Capability::SetR0HardCeiling,
             Self::BootstrapSociety => Capability::BootstrapSociety,
             Self::ProposeOperatingCycle { .. } => Capability::ProposeOperatingCycle,
             Self::AdmitOperatingCycle { .. } => Capability::AdmitOperatingCycle,
-            Self::StartGrandArchitectOfficeSession { .. } => {
-                Capability::StartGrandArchitectOfficeSession
+            Self::StartRootAuthorityOfficeSession { .. } => {
+                Capability::StartRootAuthorityOfficeSession
             }
             Self::RecordOfficeSessionReady { .. } => Capability::RecordOfficeSessionReady,
             Self::RecordOfficeSessionTerminal { .. } => Capability::RecordOfficeSessionTerminal,
@@ -2587,14 +2587,14 @@ impl CommandBody {
 #[repr(i64)]
 pub enum CommandKind {
     CreateSocietyIdentity = 1,
-    InstallGrandArchitectOffice = 2,
-    InstallFoundingUniverseSeed = 3,
-    AppointInitialGrandArchitect = 4,
+    InstallRootAuthorityOffice = 2,
+    InstallFoundingMission = 3,
+    AppointInitialRootAuthority = 4,
     SetR0HardCeiling = 5,
     BootstrapSociety = 6,
     ProposeOperatingCycle = 7,
     AdmitOperatingCycle = 8,
-    StartGrandArchitectOfficeSession = 9,
+    StartRootAuthorityOfficeSession = 9,
     RecordOfficeSessionReady = 10,
     OpenOfficeTurn = 11,
     SettleOfficeTurn = 12,
@@ -2806,14 +2806,14 @@ pub enum EventBody {
     SocietyIdentityCreated {
         society_id: SocietyId,
     },
-    GrandArchitectOfficeInstalled {
+    RootAuthorityOfficeInstalled {
         office_id: OfficeId,
     },
-    FoundingUniverseSeedInstalled {
-        seed_id: UniverseSeedId,
+    FoundingMissionInstalled {
+        mission_id: FoundingMissionId,
         application_revision_id: ApplicationRevisionId,
     },
-    GrandArchitectAppointed {
+    RootAuthorityAppointed {
         occupancy_id: OfficeOccupancyId,
         principal_id: PrincipalId,
     },
@@ -2835,22 +2835,22 @@ pub enum EventBody {
         state: OperatingCycleState,
         generation: AdmissionGeneration,
     },
-    GrandArchitectOfficeSessionStarted {
-        session_id: GrandArchitectOfficeSessionId,
+    RootAuthorityOfficeSessionStarted {
+        session_id: RootAuthorityOfficeSessionId,
         cycle_id: OperatingCycleId,
     },
-    GrandArchitectOfficeSessionStateChanged {
-        session_id: GrandArchitectOfficeSessionId,
+    RootAuthorityOfficeSessionStateChanged {
+        session_id: RootAuthorityOfficeSessionId,
         state: OfficeSessionState,
     },
     OfficeTurnOpened {
         turn_id: OfficeTurnId,
-        session_id: GrandArchitectOfficeSessionId,
+        session_id: RootAuthorityOfficeSessionId,
         purpose: OfficeTurnPurpose,
     },
     OfficeTurnSettled {
         turn_id: OfficeTurnId,
-        session_id: GrandArchitectOfficeSessionId,
+        session_id: RootAuthorityOfficeSessionId,
         charged_delta: UsdMicros,
     },
     BudgetReserved {
@@ -3180,15 +3180,15 @@ pub enum EventBody {
 #[repr(i64)]
 pub enum EventKind {
     SocietyIdentityCreated = 1,
-    GrandArchitectOfficeInstalled = 2,
-    FoundingUniverseSeedInstalled = 3,
-    GrandArchitectAppointed = 4,
+    RootAuthorityOfficeInstalled = 2,
+    FoundingMissionInstalled = 3,
+    RootAuthorityAppointed = 4,
     R0HardCeilingSet = 5,
     SocietyBootstrapped = 6,
     OperatingCycleProposed = 7,
     OperatingCycleStateChanged = 8,
-    GrandArchitectOfficeSessionStarted = 9,
-    GrandArchitectOfficeSessionStateChanged = 10,
+    RootAuthorityOfficeSessionStarted = 9,
+    RootAuthorityOfficeSessionStateChanged = 10,
     OfficeTurnOpened = 11,
     OfficeTurnSettled = 12,
     BudgetReserved = 13,
@@ -3270,18 +3270,18 @@ impl EventBody {
     pub const fn kind(&self) -> EventKind {
         match self {
             Self::SocietyIdentityCreated { .. } => EventKind::SocietyIdentityCreated,
-            Self::GrandArchitectOfficeInstalled { .. } => EventKind::GrandArchitectOfficeInstalled,
-            Self::FoundingUniverseSeedInstalled { .. } => EventKind::FoundingUniverseSeedInstalled,
-            Self::GrandArchitectAppointed { .. } => EventKind::GrandArchitectAppointed,
+            Self::RootAuthorityOfficeInstalled { .. } => EventKind::RootAuthorityOfficeInstalled,
+            Self::FoundingMissionInstalled { .. } => EventKind::FoundingMissionInstalled,
+            Self::RootAuthorityAppointed { .. } => EventKind::RootAuthorityAppointed,
             Self::R0HardCeilingSet { .. } => EventKind::R0HardCeilingSet,
             Self::SocietyBootstrapped { .. } => EventKind::SocietyBootstrapped,
             Self::OperatingCycleProposed { .. } => EventKind::OperatingCycleProposed,
             Self::OperatingCycleStateChanged { .. } => EventKind::OperatingCycleStateChanged,
-            Self::GrandArchitectOfficeSessionStarted { .. } => {
-                EventKind::GrandArchitectOfficeSessionStarted
+            Self::RootAuthorityOfficeSessionStarted { .. } => {
+                EventKind::RootAuthorityOfficeSessionStarted
             }
-            Self::GrandArchitectOfficeSessionStateChanged { .. } => {
-                EventKind::GrandArchitectOfficeSessionStateChanged
+            Self::RootAuthorityOfficeSessionStateChanged { .. } => {
+                EventKind::RootAuthorityOfficeSessionStateChanged
             }
             Self::OfficeTurnOpened { .. } => EventKind::OfficeTurnOpened,
             Self::OfficeTurnSettled { .. } => EventKind::OfficeTurnSettled,

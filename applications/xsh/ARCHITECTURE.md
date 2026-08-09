@@ -102,7 +102,12 @@ an application input factory, not an authority: it cannot install the mission,
 resolve the kernel-issued `ApplicationRevisionId`, seal content, or create a
 Project. A future trusted composition root submits those values through the
 generic supervisor boundary without linking XSH into `societyd` or
-`societyctl`.
+`societyctl`. The versioned source artifact is `UNIVERSE-SEED.v1.md`; a future
+prompt builder may materialize those exact bytes under the session-local name
+`UNIVERSE-SEED.md`, but that alias cannot identify a different rendering.
+The application office `TheGrandArchitect` is realized through the generic
+`RootAuthorityOffice`; the application title and reserved-power prose never
+become a generic enum, table, protocol tag, or daemon branch.
 
 ### `UniverseSeed` contract
 
@@ -111,7 +116,7 @@ normalized child tables with closed enum kinds, not a JSON document:
 
 ```text
 UniverseSeed {
-    universe_seed_id
+    founding_mission_id
     society_id
     revision
     status: Proposed | Active | Superseded | Rejected
@@ -172,16 +177,22 @@ alignment identity through named foreign keys rather than a polymorphic target
 or copied mission prose. Mission is stable purpose; alignment is its
 work-specific application.
 
-The first authoritative commands are:
+The implemented generic bootstrap commands are:
 
 ```text
 CreateSocietyIdentity
-InstallGrandArchitectOffice
-InstallFoundingUniverseSeed  # one-time bootstrap capability
-BootstrapSociety        # consumes one active seed revision
+InstallRootAuthorityOffice
+InstallFoundingMission  # one-time bootstrap capability
+BootstrapSociety        # consumes one active founding-mission revision
 
+```
+
+The application contract reserves this still-unimplemented descendant
+amendment path; these are not current generic command variants:
+
+```text
 ProposeUniverseSeed     # descendant amendment path
-RatifyUniverseSeed      # TheGrandArchitect capability for a descendant
+RatifyFoundingMission   # TheGrandArchitect application decision
 ```
 
 `BootstrapSociety` fails unless the seed, office contract, active occupant, R0
@@ -191,7 +202,7 @@ and cannot silently pick “latest.”
 
 The founding seed is the input which starts the apparatus, so requiring an
 already-running Grand Architect actor to ratify it would create a false causal
-loop. `InstallFoundingUniverseSeed` is therefore a consumed root capability: it
+loop. `InstallFoundingMission` is therefore a consumed root capability: it
 can activate exactly revision 1 exactly once and cannot amend it. This is not a
 standing human-ratification layer. After bootstrap, every descendant seed uses
 the ordinary proposal, challenge, C4 evidence, and Grand Architect
@@ -648,7 +659,7 @@ The following identities are distinct:
 - an `ActorConfiguration` is a versioned heritable configuration;
 - an `ActorInstance` is one admitted realization of that configuration;
 - an `ActorAttempt` is one bounded task execution;
-- a `GrandArchitectOfficeSession` is one supervised Pi SDK-host process for an
+- a `RootAuthorityOfficeSession` is one supervised Pi SDK-host process for an
   agent occupant during an Operating Cycle;
 - a `PiSession` is Pi's canonical conversation/session identity and may back an
   Actor Attempt or Grand Architect Office session;
@@ -870,7 +881,7 @@ Long-lived spans mirror real ownership rather than source-module nesting:
 society
   operating_cycle
     project / ticket / causal_episode
-      actor_attempt | grand_architect_office_session | deterministic_run
+      actor_attempt | root_authority_office_session | deterministic_run
         pi_process / evaluator_process / product_materialization
           pi_turn / tool_execution / command
 ```
@@ -1626,7 +1637,7 @@ cannot make dissent disappear, retrospectively change the decision frontier,
 or certify evidence by decree.
 
 The initial occupant is installed during society creation by the bootstrap
-principal. Later occupancy changes use `TransferGrandArchitectOffice`, which is
+principal. Later occupancy changes use `TransferRootAuthorityOffice`, which is
 atomic: there is never more than one active occupant, the predecessor and
 successor are explicit, in-flight capabilities are reconciled, and a sealed
 succession packet records the active seed, budget, projects, due decisions,
@@ -3464,7 +3475,7 @@ or an exact trusted circuit breaker changes control state.
 CancellationRequest {
     cancellation_request_id
     scope: Society | OperatingCycle | Project | Ticket | ActorAttempt |
-           GrandArchitectOfficeSession | DeterministicRun
+           RootAuthorityOfficeSession | DeterministicRun
     mode: Quiesce | GracefulCancel | EmergencyStop
     reason: ClosedCancellationReason
     requested_by: Principal | TrustedBreaker

@@ -138,7 +138,7 @@ function requireArgument(flag) {
 
 function emit(event) {
 	process.stdout.write(`${JSON.stringify({
-		protocolVersion: "society-pi-host/v3",
+		protocolVersion: "society-pi-host/v4",
 		sequence: outboundSequence++,
 		sessionIdentity,
 		...event,

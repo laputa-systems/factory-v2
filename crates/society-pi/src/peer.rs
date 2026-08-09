@@ -548,7 +548,7 @@ impl BoundaryPeer {
                     || !matches!(
                         (create.session_kind, payload.purpose),
                         (SessionKind::TaskAttempt, PromptPurpose::TaskAssignment)
-                            | (SessionKind::GrandArchitectOffice, PromptPurpose::OfficeTurn)
+                            | (SessionKind::RootAuthorityOffice, PromptPurpose::OfficeTurn)
                     )
                     || create.session_kind == SessionKind::TaskAttempt
                         && self.task_attempt_prompt_admitted
@@ -569,7 +569,7 @@ impl BoundaryPeer {
                         )
                     })
                     || self.create.as_ref().map(|create| create.session_kind)
-                        != Some(SessionKind::GrandArchitectOffice)
+                        != Some(SessionKind::RootAuthorityOffice)
                 {
                     self.fence();
                     return Err(PeerError::InvalidTransition);
@@ -1214,14 +1214,14 @@ mod peer_tests {
     }
     fn create() -> CreateSessionPayload {
         CreateSessionPayload {
-            session_kind: SessionKind::GrandArchitectOffice,
+            session_kind: SessionKind::RootAuthorityOffice,
             cwd: AbsolutePath::parse("/tmp/peer/cwd").unwrap(),
             agent_directory: AbsolutePath::parse("/tmp/peer/agent").unwrap(),
             auth_path: AbsolutePath::parse("/tmp/peer/agent/auth.json").unwrap(),
             models_path: AbsolutePath::parse("/tmp/peer/agent/models.json").unwrap(),
             session_directory: AbsolutePath::parse("/tmp/peer/sessions").unwrap(),
-            system_prompt: "seed".into(),
-            system_prompt_digest: digest(b"seed"),
+            system_prompt: "founding mission".into(),
+            system_prompt_digest: digest(b"founding mission"),
             model: model(),
             model_catalog: catalog(),
             tool_profile: ToolProfile::ReadExecuteV1,
@@ -1381,7 +1381,7 @@ mod peer_tests {
         assert_eq!(inbound.admit_inbound(prompt_frame()), Err(PeerError::Fatal));
 
         let mut outbound = setup_ready();
-        let duplicate = r#"{"protocolVersion":"society-pi-host/v3","sequence":4,"sequence":4,"sessionIdentity":"peer-session-001","event":"Fatal","failureCode":"protocol_decode_failed"}"#;
+        let duplicate = r#"{"protocolVersion":"society-pi-host/v4","sequence":4,"sequence":4,"sessionIdentity":"peer-session-001","event":"Fatal","failureCode":"protocol_decode_failed"}"#;
         assert_eq!(
             outbound.observe_outbound_jsonl(duplicate),
             Err(PeerError::Protocol(ProtocolError::DuplicateObjectKey))

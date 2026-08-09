@@ -258,7 +258,7 @@ export class PiSdkHost {
 	private async followUp(command: Extract<InboundFrame, { command: "FollowUp" }>): Promise<void> {
 		const session = this.requireReadySession(command);
 		if (!session) return;
-		if (this.effectiveSessionKind() !== "GrandArchitectOffice") return this.reject(command, "invalid_command");
+		if (this.effectiveSessionKind() !== "RootAuthorityOffice") return this.reject(command, "invalid_command");
 		if (!this.canMutateNarrative()) return this.reject(command, "invalid_state");
 		await session.followUp(command.payload.text);
 		this.accepted(command);
@@ -267,7 +267,7 @@ export class PiSdkHost {
 	private async steer(command: Extract<InboundFrame, { command: "Steer" }>): Promise<void> {
 		const session = this.requireReadySession(command);
 		if (!session) return;
-		if (this.effectiveSessionKind() !== "GrandArchitectOffice") return this.reject(command, "invalid_command");
+		if (this.effectiveSessionKind() !== "RootAuthorityOffice") return this.reject(command, "invalid_command");
 		if (!this.canMutateNarrative()) return this.reject(command, "invalid_state");
 		await session.steer(command.payload.text);
 		this.accepted(command);
@@ -398,10 +398,10 @@ export class PiSdkHost {
 	private isPromptPurposeLegal(command: Extract<InboundFrame, { command: "Prompt" }>): boolean {
 		const kind = this.effectiveSessionKind();
 		return (kind === "TaskAttempt" && command.payload.purpose === "TaskAssignment") ||
-			(kind === "GrandArchitectOffice" && command.payload.purpose === "OfficeTurn");
+			(kind === "RootAuthorityOffice" && command.payload.purpose === "OfficeTurn");
 	}
 
-	private effectiveSessionKind(): "TaskAttempt" | "GrandArchitectOffice" {
+	private effectiveSessionKind(): "TaskAttempt" | "RootAuthorityOffice" {
 		const configuration = this.createPayload;
 		if (configuration === undefined) throw new Error("missing_create_session_payload");
 		return configuration.sessionKind;

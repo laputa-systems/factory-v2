@@ -90,13 +90,18 @@ being able to run a tool.
 ## Current implementation boundary
 
 The repository currently implements a normalized `ApplicationMissionInput`,
-four typed north-star questions, seed-revision-bound
+four typed north-star questions, founding-mission-revision-bound
 `ProjectNorthStarAlignment`, and closed daemon transport for that founding
 input. The source rendering is currently identified by a declared BLAKE3
 digest only; no `ContentObjectId`, physical seal, retention, or provenance is
 established. The materializer's caller-supplied
 `ProductChangeAuthorizationInput` and local receipt are likewise not a durable
 kernel-issued `AuthorizedProductChange`.
+
+The fresh bootstrap names its single generic root-governance relation
+`FoundingMission`, `RootAuthorityOffice`, and `RootAuthorityOfficeSession`.
+Those names preserve the existing single-root-office state and numeric
+protocol semantics without importing an application's institutional vocabulary.
 
 The generic sequence therefore makes no claim that an application can yet run
 end to end. A product-specific executable contract must state its own admitted

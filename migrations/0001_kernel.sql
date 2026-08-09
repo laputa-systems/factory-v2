@@ -50,8 +50,8 @@ CREATE TABLE application_revision_north_star_questions (
     boundary_commitment_question TEXT NOT NULL,
     revisit_question TEXT NOT NULL
 );
-CREATE TABLE universe_seeds (
-    universe_seed_id INTEGER PRIMARY KEY,
+CREATE TABLE founding_missions (
+    founding_mission_id INTEGER PRIMARY KEY,
     society_id INTEGER NOT NULL REFERENCES societies(society_id),
     application_revision_id INTEGER NOT NULL
         REFERENCES application_revisions(application_revision_id),
@@ -60,8 +60,8 @@ CREATE TABLE universe_seeds (
     installed_by_command_id INTEGER NOT NULL,
     UNIQUE (society_id, revision)
 );
-CREATE UNIQUE INDEX one_active_universe_seed_per_society
-    ON universe_seeds(society_id) WHERE active = 1;
+CREATE UNIQUE INDEX one_active_founding_mission_per_society
+    ON founding_missions(society_id) WHERE active = 1;
 CREATE TABLE office_occupancies (
     office_occupancy_id INTEGER PRIMARY KEY,
     office_id INTEGER NOT NULL REFERENCES office_contracts(office_id),
@@ -73,7 +73,7 @@ CREATE UNIQUE INDEX one_active_occupancy_per_office
     ON office_occupancies(office_id) WHERE active = 1;
 CREATE TABLE society_bootstraps (
     society_id INTEGER PRIMARY KEY REFERENCES societies(society_id),
-    universe_seed_id INTEGER NOT NULL REFERENCES universe_seeds(universe_seed_id),
+    founding_mission_id INTEGER NOT NULL REFERENCES founding_missions(founding_mission_id),
     office_id INTEGER NOT NULL REFERENCES office_contracts(office_id),
     office_occupancy_id INTEGER NOT NULL REFERENCES office_occupancies(office_occupancy_id),
     hard_ceiling_micros INTEGER NOT NULL CHECK (hard_ceiling_micros > 0),
@@ -89,8 +89,8 @@ CREATE TABLE operating_cycle_reconciliations (
     reconciliation_started_by_command_id INTEGER NOT NULL,
     closed_by_command_id INTEGER
 );
-CREATE TABLE grand_architect_office_sessions (
-    grand_architect_office_session_id INTEGER PRIMARY KEY,
+CREATE TABLE root_authority_office_sessions (
+    root_authority_office_session_id INTEGER PRIMARY KEY,
     operating_cycle_id INTEGER NOT NULL REFERENCES operating_cycles(operating_cycle_id),
     office_occupancy_id INTEGER NOT NULL REFERENCES office_occupancies(office_occupancy_id),
     lifecycle_state INTEGER NOT NULL CHECK (lifecycle_state BETWEEN 1 AND 11),
@@ -98,19 +98,19 @@ CREATE TABLE grand_architect_office_sessions (
     last_transition_command_id INTEGER NOT NULL
 );
 CREATE UNIQUE INDEX one_live_office_session_per_cycle
-    ON grand_architect_office_sessions(operating_cycle_id)
+    ON root_authority_office_sessions(operating_cycle_id)
     WHERE lifecycle_state NOT IN (8, 10, 11);
 CREATE TABLE office_turns (
     office_turn_id INTEGER PRIMARY KEY,
-    grand_architect_office_session_id INTEGER NOT NULL
-        REFERENCES grand_architect_office_sessions(grand_architect_office_session_id),
+    root_authority_office_session_id INTEGER NOT NULL
+        REFERENCES root_authority_office_sessions(root_authority_office_session_id),
     lifecycle_state INTEGER NOT NULL CHECK (lifecycle_state BETWEEN 1 AND 4),
     purpose INTEGER NOT NULL CHECK (purpose BETWEEN 1 AND 4),
     opened_by_command_id INTEGER NOT NULL,
     settled_by_command_id INTEGER
 );
 CREATE UNIQUE INDEX one_active_office_turn_per_session
-    ON office_turns(grand_architect_office_session_id)
+    ON office_turns(root_authority_office_session_id)
     WHERE lifecycle_state = 1;
 CREATE TABLE budget_envelopes (
     budget_envelope_id INTEGER PRIMARY KEY,
@@ -196,8 +196,8 @@ CREATE TABLE cost_postmortem_resolutions (
     resolved_by_command_id INTEGER NOT NULL
 );
 CREATE TABLE command_create_society_identity (command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), name TEXT NOT NULL);
-CREATE TABLE command_install_grand_architect_office (command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id));
-CREATE TABLE command_install_founding_universe_seed (
+CREATE TABLE command_install_root_authority_office (command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id));
+CREATE TABLE command_install_founding_mission (
     command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id),
     application_identity TEXT NOT NULL,
     application_name TEXT NOT NULL,
@@ -205,28 +205,28 @@ CREATE TABLE command_install_founding_universe_seed (
     mission_statement TEXT NOT NULL,
     source_rendering_digest BLOB NOT NULL CHECK (length(source_rendering_digest) = 32)
 );
-CREATE TABLE command_install_founding_universe_seed_principles (
-    command_row_id INTEGER NOT NULL REFERENCES command_install_founding_universe_seed(command_row_id),
+CREATE TABLE command_install_founding_mission_principles (
+    command_row_id INTEGER NOT NULL REFERENCES command_install_founding_mission(command_row_id),
     principle_ordinal INTEGER NOT NULL CHECK (principle_ordinal > 0 AND principle_ordinal <= 16),
     principle_kind INTEGER NOT NULL CHECK (principle_kind BETWEEN 1 AND 4),
     principle_text TEXT NOT NULL,
     PRIMARY KEY(command_row_id, principle_ordinal)
 );
-CREATE TABLE command_install_founding_universe_seed_north_star_questions (
-    command_row_id INTEGER PRIMARY KEY REFERENCES command_install_founding_universe_seed(command_row_id),
+CREATE TABLE command_install_founding_mission_north_star_questions (
+    command_row_id INTEGER PRIMARY KEY REFERENCES command_install_founding_mission(command_row_id),
     change_question TEXT NOT NULL,
     improvement_evidence_question TEXT NOT NULL,
     boundary_commitment_question TEXT NOT NULL,
     revisit_question TEXT NOT NULL
 );
-CREATE TABLE command_appoint_initial_grand_architect (command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), actor_display_name TEXT NOT NULL);
+CREATE TABLE command_appoint_initial_root_authority (command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), actor_display_name TEXT NOT NULL);
 CREATE TABLE command_set_r0_hard_ceiling (command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), ceiling_micros INTEGER NOT NULL CHECK (ceiling_micros >= 0));
 CREATE TABLE command_bootstrap_society (command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id));
 CREATE TABLE command_admit_operating_cycle (command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), operating_cycle_id INTEGER NOT NULL);
-CREATE TABLE command_start_grand_architect_office_session (command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), operating_cycle_id INTEGER NOT NULL);
-CREATE TABLE command_record_office_session_ready (command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), grand_architect_office_session_id INTEGER NOT NULL);
-CREATE TABLE command_record_office_session_terminal (command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), grand_architect_office_session_id INTEGER NOT NULL, terminal_state INTEGER NOT NULL CHECK (terminal_state IN (1, 2, 3)));
-CREATE TABLE command_open_office_turn (command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), grand_architect_office_session_id INTEGER NOT NULL, purpose INTEGER NOT NULL CHECK (purpose BETWEEN 1 AND 4));
+CREATE TABLE command_start_root_authority_office_session (command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), operating_cycle_id INTEGER NOT NULL);
+CREATE TABLE command_record_office_session_ready (command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), root_authority_office_session_id INTEGER NOT NULL);
+CREATE TABLE command_record_office_session_terminal (command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), root_authority_office_session_id INTEGER NOT NULL, terminal_state INTEGER NOT NULL CHECK (terminal_state IN (1, 2, 3)));
+CREATE TABLE command_open_office_turn (command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), root_authority_office_session_id INTEGER NOT NULL, purpose INTEGER NOT NULL CHECK (purpose BETWEEN 1 AND 4));
 CREATE TABLE command_settle_office_turn (command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), office_turn_id INTEGER NOT NULL, pi_office_turn_terminal_receipt_id INTEGER NOT NULL);
 CREATE TABLE command_quiesce_operating_cycle (command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), operating_cycle_id INTEGER NOT NULL);
 CREATE TABLE command_record_cycle_drained (command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), operating_cycle_id INTEGER NOT NULL);
@@ -239,20 +239,20 @@ CREATE TABLE command_request_cancellation (command_row_id INTEGER PRIMARY KEY RE
 CREATE TABLE command_reconcile_cancellation (command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), cancellation_request_id INTEGER NOT NULL);
 CREATE TABLE command_close_cost_postmortem (command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), postmortem_id INTEGER NOT NULL, resolution_kind INTEGER NOT NULL CHECK (resolution_kind IN (1, 2)));
 CREATE TABLE event_society_identity_created (event_id INTEGER PRIMARY KEY REFERENCES events(event_id), society_id INTEGER NOT NULL REFERENCES societies(society_id));
-CREATE TABLE event_grand_architect_office_installed (event_id INTEGER PRIMARY KEY REFERENCES events(event_id), office_id INTEGER NOT NULL REFERENCES office_contracts(office_id));
-CREATE TABLE event_founding_universe_seed_installed (
+CREATE TABLE event_root_authority_office_installed (event_id INTEGER PRIMARY KEY REFERENCES events(event_id), office_id INTEGER NOT NULL REFERENCES office_contracts(office_id));
+CREATE TABLE event_founding_mission_installed (
     event_id INTEGER PRIMARY KEY REFERENCES events(event_id),
-    universe_seed_id INTEGER NOT NULL REFERENCES universe_seeds(universe_seed_id),
+    founding_mission_id INTEGER NOT NULL REFERENCES founding_missions(founding_mission_id),
     application_revision_id INTEGER NOT NULL REFERENCES application_revisions(application_revision_id)
 );
-CREATE TABLE event_grand_architect_appointed (event_id INTEGER PRIMARY KEY REFERENCES events(event_id), office_occupancy_id INTEGER NOT NULL REFERENCES office_occupancies(office_occupancy_id), principal_id INTEGER NOT NULL REFERENCES principals(principal_id));
+CREATE TABLE event_root_authority_appointed (event_id INTEGER PRIMARY KEY REFERENCES events(event_id), office_occupancy_id INTEGER NOT NULL REFERENCES office_occupancies(office_occupancy_id), principal_id INTEGER NOT NULL REFERENCES principals(principal_id));
 CREATE TABLE event_r0_hard_ceiling_set (event_id INTEGER PRIMARY KEY REFERENCES events(event_id), society_id INTEGER NOT NULL REFERENCES societies(society_id), ceiling_micros INTEGER NOT NULL CHECK (ceiling_micros > 0));
 CREATE TABLE event_society_bootstrapped (event_id INTEGER PRIMARY KEY REFERENCES events(event_id), society_id INTEGER NOT NULL REFERENCES societies(society_id));
 CREATE TABLE event_operating_cycle_state_changed (event_id INTEGER PRIMARY KEY REFERENCES events(event_id), operating_cycle_id INTEGER NOT NULL REFERENCES operating_cycles(operating_cycle_id), lifecycle_state INTEGER NOT NULL CHECK (lifecycle_state BETWEEN 1 AND 11), admission_generation INTEGER NOT NULL CHECK (admission_generation >= 0));
-CREATE TABLE event_grand_architect_office_session_started (event_id INTEGER PRIMARY KEY REFERENCES events(event_id), grand_architect_office_session_id INTEGER NOT NULL REFERENCES grand_architect_office_sessions(grand_architect_office_session_id), operating_cycle_id INTEGER NOT NULL REFERENCES operating_cycles(operating_cycle_id));
-CREATE TABLE event_grand_architect_office_session_state_changed (event_id INTEGER PRIMARY KEY REFERENCES events(event_id), grand_architect_office_session_id INTEGER NOT NULL REFERENCES grand_architect_office_sessions(grand_architect_office_session_id), lifecycle_state INTEGER NOT NULL CHECK (lifecycle_state BETWEEN 1 AND 11));
-CREATE TABLE event_office_turn_opened (event_id INTEGER PRIMARY KEY REFERENCES events(event_id), office_turn_id INTEGER NOT NULL REFERENCES office_turns(office_turn_id), grand_architect_office_session_id INTEGER NOT NULL REFERENCES grand_architect_office_sessions(grand_architect_office_session_id), purpose INTEGER NOT NULL CHECK (purpose BETWEEN 1 AND 4));
-CREATE TABLE event_office_turn_settled (event_id INTEGER PRIMARY KEY REFERENCES events(event_id), office_turn_id INTEGER NOT NULL REFERENCES office_turns(office_turn_id), grand_architect_office_session_id INTEGER NOT NULL REFERENCES grand_architect_office_sessions(grand_architect_office_session_id), charged_delta_micros INTEGER NOT NULL CHECK (charged_delta_micros >= 0));
+CREATE TABLE event_root_authority_office_session_started (event_id INTEGER PRIMARY KEY REFERENCES events(event_id), root_authority_office_session_id INTEGER NOT NULL REFERENCES root_authority_office_sessions(root_authority_office_session_id), operating_cycle_id INTEGER NOT NULL REFERENCES operating_cycles(operating_cycle_id));
+CREATE TABLE event_root_authority_office_session_state_changed (event_id INTEGER PRIMARY KEY REFERENCES events(event_id), root_authority_office_session_id INTEGER NOT NULL REFERENCES root_authority_office_sessions(root_authority_office_session_id), lifecycle_state INTEGER NOT NULL CHECK (lifecycle_state BETWEEN 1 AND 11));
+CREATE TABLE event_office_turn_opened (event_id INTEGER PRIMARY KEY REFERENCES events(event_id), office_turn_id INTEGER NOT NULL REFERENCES office_turns(office_turn_id), root_authority_office_session_id INTEGER NOT NULL REFERENCES root_authority_office_sessions(root_authority_office_session_id), purpose INTEGER NOT NULL CHECK (purpose BETWEEN 1 AND 4));
+CREATE TABLE event_office_turn_settled (event_id INTEGER PRIMARY KEY REFERENCES events(event_id), office_turn_id INTEGER NOT NULL REFERENCES office_turns(office_turn_id), root_authority_office_session_id INTEGER NOT NULL REFERENCES root_authority_office_sessions(root_authority_office_session_id), charged_delta_micros INTEGER NOT NULL CHECK (charged_delta_micros >= 0));
 CREATE TABLE event_budget_reserved (event_id INTEGER PRIMARY KEY REFERENCES events(event_id), budget_reservation_id INTEGER NOT NULL REFERENCES budget_reservations(budget_reservation_id), operating_cycle_id INTEGER NOT NULL REFERENCES operating_cycles(operating_cycle_id), amount_micros INTEGER NOT NULL CHECK (amount_micros >= 0));
 CREATE TABLE event_budget_reconciled (event_id INTEGER PRIMARY KEY REFERENCES events(event_id), budget_reservation_id INTEGER NOT NULL REFERENCES budget_reservations(budget_reservation_id), observed_micros INTEGER NOT NULL CHECK (observed_micros >= 0));
 CREATE TABLE event_budget_admission_frozen (event_id INTEGER PRIMARY KEY REFERENCES events(event_id), budget_reservation_id INTEGER NOT NULL REFERENCES budget_reservations(budget_reservation_id), operating_cycle_id INTEGER NOT NULL REFERENCES operating_cycles(operating_cycle_id), cancellation_request_id INTEGER NOT NULL REFERENCES cancellation_requests(cancellation_request_id), postmortem_id INTEGER NOT NULL REFERENCES cost_postmortems(postmortem_id), freeze_reason_kind INTEGER NOT NULL CHECK (freeze_reason_kind IN (1, 2, 3)), observed_micros INTEGER CHECK (observed_micros >= 0), reserved_micros INTEGER CHECK (reserved_micros >= 0), unknown_reason INTEGER, unavailable_reason INTEGER, CHECK ((freeze_reason_kind = 1 AND observed_micros IS NOT NULL AND reserved_micros IS NOT NULL AND unknown_reason IS NULL AND unavailable_reason IS NULL) OR (freeze_reason_kind = 2 AND observed_micros IS NULL AND reserved_micros IS NULL AND unknown_reason IS NOT NULL AND unavailable_reason IS NULL) OR (freeze_reason_kind = 3 AND observed_micros IS NULL AND reserved_micros IS NULL AND unknown_reason IS NULL AND unavailable_reason IS NOT NULL)));
@@ -262,7 +262,7 @@ CREATE TABLE event_cost_postmortem_closed (event_id INTEGER PRIMARY KEY REFERENC
 CREATE TABLE projects (
     project_id INTEGER PRIMARY KEY,
     project_name TEXT NOT NULL UNIQUE,
-    universe_seed_id INTEGER NOT NULL REFERENCES universe_seeds(universe_seed_id),
+    founding_mission_id INTEGER NOT NULL REFERENCES founding_missions(founding_mission_id),
     lifecycle_state INTEGER NOT NULL CHECK (lifecycle_state BETWEEN 1 AND 9),
     created_by_command_id INTEGER NOT NULL REFERENCES commands(command_row_id),
     last_transition_command_id INTEGER NOT NULL REFERENCES commands(command_row_id)
@@ -331,7 +331,7 @@ CREATE TABLE objects (
     object_kind INTEGER NOT NULL CHECK (object_kind BETWEEN 1 AND 2),
     project_id INTEGER REFERENCES projects(project_id),
     causal_episode_id INTEGER REFERENCES episodes(causal_episode_id),
-    universe_seed_id INTEGER NOT NULL REFERENCES universe_seeds(universe_seed_id),
+    founding_mission_id INTEGER NOT NULL REFERENCES founding_missions(founding_mission_id),
     created_by_command_id INTEGER NOT NULL REFERENCES commands(command_row_id)
 );
 CREATE TABLE object_revisions (
@@ -403,7 +403,7 @@ CREATE TABLE edges (
 CREATE TABLE episodes (
     causal_episode_id INTEGER PRIMARY KEY,
     project_id INTEGER NOT NULL REFERENCES projects(project_id),
-    universe_seed_id INTEGER NOT NULL REFERENCES universe_seeds(universe_seed_id),
+    founding_mission_id INTEGER NOT NULL REFERENCES founding_missions(founding_mission_id),
     lifecycle_state INTEGER NOT NULL CHECK (lifecycle_state BETWEEN 1 AND 17),
     created_by_command_id INTEGER NOT NULL REFERENCES commands(command_row_id),
     last_transition_command_id INTEGER NOT NULL REFERENCES commands(command_row_id)
@@ -444,7 +444,7 @@ CREATE TABLE postmortems (
     postmortem_id INTEGER PRIMARY KEY,
     project_id INTEGER NOT NULL REFERENCES projects(project_id),
     causal_episode_id INTEGER REFERENCES episodes(causal_episode_id),
-    universe_seed_id INTEGER NOT NULL REFERENCES universe_seeds(universe_seed_id),
+    founding_mission_id INTEGER NOT NULL REFERENCES founding_missions(founding_mission_id),
     lifecycle_state INTEGER NOT NULL CHECK (lifecycle_state IN (1, 2, 3)),
     triggered_by_command_id INTEGER NOT NULL REFERENCES commands(command_row_id),
     closed_by_command_id INTEGER REFERENCES commands(command_row_id),
@@ -467,7 +467,7 @@ CREATE TABLE postmortem_action_proposals (
 );
 CREATE TABLE coordination_command_provenance (
     command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id),
-    universe_seed_id INTEGER NOT NULL REFERENCES universe_seeds(universe_seed_id),
+    founding_mission_id INTEGER NOT NULL REFERENCES founding_missions(founding_mission_id),
     operating_cycle_id INTEGER NOT NULL REFERENCES operating_cycles(operating_cycle_id),
     project_id INTEGER REFERENCES projects(project_id)
 );
@@ -531,7 +531,7 @@ CREATE TABLE event_postmortem_closed (event_id INTEGER PRIMARY KEY REFERENCES ev
 CREATE TABLE operating_cycles (
     operating_cycle_id INTEGER PRIMARY KEY,
     society_id INTEGER NOT NULL REFERENCES societies(society_id),
-    universe_seed_id INTEGER NOT NULL REFERENCES universe_seeds(universe_seed_id),
+    founding_mission_id INTEGER NOT NULL REFERENCES founding_missions(founding_mission_id),
     office_occupancy_id INTEGER NOT NULL REFERENCES office_occupancies(office_occupancy_id),
     treatment INTEGER NOT NULL CHECK (treatment IN (1, 2, 3)),
     budget_ceiling_micros INTEGER NOT NULL CHECK (budget_ceiling_micros > 0),
@@ -576,7 +576,7 @@ CREATE TABLE actor_configuration_revisions (
 );
 CREATE TABLE context_packs (
     context_pack_id INTEGER PRIMARY KEY,
-    universe_seed_id INTEGER NOT NULL REFERENCES universe_seeds(universe_seed_id),
+    founding_mission_id INTEGER NOT NULL REFERENCES founding_missions(founding_mission_id),
     purpose INTEGER NOT NULL CHECK (purpose IN (1, 2)),
     rendering_digest BLOB NOT NULL CHECK (length(rendering_digest) = 32),
     created_by_command_id INTEGER NOT NULL REFERENCES commands(command_row_id)
@@ -1088,7 +1088,7 @@ CREATE TABLE pi_child_spawn_admissions (
     pi_child_spawn_admission_id INTEGER PRIMARY KEY,
     operating_cycle_id INTEGER NOT NULL REFERENCES operating_cycles(operating_cycle_id),
     actor_attempt_id INTEGER REFERENCES attempts(actor_attempt_id),
-    grand_architect_office_session_id INTEGER REFERENCES grand_architect_office_sessions(grand_architect_office_session_id),
+    root_authority_office_session_id INTEGER REFERENCES root_authority_office_sessions(root_authority_office_session_id),
     budget_reservation_id INTEGER NOT NULL REFERENCES budget_reservations(budget_reservation_id),
     execution_profile_id INTEGER NOT NULL REFERENCES execution_profiles(execution_profile_id),
     workspace_id INTEGER NOT NULL REFERENCES workspaces(workspace_id),
@@ -1098,10 +1098,10 @@ CREATE TABLE pi_child_spawn_admissions (
     lifecycle_state INTEGER NOT NULL CHECK (lifecycle_state IN (1, 2, 3)),
     admitted_by_command_id INTEGER NOT NULL REFERENCES commands(command_row_id),
     spawned_by_command_id INTEGER REFERENCES commands(command_row_id),
-    CHECK ((actor_attempt_id IS NOT NULL AND grand_architect_office_session_id IS NULL)
-        OR (actor_attempt_id IS NULL AND grand_architect_office_session_id IS NOT NULL)),
+    CHECK ((actor_attempt_id IS NOT NULL AND root_authority_office_session_id IS NULL)
+        OR (actor_attempt_id IS NULL AND root_authority_office_session_id IS NOT NULL)),
     UNIQUE(actor_attempt_id),
-    UNIQUE(grand_architect_office_session_id)
+    UNIQUE(root_authority_office_session_id)
 );
 CREATE TABLE pi_child_spawn_invalidations (
     pi_child_spawn_admission_id INTEGER PRIMARY KEY REFERENCES pi_child_spawn_admissions(pi_child_spawn_admission_id),
@@ -1109,7 +1109,7 @@ CREATE TABLE pi_child_spawn_invalidations (
     invalidated_by_command_id INTEGER NOT NULL REFERENCES commands(command_row_id)
 );
 CREATE TABLE office_session_budget_reservations (
-    grand_architect_office_session_id INTEGER PRIMARY KEY REFERENCES grand_architect_office_sessions(grand_architect_office_session_id),
+    root_authority_office_session_id INTEGER PRIMARY KEY REFERENCES root_authority_office_sessions(root_authority_office_session_id),
     budget_reservation_id INTEGER NOT NULL UNIQUE REFERENCES budget_reservations(budget_reservation_id),
     bound_by_command_id INTEGER NOT NULL REFERENCES commands(command_row_id)
 );
@@ -1260,19 +1260,19 @@ CREATE TABLE cancellation_propagation_targets (
     cancellation_propagation_target_id INTEGER PRIMARY KEY,
     cancellation_propagation_id INTEGER NOT NULL REFERENCES cancellation_propagations(cancellation_propagation_id),
     actor_attempt_id INTEGER REFERENCES attempts(actor_attempt_id),
-    grand_architect_office_session_id INTEGER REFERENCES grand_architect_office_sessions(grand_architect_office_session_id),
+    root_authority_office_session_id INTEGER REFERENCES root_authority_office_sessions(root_authority_office_session_id),
     child_process_id INTEGER REFERENCES pi_child_processes(child_process_id),
     target_disposition INTEGER NOT NULL CHECK (target_disposition IN (1, 2, 3, 4, 5, 6, 7)),
-    CHECK ((actor_attempt_id IS NOT NULL AND grand_architect_office_session_id IS NULL)
-        OR (actor_attempt_id IS NULL AND grand_architect_office_session_id IS NOT NULL)),
+    CHECK ((actor_attempt_id IS NOT NULL AND root_authority_office_session_id IS NULL)
+        OR (actor_attempt_id IS NULL AND root_authority_office_session_id IS NOT NULL)),
     UNIQUE(cancellation_propagation_id, actor_attempt_id),
-    UNIQUE(cancellation_propagation_id, grand_architect_office_session_id)
+    UNIQUE(cancellation_propagation_id, root_authority_office_session_id)
 );
 CREATE TABLE command_admit_pi_child_spawn (
     command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id),
     operating_cycle_id INTEGER NOT NULL,
     actor_attempt_id INTEGER,
-    grand_architect_office_session_id INTEGER,
+    root_authority_office_session_id INTEGER,
     budget_reservation_id INTEGER NOT NULL,
     execution_profile_id INTEGER NOT NULL,
     native_workspace_id TEXT NOT NULL,
@@ -1281,8 +1281,8 @@ CREATE TABLE command_admit_pi_child_spawn (
     supervisor_epoch_identity TEXT NOT NULL,
     pi_session_identity TEXT NOT NULL,
     spawn_nonce TEXT NOT NULL,
-    CHECK ((actor_attempt_id IS NOT NULL AND grand_architect_office_session_id IS NULL)
-        OR (actor_attempt_id IS NULL AND grand_architect_office_session_id IS NOT NULL))
+    CHECK ((actor_attempt_id IS NOT NULL AND root_authority_office_session_id IS NULL)
+        OR (actor_attempt_id IS NULL AND root_authority_office_session_id IS NOT NULL))
 );
 CREATE TABLE command_record_inert_pi_child_spawn (
     command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id),
@@ -1366,9 +1366,9 @@ CREATE TABLE command_record_pi_child_not_spawned (
 );
 CREATE TABLE event_pi_child_spawn_admitted (
     event_id INTEGER PRIMARY KEY REFERENCES events(event_id), pi_child_spawn_admission_id INTEGER NOT NULL REFERENCES pi_child_spawn_admissions(pi_child_spawn_admission_id),
-    actor_attempt_id INTEGER, grand_architect_office_session_id INTEGER, budget_reservation_id INTEGER NOT NULL REFERENCES budget_reservations(budget_reservation_id),
-    CHECK ((actor_attempt_id IS NOT NULL AND grand_architect_office_session_id IS NULL)
-        OR (actor_attempt_id IS NULL AND grand_architect_office_session_id IS NOT NULL))
+    actor_attempt_id INTEGER, root_authority_office_session_id INTEGER, budget_reservation_id INTEGER NOT NULL REFERENCES budget_reservations(budget_reservation_id),
+    CHECK ((actor_attempt_id IS NOT NULL AND root_authority_office_session_id IS NULL)
+        OR (actor_attempt_id IS NULL AND root_authority_office_session_id IS NOT NULL))
 );
 CREATE TABLE event_inert_pi_child_spawn_recorded (
     event_id INTEGER PRIMARY KEY REFERENCES events(event_id), child_process_id INTEGER NOT NULL REFERENCES pi_child_processes(child_process_id), pi_child_spawn_admission_id INTEGER NOT NULL REFERENCES pi_child_spawn_admissions(pi_child_spawn_admission_id)
@@ -1454,7 +1454,7 @@ CREATE TABLE event_pi_child_spawn_invalidated (
 -- receipt/provenance, not a generic SDK event store or routine turn reserve.
 CREATE TABLE office_turn_budget_checkpoints (
     office_turn_id INTEGER PRIMARY KEY REFERENCES office_turns(office_turn_id),
-    grand_architect_office_session_id INTEGER NOT NULL REFERENCES grand_architect_office_sessions(grand_architect_office_session_id),
+    root_authority_office_session_id INTEGER NOT NULL REFERENCES root_authority_office_sessions(root_authority_office_session_id),
     budget_reservation_id INTEGER NOT NULL REFERENCES budget_reservations(budget_reservation_id),
     baseline_cumulative_micros INTEGER NOT NULL CHECK (baseline_cumulative_micros >= 0),
     authorized_by_command_id INTEGER NOT NULL REFERENCES commands(command_row_id),
@@ -1737,6 +1737,6 @@ INSERT INTO capability_grants VALUES(45,2,88,NULL,NULL,1,3,NULL,NULL);
 INSERT INTO capability_grants VALUES(46,2,89,NULL,NULL,1,3,NULL,NULL);
 INSERT INTO capability_grants VALUES(47,2,90,NULL,NULL,1,3,NULL,NULL);
 INSERT INTO capability_grants VALUES(48,2,91,NULL,NULL,1,3,NULL,NULL);
-PRAGMA user_version = 9;
+PRAGMA user_version = 10;
 COMMIT;
 PRAGMA foreign_keys = ON;

@@ -47,7 +47,7 @@ test("main: deeply nested sub-megabyte input terminates in a typed fatal, not a 
 });
 
 test("main: invalid UTF-8 in an otherwise-shaped Prompt is contained before command admission", async () => {
-	const prefix = Buffer.from('{"protocolVersion":"society-pi-host/v3","sequence":1,"sessionIdentity":"pipe-session-001","correlationIdentity":"prompt-001","command":"Prompt","payload":{"purpose":"TaskAssignment","text":"', "utf8");
+	const prefix = Buffer.from('{"protocolVersion":"society-pi-host/v4","sequence":1,"sessionIdentity":"pipe-session-001","correlationIdentity":"prompt-001","command":"Prompt","payload":{"purpose":"TaskAssignment","text":"', "utf8");
 	const suffix = Buffer.from('"}}', "utf8");
 	const result = await runHostBytes([prefix, Buffer.from([0xff]), suffix], true);
 	assert.equal(result.stderr, "");
@@ -85,7 +85,7 @@ test("main: real-pipe CreateSession then Dispose flushes before EOF without a pr
 			cost: { input: 0.00000009, output: 0.00000018, cacheRead: 0.000000018, cacheWrite: 0 } }],
 	} } });
 	await writeFile(modelsPath, catalog, "utf8");
-	const prompt = "Universe Seed\nTask contract";
+	const prompt = "Founding Mission\nTask contract";
 	const createPayload = {
 		sessionKind: "TaskAttempt", cwd: directory, agentDirectory, authPath, modelsPath, sessionDirectory,
 		systemPrompt: prompt, systemPromptDigest: blake3Hex(prompt),
@@ -123,7 +123,7 @@ test("main: a broken stdout after SessionReady fences a later Prompt before it c
 			cost: { input: 0.00000009, output: 0.00000018, cacheRead: 0.000000018, cacheWrite: 0 } }],
 	} } });
 	await writeFile(modelsPath, catalog, "utf8");
-	const systemPrompt = "Universe Seed\nTransport containment";
+	const systemPrompt = "Founding Mission\nTransport containment";
 	const create = envelope(1, "CreateSession", {
 		sessionKind: "TaskAttempt", cwd: directory, agentDirectory, authPath, modelsPath, sessionDirectory,
 		systemPrompt, systemPromptDigest: blake3Hex(systemPrompt),
@@ -142,7 +142,7 @@ test("main: a broken stdout after SessionReady fences a later Prompt before it c
 });
 
 function envelope(sequence: number, command: string, payload: unknown) {
-	return { protocolVersion: "society-pi-host/v3", sequence, sessionIdentity: "pipe-session-001", correlationIdentity: `pipe-command-${sequence}`, command, payload };
+	return { protocolVersion: "society-pi-host/v4", sequence, sessionIdentity: "pipe-session-001", correlationIdentity: `pipe-command-${sequence}`, command, payload };
 }
 
 async function* oneChunk(chunk: Uint8Array): AsyncIterable<Uint8Array> {

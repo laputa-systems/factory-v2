@@ -39,7 +39,7 @@ grants or through an office it is authorized to occupy.
 A closed, revisioned description of the trusted runtime boundary eligible to
 execute an actor attempt. Runtime identity and readiness are separate: the
 provider-free deterministic Pi-host double is eligible only in
-`Vs001DeterministicV1`, while the pinned native Pi SDK profile remains
+`DeterministicPiHostFixtureV1`, while the pinned native Pi SDK profile remains
 `Unqualified` until the bootstrap qualification institution records its typed
 result. An execution profile is not a caller-supplied executable path or a
 claim inferred from a successful prompt.
@@ -93,9 +93,9 @@ is not a derived demand signal and cannot be created by signal pressure alone.
 ### Canonical fresh schema
 
 The one atomic embedded-SQL bootstrap accepted by the prototype kernel. The
-current schema has `PRAGMA user_version = 9`; version zero means an empty
+current schema has `PRAGMA user_version = 10`; version zero means an empty
 database eligible for bootstrap, while historical prototype versions one
-through eight are rejected without mutation. This is deliberate prototype
+through nine are rejected without mutation. This is deliberate prototype
 replacement, not an upgrade or compatibility claim.
 
 ### Cancellation propagation
@@ -448,7 +448,7 @@ quota or one fixed workflow.
 A closed admission policy selecting the purpose and exact hard ceiling of one
 Operating Cycle. VS-001 has three non-interchangeable treatments:
 `PiSdkQualificationV1` is the bootstrap/kernel-only native laboratory at
-`UsdMicros(30_000)`; `Vs001DeterministicV1` is the provider-denied process-
+`UsdMicros(30_000)`; `DeterministicPiHostFixtureV1` is the provider-denied process-
 double circuit at `UsdMicros(1_000_000)`; and `Vs001LiveV1` is the qualified
 native run at `UsdMicros(1_000_000)`. Neither a deterministic success nor a
 live-cycle label can create native qualification. A treatment is durable

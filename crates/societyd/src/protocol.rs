@@ -11,16 +11,16 @@ use society_kernel::{
     AdmissionGeneration, ApplicationIdentity, ApplicationMissionInput, ApplicationName,
     ApplicationRevisionOrdinal, Blake3Digest, CancellationMode, Capability, CapabilityGrantId,
     CommandBody, CommandDisposition, CommandId, CommandReceipt, CommandRequest, CostPostmortemId,
-    CostPostmortemResolution, ExpectedGeneration, GrandArchitectOfficeSessionId, MissionPrinciple,
-    MissionPrincipleKind, MissionPrincipleText, MissionPrinciples, MissionStatement,
-    NorthStarBoundaryCommitmentQuestion, NorthStarChangeQuestion,
-    NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet, NorthStarRevisitQuestion,
-    OfficeTurnPurpose, OperatingCycleId, OperatingCycleTreatment, PrincipalDisplayName,
-    PrincipalId, Rejection, SocietyName, UsdMicros,
+    CostPostmortemResolution, ExpectedGeneration, MissionPrinciple, MissionPrincipleKind,
+    MissionPrincipleText, MissionPrinciples, MissionStatement, NorthStarBoundaryCommitmentQuestion,
+    NorthStarChangeQuestion, NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet,
+    NorthStarRevisitQuestion, OfficeTurnPurpose, OperatingCycleId, OperatingCycleTreatment,
+    PrincipalDisplayName, PrincipalId, Rejection, RootAuthorityOfficeSessionId, SocietyName,
+    UsdMicros,
 };
 use thiserror::Error;
 
-pub const PROTOCOL_VERSION: u16 = 4;
+pub const PROTOCOL_VERSION: u16 = 5;
 pub const MAX_FRAME_BYTES: usize = 64 * 1024;
 
 // Request discriminants are intentionally partitioned by transport. A raw
@@ -54,11 +54,11 @@ pub enum ClientCommandBody {
     CreateSocietyIdentity {
         name: SocietyName,
     },
-    InstallGrandArchitectOffice,
-    InstallFoundingUniverseSeed {
+    InstallRootAuthorityOffice,
+    InstallFoundingMission {
         mission: Box<ApplicationMissionInput>,
     },
-    AppointInitialGrandArchitect {
+    AppointInitialRootAuthority {
         actor_display_name: PrincipalDisplayName,
     },
     SetR0HardCeiling {
@@ -72,11 +72,11 @@ pub enum ClientCommandBody {
     AdmitOperatingCycle {
         cycle_id: OperatingCycleId,
     },
-    StartGrandArchitectOfficeSession {
+    StartRootAuthorityOfficeSession {
         cycle_id: OperatingCycleId,
     },
     OpenOfficeTurn {
-        session_id: GrandArchitectOfficeSessionId,
+        session_id: RootAuthorityOfficeSessionId,
         purpose: OfficeTurnPurpose,
     },
     QuiesceOperatingCycle {
@@ -109,14 +109,14 @@ impl ClientCommandBody {
     fn tag(&self) -> u8 {
         match self {
             Self::CreateSocietyIdentity { .. } => 1,
-            Self::InstallGrandArchitectOffice => 2,
-            Self::InstallFoundingUniverseSeed { .. } => 3,
-            Self::AppointInitialGrandArchitect { .. } => 4,
+            Self::InstallRootAuthorityOffice => 2,
+            Self::InstallFoundingMission { .. } => 3,
+            Self::AppointInitialRootAuthority { .. } => 4,
             Self::SetR0HardCeiling { .. } => 5,
             Self::BootstrapSociety => 6,
             Self::ProposeOperatingCycle { .. } => 7,
             Self::AdmitOperatingCycle { .. } => 8,
-            Self::StartGrandArchitectOfficeSession { .. } => 9,
+            Self::StartRootAuthorityOfficeSession { .. } => 9,
             Self::OpenOfficeTurn { .. } => 11,
             Self::QuiesceOperatingCycle { .. } => 13,
             Self::ResumeOperatingCycle { .. } => 15,
@@ -131,12 +131,12 @@ impl ClientCommandBody {
     fn into_kernel(self) -> CommandBody {
         match self {
             Self::CreateSocietyIdentity { name } => CommandBody::CreateSocietyIdentity { name },
-            Self::InstallGrandArchitectOffice => CommandBody::InstallGrandArchitectOffice,
-            Self::InstallFoundingUniverseSeed { mission } => {
-                CommandBody::InstallFoundingUniverseSeed { mission: *mission }
+            Self::InstallRootAuthorityOffice => CommandBody::InstallRootAuthorityOffice,
+            Self::InstallFoundingMission { mission } => {
+                CommandBody::InstallFoundingMission { mission: *mission }
             }
-            Self::AppointInitialGrandArchitect { actor_display_name } => {
-                CommandBody::AppointInitialGrandArchitect { actor_display_name }
+            Self::AppointInitialRootAuthority { actor_display_name } => {
+                CommandBody::AppointInitialRootAuthority { actor_display_name }
             }
             Self::SetR0HardCeiling { ceiling } => CommandBody::SetR0HardCeiling { ceiling },
             Self::BootstrapSociety => CommandBody::BootstrapSociety,
@@ -148,8 +148,8 @@ impl ClientCommandBody {
                 budget_ceiling,
             },
             Self::AdmitOperatingCycle { cycle_id } => CommandBody::AdmitOperatingCycle { cycle_id },
-            Self::StartGrandArchitectOfficeSession { cycle_id } => {
-                CommandBody::StartGrandArchitectOfficeSession { cycle_id }
+            Self::StartRootAuthorityOfficeSession { cycle_id } => {
+                CommandBody::StartRootAuthorityOfficeSession { cycle_id }
             }
             Self::OpenOfficeTurn {
                 session_id,
@@ -187,15 +187,15 @@ impl ClientCommandBody {
     fn required_capability(&self) -> Capability {
         match self {
             Self::CreateSocietyIdentity { .. } => Capability::CreateSocietyIdentity,
-            Self::InstallGrandArchitectOffice => Capability::InstallGrandArchitectOffice,
-            Self::InstallFoundingUniverseSeed { .. } => Capability::InstallFoundingUniverseSeed,
-            Self::AppointInitialGrandArchitect { .. } => Capability::AppointInitialGrandArchitect,
+            Self::InstallRootAuthorityOffice => Capability::InstallRootAuthorityOffice,
+            Self::InstallFoundingMission { .. } => Capability::InstallFoundingMission,
+            Self::AppointInitialRootAuthority { .. } => Capability::AppointInitialRootAuthority,
             Self::SetR0HardCeiling { .. } => Capability::SetR0HardCeiling,
             Self::BootstrapSociety => Capability::BootstrapSociety,
             Self::ProposeOperatingCycle { .. } => Capability::ProposeOperatingCycle,
             Self::AdmitOperatingCycle { .. } => Capability::AdmitOperatingCycle,
-            Self::StartGrandArchitectOfficeSession { .. } => {
-                Capability::StartGrandArchitectOfficeSession
+            Self::StartRootAuthorityOfficeSession { .. } => {
+                Capability::StartRootAuthorityOfficeSession
             }
             Self::OpenOfficeTurn { .. } => Capability::OpenOfficeTurn,
             Self::QuiesceOperatingCycle { .. } => Capability::QuiesceOperatingCycle,
@@ -672,11 +672,11 @@ fn encode_command_request(
     put_u8(bytes, command.body.tag());
     match &command.body {
         ClientCommandBody::CreateSocietyIdentity { name } => put_string(bytes, name.as_str()),
-        ClientCommandBody::InstallGrandArchitectOffice | ClientCommandBody::BootstrapSociety => {}
-        ClientCommandBody::InstallFoundingUniverseSeed { mission } => {
+        ClientCommandBody::InstallRootAuthorityOffice | ClientCommandBody::BootstrapSociety => {}
+        ClientCommandBody::InstallFoundingMission { mission } => {
             encode_application_mission_input(bytes, mission)
         }
-        ClientCommandBody::AppointInitialGrandArchitect { actor_display_name } => {
+        ClientCommandBody::AppointInitialRootAuthority { actor_display_name } => {
             put_string(bytes, actor_display_name.as_str());
         }
         ClientCommandBody::SetR0HardCeiling { ceiling } => put_i64(bytes, ceiling.value()),
@@ -688,7 +688,7 @@ fn encode_command_request(
             put_i64(bytes, budget_ceiling.value());
         }
         ClientCommandBody::AdmitOperatingCycle { cycle_id }
-        | ClientCommandBody::StartGrandArchitectOfficeSession { cycle_id }
+        | ClientCommandBody::StartRootAuthorityOfficeSession { cycle_id }
         | ClientCommandBody::QuiesceOperatingCycle { cycle_id }
         | ClientCommandBody::ResumeOperatingCycle { cycle_id }
         | ClientCommandBody::ReconcileOperatingCycle { cycle_id }
@@ -746,11 +746,11 @@ fn decode_client_command_body(
         1 => Ok(ClientCommandBody::CreateSocietyIdentity {
             name: SocietyName::parse(cursor.string(160)?).map_err(|_| WireError::InvalidValue)?,
         }),
-        2 => Ok(ClientCommandBody::InstallGrandArchitectOffice),
-        3 => Ok(ClientCommandBody::InstallFoundingUniverseSeed {
+        2 => Ok(ClientCommandBody::InstallRootAuthorityOffice),
+        3 => Ok(ClientCommandBody::InstallFoundingMission {
             mission: Box::new(decode_application_mission_input(cursor)?),
         }),
-        4 => Ok(ClientCommandBody::AppointInitialGrandArchitect {
+        4 => Ok(ClientCommandBody::AppointInitialRootAuthority {
             actor_display_name: PrincipalDisplayName::parse(cursor.string(160)?)
                 .map_err(|_| WireError::InvalidValue)?,
         }),
@@ -767,12 +767,12 @@ fn decode_client_command_body(
             cycle_id: OperatingCycleId::try_from(cursor.i64()?)
                 .map_err(|_| WireError::InvalidValue)?,
         }),
-        9 => Ok(ClientCommandBody::StartGrandArchitectOfficeSession {
+        9 => Ok(ClientCommandBody::StartRootAuthorityOfficeSession {
             cycle_id: OperatingCycleId::try_from(cursor.i64()?)
                 .map_err(|_| WireError::InvalidValue)?,
         }),
         11 => Ok(ClientCommandBody::OpenOfficeTurn {
-            session_id: GrandArchitectOfficeSessionId::try_from(cursor.i64()?)
+            session_id: RootAuthorityOfficeSessionId::try_from(cursor.i64()?)
                 .map_err(|_| WireError::InvalidValue)?,
             purpose: office_turn_purpose_from_u8(cursor.u8()?)?,
         }),
@@ -1051,9 +1051,9 @@ fn parse_command_id(value: String) -> Result<CommandId, WireError> {
 fn capability_from_u8(value: u8) -> Result<Capability, WireError> {
     match value {
         1 => Ok(Capability::CreateSocietyIdentity),
-        2 => Ok(Capability::InstallGrandArchitectOffice),
-        3 => Ok(Capability::InstallFoundingUniverseSeed),
-        4 => Ok(Capability::AppointInitialGrandArchitect),
+        2 => Ok(Capability::InstallRootAuthorityOffice),
+        3 => Ok(Capability::InstallFoundingMission),
+        4 => Ok(Capability::AppointInitialRootAuthority),
         5 => Ok(Capability::SetR0HardCeiling),
         6 => Ok(Capability::BootstrapSociety),
         7 => Ok(Capability::ProposeOperatingCycle),
@@ -1062,7 +1062,7 @@ fn capability_from_u8(value: u8) -> Result<Capability, WireError> {
         10 => Ok(Capability::ResumeOperatingCycle),
         11 => Ok(Capability::ReconcileOperatingCycle),
         12 => Ok(Capability::CloseOperatingCycle),
-        13 => Ok(Capability::StartGrandArchitectOfficeSession),
+        13 => Ok(Capability::StartRootAuthorityOfficeSession),
         14 => Ok(Capability::OpenOfficeTurn),
         15 => Ok(Capability::RequestCancellation),
         16 => Ok(Capability::ReserveBudget),
@@ -1081,9 +1081,9 @@ fn supervisor_capability_is_representable(capability: Capability) -> bool {
     matches!(
         capability,
         Capability::CreateSocietyIdentity
-            | Capability::InstallGrandArchitectOffice
-            | Capability::InstallFoundingUniverseSeed
-            | Capability::AppointInitialGrandArchitect
+            | Capability::InstallRootAuthorityOffice
+            | Capability::InstallFoundingMission
+            | Capability::AppointInitialRootAuthority
             | Capability::SetR0HardCeiling
             | Capability::BootstrapSociety
             | Capability::ProposeOperatingCycle
@@ -1092,7 +1092,7 @@ fn supervisor_capability_is_representable(capability: Capability) -> bool {
             | Capability::ResumeOperatingCycle
             | Capability::ReconcileOperatingCycle
             | Capability::CloseOperatingCycle
-            | Capability::StartGrandArchitectOfficeSession
+            | Capability::StartRootAuthorityOfficeSession
             | Capability::OpenOfficeTurn
             | Capability::RequestCancellation
             | Capability::ReserveBudget
@@ -1209,7 +1209,7 @@ mod tests {
         }
     }
 
-    fn seed_request(mission: ApplicationMissionInput) -> SupervisorRequest {
+    fn mission_request(mission: ApplicationMissionInput) -> SupervisorRequest {
         SupervisorRequest::Execute {
             correlation: CorrelationId::new(1).expect("the fixed nonzero correlation is valid"),
             command: ClientCommandRequest {
@@ -1218,16 +1218,16 @@ mod tests {
                 principal_id: PrincipalId::new(3).expect("the fixed nonzero principal is valid"),
                 capability_grant_id: CapabilityGrantId::new(1)
                     .expect("the fixed nonzero capability grant is valid"),
-                capability: Capability::InstallFoundingUniverseSeed,
+                capability: Capability::InstallFoundingMission,
                 expected_generation: ExpectedGeneration::NotApplicable,
-                body: ClientCommandBody::InstallFoundingUniverseSeed {
+                body: ClientCommandBody::InstallFoundingMission {
                     mission: Box::new(mission),
                 },
             },
         }
     }
 
-    fn raw_seed_request_payload(
+    fn raw_mission_request_payload(
         application_identity: &str,
         revision_ordinal: i64,
         statement: &str,
@@ -1243,7 +1243,7 @@ mod tests {
         put_string(&mut payload, "wire-mission-001");
         put_i64(&mut payload, 3);
         put_i64(&mut payload, 1);
-        put_u8(&mut payload, Capability::InstallFoundingUniverseSeed as u8);
+        put_u8(&mut payload, Capability::InstallFoundingMission as u8);
         put_u8(&mut payload, 0);
         put_u8(&mut payload, 3);
         put_string(&mut payload, application_identity);
@@ -1294,7 +1294,7 @@ mod tests {
 
     #[test]
     fn supervisor_founding_mission_round_trips_as_one_exact_typed_input() {
-        let request = seed_request(example_application_mission());
+        let request = mission_request(example_application_mission());
         let mut encoded = Vec::new();
         write_supervisor_request(&mut encoded, &request)
             .expect("the closed supervisor request must encode");
@@ -1308,17 +1308,17 @@ mod tests {
     #[test]
     fn supervisor_founding_mission_rejects_malformed_principles_and_fields_at_the_wire() {
         let invalid_value_payloads = [
-            raw_seed_request_payload("wire-mission-fixture", 7, "A bounded mission.", &[9]),
-            raw_seed_request_payload("wire-mission-fixture", 7, "A bounded mission.", &[]),
-            raw_seed_request_payload(
+            raw_mission_request_payload("wire-mission-fixture", 7, "A bounded mission.", &[9]),
+            raw_mission_request_payload("wire-mission-fixture", 7, "A bounded mission.", &[]),
+            raw_mission_request_payload(
                 "wire-mission-fixture",
                 7,
                 "A bounded mission.",
                 &[1; MissionPrinciples::MAX_COUNT + 1],
             ),
-            raw_seed_request_payload("", 7, "A bounded mission.", &[1]),
-            raw_seed_request_payload("wire-mission-fixture", 0, "A bounded mission.", &[1]),
-            raw_seed_request_payload("wire-mission-fixture", 7, "", &[1]),
+            raw_mission_request_payload("", 7, "A bounded mission.", &[1]),
+            raw_mission_request_payload("wire-mission-fixture", 0, "A bounded mission.", &[1]),
+            raw_mission_request_payload("wire-mission-fixture", 7, "", &[1]),
         ];
         for payload in invalid_value_payloads {
             let encoded = framed(&payload);
@@ -1329,7 +1329,7 @@ mod tests {
         }
 
         let valid_payload =
-            raw_seed_request_payload("wire-mission-fixture", 7, "A bounded mission.", &[1]);
+            raw_mission_request_payload("wire-mission-fixture", 7, "A bounded mission.", &[1]);
         let mut truncated_payload = valid_payload.clone();
         truncated_payload.pop();
         let truncated = framed(&truncated_payload);

@@ -16,23 +16,23 @@ use society_kernel::{
     Capability, CausalEpisodeId, ChildProcessId, CommandBody, CommandDisposition, CommandId,
     CommandReceipt, CommandRequest, CostObservation, CostPostmortemResolution,
     CostUnavailableReason, CostUnknownReason, EpisodeState, EventBody, ExpectedGeneration,
-    GrandArchitectOfficeSessionId, GraphEdgeKind, GraphRevisionBody, GraphRevisionId,
-    HypothesisRevisionText, KernelStore, MissionPrinciple, MissionPrincipleKind,
-    MissionPrincipleText, MissionPrinciples, MissionStatement, NativeChildPid, NativeWorkspaceId,
-    NorthStarBoundaryCommitmentQuestion, NorthStarChangeQuestion,
-    NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet, NorthStarRevisitQuestion,
-    ObservationRevisionText, OfficeSessionTerminalState, OfficeTurnId, OfficeTurnPurpose,
-    OperatingCycleId, OperatingCycleState, OperatingCycleTreatment, OwnedProcessGroupId,
-    PiBoundarySessionIdentity, PiChildOwner, PiChildSpawnAdmissionId, PiCorrelationIdentity,
-    PiCumulativeUsage, PiOfficeTurnAssistantOutcome, PiOfficeTurnDisposition,
-    PiOfficeTurnTerminalReceiptId, PiOfficeTurnTranscriptDisposition, PiOfficeTurnUsageFailure,
-    PiOfficeTurnUsageUnavailableReason, PiProtocolSequence, PiTokenCount, PostmortemActionKind,
-    PostmortemActionProposalText, PostmortemCausalClaimKind, PostmortemCausalClaimText,
-    PostmortemId, PrincipalDisplayName, PrincipalId, ProjectId, ProjectMilestoneName, ProjectName,
-    ProjectNorthStarAlignment, ProjectNorthStarBoundaryCommitmentAnswer,
-    ProjectNorthStarChangeAnswer, ProjectNorthStarImprovementEvidenceAnswer,
-    ProjectNorthStarRevisitAnswer, ProjectObjectiveText, ProjectState, ProjectStopConditionText,
-    ProviderCostBinary64, Rejection, ReviewChallengeSeverity, ReviewFailureHypothesis, SocietyName,
+    GraphEdgeKind, GraphRevisionBody, GraphRevisionId, HypothesisRevisionText, KernelStore,
+    MissionPrinciple, MissionPrincipleKind, MissionPrincipleText, MissionPrinciples,
+    MissionStatement, NativeChildPid, NativeWorkspaceId, NorthStarBoundaryCommitmentQuestion,
+    NorthStarChangeQuestion, NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet,
+    NorthStarRevisitQuestion, ObservationRevisionText, OfficeSessionTerminalState, OfficeTurnId,
+    OfficeTurnPurpose, OperatingCycleId, OperatingCycleState, OperatingCycleTreatment,
+    OwnedProcessGroupId, PiBoundarySessionIdentity, PiChildOwner, PiChildSpawnAdmissionId,
+    PiCorrelationIdentity, PiCumulativeUsage, PiOfficeTurnAssistantOutcome,
+    PiOfficeTurnDisposition, PiOfficeTurnTerminalReceiptId, PiOfficeTurnTranscriptDisposition,
+    PiOfficeTurnUsageFailure, PiOfficeTurnUsageUnavailableReason, PiProtocolSequence, PiTokenCount,
+    PostmortemActionKind, PostmortemActionProposalText, PostmortemCausalClaimKind,
+    PostmortemCausalClaimText, PostmortemId, PrincipalDisplayName, PrincipalId, ProjectId,
+    ProjectMilestoneName, ProjectName, ProjectNorthStarAlignment,
+    ProjectNorthStarBoundaryCommitmentAnswer, ProjectNorthStarChangeAnswer,
+    ProjectNorthStarImprovementEvidenceAnswer, ProjectNorthStarRevisitAnswer, ProjectObjectiveText,
+    ProjectState, ProjectStopConditionText, ProviderCostBinary64, Rejection,
+    ReviewChallengeSeverity, ReviewFailureHypothesis, RootAuthorityOfficeSessionId, SocietyName,
     SpawnNonce, StoreError, SupervisedChildIdentity, SupervisorEpochId, SupervisorEpochIdentity,
     UsdMicros,
 };
@@ -178,11 +178,11 @@ fn found_cycle(store: &mut KernelStore) -> (PrincipalId, OperatingCycleId) {
     );
     accepted(
         store,
-        "found-install-seed",
+        "found-install-founding-mission",
         bootstrap,
-        Capability::InstallFoundingUniverseSeed,
+        Capability::InstallFoundingMission,
         ExpectedGeneration::NotApplicable,
-        CommandBody::InstallFoundingUniverseSeed {
+        CommandBody::InstallFoundingMission {
             mission: example_application_mission(),
         },
     );
@@ -190,17 +190,17 @@ fn found_cycle(store: &mut KernelStore) -> (PrincipalId, OperatingCycleId) {
         store,
         "found-install-office",
         bootstrap,
-        Capability::InstallGrandArchitectOffice,
+        Capability::InstallRootAuthorityOffice,
         ExpectedGeneration::NotApplicable,
-        CommandBody::InstallGrandArchitectOffice,
+        CommandBody::InstallRootAuthorityOffice,
     );
     accepted(
         store,
-        "found-appoint-grand-architect",
+        "found-appoint-root-authority",
         bootstrap,
-        Capability::AppointInitialGrandArchitect,
+        Capability::AppointInitialRootAuthority,
         ExpectedGeneration::NotApplicable,
-        CommandBody::AppointInitialGrandArchitect {
+        CommandBody::AppointInitialRootAuthority {
             actor_display_name: PrincipalDisplayName::parse("GA1 actor").unwrap(),
         },
     );
@@ -253,7 +253,7 @@ fn current_operating_cycle_generation_is_typed_and_distinguishes_absence_from_co
         .as_nanos();
     let path = std::env::temp_dir().join(format!("society-cycle-generation-read-{nonce}.sqlite"));
     let mut store = KernelStore::open(&path).unwrap();
-    let (grand_architect, cycle_id) = found_cycle(&mut store);
+    let (root_authority, cycle_id) = found_cycle(&mut store);
     assert_eq!(
         store
             .current_operating_cycle_admission_generation(cycle_id)
@@ -264,7 +264,7 @@ fn current_operating_cycle_generation_is_typed_and_distinguishes_absence_from_co
     accepted(
         &mut store,
         "cycle-generation-read-cancel",
-        grand_architect,
+        root_authority,
         Capability::RequestCancellation,
         ExpectedGeneration::Exact(AdmissionGeneration::INITIAL),
         CommandBody::RequestCancellation {
@@ -316,9 +316,9 @@ fn current_operating_cycle_generation_is_typed_and_distinguishes_absence_from_co
 /// is not evidence of a paid Pi run.
 fn ready_supervised_office_session(
     store: &mut KernelStore,
-    architect: PrincipalId,
+    root_authority: PrincipalId,
     cycle_id: OperatingCycleId,
-    session_id: GrandArchitectOfficeSessionId,
+    session_id: RootAuthorityOfficeSessionId,
     label: &str,
     reservation_amount: UsdMicros,
 ) {
@@ -326,7 +326,7 @@ fn ready_supervised_office_session(
     accepted(
         store,
         &format!("{label}-reserve"),
-        architect,
+        root_authority,
         Capability::ReserveBudget,
         generation,
         CommandBody::ReserveBudget {
@@ -357,7 +357,7 @@ fn ready_supervised_office_session(
         generation,
         CommandBody::AdmitPiChildSpawn {
             operating_cycle_id: cycle_id,
-            owner: PiChildOwner::GrandArchitectOfficeSession(session_id),
+            owner: PiChildOwner::RootAuthorityOfficeSession(session_id),
             budget_reservation_id: BudgetReservationId::new(1).unwrap(),
             execution_profile_id:
                 society_kernel::ExecutionProfileId::DETERMINISTIC_PI_HOST_DOUBLE_V1,
@@ -446,20 +446,20 @@ fn ready_supervised_office_session(
 #[test]
 fn founding_cycle_is_idempotent_fenced_and_replayable() {
     let mut store = KernelStore::open_in_memory().unwrap();
-    let (grand_architect, cycle_id) = found_cycle(&mut store);
+    let (root_authority, cycle_id) = found_cycle(&mut store);
 
     let first = submit(
         &mut store,
-        "ga-quiesce-generation-zero",
-        grand_architect,
+        "root-authority-quiesce-generation-zero",
+        root_authority,
         Capability::QuiesceOperatingCycle,
         ExpectedGeneration::Exact(AdmissionGeneration::INITIAL),
         CommandBody::QuiesceOperatingCycle { cycle_id },
     );
     let repeat = submit(
         &mut store,
-        "ga-quiesce-generation-zero",
-        grand_architect,
+        "root-authority-quiesce-generation-zero",
+        root_authority,
         Capability::QuiesceOperatingCycle,
         ExpectedGeneration::Exact(AdmissionGeneration::INITIAL),
         CommandBody::QuiesceOperatingCycle { cycle_id },
@@ -469,8 +469,8 @@ fn founding_cycle_is_idempotent_fenced_and_replayable() {
 
     rejected(
         &mut store,
-        "ga-resume-stale-generation-zero",
-        grand_architect,
+        "root-authority-resume-stale-generation-zero",
+        root_authority,
         Capability::ResumeOperatingCycle,
         ExpectedGeneration::Exact(AdmissionGeneration::INITIAL),
         CommandBody::ResumeOperatingCycle { cycle_id },
@@ -486,16 +486,16 @@ fn founding_cycle_is_idempotent_fenced_and_replayable() {
     );
     accepted(
         &mut store,
-        "ga-resume-generation-one",
-        grand_architect,
+        "root-authority-resume-generation-one",
+        root_authority,
         Capability::ResumeOperatingCycle,
         ExpectedGeneration::Exact(AdmissionGeneration::try_from(1).unwrap()),
         CommandBody::ResumeOperatingCycle { cycle_id },
     );
     accepted(
         &mut store,
-        "ga-quiesce-generation-one",
-        grand_architect,
+        "root-authority-quiesce-generation-one",
+        root_authority,
         Capability::QuiesceOperatingCycle,
         ExpectedGeneration::Exact(AdmissionGeneration::try_from(1).unwrap()),
         CommandBody::QuiesceOperatingCycle { cycle_id },
@@ -510,16 +510,16 @@ fn founding_cycle_is_idempotent_fenced_and_replayable() {
     );
     accepted(
         &mut store,
-        "ga-reconcile-cycle",
-        grand_architect,
+        "root-authority-reconcile-cycle",
+        root_authority,
         Capability::ReconcileOperatingCycle,
         ExpectedGeneration::Exact(AdmissionGeneration::try_from(2).unwrap()),
         CommandBody::ReconcileOperatingCycle { cycle_id },
     );
     accepted(
         &mut store,
-        "ga-close-cycle",
-        grand_architect,
+        "root-authority-close-cycle",
+        root_authority,
         Capability::CloseOperatingCycle,
         ExpectedGeneration::Exact(AdmissionGeneration::try_from(2).unwrap()),
         CommandBody::CloseOperatingCycle { cycle_id },
@@ -547,20 +547,20 @@ fn project_charter_activation_and_close_blocker_are_typed_and_replayable() {
             .as_nanos()
     ));
     let mut store = KernelStore::open(&path).unwrap();
-    let (grand_architect, cycle_id) = found_cycle(&mut store);
+    let (root_authority, cycle_id) = found_cycle(&mut store);
     let generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
     accepted(
         &mut store,
         "coord-start-session",
-        grand_architect,
-        Capability::StartGrandArchitectOfficeSession,
+        root_authority,
+        Capability::StartRootAuthorityOfficeSession,
         generation,
-        CommandBody::StartGrandArchitectOfficeSession { cycle_id },
+        CommandBody::StartRootAuthorityOfficeSession { cycle_id },
     );
     accepted(
         &mut store,
         "coord-create-project",
-        grand_architect,
+        root_authority,
         Capability::CreateProject,
         generation,
         CommandBody::CreateProject {
@@ -573,7 +573,7 @@ fn project_charter_activation_and_close_blocker_are_typed_and_replayable() {
     rejected(
         &mut store,
         "coord-charter-proposed-rejected",
-        grand_architect,
+        root_authority,
         Capability::CharterProject,
         generation,
         CommandBody::CharterProject {
@@ -588,7 +588,7 @@ fn project_charter_activation_and_close_blocker_are_typed_and_replayable() {
     accepted(
         &mut store,
         "coord-challenge-project",
-        grand_architect,
+        root_authority,
         Capability::TransitionProject,
         generation,
         CommandBody::TransitionProject {
@@ -600,7 +600,7 @@ fn project_charter_activation_and_close_blocker_are_typed_and_replayable() {
     accepted(
         &mut store,
         "coord-charter-project",
-        grand_architect,
+        root_authority,
         Capability::CharterProject,
         generation,
         CommandBody::CharterProject {
@@ -614,7 +614,7 @@ fn project_charter_activation_and_close_blocker_are_typed_and_replayable() {
     accepted(
         &mut store,
         "coord-activate-project",
-        grand_architect,
+        root_authority,
         Capability::TransitionProject,
         generation,
         CommandBody::TransitionProject {
@@ -626,7 +626,7 @@ fn project_charter_activation_and_close_blocker_are_typed_and_replayable() {
     accepted(
         &mut store,
         "coord-create-episode",
-        grand_architect,
+        root_authority,
         Capability::CreateEpisode,
         generation,
         CommandBody::CreateEpisode {
@@ -638,7 +638,7 @@ fn project_charter_activation_and_close_blocker_are_typed_and_replayable() {
     accepted(
         &mut store,
         "coord-admit-episode",
-        grand_architect,
+        root_authority,
         Capability::TransitionEpisode,
         generation,
         CommandBody::TransitionEpisode {
@@ -650,7 +650,7 @@ fn project_charter_activation_and_close_blocker_are_typed_and_replayable() {
     accepted(
         &mut store,
         "coord-add-observation",
-        grand_architect,
+        root_authority,
         Capability::AddGraphObjectRevision,
         generation,
         CommandBody::AddGraphObjectRevision {
@@ -667,7 +667,7 @@ fn project_charter_activation_and_close_blocker_are_typed_and_replayable() {
     accepted(
         &mut store,
         "coord-add-hypothesis",
-        grand_architect,
+        root_authority,
         Capability::AddGraphObjectRevision,
         generation,
         CommandBody::AddGraphObjectRevision {
@@ -690,7 +690,7 @@ fn project_charter_activation_and_close_blocker_are_typed_and_replayable() {
         accepted(
             &mut store,
             id,
-            grand_architect,
+            root_authority,
             Capability::CommitGraphRevision,
             generation,
             CommandBody::CommitGraphRevision {
@@ -702,7 +702,7 @@ fn project_charter_activation_and_close_blocker_are_typed_and_replayable() {
     accepted(
         &mut store,
         "coord-support-edge",
-        grand_architect,
+        root_authority,
         Capability::AddGraphEdge,
         generation,
         CommandBody::AddGraphEdge {
@@ -716,7 +716,7 @@ fn project_charter_activation_and_close_blocker_are_typed_and_replayable() {
     accepted(
         &mut store,
         "coord-request-review",
-        grand_architect,
+        root_authority,
         Capability::RequestAdversarialReview,
         generation,
         CommandBody::RequestAdversarialReview {
@@ -728,7 +728,7 @@ fn project_charter_activation_and_close_blocker_are_typed_and_replayable() {
     accepted(
         &mut store,
         "coord-trigger-postmortem",
-        grand_architect,
+        root_authority,
         Capability::TriggerPostmortem,
         generation,
         CommandBody::TriggerPostmortem {
@@ -741,7 +741,7 @@ fn project_charter_activation_and_close_blocker_are_typed_and_replayable() {
     accepted(
         &mut store,
         "coord-record-causal-claim",
-        grand_architect,
+        root_authority,
         Capability::RecordPostmortemCausalClaim,
         generation,
         CommandBody::RecordPostmortemCausalClaim {
@@ -755,7 +755,7 @@ fn project_charter_activation_and_close_blocker_are_typed_and_replayable() {
     accepted(
         &mut store,
         "coord-propose-postmortem-action",
-        grand_architect,
+        root_authority,
         Capability::ProposePostmortemAction,
         generation,
         CommandBody::ProposePostmortemAction {
@@ -771,7 +771,7 @@ fn project_charter_activation_and_close_blocker_are_typed_and_replayable() {
     accepted(
         &mut store,
         "coord-close-postmortem",
-        grand_architect,
+        root_authority,
         Capability::ClosePostmortem,
         generation,
         CommandBody::ClosePostmortem {
@@ -790,7 +790,7 @@ fn project_charter_activation_and_close_blocker_are_typed_and_replayable() {
             operating_cycle_id: cycle_id,
             adversarial_review_id: review_id,
             target_graph_revision_id: hypothesis,
-            author_principal_id: grand_architect,
+            author_principal_id: root_authority,
             severity: ReviewChallengeSeverity::High,
             failure_hypothesis: ReviewFailureHypothesis::parse(
                 "The causal direction may be inverted.",
@@ -808,7 +808,7 @@ fn project_charter_activation_and_close_blocker_are_typed_and_replayable() {
         CommandBody::AssignAdversarialReviewer {
             operating_cycle_id: cycle_id,
             adversarial_review_id: review_id,
-            reviewer_principal_id: grand_architect,
+            reviewer_principal_id: root_authority,
             reviewer_actor_instance_id: society_kernel::ActorInstanceId::new(1).unwrap(),
             reviewer_actor_attempt_id: society_kernel::ActorAttemptId::new(1).unwrap(),
         },
@@ -817,7 +817,7 @@ fn project_charter_activation_and_close_blocker_are_typed_and_replayable() {
     accepted(
         &mut store,
         "coord-observe-project",
-        grand_architect,
+        root_authority,
         Capability::TransitionProject,
         generation,
         CommandBody::TransitionProject {
@@ -829,7 +829,7 @@ fn project_charter_activation_and_close_blocker_are_typed_and_replayable() {
     rejected(
         &mut store,
         "coord-close-with-milestone",
-        grand_architect,
+        root_authority,
         Capability::TransitionProject,
         generation,
         CommandBody::TransitionProject {
@@ -842,7 +842,7 @@ fn project_charter_activation_and_close_blocker_are_typed_and_replayable() {
     accepted(
         &mut store,
         "coord-complete-milestone",
-        grand_architect,
+        root_authority,
         Capability::CompleteProjectMilestone,
         generation,
         CommandBody::CompleteProjectMilestone {
@@ -853,7 +853,7 @@ fn project_charter_activation_and_close_blocker_are_typed_and_replayable() {
     rejected(
         &mut store,
         "coord-close-project-with-open-review",
-        grand_architect,
+        root_authority,
         Capability::TransitionProject,
         generation,
         CommandBody::TransitionProject {
@@ -920,7 +920,7 @@ fn project_charter_activation_and_close_blocker_are_typed_and_replayable() {
 }
 
 #[test]
-fn application_mission_alignment_is_normalized_seed_bound_and_replay_verified() {
+fn application_mission_alignment_is_founding_mission_bound_and_replay_verified() {
     let path = std::env::temp_dir().join(format!(
         "society-application-mission-alignment-{}-{}.sqlite",
         std::process::id(),
@@ -930,15 +930,15 @@ fn application_mission_alignment_is_normalized_seed_bound_and_replay_verified() 
             .as_nanos()
     ));
     let mut store = KernelStore::open(&path).unwrap();
-    let (grand_architect, cycle_id) = found_cycle(&mut store);
+    let (root_authority, cycle_id) = found_cycle(&mut store);
     let generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
     accepted(
         &mut store,
         "mission-start-office-session",
-        grand_architect,
-        Capability::StartGrandArchitectOfficeSession,
+        root_authority,
+        Capability::StartRootAuthorityOfficeSession,
         generation,
-        CommandBody::StartGrandArchitectOfficeSession { cycle_id },
+        CommandBody::StartRootAuthorityOfficeSession { cycle_id },
     );
 
     let mut stale_alignment = example_project_north_star_alignment();
@@ -946,7 +946,7 @@ fn application_mission_alignment_is_normalized_seed_bound_and_replay_verified() 
     rejected(
         &mut store,
         "mission-project-stale-revision",
-        grand_architect,
+        root_authority,
         Capability::CreateProject,
         generation,
         CommandBody::CreateProject {
@@ -959,7 +959,7 @@ fn application_mission_alignment_is_normalized_seed_bound_and_replay_verified() 
     accepted(
         &mut store,
         "mission-project-exact-alignment",
-        grand_architect,
+        root_authority,
         Capability::CreateProject,
         generation,
         CommandBody::CreateProject {
@@ -1031,10 +1031,10 @@ fn application_mission_alignment_is_normalized_seed_bound_and_replay_verified() 
     let connection = Connection::open(&path).unwrap();
     connection
         .execute(
-            "UPDATE command_install_founding_universe_seed_principles
+            "UPDATE command_install_founding_mission_principles
              SET principle_text = 'tampered mission principle'
              WHERE command_row_id = (
-                 SELECT command_row_id FROM commands WHERE command_id = 'found-install-seed'
+                 SELECT command_row_id FROM commands WHERE command_id = 'found-install-founding-mission'
              ) AND principle_ordinal = 1",
             [],
         )
@@ -1045,10 +1045,10 @@ fn application_mission_alignment_is_normalized_seed_bound_and_replay_verified() 
     let connection = Connection::open(&path).unwrap();
     connection
         .execute(
-            "UPDATE command_install_founding_universe_seed_principles
+            "UPDATE command_install_founding_mission_principles
              SET principle_text = 'Pursue a clear public purpose.'
              WHERE command_row_id = (
-                 SELECT command_row_id FROM commands WHERE command_id = 'found-install-seed'
+                 SELECT command_row_id FROM commands WHERE command_id = 'found-install-founding-mission'
              ) AND principle_ordinal = 1",
             [],
         )
@@ -1084,7 +1084,7 @@ fn current_schema_reopens_after_atomic_fresh_bootstrap() {
         connection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        9
+        10
     );
     drop(connection);
     drop(KernelStore::open(&path).unwrap());
@@ -1093,7 +1093,7 @@ fn current_schema_reopens_after_atomic_fresh_bootstrap() {
         reopened
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        9
+        10
     );
     assert_eq!(
         reopened
@@ -1116,9 +1116,9 @@ fn current_schema_reopens_after_atomic_fresh_bootstrap() {
 }
 
 #[test]
-fn historical_schema_eight_is_rejected_without_current_schema_mutation() {
+fn historical_schema_nine_is_rejected_without_current_schema_mutation() {
     let path = std::env::temp_dir().join(format!(
-        "society-historical-schema-eight-{}-{}.sqlite",
+        "society-historical-schema-nine-{}-{}.sqlite",
         std::process::id(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -1126,33 +1126,33 @@ fn historical_schema_eight_is_rejected_without_current_schema_mutation() {
             .as_nanos()
     ));
     let historical = Connection::open(&path).unwrap();
-    // Schema eight was the former fresh-only canonical identity while durable
-    // byte identities still meant SHA-256. Schema nine never reinterprets its
-    // ledger as BLAKE3 merely because both digests are 32 bytes.
+    // Schema nine was the immediately preceding fresh-only identity and still
+    // used the retired application-governance vocabulary. Schema ten must not
+    // mistake that database for the renamed canonical schema.
     historical
         .execute_batch(
-            "CREATE TABLE previous_v8_ledger_marker (entry_id INTEGER PRIMARY KEY);
-             INSERT INTO previous_v8_ledger_marker VALUES (1);
-             PRAGMA user_version = 8;",
+            "CREATE TABLE previous_v9_ledger_marker (entry_id INTEGER PRIMARY KEY);
+             INSERT INTO previous_v9_ledger_marker VALUES (1);
+             PRAGMA user_version = 9;",
         )
         .unwrap();
     drop(historical);
 
     assert!(matches!(
         KernelStore::open(&path),
-        Err(StoreError::UnsupportedSchemaVersion(8))
+        Err(StoreError::UnsupportedSchemaVersion(9))
     ));
     let inspection = Connection::open(&path).unwrap();
     assert_eq!(
         inspection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        8
+        9
     );
     assert_eq!(
         inspection
             .query_row(
-                "SELECT COUNT(*) FROM previous_v8_ledger_marker",
+                "SELECT COUNT(*) FROM previous_v9_ledger_marker",
                 [],
                 |row| { row.get::<_, i64>(0) }
             )
@@ -1216,11 +1216,11 @@ fn founding_budget_policy_is_explicit_per_closed_treatment() {
         );
         accepted(
             &mut store,
-            "policy-install-seed",
+            "policy-install-founding-mission",
             bootstrap,
-            Capability::InstallFoundingUniverseSeed,
+            Capability::InstallFoundingMission,
             ExpectedGeneration::NotApplicable,
-            CommandBody::InstallFoundingUniverseSeed {
+            CommandBody::InstallFoundingMission {
                 mission: example_application_mission(),
             },
         );
@@ -1228,18 +1228,19 @@ fn founding_budget_policy_is_explicit_per_closed_treatment() {
             &mut store,
             "policy-install-office",
             bootstrap,
-            Capability::InstallGrandArchitectOffice,
+            Capability::InstallRootAuthorityOffice,
             ExpectedGeneration::NotApplicable,
-            CommandBody::InstallGrandArchitectOffice,
+            CommandBody::InstallRootAuthorityOffice,
         );
         accepted(
             &mut store,
-            "policy-appoint-ga",
+            "policy-appoint-root-authority",
             bootstrap,
-            Capability::AppointInitialGrandArchitect,
+            Capability::AppointInitialRootAuthority,
             ExpectedGeneration::NotApplicable,
-            CommandBody::AppointInitialGrandArchitect {
-                actor_display_name: PrincipalDisplayName::parse("synthetic architect").unwrap(),
+            CommandBody::AppointInitialRootAuthority {
+                actor_display_name: PrincipalDisplayName::parse("synthetic root_authority")
+                    .unwrap(),
             },
         );
         rejected(
@@ -1542,21 +1543,21 @@ fn forged_grant_principal_cannot_borrow_an_active_occupancy() {
 #[test]
 fn office_turn_and_cross_cut_budget_freeze_unknown_cost() {
     let mut store = KernelStore::open_in_memory().unwrap();
-    let (grand_architect, cycle_id) = found_cycle(&mut store);
+    let (root_authority, cycle_id) = found_cycle(&mut store);
     let zero = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
-    let session_id = GrandArchitectOfficeSessionId::new(1).unwrap();
+    let session_id = RootAuthorityOfficeSessionId::new(1).unwrap();
 
     accepted(
         &mut store,
-        "ga-start-office-session",
-        grand_architect,
-        Capability::StartGrandArchitectOfficeSession,
+        "root-authority-start-office-session",
+        root_authority,
+        Capability::StartRootAuthorityOfficeSession,
         zero,
-        CommandBody::StartGrandArchitectOfficeSession { cycle_id },
+        CommandBody::StartRootAuthorityOfficeSession { cycle_id },
     );
     ready_supervised_office_session(
         &mut store,
-        grand_architect,
+        root_authority,
         cycle_id,
         session_id,
         "office-turn",
@@ -1564,8 +1565,8 @@ fn office_turn_and_cross_cut_budget_freeze_unknown_cost() {
     );
     accepted(
         &mut store,
-        "ga-open-office-turn",
-        grand_architect,
+        "root-authority-open-office-turn",
+        root_authority,
         Capability::OpenOfficeTurn,
         zero,
         CommandBody::OpenOfficeTurn {
@@ -1575,8 +1576,8 @@ fn office_turn_and_cross_cut_budget_freeze_unknown_cost() {
     );
     rejected(
         &mut store,
-        "ga-open-concurrent-office-turn",
-        grand_architect,
+        "root-authority-open-concurrent-office-turn",
+        root_authority,
         Capability::OpenOfficeTurn,
         zero,
         CommandBody::OpenOfficeTurn {
@@ -1600,8 +1601,8 @@ fn office_turn_and_cross_cut_budget_freeze_unknown_cost() {
 
     rejected(
         &mut store,
-        "ga-reject-zero-budget-reservation",
-        grand_architect,
+        "root-authority-reject-zero-budget-reservation",
+        root_authority,
         Capability::ReserveBudget,
         zero,
         CommandBody::ReserveBudget {
@@ -1612,8 +1613,8 @@ fn office_turn_and_cross_cut_budget_freeze_unknown_cost() {
     );
     accepted(
         &mut store,
-        "ga-reserve-six-hundred-thousand",
-        grand_architect,
+        "root-authority-reserve-six-hundred-thousand",
+        root_authority,
         Capability::ReserveBudget,
         zero,
         CommandBody::ReserveBudget {
@@ -1623,8 +1624,8 @@ fn office_turn_and_cross_cut_budget_freeze_unknown_cost() {
     );
     rejected(
         &mut store,
-        "ga-reject-cycle-cap-overrun",
-        grand_architect,
+        "root-authority-reject-cycle-cap-overrun",
+        root_authority,
         Capability::ReserveBudget,
         zero,
         CommandBody::ReserveBudget {
@@ -1646,8 +1647,8 @@ fn office_turn_and_cross_cut_budget_freeze_unknown_cost() {
     );
     accepted(
         &mut store,
-        "ga-reserve-remaining-seven-hundred-thousand",
-        grand_architect,
+        "root-authority-reserve-remaining-seven-hundred-thousand",
+        root_authority,
         Capability::ReserveBudget,
         zero,
         CommandBody::ReserveBudget {
@@ -1668,8 +1669,8 @@ fn office_turn_and_cross_cut_budget_freeze_unknown_cost() {
     );
     let stale = rejected(
         &mut store,
-        "ga-reserve-after-unknown-cost",
-        grand_architect,
+        "root-authority-reserve-after-unknown-cost",
+        root_authority,
         Capability::ReserveBudget,
         zero,
         CommandBody::ReserveBudget {
@@ -1680,7 +1681,9 @@ fn office_turn_and_cross_cut_budget_freeze_unknown_cost() {
     );
     assert_eq!(
         store
-            .command_receipt(&CommandId::parse("ga-reserve-after-unknown-cost").unwrap())
+            .command_receipt(
+                &CommandId::parse("root-authority-reserve-after-unknown-cost").unwrap()
+            )
             .unwrap()
             .unwrap()
             .disposition,
@@ -1698,21 +1701,21 @@ fn office_turn_and_cross_cut_budget_freeze_unknown_cost() {
 #[test]
 fn unavailable_cost_reason_survives_event_replay() {
     let mut store = KernelStore::open_in_memory().unwrap();
-    let (grand_architect, cycle_id) = found_cycle(&mut store);
+    let (root_authority, cycle_id) = found_cycle(&mut store);
     let zero = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
 
     accepted(
         &mut store,
-        "ga-start-unavailable-cost-session",
-        grand_architect,
-        Capability::StartGrandArchitectOfficeSession,
+        "root-authority-start-unavailable-cost-session",
+        root_authority,
+        Capability::StartRootAuthorityOfficeSession,
         zero,
-        CommandBody::StartGrandArchitectOfficeSession { cycle_id },
+        CommandBody::StartRootAuthorityOfficeSession { cycle_id },
     );
     accepted(
         &mut store,
-        "ga-reserve-unavailable-cost",
-        grand_architect,
+        "root-authority-reserve-unavailable-cost",
+        root_authority,
         Capability::ReserveBudget,
         zero,
         CommandBody::ReserveBudget {
@@ -1744,14 +1747,14 @@ fn unavailable_cost_reason_survives_event_replay() {
 #[test]
 fn quiesce_cancellation_must_reconcile_before_resuming_admission() {
     let mut store = KernelStore::open_in_memory().unwrap();
-    let (grand_architect, cycle_id) = found_cycle(&mut store);
+    let (root_authority, cycle_id) = found_cycle(&mut store);
     let zero = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
     let one = ExpectedGeneration::Exact(AdmissionGeneration::try_from(1).unwrap());
 
     accepted(
         &mut store,
-        "ga-request-quiesce-cancellation",
-        grand_architect,
+        "root-authority-request-quiesce-cancellation",
+        root_authority,
         Capability::RequestCancellation,
         zero,
         CommandBody::RequestCancellation {
@@ -1780,8 +1783,8 @@ fn quiesce_cancellation_must_reconcile_before_resuming_admission() {
     );
     rejected(
         &mut store,
-        "ga-cannot-resume-unreconciled-cancellation",
-        grand_architect,
+        "root-authority-cannot-resume-unreconciled-cancellation",
+        root_authority,
         Capability::ResumeOperatingCycle,
         one,
         CommandBody::ResumeOperatingCycle { cycle_id },
@@ -1799,8 +1802,8 @@ fn quiesce_cancellation_must_reconcile_before_resuming_admission() {
     );
     accepted(
         &mut store,
-        "ga-resume-reconciled-cancellation",
-        grand_architect,
+        "root-authority-resume-reconciled-cancellation",
+        root_authority,
         Capability::ResumeOperatingCycle,
         one,
         CommandBody::ResumeOperatingCycle { cycle_id },
@@ -1821,22 +1824,22 @@ fn quiesce_cancellation_must_reconcile_before_resuming_admission() {
 #[test]
 fn office_turn_purpose_and_session_fences_follow_cycle_state() {
     let mut store = KernelStore::open_in_memory().unwrap();
-    let (grand_architect, cycle_id) = found_cycle(&mut store);
+    let (root_authority, cycle_id) = found_cycle(&mut store);
     let zero = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
     let one = ExpectedGeneration::Exact(AdmissionGeneration::try_from(1).unwrap());
-    let session_id = GrandArchitectOfficeSessionId::new(1).unwrap();
+    let session_id = RootAuthorityOfficeSessionId::new(1).unwrap();
 
     accepted(
         &mut store,
-        "ga-start-purpose-session",
-        grand_architect,
-        Capability::StartGrandArchitectOfficeSession,
+        "root-authority-start-purpose-session",
+        root_authority,
+        Capability::StartRootAuthorityOfficeSession,
         zero,
-        CommandBody::StartGrandArchitectOfficeSession { cycle_id },
+        CommandBody::StartRootAuthorityOfficeSession { cycle_id },
     );
     ready_supervised_office_session(
         &mut store,
-        grand_architect,
+        root_authority,
         cycle_id,
         session_id,
         "office-purpose",
@@ -1844,8 +1847,8 @@ fn office_turn_purpose_and_session_fences_follow_cycle_state() {
     );
     accepted(
         &mut store,
-        "ga-quiesce-purpose-cycle",
-        grand_architect,
+        "root-authority-quiesce-purpose-cycle",
+        root_authority,
         Capability::QuiesceOperatingCycle,
         zero,
         CommandBody::QuiesceOperatingCycle { cycle_id },
@@ -1861,8 +1864,8 @@ fn office_turn_purpose_and_session_fences_follow_cycle_state() {
     );
     rejected(
         &mut store,
-        "ga-ordinary-turn-rejected-while-quiescing",
-        grand_architect,
+        "root-authority-ordinary-turn-rejected-while-quiescing",
+        root_authority,
         Capability::OpenOfficeTurn,
         one,
         CommandBody::OpenOfficeTurn {
@@ -1873,8 +1876,8 @@ fn office_turn_purpose_and_session_fences_follow_cycle_state() {
     );
     accepted(
         &mut store,
-        "ga-recovery-turn-while-quiescing",
-        grand_architect,
+        "root-authority-recovery-turn-while-quiescing",
+        root_authority,
         Capability::OpenOfficeTurn,
         one,
         CommandBody::OpenOfficeTurn {
@@ -1919,22 +1922,22 @@ fn office_turn_purpose_and_session_fences_follow_cycle_state() {
 #[test]
 fn terminal_session_fact_cannot_close_an_active_turn() {
     let mut store = KernelStore::open_in_memory().unwrap();
-    let (grand_architect, cycle_id) = found_cycle(&mut store);
+    let (root_authority, cycle_id) = found_cycle(&mut store);
     let zero = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
     let one = ExpectedGeneration::Exact(AdmissionGeneration::try_from(1).unwrap());
-    let session_id = GrandArchitectOfficeSessionId::new(1).unwrap();
+    let session_id = RootAuthorityOfficeSessionId::new(1).unwrap();
 
     accepted(
         &mut store,
-        "ga-start-terminal-fence-session",
-        grand_architect,
-        Capability::StartGrandArchitectOfficeSession,
+        "root-authority-start-terminal-fence-session",
+        root_authority,
+        Capability::StartRootAuthorityOfficeSession,
         zero,
-        CommandBody::StartGrandArchitectOfficeSession { cycle_id },
+        CommandBody::StartRootAuthorityOfficeSession { cycle_id },
     );
     ready_supervised_office_session(
         &mut store,
-        grand_architect,
+        root_authority,
         cycle_id,
         session_id,
         "office-terminal",
@@ -1942,8 +1945,8 @@ fn terminal_session_fact_cannot_close_an_active_turn() {
     );
     accepted(
         &mut store,
-        "ga-open-terminal-fence-turn",
-        grand_architect,
+        "root-authority-open-terminal-fence-turn",
+        root_authority,
         Capability::OpenOfficeTurn,
         zero,
         CommandBody::OpenOfficeTurn {
@@ -1953,8 +1956,8 @@ fn terminal_session_fact_cannot_close_an_active_turn() {
     );
     accepted(
         &mut store,
-        "ga-cancel-terminal-fence-cycle",
-        grand_architect,
+        "root-authority-cancel-terminal-fence-cycle",
+        root_authority,
         Capability::RequestCancellation,
         zero,
         CommandBody::RequestCancellation {
@@ -1979,23 +1982,23 @@ fn terminal_session_fact_cannot_close_an_active_turn() {
 #[test]
 fn known_overrun_fences_admission_and_frozen_charge_blocks_cycle_close() {
     let mut store = KernelStore::open_in_memory().unwrap();
-    let (grand_architect, cycle_id) = found_cycle(&mut store);
+    let (root_authority, cycle_id) = found_cycle(&mut store);
     let zero = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
     let one = ExpectedGeneration::Exact(AdmissionGeneration::try_from(1).unwrap());
-    let session_id = GrandArchitectOfficeSessionId::new(1).unwrap();
+    let session_id = RootAuthorityOfficeSessionId::new(1).unwrap();
 
     accepted(
         &mut store,
-        "ga-start-known-overrun-session",
-        grand_architect,
-        Capability::StartGrandArchitectOfficeSession,
+        "root-authority-start-known-overrun-session",
+        root_authority,
+        Capability::StartRootAuthorityOfficeSession,
         zero,
-        CommandBody::StartGrandArchitectOfficeSession { cycle_id },
+        CommandBody::StartRootAuthorityOfficeSession { cycle_id },
     );
     accepted(
         &mut store,
-        "ga-reserve-known-overrun",
-        grand_architect,
+        "root-authority-reserve-known-overrun",
+        root_authority,
         Capability::ReserveBudget,
         zero,
         CommandBody::ReserveBudget {
@@ -2038,8 +2041,8 @@ fn known_overrun_fences_admission_and_frozen_charge_blocks_cycle_close() {
 
     rejected(
         &mut store,
-        "ga-admission-fenced-by-known-overrun",
-        grand_architect,
+        "root-authority-admission-fenced-by-known-overrun",
+        root_authority,
         Capability::ReserveBudget,
         zero,
         CommandBody::ReserveBudget {
@@ -2071,8 +2074,8 @@ fn known_overrun_fences_admission_and_frozen_charge_blocks_cycle_close() {
     );
     rejected(
         &mut store,
-        "ga-cannot-resume-frozen-known-overrun",
-        grand_architect,
+        "root-authority-cannot-resume-frozen-known-overrun",
+        root_authority,
         Capability::ResumeOperatingCycle,
         one,
         CommandBody::ResumeOperatingCycle { cycle_id },
@@ -2080,16 +2083,16 @@ fn known_overrun_fences_admission_and_frozen_charge_blocks_cycle_close() {
     );
     accepted(
         &mut store,
-        "ga-begin-known-overrun-reconciliation",
-        grand_architect,
+        "root-authority-begin-known-overrun-reconciliation",
+        root_authority,
         Capability::ReconcileOperatingCycle,
         one,
         CommandBody::ReconcileOperatingCycle { cycle_id },
     );
     rejected(
         &mut store,
-        "ga-cannot-close-frozen-known-overrun",
-        grand_architect,
+        "root-authority-cannot-close-frozen-known-overrun",
+        root_authority,
         Capability::CloseOperatingCycle,
         one,
         CommandBody::CloseOperatingCycle { cycle_id },
@@ -2100,23 +2103,23 @@ fn known_overrun_fences_admission_and_frozen_charge_blocks_cycle_close() {
 #[test]
 fn cost_postmortem_is_the_only_conservative_frozen_cost_resolution() {
     let mut store = KernelStore::open_in_memory().unwrap();
-    let (grand_architect, cycle_id) = found_cycle(&mut store);
+    let (root_authority, cycle_id) = found_cycle(&mut store);
     let zero = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
     let one = ExpectedGeneration::Exact(AdmissionGeneration::try_from(1).unwrap());
-    let session_id = GrandArchitectOfficeSessionId::new(1).unwrap();
+    let session_id = RootAuthorityOfficeSessionId::new(1).unwrap();
 
     accepted(
         &mut store,
-        "ga-start-postmortem-session",
-        grand_architect,
-        Capability::StartGrandArchitectOfficeSession,
+        "root-authority-start-postmortem-session",
+        root_authority,
+        Capability::StartRootAuthorityOfficeSession,
         zero,
-        CommandBody::StartGrandArchitectOfficeSession { cycle_id },
+        CommandBody::StartRootAuthorityOfficeSession { cycle_id },
     );
     accepted(
         &mut store,
-        "ga-reserve-postmortem-cost",
-        grand_architect,
+        "root-authority-reserve-postmortem-cost",
+        root_authority,
         Capability::ReserveBudget,
         zero,
         CommandBody::ReserveBudget {
@@ -2152,8 +2155,8 @@ fn cost_postmortem_is_the_only_conservative_frozen_cost_resolution() {
 
     rejected(
         &mut store,
-        "ga-cannot-resolve-before-postmortem-is-closable",
-        grand_architect,
+        "root-authority-cannot-resolve-before-postmortem-is-closable",
+        root_authority,
         Capability::CloseCostPostmortem,
         one,
         CommandBody::CloseCostPostmortem {
@@ -2185,8 +2188,8 @@ fn cost_postmortem_is_the_only_conservative_frozen_cost_resolution() {
     );
     rejected(
         &mut store,
-        "ga-reject-overrun-resolution-for-unknown-cost",
-        grand_architect,
+        "root-authority-reject-overrun-resolution-for-unknown-cost",
+        root_authority,
         Capability::CloseCostPostmortem,
         one,
         CommandBody::CloseCostPostmortem {
@@ -2197,8 +2200,8 @@ fn cost_postmortem_is_the_only_conservative_frozen_cost_resolution() {
     );
     accepted(
         &mut store,
-        "ga-close-unknown-cost-postmortem",
-        grand_architect,
+        "root-authority-close-unknown-cost-postmortem",
+        root_authority,
         Capability::CloseCostPostmortem,
         one,
         CommandBody::CloseCostPostmortem {
@@ -2208,8 +2211,8 @@ fn cost_postmortem_is_the_only_conservative_frozen_cost_resolution() {
     );
     accepted(
         &mut store,
-        "ga-resume-after-conservative-postmortem-resolution",
-        grand_architect,
+        "root-authority-resume-after-conservative-postmortem-resolution",
+        root_authority,
         Capability::ResumeOperatingCycle,
         one,
         CommandBody::ResumeOperatingCycle { cycle_id },
@@ -2225,23 +2228,23 @@ fn known_overrun_postmortem_records_actual_spend_even_above_admission_ceiling() 
         .as_nanos();
     let path = std::env::temp_dir().join(format!("society-known-overrun-{unique}.sqlite3"));
     let mut store = KernelStore::open(&path).unwrap();
-    let (grand_architect, cycle_id) = found_cycle(&mut store);
+    let (root_authority, cycle_id) = found_cycle(&mut store);
     let zero = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
     let one = ExpectedGeneration::Exact(AdmissionGeneration::try_from(1).unwrap());
-    let session_id = GrandArchitectOfficeSessionId::new(1).unwrap();
+    let session_id = RootAuthorityOfficeSessionId::new(1).unwrap();
 
     accepted(
         &mut store,
-        "ga-start-actual-overrun-session",
-        grand_architect,
-        Capability::StartGrandArchitectOfficeSession,
+        "root-authority-start-actual-overrun-session",
+        root_authority,
+        Capability::StartRootAuthorityOfficeSession,
         zero,
-        CommandBody::StartGrandArchitectOfficeSession { cycle_id },
+        CommandBody::StartRootAuthorityOfficeSession { cycle_id },
     );
     accepted(
         &mut store,
-        "ga-reserve-actual-overrun",
-        grand_architect,
+        "root-authority-reserve-actual-overrun",
+        root_authority,
         Capability::ReserveBudget,
         zero,
         CommandBody::ReserveBudget {
@@ -2301,8 +2304,8 @@ fn known_overrun_postmortem_records_actual_spend_even_above_admission_ceiling() 
     );
     accepted(
         &mut store,
-        "ga-close-known-overrun-postmortem",
-        grand_architect,
+        "root-authority-close-known-overrun-postmortem",
+        root_authority,
         Capability::CloseCostPostmortem,
         one,
         CommandBody::CloseCostPostmortem {
@@ -2338,16 +2341,16 @@ fn known_overrun_postmortem_records_actual_spend_even_above_admission_ceiling() 
 #[test]
 fn changed_typed_body_reusing_a_command_id_is_an_idempotency_conflict() {
     let mut store = KernelStore::open_in_memory().unwrap();
-    let (grand_architect, cycle_id) = found_cycle(&mut store);
+    let (root_authority, cycle_id) = found_cycle(&mut store);
     let command_id = CommandId::parse("same-command-id-different-body").unwrap();
     let quiesce_grant = store
-        .active_capability_grant(grand_architect, Capability::QuiesceOperatingCycle)
+        .active_capability_grant(root_authority, Capability::QuiesceOperatingCycle)
         .unwrap()
         .unwrap();
     let first = store
         .execute(CommandRequest {
             command_id: command_id.clone(),
-            principal_id: grand_architect,
+            principal_id: root_authority,
             capability_grant_id: quiesce_grant,
             capability: Capability::QuiesceOperatingCycle,
             expected_generation: ExpectedGeneration::Exact(AdmissionGeneration::INITIAL),
@@ -2358,13 +2361,13 @@ fn changed_typed_body_reusing_a_command_id_is_an_idempotency_conflict() {
     let count_after_first = store.command_count().unwrap();
 
     let resume_grant = store
-        .active_capability_grant(grand_architect, Capability::ResumeOperatingCycle)
+        .active_capability_grant(root_authority, Capability::ResumeOperatingCycle)
         .unwrap()
         .unwrap();
     assert!(matches!(
         store.execute(CommandRequest {
             command_id,
-            principal_id: grand_architect,
+            principal_id: root_authority,
             capability_grant_id: resume_grant,
             capability: Capability::ResumeOperatingCycle,
             expected_generation: ExpectedGeneration::Exact(
@@ -2385,20 +2388,20 @@ fn pi_office_turn_requires_authorized_delivered_peer_terminal_chain_and_debits_o
         .as_nanos();
     let path = std::env::temp_dir().join(format!("society-m6-office-turn-{unique}.sqlite3"));
     let mut store = KernelStore::open(&path).unwrap();
-    let (grand_architect, cycle_id) = found_cycle(&mut store);
+    let (root_authority, cycle_id) = found_cycle(&mut store);
     let zero = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
-    let session_id = GrandArchitectOfficeSessionId::new(1).unwrap();
+    let session_id = RootAuthorityOfficeSessionId::new(1).unwrap();
     accepted(
         &mut store,
         "m6-start-office-session",
-        grand_architect,
-        Capability::StartGrandArchitectOfficeSession,
+        root_authority,
+        Capability::StartRootAuthorityOfficeSession,
         zero,
-        CommandBody::StartGrandArchitectOfficeSession { cycle_id },
+        CommandBody::StartRootAuthorityOfficeSession { cycle_id },
     );
     ready_supervised_office_session(
         &mut store,
-        grand_architect,
+        root_authority,
         cycle_id,
         session_id,
         "m6-office",
@@ -2441,7 +2444,7 @@ fn pi_office_turn_requires_authorized_delivered_peer_terminal_chain_and_debits_o
     let open = accepted(
         &mut store,
         "m6-open-turn-one",
-        grand_architect,
+        root_authority,
         Capability::OpenOfficeTurn,
         zero,
         CommandBody::OpenOfficeTurn {
@@ -2635,7 +2638,7 @@ fn pi_office_turn_requires_authorized_delivered_peer_terminal_chain_and_debits_o
     let open_two = accepted(
         &mut store,
         "m6-open-turn-two",
-        grand_architect,
+        root_authority,
         Capability::OpenOfficeTurn,
         zero,
         CommandBody::OpenOfficeTurn {
@@ -2765,7 +2768,7 @@ fn pi_office_turn_requires_authorized_delivered_peer_terminal_chain_and_debits_o
     let open_three = accepted(
         &mut store,
         "m6-open-turn-three",
-        grand_architect,
+        root_authority,
         Capability::OpenOfficeTurn,
         zero,
         CommandBody::OpenOfficeTurn {
@@ -3003,20 +3006,20 @@ fn pi_office_turn_requires_authorized_delivered_peer_terminal_chain_and_debits_o
 #[test]
 fn pi_office_turn_late_receipts_after_cancellation_never_restore_office_authority() {
     let mut store = KernelStore::open_in_memory().unwrap();
-    let (grand_architect, cycle_id) = found_cycle(&mut store);
+    let (root_authority, cycle_id) = found_cycle(&mut store);
     let zero = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
-    let session_id = GrandArchitectOfficeSessionId::new(1).unwrap();
+    let session_id = RootAuthorityOfficeSessionId::new(1).unwrap();
     accepted(
         &mut store,
         "m6-race-start-office-session",
-        grand_architect,
-        Capability::StartGrandArchitectOfficeSession,
+        root_authority,
+        Capability::StartRootAuthorityOfficeSession,
         zero,
-        CommandBody::StartGrandArchitectOfficeSession { cycle_id },
+        CommandBody::StartRootAuthorityOfficeSession { cycle_id },
     );
     ready_supervised_office_session(
         &mut store,
-        grand_architect,
+        root_authority,
         cycle_id,
         session_id,
         "m6-race-office",
@@ -3044,7 +3047,7 @@ fn pi_office_turn_late_receipts_after_cancellation_never_restore_office_authorit
     let opened = accepted(
         &mut store,
         "m6-race-open-turn",
-        grand_architect,
+        root_authority,
         Capability::OpenOfficeTurn,
         zero,
         CommandBody::OpenOfficeTurn {
@@ -3075,7 +3078,7 @@ fn pi_office_turn_late_receipts_after_cancellation_never_restore_office_authorit
     accepted(
         &mut store,
         "m6-race-cancel-between-authorize-and-delivery",
-        grand_architect,
+        root_authority,
         Capability::RequestCancellation,
         zero,
         CommandBody::RequestCancellation {
@@ -3183,21 +3186,21 @@ fn duplicate_cost_incident_cannot_open_another_postmortem_or_cancellation() {
     let path =
         std::env::temp_dir().join(format!("society-duplicate-cost-incident-{unique}.sqlite3"));
     let mut store = KernelStore::open(&path).unwrap();
-    let (grand_architect, cycle_id) = found_cycle(&mut store);
+    let (root_authority, cycle_id) = found_cycle(&mut store);
     let zero = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
 
     accepted(
         &mut store,
-        "ga-start-duplicate-cost-session",
-        grand_architect,
-        Capability::StartGrandArchitectOfficeSession,
+        "root-authority-start-duplicate-cost-session",
+        root_authority,
+        Capability::StartRootAuthorityOfficeSession,
         zero,
-        CommandBody::StartGrandArchitectOfficeSession { cycle_id },
+        CommandBody::StartRootAuthorityOfficeSession { cycle_id },
     );
     accepted(
         &mut store,
-        "ga-reserve-duplicate-cost",
-        grand_architect,
+        "root-authority-reserve-duplicate-cost",
+        root_authority,
         Capability::ReserveBudget,
         zero,
         CommandBody::ReserveBudget {
@@ -3267,14 +3270,14 @@ fn fresh_replay_detects_operating_cycle_budget_and_session_row_tampering() {
         .as_nanos();
     let path = std::env::temp_dir().join(format!("society-materialized-replay-{unique}.sqlite3"));
     let mut store = KernelStore::open(&path).unwrap();
-    let (grand_architect, cycle_id) = found_cycle(&mut store);
+    let (root_authority, cycle_id) = found_cycle(&mut store);
     accepted(
         &mut store,
-        "ga-start-material-replay-session",
-        grand_architect,
-        Capability::StartGrandArchitectOfficeSession,
+        "root-authority-start-material-replay-session",
+        root_authority,
+        Capability::StartRootAuthorityOfficeSession,
         ExpectedGeneration::Exact(AdmissionGeneration::INITIAL),
-        CommandBody::StartGrandArchitectOfficeSession { cycle_id },
+        CommandBody::StartRootAuthorityOfficeSession { cycle_id },
     );
     assert!(store.validate_replayed_materialized_state().is_ok());
 
@@ -3315,8 +3318,8 @@ fn fresh_replay_detects_operating_cycle_budget_and_session_row_tampering() {
 
     tamper
         .execute(
-            "UPDATE grand_architect_office_sessions SET lifecycle_state = ?1
-             WHERE grand_architect_office_session_id = 1",
+            "UPDATE root_authority_office_sessions SET lifecycle_state = ?1
+             WHERE root_authority_office_session_id = 1",
             [11_i64],
         )
         .unwrap();
@@ -3326,8 +3329,8 @@ fn fresh_replay_detects_operating_cycle_budget_and_session_row_tampering() {
     ));
     tamper
         .execute(
-            "UPDATE grand_architect_office_sessions SET lifecycle_state = 1
-             WHERE grand_architect_office_session_id = 1",
+            "UPDATE root_authority_office_sessions SET lifecycle_state = 1
+             WHERE root_authority_office_session_id = 1",
             [],
         )
         .unwrap();
@@ -3413,12 +3416,12 @@ fn rejected_missing_subject_and_tampered_extra_body_are_detected() {
         .as_nanos();
     let path = std::env::temp_dir().join(format!("society-kernel-{unique}.sqlite3"));
     let mut store = KernelStore::open(&path).unwrap();
-    let (grand_architect, cycle_id) = found_cycle(&mut store);
-    let invalid_grant_id = CommandId::parse("ga-invalid-capability-grant").unwrap();
+    let (root_authority, cycle_id) = found_cycle(&mut store);
+    let invalid_grant_id = CommandId::parse("root-authority-invalid-capability-grant").unwrap();
     let invalid_grant = store
         .execute(CommandRequest {
             command_id: invalid_grant_id.clone(),
-            principal_id: grand_architect,
+            principal_id: root_authority,
             capability_grant_id: society_kernel::CapabilityGrantId::new(999).unwrap(),
             capability: Capability::QuiesceOperatingCycle,
             expected_generation: ExpectedGeneration::Exact(AdmissionGeneration::INITIAL),
@@ -3439,8 +3442,8 @@ fn rejected_missing_subject_and_tampered_extra_body_are_detected() {
     );
     let absent = rejected(
         &mut store,
-        "ga-quiesce-absent-cycle",
-        grand_architect,
+        "root-authority-quiesce-absent-cycle",
+        root_authority,
         Capability::QuiesceOperatingCycle,
         ExpectedGeneration::Exact(AdmissionGeneration::INITIAL),
         CommandBody::QuiesceOperatingCycle {
@@ -3450,7 +3453,7 @@ fn rejected_missing_subject_and_tampered_extra_body_are_detected() {
     );
     assert_eq!(
         store
-            .command_receipt(&CommandId::parse("ga-quiesce-absent-cycle").unwrap())
+            .command_receipt(&CommandId::parse("root-authority-quiesce-absent-cycle").unwrap())
             .unwrap()
             .unwrap()
             .disposition,

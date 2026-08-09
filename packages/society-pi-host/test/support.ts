@@ -29,7 +29,7 @@ export const TEST_RUNTIME_EVIDENCE = {
 export function decodeCommand(sequence: number, command: string, payload: Record<string, unknown>): InboundFrame {
 	return decodeInboundJsonl(
 		JSON.stringify({
-			protocolVersion: "society-pi-host/v3",
+			protocolVersion: "society-pi-host/v4",
 			sequence,
 			sessionIdentity: TEST_SESSION_IDENTITY,
 			correlationIdentity: `command-${sequence}`,
@@ -39,8 +39,8 @@ export function decodeCommand(sequence: number, command: string, payload: Record
 	);
 }
 
-export function createSessionPayload(sessionKind: "TaskAttempt" | "GrandArchitectOffice" = "GrandArchitectOffice"): Record<string, unknown> {
-	const systemPrompt = "Universe Seed\nOffice contract";
+export function createSessionPayload(sessionKind: "TaskAttempt" | "RootAuthorityOffice" = "RootAuthorityOffice"): Record<string, unknown> {
+	const systemPrompt = "Founding Mission\nOffice contract";
 	return {
 		sessionKind,
 		cwd: "/tmp/society-host-fixture/work",
@@ -97,7 +97,7 @@ export function createSessionPayload(sessionKind: "TaskAttempt" | "GrandArchitec
 	};
 }
 
-export function decodedCreatePayload(sessionKind: "TaskAttempt" | "GrandArchitectOffice" = "GrandArchitectOffice"): CreateSessionPayload {
+export function decodedCreatePayload(sessionKind: "TaskAttempt" | "RootAuthorityOffice" = "RootAuthorityOffice"): CreateSessionPayload {
 	const command = decodeCommand(1, "CreateSession", createSessionPayload(sessionKind));
 	if (command.command !== "CreateSession") throw new Error("expected_create_session_command");
 	return command.payload;

@@ -27,7 +27,7 @@ use crate::{
     EvaluatorRevisionId, EventBody, EventId, EventKind, EvidenceAdmissionId,
     EvidenceLimitationText, EvidenceSemanticRole, ExecutionProfileId, ExecutionProfileKind,
     ExecutionProfileReadiness, ExpectedGeneration, ForensicManifestCapturePolicy,
-    ForensicManifestId, GrandArchitectOfficeSessionId, GraphEdgeId, GraphEdgeKind, GraphObjectId,
+    ForensicManifestId, FoundingMissionId, GraphEdgeId, GraphEdgeKind, GraphObjectId,
     GraphObjectKind, GraphRevisionBody, GraphRevisionId, GraphRevisionState,
     HypothesisRevisionText, InputManifestId, LedgerEvent, MissionPrinciple, MissionPrincipleKind,
     MissionPrincipleText, MissionPrinciples, MissionStatement, NativeChildPid, NativeWorkspaceId,
@@ -52,17 +52,17 @@ use crate::{
     ProjectNorthStarChangeAnswer, ProjectNorthStarImprovementEvidenceAnswer,
     ProjectNorthStarRevisitAnswer, ProjectState, ProviderCostBinary64, Rejection,
     RetentionAccessClass, ReviewChallengeId, ReviewChallengeResponseState, ReviewChallengeSeverity,
-    ReviewDispositionKind, ReviewResolutionKind, SocietyId, SocietyName, SpawnNonce,
-    SupervisedChildIdentity, SupervisorEpochId, SupervisorEpochIdentity, TicketId, TicketState,
-    UniverseSeedId, UsdMicros, WorkItemId, WorkItemKind, WorkItemState, WorkLeaseId,
+    ReviewDispositionKind, ReviewResolutionKind, RootAuthorityOfficeSessionId, SocietyId,
+    SocietyName, SpawnNonce, SupervisedChildIdentity, SupervisorEpochId, SupervisorEpochIdentity,
+    TicketId, TicketState, UsdMicros, WorkItemId, WorkItemKind, WorkItemState, WorkLeaseId,
     WorkLeaseState,
 };
 
 const CURRENT_SCHEMA: &str = include_str!("../../../migrations/0001_kernel.sql");
-// Historical prototype schemas used versions one through seven. The collapsed
+// Historical prototype schemas used versions one through nine. The collapsed
 // fresh schema deliberately occupies a noncolliding identity, so an old
 // ledger cannot be mistaken for current trusted physics.
-const CURRENT_SCHEMA_VERSION: i64 = 9;
+const CURRENT_SCHEMA_VERSION: i64 = 10;
 
 struct PiChildSpawnAdmissionInput<'a> {
     operating_cycle_id: OperatingCycleId,
@@ -140,14 +140,14 @@ type PiOfficeTurnSettlementSqlRow = (i64, i64, i64, i64, i64, i64, i64, i64, i64
 
 const COMMAND_BODY_TABLES: [&str; 91] = [
     "command_create_society_identity",
-    "command_install_grand_architect_office",
-    "command_install_founding_universe_seed",
-    "command_appoint_initial_grand_architect",
+    "command_install_root_authority_office",
+    "command_install_founding_mission",
+    "command_appoint_initial_root_authority",
     "command_set_r0_hard_ceiling",
     "command_bootstrap_society",
     "command_propose_operating_cycle",
     "command_admit_operating_cycle",
-    "command_start_grand_architect_office_session",
+    "command_start_root_authority_office_session",
     "command_record_office_session_ready",
     "command_open_office_turn",
     "command_settle_office_turn",
@@ -234,15 +234,15 @@ const COMMAND_BODY_TABLES: [&str; 91] = [
 
 const EVENT_BODY_TABLES: [&str; 85] = [
     "event_society_identity_created",
-    "event_grand_architect_office_installed",
-    "event_founding_universe_seed_installed",
-    "event_grand_architect_appointed",
+    "event_root_authority_office_installed",
+    "event_founding_mission_installed",
+    "event_root_authority_appointed",
     "event_r0_hard_ceiling_set",
     "event_society_bootstrapped",
     "event_operating_cycle_proposed",
     "event_operating_cycle_state_changed",
-    "event_grand_architect_office_session_started",
-    "event_grand_architect_office_session_state_changed",
+    "event_root_authority_office_session_started",
+    "event_root_authority_office_session_state_changed",
     "event_office_turn_opened",
     "event_office_turn_settled",
     "event_budget_reserved",
@@ -369,7 +369,7 @@ pub enum StoreError {
 #[derive(Clone, Copy)]
 struct CycleRow {
     society_id: SocietyId,
-    seed_id: UniverseSeedId,
+    mission_id: FoundingMissionId,
     occupancy_id: OfficeOccupancyId,
     _treatment: OperatingCycleTreatment,
     state: OperatingCycleState,
@@ -817,7 +817,7 @@ impl KernelStore {
 }
 
 /// `PiSdkQualificationV1` is a bootstrap-only native lab treatment. It has
-/// no Grand Architect office work, discovery, or Actor execution surface: the
+/// no Root Authority office work, discovery, or Actor execution surface: the
 /// future qualification command may be added only as a kernel-owned typed
 /// fact. This guard is intentionally centralized before command dispatch so
 /// a newly added cycle-scoped command cannot accidentally turn the paid lab
@@ -888,7 +888,7 @@ fn command_operating_cycle_for_treatment(
 ) -> Result<Option<OperatingCycleId>, StoreError> {
     let direct = match body {
         CommandBody::AdmitOperatingCycle { cycle_id }
-        | CommandBody::StartGrandArchitectOfficeSession { cycle_id }
+        | CommandBody::StartRootAuthorityOfficeSession { cycle_id }
         | CommandBody::QuiesceOperatingCycle { cycle_id }
         | CommandBody::RecordCycleDrained { cycle_id }
         | CommandBody::ResumeOperatingCycle { cycle_id }
@@ -1024,8 +1024,8 @@ fn command_operating_cycle_for_treatment(
         | CommandBody::RecordOfficeSessionTerminal { session_id, .. }
         | CommandBody::OpenOfficeTurn { session_id, .. } => transaction
             .query_row(
-                "SELECT operating_cycle_id FROM grand_architect_office_sessions
-                 WHERE grand_architect_office_session_id = ?1",
+                "SELECT operating_cycle_id FROM root_authority_office_sessions
+                 WHERE root_authority_office_session_id = ?1",
                 [session_id.value()],
                 |row| row.get(0),
             )
@@ -1033,8 +1033,8 @@ fn command_operating_cycle_for_treatment(
         CommandBody::SettleOfficeTurn { turn_id, .. } => transaction
             .query_row(
                 "SELECT s.operating_cycle_id FROM office_turns t
-                 JOIN grand_architect_office_sessions s
-                   ON s.grand_architect_office_session_id = t.grand_architect_office_session_id
+                 JOIN root_authority_office_sessions s
+                   ON s.root_authority_office_session_id = t.root_authority_office_session_id
                  WHERE t.office_turn_id = ?1",
                 [turn_id.value()],
                 |row| row.get(0),
@@ -1115,7 +1115,7 @@ fn apply_command(
     if matches!(
         request.body,
         CommandBody::AdmitOperatingCycle { .. }
-            | CommandBody::StartGrandArchitectOfficeSession { .. }
+            | CommandBody::StartRootAuthorityOfficeSession { .. }
             | CommandBody::RecordOfficeSessionReady { .. }
             | CommandBody::RecordOfficeSessionTerminal { .. }
             | CommandBody::OpenOfficeTurn { .. }
@@ -1238,18 +1238,14 @@ fn apply_command(
         CommandBody::CreateSocietyIdentity { name } => {
             create_society(transaction, command_row_id, name)
         }
-        CommandBody::InstallGrandArchitectOffice => {
-            install_grand_architect_office(transaction, command_row_id)
+        CommandBody::InstallRootAuthorityOffice => {
+            install_root_authority_office(transaction, command_row_id)
         }
-        CommandBody::InstallFoundingUniverseSeed { mission } => {
-            install_founding_universe_seed(transaction, command_row_id, mission)
+        CommandBody::InstallFoundingMission { mission } => {
+            install_founding_mission(transaction, command_row_id, mission)
         }
-        CommandBody::AppointInitialGrandArchitect { actor_display_name } => {
-            appoint_initial_grand_architect(
-                transaction,
-                command_row_id,
-                actor_display_name.as_str(),
-            )
+        CommandBody::AppointInitialRootAuthority { actor_display_name } => {
+            appoint_initial_root_authority(transaction, command_row_id, actor_display_name.as_str())
         }
         CommandBody::SetR0HardCeiling { ceiling } => {
             set_r0_hard_ceiling(transaction, command_row_id, *ceiling)
@@ -1265,7 +1261,7 @@ fn apply_command(
             request.expected_generation,
             *cycle_id,
         ),
-        CommandBody::StartGrandArchitectOfficeSession { cycle_id } => start_office_session(
+        CommandBody::StartRootAuthorityOfficeSession { cycle_id } => start_office_session(
             transaction,
             command_row_id,
             request.expected_generation,
@@ -2250,7 +2246,7 @@ fn create_society(
     Ok(EventBody::SocietyIdentityCreated { society_id })
 }
 
-fn install_grand_architect_office(
+fn install_root_authority_office(
     transaction: &Transaction<'_>,
     command_row_id: i64,
 ) -> Result<EventBody, Rejection> {
@@ -2265,15 +2261,15 @@ fn install_grand_architect_office(
     transaction
         .execute(
             "INSERT INTO office_contracts(office_kind, installed_by_command_id) VALUES (?1, ?2)",
-            params![OfficeKind::TheGrandArchitect as i64, command_row_id],
+            params![OfficeKind::RootAuthorityOffice as i64, command_row_id],
         )
         .map_err(|_| Rejection::FoundingInvariant)?;
-    Ok(EventBody::GrandArchitectOfficeInstalled {
+    Ok(EventBody::RootAuthorityOfficeInstalled {
         office_id: id_from_last_insert::<OfficeId>(transaction)?,
     })
 }
 
-fn install_founding_universe_seed(
+fn install_founding_mission(
     transaction: &Transaction<'_>,
     command_row_id: i64,
     mission: &ApplicationMissionInput,
@@ -2281,7 +2277,7 @@ fn install_founding_universe_seed(
     let society_id = only_society_id(transaction)?;
     if exists(
         transaction,
-        "SELECT 1 FROM universe_seeds WHERE society_id = (SELECT society_id FROM societies LIMIT 1)",
+        "SELECT 1 FROM founding_missions WHERE society_id = (SELECT society_id FROM societies LIMIT 1)",
     )? {
         return Err(Rejection::FoundingInvariant);
     }
@@ -2349,7 +2345,7 @@ fn install_founding_universe_seed(
         .map_err(|_| Rejection::FoundingInvariant)?;
     transaction
         .execute(
-            "INSERT INTO universe_seeds(
+            "INSERT INTO founding_missions(
                  society_id, application_revision_id, revision,
                  active, installed_by_command_id
              ) VALUES (?1, ?2, ?3, 1, ?4)",
@@ -2361,18 +2357,18 @@ fn install_founding_universe_seed(
             ],
         )
         .map_err(|_| Rejection::FoundingInvariant)?;
-    Ok(EventBody::FoundingUniverseSeedInstalled {
-        seed_id: id_from_last_insert::<UniverseSeedId>(transaction)?,
+    Ok(EventBody::FoundingMissionInstalled {
+        mission_id: id_from_last_insert::<FoundingMissionId>(transaction)?,
         application_revision_id,
     })
 }
 
-fn appoint_initial_grand_architect(
+fn appoint_initial_root_authority(
     transaction: &Transaction<'_>,
     command_row_id: i64,
     actor_display_name: &str,
 ) -> Result<EventBody, Rejection> {
-    let office_id = grand_architect_office_id(transaction)?;
+    let office_id = root_authority_office_id(transaction)?;
     if exists(
         transaction,
         "SELECT 1 FROM office_occupancies WHERE office_id = (SELECT office_id FROM office_contracts WHERE office_kind = 1) AND active = 1",
@@ -2394,7 +2390,7 @@ fn appoint_initial_grand_architect(
         )
         .map_err(|_| Rejection::ActiveOfficeOccupancyAlreadyExists)?;
     let occupancy_id = id_from_last_insert::<OfficeOccupancyId>(transaction)?;
-    for capability in Capability::GRAND_ARCHITECT {
+    for capability in Capability::ROOT_AUTHORITY {
         transaction
             .execute(
                 "INSERT INTO capability_grants(principal_id, capability_kind, office_occupancy_id,
@@ -2404,7 +2400,7 @@ fn appoint_initial_grand_architect(
             )
             .map_err(|_| Rejection::FoundingInvariant)?;
     }
-    Ok(EventBody::GrandArchitectAppointed {
+    Ok(EventBody::RootAuthorityAppointed {
         occupancy_id,
         principal_id: actor_principal,
     })
@@ -2436,16 +2432,16 @@ fn bootstrap_society(
     if exists(transaction, "SELECT 1 FROM society_bootstraps LIMIT 1")? {
         return Err(Rejection::FoundingInvariant);
     }
-    let seed_id = active_seed_id(transaction, society_id)?;
-    let office_id = grand_architect_office_id(transaction)?;
-    let occupancy_id = active_grand_architect_occupancy_id(transaction)?;
+    let mission_id = active_founding_mission_id(transaction, society_id)?;
+    let office_id = root_authority_office_id(transaction)?;
+    let occupancy_id = active_root_authority_occupancy_id(transaction)?;
     let ceiling = hard_ceiling_from_event_body(transaction)?;
     transaction
         .execute(
-            "INSERT INTO society_bootstraps(society_id, universe_seed_id, office_id, office_occupancy_id,
+            "INSERT INTO society_bootstraps(society_id, founding_mission_id, office_id, office_occupancy_id,
                                              hard_ceiling_micros, bootstrapped_by_command_id)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![society_id.value(), seed_id.value(), office_id.value(), occupancy_id.value(), ceiling.value(), command_row_id],
+            params![society_id.value(), mission_id.value(), office_id.value(), occupancy_id.value(), ceiling.value(), command_row_id],
         )
         .map_err(|_| Rejection::FoundingInvariant)?;
     transaction
@@ -2469,7 +2465,7 @@ fn propose_operating_cycle(
     treatment: OperatingCycleTreatment,
     budget_ceiling: UsdMicros,
 ) -> Result<EventBody, Rejection> {
-    let (society_id, seed_id, occupancy_id, society_hard_ceiling) =
+    let (society_id, mission_id, occupancy_id, society_hard_ceiling) =
         bootstrapped_constitution(transaction)?;
     if budget_ceiling == UsdMicros::ZERO || budget_ceiling > society_hard_ceiling {
         return Err(Rejection::BudgetPolicyViolation);
@@ -2481,11 +2477,11 @@ fn propose_operating_cycle(
         return Err(Rejection::ActiveCycleAlreadyExists);
     }
     transaction.execute(
-        "INSERT INTO operating_cycles(society_id, universe_seed_id, office_occupancy_id, treatment,
+        "INSERT INTO operating_cycles(society_id, founding_mission_id, office_occupancy_id, treatment,
                                       budget_ceiling_micros, lifecycle_state, admission_generation,
                                       proposed_by_command_id, last_transition_command_id)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7, ?7)",
-        params![society_id.value(), seed_id.value(), occupancy_id.value(), treatment as i64,
+        params![society_id.value(), mission_id.value(), occupancy_id.value(), treatment as i64,
                 budget_ceiling.value(), OperatingCycleState::Proposed as i64, command_row_id],
     ).map_err(|_| Rejection::ActiveCycleAlreadyExists)?;
     let cycle_id = id_from_last_insert::<OperatingCycleId>(transaction)?;
@@ -2548,13 +2544,13 @@ fn start_office_session(
         params![command_row_id, cycle_id.value()],
     ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
     transaction.execute(
-        "INSERT INTO grand_architect_office_sessions(operating_cycle_id, office_occupancy_id, lifecycle_state,
+        "INSERT INTO root_authority_office_sessions(operating_cycle_id, office_occupancy_id, lifecycle_state,
                                                       started_by_command_id, last_transition_command_id)
          VALUES (?1, ?2, ?3, ?4, ?4)",
         params![cycle_id.value(), cycle.occupancy_id.value(), OfficeSessionState::Reserved as i64, command_row_id],
     ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
-    Ok(EventBody::GrandArchitectOfficeSessionStarted {
-        session_id: id_from_last_insert::<GrandArchitectOfficeSessionId>(transaction)?,
+    Ok(EventBody::RootAuthorityOfficeSessionStarted {
+        session_id: id_from_last_insert::<RootAuthorityOfficeSessionId>(transaction)?,
         cycle_id,
     })
 }
@@ -2563,7 +2559,7 @@ fn record_office_session_ready(
     transaction: &Transaction<'_>,
     command_row_id: i64,
     expected_generation: ExpectedGeneration,
-    session_id: GrandArchitectOfficeSessionId,
+    session_id: RootAuthorityOfficeSessionId,
 ) -> Result<EventBody, Rejection> {
     let (state, cycle_id) = session_row(transaction, session_id)?;
     let cycle = cycle_for_generation(transaction, cycle_id, expected_generation)?;
@@ -2577,7 +2573,7 @@ fn record_office_session_ready(
     let supervised_admission: Option<i64> = transaction
         .query_row(
             "SELECT pi_child_spawn_admission_id FROM pi_child_spawn_admissions
-          WHERE grand_architect_office_session_id = ?1",
+          WHERE root_authority_office_session_id = ?1",
             [session_id.value()],
             |row| row.get(0),
         )
@@ -2607,11 +2603,11 @@ fn record_office_session_ready(
         return Err(Rejection::ChildLifecycleReceiptMissing);
     }
     transaction.execute(
-        "UPDATE grand_architect_office_sessions SET lifecycle_state = ?1, last_transition_command_id = ?2
-         WHERE grand_architect_office_session_id = ?3",
+        "UPDATE root_authority_office_sessions SET lifecycle_state = ?1, last_transition_command_id = ?2
+         WHERE root_authority_office_session_id = ?3",
         params![OfficeSessionState::Ready as i64, command_row_id, session_id.value()],
     ).map_err(|_| Rejection::SubjectNotFound)?;
-    Ok(EventBody::GrandArchitectOfficeSessionStateChanged {
+    Ok(EventBody::RootAuthorityOfficeSessionStateChanged {
         session_id,
         state: OfficeSessionState::Ready,
     })
@@ -2625,7 +2621,7 @@ fn record_office_session_terminal(
     transaction: &Transaction<'_>,
     command_row_id: i64,
     expected_generation: ExpectedGeneration,
-    session_id: GrandArchitectOfficeSessionId,
+    session_id: RootAuthorityOfficeSessionId,
     terminal_state: OfficeSessionTerminalState,
 ) -> Result<EventBody, Rejection> {
     let (state, cycle_id) = session_row(transaction, session_id)?;
@@ -2637,7 +2633,7 @@ fn record_office_session_terminal(
     // Office terminal fact manufacture a semantic Pi/Office settlement for a
     // supervised session; a later normalized receipt owns that transition.
     let has_pi_child: bool = transaction.query_row(
-        "SELECT EXISTS(SELECT 1 FROM pi_child_spawn_admissions WHERE grand_architect_office_session_id = ?1)",
+        "SELECT EXISTS(SELECT 1 FROM pi_child_spawn_admissions WHERE root_authority_office_session_id = ?1)",
         [session_id.value()], |row| row.get::<_, i64>(0),
     ).map_err(|_| Rejection::ChildLifecycleReceiptMissing)? != 0;
     if has_pi_child {
@@ -2672,8 +2668,8 @@ fn record_office_session_terminal(
     };
     transaction
         .execute(
-            "UPDATE grand_architect_office_sessions SET lifecycle_state = ?1, last_transition_command_id = ?2
-             WHERE grand_architect_office_session_id = ?3",
+            "UPDATE root_authority_office_sessions SET lifecycle_state = ?1, last_transition_command_id = ?2
+             WHERE root_authority_office_session_id = ?3",
             params![
                 next_state as i64,
                 command_row_id,
@@ -2681,7 +2677,7 @@ fn record_office_session_terminal(
             ],
         )
         .map_err(|_| Rejection::SubjectNotFound)?;
-    Ok(EventBody::GrandArchitectOfficeSessionStateChanged {
+    Ok(EventBody::RootAuthorityOfficeSessionStateChanged {
         session_id,
         state: next_state,
     })
@@ -2691,7 +2687,7 @@ fn open_office_turn(
     transaction: &Transaction<'_>,
     command_row_id: i64,
     expected_generation: ExpectedGeneration,
-    session_id: GrandArchitectOfficeSessionId,
+    session_id: RootAuthorityOfficeSessionId,
     purpose: OfficeTurnPurpose,
 ) -> Result<EventBody, Rejection> {
     let (state, cycle_id) = session_row(transaction, session_id)?;
@@ -2703,7 +2699,7 @@ fn open_office_turn(
     let supervised_admission: Option<i64> = transaction
         .query_row(
             "SELECT pi_child_spawn_admission_id FROM pi_child_spawn_admissions
-              WHERE grand_architect_office_session_id = ?1",
+              WHERE root_authority_office_session_id = ?1",
             [session_id.value()],
             |row| row.get(0),
         )
@@ -2747,12 +2743,12 @@ fn open_office_turn(
         return Err(Rejection::InvalidLifecycleTransition);
     }
     transaction.execute(
-        "UPDATE grand_architect_office_sessions SET lifecycle_state = ?1, last_transition_command_id = ?2
-         WHERE grand_architect_office_session_id = ?3",
+        "UPDATE root_authority_office_sessions SET lifecycle_state = ?1, last_transition_command_id = ?2
+         WHERE root_authority_office_session_id = ?3",
         params![OfficeSessionState::TurnActive as i64, command_row_id, session_id.value()],
     ).map_err(|_| Rejection::SubjectNotFound)?;
     transaction.execute(
-        "INSERT INTO office_turns(grand_architect_office_session_id, lifecycle_state, purpose, opened_by_command_id, settled_by_command_id)
+        "INSERT INTO office_turns(root_authority_office_session_id, lifecycle_state, purpose, opened_by_command_id, settled_by_command_id)
          VALUES (?1, ?2, ?3, ?4, NULL)",
         params![session_id.value(), OfficeTurnState::Active as i64, purpose as i64, command_row_id],
     ).map_err(|_| Rejection::SessionTurnAlreadyActive)?;
@@ -2782,16 +2778,16 @@ fn authorize_pi_office_turn_prompt(
     } = input;
     let row: (i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64) = transaction
         .query_row(
-            "SELECT t.lifecycle_state, t.purpose, t.grand_architect_office_session_id,
+            "SELECT t.lifecycle_state, t.purpose, t.root_authority_office_session_id,
                     s.lifecycle_state, s.operating_cycle_id, c.treatment,
                     a.budget_reservation_id, a.pi_session_id, a.execution_profile_id,
                     p.child_process_id, p.lifecycle_state, proto.lifecycle_state
              FROM office_turns t
-             JOIN grand_architect_office_sessions s
-               ON s.grand_architect_office_session_id = t.grand_architect_office_session_id
+             JOIN root_authority_office_sessions s
+               ON s.root_authority_office_session_id = t.root_authority_office_session_id
              JOIN operating_cycles c ON c.operating_cycle_id = s.operating_cycle_id
              JOIN pi_child_spawn_admissions a
-               ON a.grand_architect_office_session_id = s.grand_architect_office_session_id
+               ON a.root_authority_office_session_id = s.root_authority_office_session_id
              JOIN pi_child_processes p ON p.pi_child_spawn_admission_id = a.pi_child_spawn_admission_id
              JOIN pi_child_session_protocols proto ON proto.child_process_id = p.child_process_id
              WHERE t.office_turn_id = ?1",
@@ -2831,14 +2827,14 @@ fn authorize_pi_office_turn_prompt(
     }
     let reservation_id = BudgetReservationId::try_from(row.6)
         .map_err(|_| Rejection::PiOfficeTurnAuthorityMissing)?;
-    let session_id = GrandArchitectOfficeSessionId::try_from(row.2)
+    let session_id = RootAuthorityOfficeSessionId::try_from(row.2)
         .map_err(|_| Rejection::PiOfficeTurnAuthorityMissing)?;
     let (mapped_reservation, reservation_state, charged, amount): (i64, i64, i64, i64) = transaction
         .query_row(
             "SELECT o.budget_reservation_id, r.reservation_state, r.charged_micros, r.amount_micros
              FROM office_session_budget_reservations o
              JOIN budget_reservations r ON r.budget_reservation_id = o.budget_reservation_id
-             WHERE o.grand_architect_office_session_id = ?1",
+             WHERE o.root_authority_office_session_id = ?1",
             [session_id.value()],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )
@@ -2888,7 +2884,7 @@ fn authorize_pi_office_turn_prompt(
         return Err(Rejection::PiOfficeTurnPromptBindingMismatch);
     }
     transaction.execute(
-        "INSERT INTO office_turn_budget_checkpoints(office_turn_id, grand_architect_office_session_id, budget_reservation_id, baseline_cumulative_micros, authorized_by_command_id, settled_cumulative_micros, settled_by_command_id)
+        "INSERT INTO office_turn_budget_checkpoints(office_turn_id, root_authority_office_session_id, budget_reservation_id, baseline_cumulative_micros, authorized_by_command_id, settled_cumulative_micros, settled_by_command_id)
          VALUES (?1, ?2, ?3, ?4, ?5, NULL, NULL)",
         params![office_turn_id.value(), session_id.value(), reservation_id.value(), charged, command_row_id],
     ).map_err(|_| Rejection::PiOfficeTurnAuthorityMissing)?;
@@ -3081,7 +3077,7 @@ fn record_pi_office_turn_usage_failure(
                 a.pi_session_id, accepted.command_result_sequence
          FROM pi_office_turn_prompt_authorizations a
          JOIN office_turns t ON t.office_turn_id = a.office_turn_id
-         JOIN grand_architect_office_sessions s ON s.grand_architect_office_session_id = t.grand_architect_office_session_id
+         JOIN root_authority_office_sessions s ON s.root_authority_office_session_id = t.root_authority_office_session_id
          JOIN pi_office_turn_prompt_acceptances accepted ON accepted.pi_office_turn_prompt_authorization_id = a.pi_office_turn_prompt_authorization_id
          WHERE a.office_turn_id = ?1 AND a.correlation_identity = ?2",
         params![office_turn_id.value(), correlation_identity.as_str()], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
@@ -3234,7 +3230,7 @@ fn record_pi_office_turn_terminal(
                 s.operating_cycle_id, accepted.command_result_sequence
          FROM pi_office_turn_prompt_authorizations a
          JOIN office_turns t ON t.office_turn_id = a.office_turn_id
-         JOIN grand_architect_office_sessions s ON s.grand_architect_office_session_id = t.grand_architect_office_session_id
+         JOIN root_authority_office_sessions s ON s.root_authority_office_session_id = t.root_authority_office_session_id
          JOIN pi_office_turn_prompt_acceptances accepted ON accepted.pi_office_turn_prompt_authorization_id = a.pi_office_turn_prompt_authorization_id
          WHERE a.office_turn_id = ?1 AND a.correlation_identity = ?2",
         params![office_turn_id.value(), correlation_identity.as_str()], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
@@ -3327,7 +3323,7 @@ fn settle_office_turn(
     terminal_receipt_id: PiOfficeTurnTerminalReceiptId,
 ) -> Result<EventBody, Rejection> {
     let row: Option<PiOfficeTurnSettlementSqlRow> = transaction.query_row(
-        "SELECT t.lifecycle_state, t.grand_architect_office_session_id,
+        "SELECT t.lifecycle_state, t.root_authority_office_session_id,
                 terminal.disposition, terminal.assistant_outcome, terminal.child_process_id,
                 terminal.pi_session_id, terminal.final_usage_receipt_id,
                 checkpoint.budget_reservation_id, usage.cumulative_ceiling_micros,
@@ -3347,15 +3343,15 @@ fn settle_office_turn(
     {
         return Err(Rejection::PiOfficeTurnNotReconciled);
     }
-    let session_id = GrandArchitectOfficeSessionId::try_from(row.1)
+    let session_id = RootAuthorityOfficeSessionId::try_from(row.1)
         .map_err(|_| Rejection::PiOfficeTurnTerminalEvidenceMissing)?;
     let guard: Option<(i64, i64, i64, i64, i64)> = transaction.query_row(
         "SELECT s.lifecycle_state, s.operating_cycle_id, c.lifecycle_state, c.admission_generation,
                 a.admission_generation
-         FROM grand_architect_office_sessions s
+         FROM root_authority_office_sessions s
          JOIN operating_cycles c ON c.operating_cycle_id = s.operating_cycle_id
          JOIN pi_office_turn_prompt_authorizations a ON a.office_turn_id = ?1
-         WHERE s.grand_architect_office_session_id = ?2",
+         WHERE s.root_authority_office_session_id = ?2",
         params![turn_id.value(), session_id.value()],
         |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
     ).optional().map_err(|_| Rejection::PiOfficeTurnNotReconciled)?;
@@ -3447,8 +3443,8 @@ fn settle_office_turn(
         params![OfficeTurnState::Settled as i64, command_row_id, turn_id.value()],
     ).map_err(|_| Rejection::SubjectNotFound)?;
     transaction.execute(
-        "UPDATE grand_architect_office_sessions SET lifecycle_state = ?1, last_transition_command_id = ?2
-         WHERE grand_architect_office_session_id = ?3",
+        "UPDATE root_authority_office_sessions SET lifecycle_state = ?1, last_transition_command_id = ?2
+         WHERE root_authority_office_session_id = ?3",
         params![OfficeSessionState::Ready as i64, command_row_id, session_id.value()],
     ).map_err(|_| Rejection::SubjectNotFound)?;
     Ok(EventBody::OfficeTurnSettled {
@@ -4192,7 +4188,7 @@ fn close_cost_postmortem(
 
 /// Every coordination command is attributed to the exact Operating Cycle in
 /// which it acted. Projects and causal Episodes intentionally retain only
-/// their seed/project identity, so a successor cycle does not rewrite their
+/// their founding-mission/project identity, so a successor cycle does not rewrite their
 /// historical scope into a false single-cycle ownership claim.
 fn coordination_cycle(
     transaction: &Transaction<'_>,
@@ -4214,9 +4210,9 @@ fn record_coordination_provenance(
     project_id: Option<ProjectId>,
 ) -> Result<(), Rejection> {
     transaction.execute(
-        "INSERT INTO coordination_command_provenance(command_row_id, universe_seed_id, operating_cycle_id, project_id)
+        "INSERT INTO coordination_command_provenance(command_row_id, founding_mission_id, operating_cycle_id, project_id)
          VALUES (?1, ?2, ?3, ?4)",
-        params![command_row_id, cycle.seed_id.value(), operating_cycle_id.value(), project_id.map(ProjectId::value)],
+        params![command_row_id, cycle.mission_id.value(), operating_cycle_id.value(), project_id.map(ProjectId::value)],
     ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
     Ok(())
 }
@@ -4224,10 +4220,10 @@ fn record_coordination_provenance(
 fn project_row(
     transaction: &Transaction<'_>,
     project_id: ProjectId,
-) -> Result<(ProjectState, UniverseSeedId), Rejection> {
+) -> Result<(ProjectState, FoundingMissionId), Rejection> {
     let row = transaction
         .query_row(
-            "SELECT lifecycle_state, universe_seed_id FROM projects WHERE project_id = ?1",
+            "SELECT lifecycle_state, founding_mission_id FROM projects WHERE project_id = ?1",
             [project_id.value()],
             |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
         )
@@ -4236,7 +4232,7 @@ fn project_row(
         .ok_or(Rejection::SubjectNotFound)?;
     Ok((
         project_state_from_i64(row.0).map_err(|_| Rejection::SubjectNotFound)?,
-        UniverseSeedId::try_from(row.1).map_err(|_| Rejection::SubjectNotFound)?,
+        FoundingMissionId::try_from(row.1).map_err(|_| Rejection::SubjectNotFound)?,
     ))
 }
 
@@ -4249,22 +4245,24 @@ fn create_project(
     north_star_alignment: &ProjectNorthStarAlignment,
 ) -> Result<EventBody, Rejection> {
     let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
-    let seed_application_revision_id: i64 = transaction
+    let founding_mission_application_revision_id: i64 = transaction
         .query_row(
-            "SELECT application_revision_id FROM universe_seeds WHERE universe_seed_id = ?1",
-            [cycle.seed_id.value()],
+            "SELECT application_revision_id FROM founding_missions WHERE founding_mission_id = ?1",
+            [cycle.mission_id.value()],
             |row| row.get(0),
         )
         .optional()
         .map_err(|_| Rejection::SubjectNotFound)?
         .ok_or(Rejection::SubjectNotFound)?;
-    if seed_application_revision_id != north_star_alignment.application_revision_id.value() {
+    if founding_mission_application_revision_id
+        != north_star_alignment.application_revision_id.value()
+    {
         return Err(Rejection::ProjectNorthStarAlignmentMismatch);
     }
     transaction.execute(
-        "INSERT INTO projects(project_name, universe_seed_id, lifecycle_state, created_by_command_id, last_transition_command_id)
+        "INSERT INTO projects(project_name, founding_mission_id, lifecycle_state, created_by_command_id, last_transition_command_id)
          VALUES (?1, ?2, ?3, ?4, ?4)",
-        params![project_name, cycle.seed_id.value(), ProjectState::Proposed as i64, command_row_id],
+        params![project_name, cycle.mission_id.value(), ProjectState::Proposed as i64, command_row_id],
     ).map_err(|_| Rejection::FoundingInvariant)?;
     let project_id = id_from_last_insert::<ProjectId>(transaction)?;
     transaction
@@ -4733,9 +4731,9 @@ fn add_graph_object_revision(
         }
         None => {
             transaction.execute(
-                "INSERT INTO objects(project_id, causal_episode_id, universe_seed_id, object_kind, created_by_command_id)
+                "INSERT INTO objects(project_id, causal_episode_id, founding_mission_id, object_kind, created_by_command_id)
                  VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![project_id.value(), causal_episode_id.map(CausalEpisodeId::value), cycle.seed_id.value(), object_kind as i64, command_row_id],
+                params![project_id.value(), causal_episode_id.map(CausalEpisodeId::value), cycle.mission_id.value(), object_kind as i64, command_row_id],
             ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
             id_from_last_insert::<GraphObjectId>(transaction)?
         }
@@ -4920,8 +4918,8 @@ fn create_episode(
     let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
     project_is_active(transaction, project_id)?;
     transaction.execute(
-        "INSERT INTO episodes(project_id, universe_seed_id, lifecycle_state, created_by_command_id, last_transition_command_id) VALUES (?1, ?2, 1, ?3, ?3)",
-        params![project_id.value(), cycle.seed_id.value(), command_row_id],
+        "INSERT INTO episodes(project_id, founding_mission_id, lifecycle_state, created_by_command_id, last_transition_command_id) VALUES (?1, ?2, 1, ?3, ?3)",
+        params![project_id.value(), cycle.mission_id.value(), command_row_id],
     ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
     let causal_episode_id = id_from_last_insert::<CausalEpisodeId>(transaction)?;
     record_coordination_provenance(
@@ -5062,14 +5060,14 @@ fn assign_adversarial_reviewer(
     if review_state != AdversarialReviewState::Requested {
         return Err(Rejection::InvalidLifecycleTransition);
     }
-    let cycle_grand_architect: i64 = transaction
+    let cycle_root_authority: i64 = transaction
         .query_row(
             "SELECT principal_id FROM office_occupancies WHERE office_occupancy_id = ?1",
             [cycle.occupancy_id.value()],
             |row| row.get(0),
         )
         .map_err(|_| Rejection::SubjectNotFound)?;
-    if reviewer_principal_id.value() == cycle_grand_architect {
+    if reviewer_principal_id.value() == cycle_root_authority {
         return Err(Rejection::ReviewAssignmentNotIndependent);
     }
     let (actor_principal, _, _, actor_cycle, actor_state) =
@@ -5400,7 +5398,7 @@ fn trigger_postmortem(
     {
         return Err(Rejection::SubjectNotFound);
     }
-    transaction.execute("INSERT INTO postmortems(project_id, causal_episode_id, universe_seed_id, lifecycle_state, triggered_by_command_id, closed_by_command_id) VALUES (?1, ?2, ?3, 1, ?4, NULL)", params![project_id.value(), causal_episode_id.map(CausalEpisodeId::value), cycle.seed_id.value(), command_row_id]).map_err(|_| Rejection::InvalidLifecycleTransition)?;
+    transaction.execute("INSERT INTO postmortems(project_id, causal_episode_id, founding_mission_id, lifecycle_state, triggered_by_command_id, closed_by_command_id) VALUES (?1, ?2, ?3, 1, ?4, NULL)", params![project_id.value(), causal_episode_id.map(CausalEpisodeId::value), cycle.mission_id.value(), command_row_id]).map_err(|_| Rejection::InvalidLifecycleTransition)?;
     let postmortem_id = id_from_last_insert::<PostmortemId>(transaction)?;
     record_coordination_provenance(
         transaction,
@@ -5548,8 +5546,8 @@ fn register_context_pack(
 ) -> Result<EventBody, Rejection> {
     let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
     transaction.execute(
-        "INSERT INTO context_packs(universe_seed_id, purpose, rendering_digest, created_by_command_id) VALUES (?1, ?2, ?3, ?4)",
-        params![cycle.seed_id.value(), purpose as i64, rendering_digest.as_bytes(), command_row_id],
+        "INSERT INTO context_packs(founding_mission_id, purpose, rendering_digest, created_by_command_id) VALUES (?1, ?2, ?3, ?4)",
+        params![cycle.mission_id.value(), purpose as i64, rendering_digest.as_bytes(), command_row_id],
     ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
     let context_pack_id = id_from_last_insert::<ContextPackId>(transaction)?;
     record_coordination_provenance(transaction, command_row_id, cycle, operating_cycle_id, None)?;
@@ -5629,7 +5627,7 @@ fn admit_actor_instance(
 /// The Pi child bridge repeats the M3 admission matrix at its final Create
 /// gate. `PiSdkQualificationV1` has no M5 Office/Actor owner constructor yet:
 /// bootstrap-native qualification remains a later explicit authority path, not
-/// a disguised Grand Architect session. The deterministic double is confined
+/// a disguised Root Authority session. The deterministic double is confined
 /// to its provider-free fixture treatment and cannot cross into paid/native
 /// qualification or live work.
 fn pi_child_profile_allowed(
@@ -5735,14 +5733,14 @@ fn register_work_item(
     }
     let context: (i64, i64) = transaction
         .query_row(
-            "SELECT universe_seed_id, purpose FROM context_packs WHERE context_pack_id = ?1",
+            "SELECT founding_mission_id, purpose FROM context_packs WHERE context_pack_id = ?1",
             [context_pack_id.value()],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()
         .map_err(|_| Rejection::SubjectNotFound)?
         .ok_or(Rejection::SubjectNotFound)?;
-    if context.0 != cycle.seed_id.value()
+    if context.0 != cycle.mission_id.value()
         || context_pack_purpose_from_i64(context.1).map_err(|_| Rejection::SubjectNotFound)?
             != work_kind.required_context_purpose()
     {
@@ -6046,7 +6044,7 @@ fn validate_ticket_attempt(
     // This M3 kernel-service command is a receipt-free atomic fixture
     // attestation: it records that this exact Ticket acceptance condition was
     // satisfied. It is not VS evidence validation; a later evidence receipt
-    // must refine this boundary rather than letting the Grand Architect
+    // must refine this boundary rather than letting the Root Authority
     // self-attest acceptance.
     let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
     let (attempt_cycle, ticket_id, _, _, _, state) =
@@ -6796,11 +6794,11 @@ fn admit_pi_child_spawn(
             }
             (Some(actor_attempt_id), None)
         }
-        PiChildOwner::GrandArchitectOfficeSession(session_id) => {
+        PiChildOwner::RootAuthorityOfficeSession(session_id) => {
             let row: Option<i64> = transaction
                 .query_row(
-                    "SELECT operating_cycle_id FROM grand_architect_office_sessions
-                  WHERE grand_architect_office_session_id = ?1 AND lifecycle_state IN (1, 2, 3, 4)",
+                    "SELECT operating_cycle_id FROM root_authority_office_sessions
+                  WHERE root_authority_office_session_id = ?1 AND lifecycle_state IN (1, 2, 3, 4)",
                     [session_id.value()],
                     |r| r.get(0),
                 )
@@ -6810,7 +6808,7 @@ fn admit_pi_child_spawn(
                 return Err(Rejection::ChildSpawnAdmissionInvalid);
             }
             let existing: Option<i64> = transaction.query_row(
-                "SELECT budget_reservation_id FROM office_session_budget_reservations WHERE grand_architect_office_session_id = ?1",
+                "SELECT budget_reservation_id FROM office_session_budget_reservations WHERE root_authority_office_session_id = ?1",
                 [session_id.value()], |r| r.get(0),
             ).optional().map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
             match existing {
@@ -6818,7 +6816,7 @@ fn admit_pi_child_spawn(
                 Some(_) => return Err(Rejection::ChildSpawnAdmissionInvalid),
                 None => {
                     transaction.execute(
-                        "INSERT INTO office_session_budget_reservations(grand_architect_office_session_id, budget_reservation_id, bound_by_command_id) VALUES (?1, ?2, ?3)",
+                        "INSERT INTO office_session_budget_reservations(root_authority_office_session_id, budget_reservation_id, bound_by_command_id) VALUES (?1, ?2, ?3)",
                         params![session_id.value(), budget_reservation_id.value(), command_row_id],
                     ).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
                 }
@@ -6861,9 +6859,9 @@ fn admit_pi_child_spawn(
     transaction.execute("INSERT INTO pi_child_sessions(pi_session_identity, spawn_nonce, created_by_command_id, ready_by_command_id) VALUES (?1, ?2, ?3, NULL)", params![pi_session_identity.as_str(), spawn_nonce.as_str(), command_row_id]).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
     let pi_session_id = id_from_last_insert::<PiSessionId>(transaction)?;
     transaction.execute(
-        "INSERT INTO pi_child_spawn_admissions(operating_cycle_id, actor_attempt_id, grand_architect_office_session_id, budget_reservation_id, execution_profile_id, workspace_id, supervisor_epoch_id, pi_session_id, admission_generation, lifecycle_state, admitted_by_command_id, spawned_by_command_id)
+        "INSERT INTO pi_child_spawn_admissions(operating_cycle_id, actor_attempt_id, root_authority_office_session_id, budget_reservation_id, execution_profile_id, workspace_id, supervisor_epoch_id, pi_session_id, admission_generation, lifecycle_state, admitted_by_command_id, spawned_by_command_id)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1, ?10, NULL)",
-        params![operating_cycle_id.value(), attempt.map(ActorAttemptId::value), office_session.map(GrandArchitectOfficeSessionId::value), budget_reservation_id.value(), execution_profile_id.value(), workspace_id, supervisor_epoch_id.value(), pi_session_id.value(), cycle.generation.value(), command_row_id],
+        params![operating_cycle_id.value(), attempt.map(ActorAttemptId::value), office_session.map(RootAuthorityOfficeSessionId::value), budget_reservation_id.value(), execution_profile_id.value(), workspace_id, supervisor_epoch_id.value(), pi_session_id.value(), cycle.generation.value(), command_row_id],
     ).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
     Ok(EventBody::PiChildSpawnAdmitted {
         pi_child_spawn_admission_id: id_from_last_insert::<PiChildSpawnAdmissionId>(transaction)?,
@@ -6970,7 +6968,7 @@ fn record_inert_child_spawn(
                  WHERE p.operating_cycle_id = a.operating_cycle_id
                    AND p.lifecycle_state = 1)
             AND (actor_attempt_id = (SELECT actor_attempt_id FROM pi_child_spawn_admissions WHERE pi_child_spawn_admission_id = ?3)
-              OR grand_architect_office_session_id = (SELECT grand_architect_office_session_id FROM pi_child_spawn_admissions WHERE pi_child_spawn_admission_id = ?3))",
+              OR root_authority_office_session_id = (SELECT root_authority_office_session_id FROM pi_child_spawn_admissions WHERE pi_child_spawn_admission_id = ?3))",
         params![
             child_process_id.value(),
             CancellationPropagationTargetDisposition::AwaitingChildReceipt as i64,
@@ -7019,7 +7017,7 @@ fn record_pi_child_not_spawned(
             AND child_process_id IS NULL
             AND target_disposition = ?3
             AND (actor_attempt_id = (SELECT actor_attempt_id FROM pi_child_spawn_admissions WHERE pi_child_spawn_admission_id = ?4)
-              OR grand_architect_office_session_id = (SELECT grand_architect_office_session_id FROM pi_child_spawn_admissions WHERE pi_child_spawn_admission_id = ?4))",
+              OR root_authority_office_session_id = (SELECT root_authority_office_session_id FROM pi_child_spawn_admissions WHERE pi_child_spawn_admission_id = ?4))",
         params![
             CancellationPropagationTargetDisposition::NotRunning as i64,
             cycle_id.value(),
@@ -7090,7 +7088,7 @@ fn authorize_pi_create_session(
     let (cycle_id, state, _) = child_cycle_for_generation(transaction, child_id, expected)?;
     let cycle = cycle_for_generation(transaction, cycle_id, expected)?;
     let admission: (i64, i64, i64, Option<i64>, Option<i64>, i64, i64) = transaction.query_row(
-        "SELECT a.admission_generation, a.budget_reservation_id, a.execution_profile_id, a.actor_attempt_id, a.grand_architect_office_session_id, p.profile_kind, p.readiness
+        "SELECT a.admission_generation, a.budget_reservation_id, a.execution_profile_id, a.actor_attempt_id, a.root_authority_office_session_id, p.profile_kind, p.readiness
            FROM pi_child_processes c JOIN pi_child_spawn_admissions a ON a.pi_child_spawn_admission_id = c.pi_child_spawn_admission_id
            JOIN execution_profiles p ON p.execution_profile_id = a.execution_profile_id
           WHERE c.child_process_id = ?1",
@@ -7109,7 +7107,7 @@ fn authorize_pi_create_session(
     }
     let owner_active = match (admission.3, admission.4) {
         (Some(attempt), None) => transaction.query_row("SELECT EXISTS(SELECT 1 FROM attempts WHERE actor_attempt_id = ?1 AND lifecycle_state = 1)", [attempt], |r| r.get::<_,i64>(0)).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)? != 0,
-        (None, Some(session)) => transaction.query_row("SELECT EXISTS(SELECT 1 FROM grand_architect_office_sessions s JOIN office_session_budget_reservations b ON b.grand_architect_office_session_id = s.grand_architect_office_session_id WHERE s.grand_architect_office_session_id = ?1 AND b.budget_reservation_id = ?2 AND s.lifecycle_state IN (1,2,3,4))", params![session, admission.1], |r| r.get::<_,i64>(0)).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)? != 0,
+        (None, Some(session)) => transaction.query_row("SELECT EXISTS(SELECT 1 FROM root_authority_office_sessions s JOIN office_session_budget_reservations b ON b.root_authority_office_session_id = s.root_authority_office_session_id WHERE s.root_authority_office_session_id = ?1 AND b.budget_reservation_id = ?2 AND s.lifecycle_state IN (1,2,3,4))", params![session, admission.1], |r| r.get::<_,i64>(0)).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)? != 0,
         _ => false,
     };
     if !owner_active {
@@ -7826,7 +7824,7 @@ fn begin_cancellation_propagation(
     // AwaitingChildReceipt until a typed invalidation or raced spawn resolves
     // it; a target with no admission is the explicit `not_running` fact.
     transaction.execute(
-        "INSERT INTO cancellation_propagation_targets(cancellation_propagation_id, actor_attempt_id, grand_architect_office_session_id, child_process_id, target_disposition)
+        "INSERT INTO cancellation_propagation_targets(cancellation_propagation_id, actor_attempt_id, root_authority_office_session_id, child_process_id, target_disposition)
          SELECT ?1, a.actor_attempt_id, NULL, p.child_process_id,
                 CASE
                   WHEN p.child_process_id IS NULL AND s.pi_child_spawn_admission_id IS NOT NULL AND s.lifecycle_state = 1 THEN 2
@@ -7846,8 +7844,8 @@ fn begin_cancellation_propagation(
         params![id.value(), cycle_id.value()],
     ).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
     transaction.execute(
-        "INSERT INTO cancellation_propagation_targets(cancellation_propagation_id, actor_attempt_id, grand_architect_office_session_id, child_process_id, target_disposition)
-         SELECT ?1, NULL, o.grand_architect_office_session_id, p.child_process_id,
+        "INSERT INTO cancellation_propagation_targets(cancellation_propagation_id, actor_attempt_id, root_authority_office_session_id, child_process_id, target_disposition)
+         SELECT ?1, NULL, o.root_authority_office_session_id, p.child_process_id,
                 CASE
                   WHEN p.child_process_id IS NULL AND s.pi_child_spawn_admission_id IS NOT NULL AND s.lifecycle_state = 1 THEN 2
                   WHEN p.child_process_id IS NULL THEN 1
@@ -7859,8 +7857,8 @@ fn begin_cancellation_propagation(
                   WHEN p.lifecycle_state = 5 THEN 2
                   ELSE 2
                 END
-           FROM grand_architect_office_sessions o
-      LEFT JOIN pi_child_spawn_admissions s ON s.grand_architect_office_session_id = o.grand_architect_office_session_id
+           FROM root_authority_office_sessions o
+      LEFT JOIN pi_child_spawn_admissions s ON s.root_authority_office_session_id = o.root_authority_office_session_id
       LEFT JOIN pi_child_processes p ON p.pi_child_spawn_admission_id = s.pi_child_spawn_admission_id
           WHERE o.operating_cycle_id = ?2 AND o.lifecycle_state NOT IN (8, 10, 11)",
         params![id.value(), cycle_id.value()],
@@ -8117,8 +8115,8 @@ fn grant_has_active_actor_instance(
 }
 
 /// Every actor-side command that governs a cycle, session, or cost incident is
-/// bound to that object's pinned Office occupancy. A merely active Grand
-/// Architect grant is not interchangeable with the grant that governed the
+/// bound to that object's pinned Office occupancy. A merely active Root
+/// Authority grant is not interchangeable with the grant that governed the
 /// scoped object when succession becomes possible.
 fn command_target_occupancy(
     transaction: &Transaction<'_>,
@@ -8129,7 +8127,7 @@ fn command_target_occupancy(
             Ok(Some(bootstrapped_constitution(transaction)?.2))
         }
         CommandBody::AdmitOperatingCycle { cycle_id }
-        | CommandBody::StartGrandArchitectOfficeSession { cycle_id }
+        | CommandBody::StartRootAuthorityOfficeSession { cycle_id }
         | CommandBody::QuiesceOperatingCycle { cycle_id }
         | CommandBody::ResumeOperatingCycle { cycle_id }
         | CommandBody::ReconcileOperatingCycle { cycle_id }
@@ -8281,7 +8279,7 @@ fn only_society_id(transaction: &Transaction<'_>) -> Result<SocietyId, Rejection
     SocietyId::try_from(value).map_err(|_| Rejection::SubjectNotFound)
 }
 
-fn grand_architect_office_id(transaction: &Transaction<'_>) -> Result<OfficeId, Rejection> {
+fn root_authority_office_id(transaction: &Transaction<'_>) -> Result<OfficeId, Rejection> {
     let value = transaction
         .query_row(
             "SELECT office_id FROM office_contracts WHERE office_kind = 1",
@@ -8294,23 +8292,23 @@ fn grand_architect_office_id(transaction: &Transaction<'_>) -> Result<OfficeId, 
     OfficeId::try_from(value).map_err(|_| Rejection::SubjectNotFound)
 }
 
-fn active_seed_id(
+fn active_founding_mission_id(
     transaction: &Transaction<'_>,
     society_id: SocietyId,
-) -> Result<UniverseSeedId, Rejection> {
+) -> Result<FoundingMissionId, Rejection> {
     let value = transaction
         .query_row(
-            "SELECT universe_seed_id FROM universe_seeds WHERE society_id = ?1 AND active = 1",
+            "SELECT founding_mission_id FROM founding_missions WHERE society_id = ?1 AND active = 1",
             [society_id.value()],
             |row| row.get::<_, i64>(0),
         )
         .optional()
         .map_err(|_| Rejection::SubjectNotFound)?
         .ok_or(Rejection::SubjectNotFound)?;
-    UniverseSeedId::try_from(value).map_err(|_| Rejection::SubjectNotFound)
+    FoundingMissionId::try_from(value).map_err(|_| Rejection::SubjectNotFound)
 }
 
-fn active_grand_architect_occupancy_id(
+fn active_root_authority_occupancy_id(
     transaction: &Transaction<'_>,
 ) -> Result<OfficeOccupancyId, Rejection> {
     let value = transaction
@@ -8342,10 +8340,10 @@ fn hard_ceiling_from_event_body(transaction: &Transaction<'_>) -> Result<UsdMicr
 
 fn bootstrapped_constitution(
     transaction: &Transaction<'_>,
-) -> Result<(SocietyId, UniverseSeedId, OfficeOccupancyId, UsdMicros), Rejection> {
+) -> Result<(SocietyId, FoundingMissionId, OfficeOccupancyId, UsdMicros), Rejection> {
     let row = transaction
         .query_row(
-            "SELECT society_id, universe_seed_id, office_occupancy_id, hard_ceiling_micros
+            "SELECT society_id, founding_mission_id, office_occupancy_id, hard_ceiling_micros
          FROM society_bootstraps LIMIT 1",
             [],
             |row| {
@@ -8362,7 +8360,7 @@ fn bootstrapped_constitution(
         .ok_or(Rejection::FoundingInvariant)?;
     Ok((
         SocietyId::try_from(row.0).map_err(|_| Rejection::FoundingInvariant)?,
-        UniverseSeedId::try_from(row.1).map_err(|_| Rejection::FoundingInvariant)?,
+        FoundingMissionId::try_from(row.1).map_err(|_| Rejection::FoundingInvariant)?,
         OfficeOccupancyId::try_from(row.2).map_err(|_| Rejection::FoundingInvariant)?,
         UsdMicros::try_from(row.3).map_err(|_| Rejection::FoundingInvariant)?,
     ))
@@ -8373,14 +8371,14 @@ fn cycle_row(
     cycle_id: OperatingCycleId,
 ) -> Result<CycleRow, Rejection> {
     let row = transaction.query_row(
-        "SELECT society_id, universe_seed_id, office_occupancy_id, treatment, lifecycle_state, admission_generation
+        "SELECT society_id, founding_mission_id, office_occupancy_id, treatment, lifecycle_state, admission_generation
          FROM operating_cycles WHERE operating_cycle_id = ?1",
         [cycle_id.value()],
         |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?, row.get::<_, i64>(5)?)),
     ).optional().map_err(|_| Rejection::SubjectNotFound)?.ok_or(Rejection::SubjectNotFound)?;
     Ok(CycleRow {
         society_id: SocietyId::try_from(row.0).map_err(|_| Rejection::SubjectNotFound)?,
-        seed_id: UniverseSeedId::try_from(row.1).map_err(|_| Rejection::SubjectNotFound)?,
+        mission_id: FoundingMissionId::try_from(row.1).map_err(|_| Rejection::SubjectNotFound)?,
         occupancy_id: OfficeOccupancyId::try_from(row.2).map_err(|_| Rejection::SubjectNotFound)?,
         _treatment: operating_cycle_treatment_from_i64(row.3)
             .map_err(|_| Rejection::SubjectNotFound)?,
@@ -8406,12 +8404,12 @@ fn cycle_for_generation(
 
 fn session_row(
     transaction: &Transaction<'_>,
-    session_id: GrandArchitectOfficeSessionId,
+    session_id: RootAuthorityOfficeSessionId,
 ) -> Result<(OfficeSessionState, OperatingCycleId), Rejection> {
     let row = transaction
         .query_row(
-            "SELECT lifecycle_state, operating_cycle_id FROM grand_architect_office_sessions
-         WHERE grand_architect_office_session_id = ?1",
+            "SELECT lifecycle_state, operating_cycle_id FROM root_authority_office_sessions
+         WHERE root_authority_office_session_id = ?1",
             [session_id.value()],
             |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
         )
@@ -8426,12 +8424,12 @@ fn session_row(
 
 fn session_occupancy_id(
     transaction: &Transaction<'_>,
-    session_id: GrandArchitectOfficeSessionId,
+    session_id: RootAuthorityOfficeSessionId,
 ) -> Result<OfficeOccupancyId, Rejection> {
     let value = transaction
         .query_row(
-            "SELECT office_occupancy_id FROM grand_architect_office_sessions
-             WHERE grand_architect_office_session_id = ?1",
+            "SELECT office_occupancy_id FROM root_authority_office_sessions
+             WHERE root_authority_office_session_id = ?1",
             [session_id.value()],
             |row| row.get::<_, i64>(0),
         )
@@ -8522,7 +8520,7 @@ fn active_office_turn_count(
 ) -> Result<i64, Rejection> {
     transaction.query_row(
         "SELECT COUNT(*) FROM office_turns t
-         JOIN grand_architect_office_sessions s ON s.grand_architect_office_session_id = t.grand_architect_office_session_id
+         JOIN root_authority_office_sessions s ON s.root_authority_office_session_id = t.root_authority_office_session_id
          WHERE s.operating_cycle_id = ?1 AND t.lifecycle_state = ?2",
         params![cycle_id.value(), OfficeTurnState::Active as i64],
         |row| row.get(0),
@@ -8531,12 +8529,12 @@ fn active_office_turn_count(
 
 fn session_has_active_turn(
     transaction: &Transaction<'_>,
-    session_id: GrandArchitectOfficeSessionId,
+    session_id: RootAuthorityOfficeSessionId,
 ) -> Result<bool, Rejection> {
     transaction
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM office_turns
-             WHERE grand_architect_office_session_id = ?1 AND lifecycle_state = ?2)",
+             WHERE root_authority_office_session_id = ?1 AND lifecycle_state = ?2)",
             params![session_id.value(), OfficeTurnState::Active as i64],
             |row| row.get::<_, i64>(0),
         )
@@ -8550,7 +8548,7 @@ fn live_office_session_count(
 ) -> Result<i64, Rejection> {
     transaction
         .query_row(
-            "SELECT COUNT(*) FROM grand_architect_office_sessions
+            "SELECT COUNT(*) FROM root_authority_office_sessions
              WHERE operating_cycle_id = ?1 AND lifecycle_state NOT IN (?2, ?3, ?4)",
             params![
                 cycle_id.value(),
@@ -8717,8 +8715,8 @@ fn request_fingerprint(request: &CommandRequest) -> Blake3Digest {
         CommandBody::CreateSocietyIdentity { name } => {
             put_bytes(&mut bytes, name.as_str().as_bytes())
         }
-        CommandBody::InstallGrandArchitectOffice | CommandBody::BootstrapSociety => {}
-        CommandBody::InstallFoundingUniverseSeed { mission } => {
+        CommandBody::InstallRootAuthorityOffice | CommandBody::BootstrapSociety => {}
+        CommandBody::InstallFoundingMission { mission } => {
             put_bytes(&mut bytes, mission.application_identity.as_str().as_bytes());
             put_bytes(&mut bytes, mission.application_name.as_str().as_bytes());
             put_i64(&mut bytes, mission.revision_ordinal.value());
@@ -8754,7 +8752,7 @@ fn request_fingerprint(request: &CommandRequest) -> Blake3Digest {
             );
             put_bytes(&mut bytes, &mission.source_rendering_digest.as_bytes());
         }
-        CommandBody::AppointInitialGrandArchitect { actor_display_name } => {
+        CommandBody::AppointInitialRootAuthority { actor_display_name } => {
             put_bytes(&mut bytes, actor_display_name.as_str().as_bytes())
         }
         CommandBody::SetR0HardCeiling { ceiling } => put_i64(&mut bytes, ceiling.value()),
@@ -8766,7 +8764,7 @@ fn request_fingerprint(request: &CommandRequest) -> Blake3Digest {
             put_i64(&mut bytes, budget_ceiling.value());
         }
         CommandBody::AdmitOperatingCycle { cycle_id }
-        | CommandBody::StartGrandArchitectOfficeSession { cycle_id }
+        | CommandBody::StartRootAuthorityOfficeSession { cycle_id }
         | CommandBody::QuiesceOperatingCycle { cycle_id }
         | CommandBody::RecordCycleDrained { cycle_id }
         | CommandBody::ResumeOperatingCycle { cycle_id }
@@ -9321,7 +9319,7 @@ fn request_fingerprint(request: &CommandRequest) -> Blake3Digest {
                     put_i64(&mut bytes, 1);
                     put_i64(&mut bytes, id.value());
                 }
-                PiChildOwner::GrandArchitectOfficeSession(id) => {
+                PiChildOwner::RootAuthorityOfficeSession(id) => {
                     put_i64(&mut bytes, 2);
                     put_i64(&mut bytes, id.value());
                 }
@@ -9548,17 +9546,17 @@ fn event_fingerprint(event_id: EventId, command_id: &CommandId, body: &EventBody
         | EventBody::SocietyBootstrapped { society_id } => {
             put_i64(&mut bytes, society_id.value());
         }
-        EventBody::GrandArchitectOfficeInstalled { office_id } => {
+        EventBody::RootAuthorityOfficeInstalled { office_id } => {
             put_i64(&mut bytes, office_id.value());
         }
-        EventBody::FoundingUniverseSeedInstalled {
-            seed_id,
+        EventBody::FoundingMissionInstalled {
+            mission_id,
             application_revision_id,
         } => {
-            put_i64(&mut bytes, seed_id.value());
+            put_i64(&mut bytes, mission_id.value());
             put_i64(&mut bytes, application_revision_id.value());
         }
-        EventBody::GrandArchitectAppointed {
+        EventBody::RootAuthorityAppointed {
             occupancy_id,
             principal_id,
         } => {
@@ -9592,14 +9590,14 @@ fn event_fingerprint(event_id: EventId, command_id: &CommandId, body: &EventBody
             put_i64(&mut bytes, *state as i64);
             put_i64(&mut bytes, generation.value());
         }
-        EventBody::GrandArchitectOfficeSessionStarted {
+        EventBody::RootAuthorityOfficeSessionStarted {
             session_id,
             cycle_id,
         } => {
             put_i64(&mut bytes, session_id.value());
             put_i64(&mut bytes, cycle_id.value());
         }
-        EventBody::GrandArchitectOfficeSessionStateChanged { session_id, state } => {
+        EventBody::RootAuthorityOfficeSessionStateChanged { session_id, state } => {
             put_i64(&mut bytes, session_id.value());
             put_i64(&mut bytes, *state as i64);
         }
@@ -9961,7 +9959,7 @@ fn event_fingerprint(event_id: EventId, command_id: &CommandId, body: &EventBody
                     put_i64(&mut bytes, 1);
                     put_i64(&mut bytes, id.value());
                 }
-                PiChildOwner::GrandArchitectOfficeSession(id) => {
+                PiChildOwner::RootAuthorityOfficeSession(id) => {
                     put_i64(&mut bytes, 2);
                     put_i64(&mut bytes, id.value());
                 }
@@ -10264,15 +10262,15 @@ fn insert_command_body(
                 params![command_row_id, child_process_id.value(), cancellation_propagation_id.value(), correlation_identity.as_str(), abort_command_digest.as_bytes().as_slice(), *outcome as i64],
             )?;
         }
-        CommandBody::InstallGrandArchitectOffice => {
+        CommandBody::InstallRootAuthorityOffice => {
             transaction.execute(
-                "INSERT INTO command_install_grand_architect_office(command_row_id) VALUES (?1)",
+                "INSERT INTO command_install_root_authority_office(command_row_id) VALUES (?1)",
                 [command_row_id],
             )?;
         }
-        CommandBody::InstallFoundingUniverseSeed { mission } => {
+        CommandBody::InstallFoundingMission { mission } => {
             transaction.execute(
-                "INSERT INTO command_install_founding_universe_seed(
+                "INSERT INTO command_install_founding_mission(
                      command_row_id, application_identity, application_name,
                      revision_ordinal, mission_statement, source_rendering_digest
                  ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -10287,7 +10285,7 @@ fn insert_command_body(
             )?;
             for (index, principle) in mission.principles.as_slice().iter().enumerate() {
                 transaction.execute(
-                    "INSERT INTO command_install_founding_universe_seed_principles(
+                    "INSERT INTO command_install_founding_mission_principles(
                          command_row_id, principle_ordinal, principle_kind, principle_text
                      ) VALUES (?1, ?2, ?3, ?4)",
                     params![
@@ -10300,7 +10298,7 @@ fn insert_command_body(
             }
             let questions = &mission.north_star_questions;
             transaction.execute(
-                "INSERT INTO command_install_founding_universe_seed_north_star_questions(
+                "INSERT INTO command_install_founding_mission_north_star_questions(
                      command_row_id, change_question, improvement_evidence_question,
                      boundary_commitment_question, revisit_question
                  ) VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -10313,8 +10311,8 @@ fn insert_command_body(
                 ],
             )?;
         }
-        CommandBody::AppointInitialGrandArchitect { actor_display_name } => {
-            transaction.execute("INSERT INTO command_appoint_initial_grand_architect(command_row_id, actor_display_name) VALUES (?1, ?2)", params![command_row_id, actor_display_name.as_str()])?;
+        CommandBody::AppointInitialRootAuthority { actor_display_name } => {
+            transaction.execute("INSERT INTO command_appoint_initial_root_authority(command_row_id, actor_display_name) VALUES (?1, ?2)", params![command_row_id, actor_display_name.as_str()])?;
         }
         CommandBody::SetR0HardCeiling { ceiling } => {
             transaction.execute("INSERT INTO command_set_r0_hard_ceiling(command_row_id, ceiling_micros) VALUES (?1, ?2)", params![command_row_id, ceiling.value()])?;
@@ -10334,23 +10332,23 @@ fn insert_command_body(
         CommandBody::AdmitOperatingCycle { cycle_id } => {
             transaction.execute("INSERT INTO command_admit_operating_cycle(command_row_id, operating_cycle_id) VALUES (?1, ?2)", params![command_row_id, cycle_id.value()])?;
         }
-        CommandBody::StartGrandArchitectOfficeSession { cycle_id } => {
-            transaction.execute("INSERT INTO command_start_grand_architect_office_session(command_row_id, operating_cycle_id) VALUES (?1, ?2)", params![command_row_id, cycle_id.value()])?;
+        CommandBody::StartRootAuthorityOfficeSession { cycle_id } => {
+            transaction.execute("INSERT INTO command_start_root_authority_office_session(command_row_id, operating_cycle_id) VALUES (?1, ?2)", params![command_row_id, cycle_id.value()])?;
         }
         CommandBody::RecordOfficeSessionReady { session_id } => {
-            transaction.execute("INSERT INTO command_record_office_session_ready(command_row_id, grand_architect_office_session_id) VALUES (?1, ?2)", params![command_row_id, session_id.value()])?;
+            transaction.execute("INSERT INTO command_record_office_session_ready(command_row_id, root_authority_office_session_id) VALUES (?1, ?2)", params![command_row_id, session_id.value()])?;
         }
         CommandBody::RecordOfficeSessionTerminal {
             session_id,
             terminal_state,
         } => {
-            transaction.execute("INSERT INTO command_record_office_session_terminal(command_row_id, grand_architect_office_session_id, terminal_state) VALUES (?1, ?2, ?3)", params![command_row_id, session_id.value(), *terminal_state as i64])?;
+            transaction.execute("INSERT INTO command_record_office_session_terminal(command_row_id, root_authority_office_session_id, terminal_state) VALUES (?1, ?2, ?3)", params![command_row_id, session_id.value(), *terminal_state as i64])?;
         }
         CommandBody::OpenOfficeTurn {
             session_id,
             purpose,
         } => {
-            transaction.execute("INSERT INTO command_open_office_turn(command_row_id, grand_architect_office_session_id, purpose) VALUES (?1, ?2, ?3)", params![command_row_id, session_id.value(), *purpose as i64])?;
+            transaction.execute("INSERT INTO command_open_office_turn(command_row_id, root_authority_office_session_id, purpose) VALUES (?1, ?2, ?3)", params![command_row_id, session_id.value(), *purpose as i64])?;
         }
         CommandBody::SettleOfficeTurn {
             turn_id,
@@ -11177,7 +11175,7 @@ fn insert_command_body(
         } => {
             let (attempt, office) = match owner {
                 PiChildOwner::ActorAttempt(id) => (Some(id.value()), None),
-                PiChildOwner::GrandArchitectOfficeSession(id) => (None, Some(id.value())),
+                PiChildOwner::RootAuthorityOfficeSession(id) => (None, Some(id.value())),
             };
             transaction.execute("INSERT INTO command_admit_pi_child_spawn VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)", params![command_row_id, operating_cycle_id.value(), attempt, office, budget_reservation_id.value(), execution_profile_id.value(), native_workspace_id.as_str(), canonical_workspace_path.as_str(), supervisor_epoch_id.value(), supervisor_epoch_identity.as_str(), pi_session_identity.as_str(), spawn_nonce.as_str()])?;
         }
@@ -11421,29 +11419,29 @@ fn insert_event_body(
                 params![event_id.value(), society_id.value()],
             )?;
         }
-        EventBody::GrandArchitectOfficeInstalled { office_id } => {
-            transaction.execute("INSERT INTO event_grand_architect_office_installed(event_id, office_id) VALUES (?1, ?2)", params![event_id.value(), office_id.value()])?;
+        EventBody::RootAuthorityOfficeInstalled { office_id } => {
+            transaction.execute("INSERT INTO event_root_authority_office_installed(event_id, office_id) VALUES (?1, ?2)", params![event_id.value(), office_id.value()])?;
         }
-        EventBody::FoundingUniverseSeedInstalled {
-            seed_id,
+        EventBody::FoundingMissionInstalled {
+            mission_id,
             application_revision_id,
         } => {
             transaction.execute(
-                "INSERT INTO event_founding_universe_seed_installed(
-                     event_id, universe_seed_id, application_revision_id
+                "INSERT INTO event_founding_mission_installed(
+                     event_id, founding_mission_id, application_revision_id
                  ) VALUES (?1, ?2, ?3)",
                 params![
                     event_id.value(),
-                    seed_id.value(),
+                    mission_id.value(),
                     application_revision_id.value()
                 ],
             )?;
         }
-        EventBody::GrandArchitectAppointed {
+        EventBody::RootAuthorityAppointed {
             occupancy_id,
             principal_id,
         } => {
-            transaction.execute("INSERT INTO event_grand_architect_appointed(event_id, office_occupancy_id, principal_id) VALUES (?1, ?2, ?3)", params![event_id.value(), occupancy_id.value(), principal_id.value()])?;
+            transaction.execute("INSERT INTO event_root_authority_appointed(event_id, office_occupancy_id, principal_id) VALUES (?1, ?2, ?3)", params![event_id.value(), occupancy_id.value(), principal_id.value()])?;
         }
         EventBody::R0HardCeilingSet {
             society_id,
@@ -11472,28 +11470,28 @@ fn insert_event_body(
         } => {
             transaction.execute("INSERT INTO event_operating_cycle_state_changed(event_id, operating_cycle_id, lifecycle_state, admission_generation) VALUES (?1, ?2, ?3, ?4)", params![event_id.value(), cycle_id.value(), *state as i64, generation.value()])?;
         }
-        EventBody::GrandArchitectOfficeSessionStarted {
+        EventBody::RootAuthorityOfficeSessionStarted {
             session_id,
             cycle_id,
         } => {
-            transaction.execute("INSERT INTO event_grand_architect_office_session_started(event_id, grand_architect_office_session_id, operating_cycle_id) VALUES (?1, ?2, ?3)", params![event_id.value(), session_id.value(), cycle_id.value()])?;
+            transaction.execute("INSERT INTO event_root_authority_office_session_started(event_id, root_authority_office_session_id, operating_cycle_id) VALUES (?1, ?2, ?3)", params![event_id.value(), session_id.value(), cycle_id.value()])?;
         }
-        EventBody::GrandArchitectOfficeSessionStateChanged { session_id, state } => {
-            transaction.execute("INSERT INTO event_grand_architect_office_session_state_changed(event_id, grand_architect_office_session_id, lifecycle_state) VALUES (?1, ?2, ?3)", params![event_id.value(), session_id.value(), *state as i64])?;
+        EventBody::RootAuthorityOfficeSessionStateChanged { session_id, state } => {
+            transaction.execute("INSERT INTO event_root_authority_office_session_state_changed(event_id, root_authority_office_session_id, lifecycle_state) VALUES (?1, ?2, ?3)", params![event_id.value(), session_id.value(), *state as i64])?;
         }
         EventBody::OfficeTurnOpened {
             turn_id,
             session_id,
             purpose,
         } => {
-            transaction.execute("INSERT INTO event_office_turn_opened(event_id, office_turn_id, grand_architect_office_session_id, purpose) VALUES (?1, ?2, ?3, ?4)", params![event_id.value(), turn_id.value(), session_id.value(), *purpose as i64])?;
+            transaction.execute("INSERT INTO event_office_turn_opened(event_id, office_turn_id, root_authority_office_session_id, purpose) VALUES (?1, ?2, ?3, ?4)", params![event_id.value(), turn_id.value(), session_id.value(), *purpose as i64])?;
         }
         EventBody::OfficeTurnSettled {
             turn_id,
             session_id,
             charged_delta,
         } => {
-            transaction.execute("INSERT INTO event_office_turn_settled(event_id, office_turn_id, grand_architect_office_session_id, charged_delta_micros) VALUES (?1, ?2, ?3, ?4)", params![event_id.value(), turn_id.value(), session_id.value(), charged_delta.value()])?;
+            transaction.execute("INSERT INTO event_office_turn_settled(event_id, office_turn_id, root_authority_office_session_id, charged_delta_micros) VALUES (?1, ?2, ?3, ?4)", params![event_id.value(), turn_id.value(), session_id.value(), charged_delta.value()])?;
         }
         EventBody::BudgetReserved {
             reservation_id,
@@ -12023,7 +12021,7 @@ fn insert_event_body(
         } => {
             let (attempt, office) = match owner {
                 PiChildOwner::ActorAttempt(id) => (Some(id.value()), None),
-                PiChildOwner::GrandArchitectOfficeSession(id) => (None, Some(id.value())),
+                PiChildOwner::RootAuthorityOfficeSession(id) => (None, Some(id.value())),
             };
             transaction.execute(
                 "INSERT INTO event_pi_child_spawn_admitted VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -12355,46 +12353,46 @@ fn decode_event_body(
                 event_id_typed,
             )?,
         },
-        EventKind::GrandArchitectOfficeInstalled => EventBody::GrandArchitectOfficeInstalled {
+        EventKind::RootAuthorityOfficeInstalled => EventBody::RootAuthorityOfficeInstalled {
             office_id: query_event_id(
                 connection,
-                "event_grand_architect_office_installed",
+                "event_root_authority_office_installed",
                 "office_id",
                 event_id_typed,
             )?,
         },
-        EventKind::FoundingUniverseSeedInstalled => {
-            let (seed_id, application_revision_id) = connection
+        EventKind::FoundingMissionInstalled => {
+            let (mission_id, application_revision_id) = connection
                 .query_row(
-                    "SELECT universe_seed_id, application_revision_id
-                     FROM event_founding_universe_seed_installed WHERE event_id = ?1",
+                    "SELECT founding_mission_id, application_revision_id
+                     FROM event_founding_mission_installed WHERE event_id = ?1",
                     [event_id],
                     |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
                 )
                 .optional()?
                 .ok_or(StoreError::LedgerCorruption(
-                    "missing founding universe seed event body",
+                    "missing founding mission event body",
                 ))?;
-            EventBody::FoundingUniverseSeedInstalled {
-                seed_id: UniverseSeedId::try_from(seed_id)
+            EventBody::FoundingMissionInstalled {
+                mission_id: FoundingMissionId::try_from(mission_id)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
                 application_revision_id: ApplicationRevisionId::try_from(application_revision_id)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
             }
         }
-        EventKind::GrandArchitectAppointed => {
+        EventKind::RootAuthorityAppointed => {
             let (occupancy_id, principal_id) = connection
                 .query_row(
                     "SELECT office_occupancy_id, principal_id
-                     FROM event_grand_architect_appointed WHERE event_id = ?1",
+                     FROM event_root_authority_appointed WHERE event_id = ?1",
                     [event_id],
                     |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
                 )
                 .optional()?
                 .ok_or(StoreError::LedgerCorruption(
-                    "missing grand architect appointment event body",
+                    "missing root authority appointment event body",
                 ))?;
-            EventBody::GrandArchitectAppointed {
+            EventBody::RootAuthorityAppointed {
                 occupancy_id: OfficeOccupancyId::try_from(occupancy_id)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
                 principal_id: PrincipalId::try_from(principal_id)
@@ -12440,19 +12438,19 @@ fn decode_event_body(
                     .map_err(|_| StoreError::InvalidStoredValue)?,
             }
         }
-        EventKind::GrandArchitectOfficeSessionStarted => {
-            let (session, cycle) = connection.query_row("SELECT grand_architect_office_session_id, operating_cycle_id FROM event_grand_architect_office_session_started WHERE event_id = ?1", [event_id], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing office session event body"))?;
-            EventBody::GrandArchitectOfficeSessionStarted {
-                session_id: GrandArchitectOfficeSessionId::try_from(session)
+        EventKind::RootAuthorityOfficeSessionStarted => {
+            let (session, cycle) = connection.query_row("SELECT root_authority_office_session_id, operating_cycle_id FROM event_root_authority_office_session_started WHERE event_id = ?1", [event_id], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing office session event body"))?;
+            EventBody::RootAuthorityOfficeSessionStarted {
+                session_id: RootAuthorityOfficeSessionId::try_from(session)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
                 cycle_id: OperatingCycleId::try_from(cycle)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
             }
         }
-        EventKind::GrandArchitectOfficeSessionStateChanged => {
-            let (session, state) = connection.query_row("SELECT grand_architect_office_session_id, lifecycle_state FROM event_grand_architect_office_session_state_changed WHERE event_id = ?1", [event_id], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing office session state event body"))?;
-            EventBody::GrandArchitectOfficeSessionStateChanged {
-                session_id: GrandArchitectOfficeSessionId::try_from(session)
+        EventKind::RootAuthorityOfficeSessionStateChanged => {
+            let (session, state) = connection.query_row("SELECT root_authority_office_session_id, lifecycle_state FROM event_root_authority_office_session_state_changed WHERE event_id = ?1", [event_id], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing office session state event body"))?;
+            EventBody::RootAuthorityOfficeSessionStateChanged {
+                session_id: RootAuthorityOfficeSessionId::try_from(session)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
                 state: office_session_state_from_i64(state)?,
             }
@@ -12966,7 +12964,7 @@ fn decode_event_body(
             )?,
         },
         EventKind::PiChildSpawnAdmitted => {
-            let row: (i64, Option<i64>, Option<i64>, i64) = connection.query_row("SELECT pi_child_spawn_admission_id, actor_attempt_id, grand_architect_office_session_id, budget_reservation_id FROM event_pi_child_spawn_admitted WHERE event_id = ?1", [event_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi child admission event body"))?;
+            let row: (i64, Option<i64>, Option<i64>, i64) = connection.query_row("SELECT pi_child_spawn_admission_id, actor_attempt_id, root_authority_office_session_id, budget_reservation_id FROM event_pi_child_spawn_admitted WHERE event_id = ?1", [event_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi child admission event body"))?;
             let owner = decode_child_owner(row.1, row.2)?;
             EventBody::PiChildSpawnAdmitted {
                 pi_child_spawn_admission_id: PiChildSpawnAdmissionId::try_from(row.0)
@@ -13462,14 +13460,14 @@ const MATERIALIZED_TABLES: [&str; 89] = [
     "application_revisions",
     "application_revision_principles",
     "application_revision_north_star_questions",
-    "universe_seeds",
+    "founding_missions",
     "office_occupancies",
     "capability_grants",
     "society_bootstraps",
     "operating_cycles",
     "operating_cycle_admissions",
     "operating_cycle_reconciliations",
-    "grand_architect_office_sessions",
+    "root_authority_office_sessions",
     "office_turns",
     "budget_envelopes",
     "budget_envelope_constraints",
@@ -13600,18 +13598,18 @@ fn decode_command_body(
                 name: SocietyName::parse(name).map_err(|_| StoreError::InvalidStoredValue)?,
             }
         }
-        CommandKind::InstallGrandArchitectOffice => CommandBody::InstallGrandArchitectOffice,
-        CommandKind::InstallFoundingUniverseSeed => CommandBody::InstallFoundingUniverseSeed {
+        CommandKind::InstallRootAuthorityOffice => CommandBody::InstallRootAuthorityOffice,
+        CommandKind::InstallFoundingMission => CommandBody::InstallFoundingMission {
             mission: decode_application_mission_input(connection, command_row_id)?,
         },
-        CommandKind::AppointInitialGrandArchitect => {
+        CommandKind::AppointInitialRootAuthority => {
             let display_name: String = query_command_value(
                 connection,
-                "command_appoint_initial_grand_architect",
+                "command_appoint_initial_root_authority",
                 "actor_display_name",
                 command_row_id,
             )?;
-            CommandBody::AppointInitialGrandArchitect {
+            CommandBody::AppointInitialRootAuthority {
                 actor_display_name: crate::PrincipalDisplayName::parse(display_name)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
             }
@@ -13649,11 +13647,11 @@ fn decode_command_body(
                 command_row_id,
             )?,
         },
-        CommandKind::StartGrandArchitectOfficeSession => {
-            CommandBody::StartGrandArchitectOfficeSession {
+        CommandKind::StartRootAuthorityOfficeSession => {
+            CommandBody::StartRootAuthorityOfficeSession {
                 cycle_id: query_command_id(
                     connection,
-                    "command_start_grand_architect_office_session",
+                    "command_start_root_authority_office_session",
                     "operating_cycle_id",
                     command_row_id,
                 )?,
@@ -13663,14 +13661,14 @@ fn decode_command_body(
             session_id: query_command_id(
                 connection,
                 "command_record_office_session_ready",
-                "grand_architect_office_session_id",
+                "root_authority_office_session_id",
                 command_row_id,
             )?,
         },
         CommandKind::OpenOfficeTurn => {
             let (session_id, purpose) = connection
                 .query_row(
-                    "SELECT grand_architect_office_session_id, purpose
+                    "SELECT root_authority_office_session_id, purpose
                      FROM command_open_office_turn WHERE command_row_id = ?1",
                     [command_row_id],
                     |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
@@ -13680,7 +13678,7 @@ fn decode_command_body(
                     "missing office turn command body",
                 ))?;
             CommandBody::OpenOfficeTurn {
-                session_id: GrandArchitectOfficeSessionId::try_from(session_id)
+                session_id: RootAuthorityOfficeSessionId::try_from(session_id)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
                 purpose: office_turn_purpose_from_i64(purpose)?,
             }
@@ -13823,7 +13821,7 @@ fn decode_command_body(
         CommandKind::RecordOfficeSessionTerminal => {
             let (session_id, terminal_state) = connection
                 .query_row(
-                    "SELECT grand_architect_office_session_id, terminal_state
+                    "SELECT root_authority_office_session_id, terminal_state
                      FROM command_record_office_session_terminal WHERE command_row_id = ?1",
                     [command_row_id],
                     |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
@@ -13833,7 +13831,7 @@ fn decode_command_body(
                     "missing office session terminal command body",
                 ))?;
             CommandBody::RecordOfficeSessionTerminal {
-                session_id: GrandArchitectOfficeSessionId::try_from(session_id)
+                session_id: RootAuthorityOfficeSessionId::try_from(session_id)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
                 terminal_state: office_session_terminal_state_from_i64(terminal_state)?,
             }
@@ -14474,7 +14472,7 @@ fn decode_command_body(
             }
         }
         CommandKind::AdmitPiChildSpawn => {
-            let row: StoredPiChildAdmissionCommand = connection.query_row("SELECT operating_cycle_id, actor_attempt_id, grand_architect_office_session_id, budget_reservation_id, execution_profile_id, native_workspace_id, canonical_workspace_path, supervisor_epoch_id, supervisor_epoch_identity, pi_session_identity, spawn_nonce FROM command_admit_pi_child_spawn WHERE command_row_id = ?1",[command_row_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,r.get(8)?,r.get(9)?,r.get(10)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi child admission command body"))?;
+            let row: StoredPiChildAdmissionCommand = connection.query_row("SELECT operating_cycle_id, actor_attempt_id, root_authority_office_session_id, budget_reservation_id, execution_profile_id, native_workspace_id, canonical_workspace_path, supervisor_epoch_id, supervisor_epoch_identity, pi_session_identity, spawn_nonce FROM command_admit_pi_child_spawn WHERE command_row_id = ?1",[command_row_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,r.get(8)?,r.get(9)?,r.get(10)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi child admission command body"))?;
             CommandBody::AdmitPiChildSpawn {
                 operating_cycle_id: OperatingCycleId::try_from(row.0)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -14951,7 +14949,7 @@ fn decode_application_mission_input(
         .query_row(
             "SELECT application_identity, application_name, revision_ordinal,
                     mission_statement, source_rendering_digest
-             FROM command_install_founding_universe_seed WHERE command_row_id = ?1",
+             FROM command_install_founding_mission WHERE command_row_id = ?1",
             [command_row_id],
             |row| {
                 Ok((
@@ -14969,7 +14967,7 @@ fn decode_application_mission_input(
         ))?;
     let mut statement_rows = connection.prepare(
         "SELECT principle_ordinal, principle_kind, principle_text
-         FROM command_install_founding_universe_seed_principles
+         FROM command_install_founding_mission_principles
          WHERE command_row_id = ?1 ORDER BY principle_ordinal",
     )?;
     let rows = statement_rows.query_map([command_row_id], |row| {
@@ -14998,7 +14996,7 @@ fn decode_application_mission_input(
         .query_row(
             "SELECT change_question, improvement_evidence_question,
                     boundary_commitment_question, revisit_question
-             FROM command_install_founding_universe_seed_north_star_questions
+             FROM command_install_founding_mission_north_star_questions
              WHERE command_row_id = ?1",
             [command_row_id],
             |row| {
@@ -15157,14 +15155,14 @@ fn command_body_table(kind: CommandKind) -> Result<&'static str, StoreError> {
 fn command_kind_from_i64(value: i64) -> Result<CommandKind, StoreError> {
     match value {
         1 => Ok(CommandKind::CreateSocietyIdentity),
-        2 => Ok(CommandKind::InstallGrandArchitectOffice),
-        3 => Ok(CommandKind::InstallFoundingUniverseSeed),
-        4 => Ok(CommandKind::AppointInitialGrandArchitect),
+        2 => Ok(CommandKind::InstallRootAuthorityOffice),
+        3 => Ok(CommandKind::InstallFoundingMission),
+        4 => Ok(CommandKind::AppointInitialRootAuthority),
         5 => Ok(CommandKind::SetR0HardCeiling),
         6 => Ok(CommandKind::BootstrapSociety),
         7 => Ok(CommandKind::ProposeOperatingCycle),
         8 => Ok(CommandKind::AdmitOperatingCycle),
-        9 => Ok(CommandKind::StartGrandArchitectOfficeSession),
+        9 => Ok(CommandKind::StartRootAuthorityOfficeSession),
         10 => Ok(CommandKind::RecordOfficeSessionReady),
         11 => Ok(CommandKind::OpenOfficeTurn),
         12 => Ok(CommandKind::SettleOfficeTurn),
@@ -15254,9 +15252,9 @@ fn command_kind_from_i64(value: i64) -> Result<CommandKind, StoreError> {
 fn capability_from_i64(value: i64) -> Result<Capability, StoreError> {
     match value {
         1 => Ok(Capability::CreateSocietyIdentity),
-        2 => Ok(Capability::InstallGrandArchitectOffice),
-        3 => Ok(Capability::InstallFoundingUniverseSeed),
-        4 => Ok(Capability::AppointInitialGrandArchitect),
+        2 => Ok(Capability::InstallRootAuthorityOffice),
+        3 => Ok(Capability::InstallFoundingMission),
+        4 => Ok(Capability::AppointInitialRootAuthority),
         5 => Ok(Capability::SetR0HardCeiling),
         6 => Ok(Capability::BootstrapSociety),
         7 => Ok(Capability::ProposeOperatingCycle),
@@ -15265,7 +15263,7 @@ fn capability_from_i64(value: i64) -> Result<Capability, StoreError> {
         10 => Ok(Capability::ResumeOperatingCycle),
         11 => Ok(Capability::ReconcileOperatingCycle),
         12 => Ok(Capability::CloseOperatingCycle),
-        13 => Ok(Capability::StartGrandArchitectOfficeSession),
+        13 => Ok(Capability::StartRootAuthorityOfficeSession),
         14 => Ok(Capability::OpenOfficeTurn),
         15 => Ok(Capability::RequestCancellation),
         16 => Ok(Capability::ReserveBudget),
@@ -15371,7 +15369,7 @@ fn decode_office_turn_opened_event(
 ) -> Result<EventBody, StoreError> {
     let (turn, session, purpose) = connection
         .query_row(
-            "SELECT office_turn_id, grand_architect_office_session_id, purpose
+            "SELECT office_turn_id, root_authority_office_session_id, purpose
              FROM event_office_turn_opened WHERE event_id = ?1",
             [event_id.value()],
             |row| {
@@ -15387,7 +15385,7 @@ fn decode_office_turn_opened_event(
             "missing office turn event body",
         ))?;
     let turn_id = OfficeTurnId::try_from(turn).map_err(|_| StoreError::InvalidStoredValue)?;
-    let session_id = GrandArchitectOfficeSessionId::try_from(session)
+    let session_id = RootAuthorityOfficeSessionId::try_from(session)
         .map_err(|_| StoreError::InvalidStoredValue)?;
     Ok(EventBody::OfficeTurnOpened {
         turn_id,
@@ -15402,7 +15400,7 @@ fn decode_office_turn_settled_event(
 ) -> Result<EventBody, StoreError> {
     let (turn, session, charged_delta) = connection
         .query_row(
-            "SELECT office_turn_id, grand_architect_office_session_id, charged_delta_micros
+            "SELECT office_turn_id, root_authority_office_session_id, charged_delta_micros
              FROM event_office_turn_settled WHERE event_id = ?1",
             [event_id.value()],
             |row| {
@@ -15419,7 +15417,7 @@ fn decode_office_turn_settled_event(
         ))?;
     Ok(EventBody::OfficeTurnSettled {
         turn_id: OfficeTurnId::try_from(turn).map_err(|_| StoreError::InvalidStoredValue)?,
-        session_id: GrandArchitectOfficeSessionId::try_from(session)
+        session_id: RootAuthorityOfficeSessionId::try_from(session)
             .map_err(|_| StoreError::InvalidStoredValue)?,
         charged_delta: UsdMicros::try_from(charged_delta)
             .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -15528,15 +15526,15 @@ fn pi_cumulative_usage_from_sql(
 fn event_kind_from_i64(value: i64) -> Result<EventKind, StoreError> {
     match value {
         1 => Ok(EventKind::SocietyIdentityCreated),
-        2 => Ok(EventKind::GrandArchitectOfficeInstalled),
-        3 => Ok(EventKind::FoundingUniverseSeedInstalled),
-        4 => Ok(EventKind::GrandArchitectAppointed),
+        2 => Ok(EventKind::RootAuthorityOfficeInstalled),
+        3 => Ok(EventKind::FoundingMissionInstalled),
+        4 => Ok(EventKind::RootAuthorityAppointed),
         5 => Ok(EventKind::R0HardCeilingSet),
         6 => Ok(EventKind::SocietyBootstrapped),
         7 => Ok(EventKind::OperatingCycleProposed),
         8 => Ok(EventKind::OperatingCycleStateChanged),
-        9 => Ok(EventKind::GrandArchitectOfficeSessionStarted),
-        10 => Ok(EventKind::GrandArchitectOfficeSessionStateChanged),
+        9 => Ok(EventKind::RootAuthorityOfficeSessionStarted),
+        10 => Ok(EventKind::RootAuthorityOfficeSessionStateChanged),
         11 => Ok(EventKind::OfficeTurnOpened),
         12 => Ok(EventKind::OfficeTurnSettled),
         13 => Ok(EventKind::BudgetReserved),
@@ -15655,8 +15653,8 @@ fn decode_child_owner(
         (Some(attempt), None) => Ok(PiChildOwner::ActorAttempt(
             ActorAttemptId::try_from(attempt).map_err(|_| StoreError::InvalidStoredValue)?,
         )),
-        (None, Some(office)) => Ok(PiChildOwner::GrandArchitectOfficeSession(
-            GrandArchitectOfficeSessionId::try_from(office)
+        (None, Some(office)) => Ok(PiChildOwner::RootAuthorityOfficeSession(
+            RootAuthorityOfficeSessionId::try_from(office)
                 .map_err(|_| StoreError::InvalidStoredValue)?,
         )),
         _ => Err(StoreError::LedgerCorruption("invalid Pi child owner union")),
@@ -16113,7 +16111,7 @@ fn actor_attempt_cancellation_reason_from_i64(
     value: i64,
 ) -> Result<ActorAttemptCancellationReason, StoreError> {
     match value {
-        1 => Ok(ActorAttemptCancellationReason::GrandArchitectRequested),
+        1 => Ok(ActorAttemptCancellationReason::RootAuthorityRequested),
         2 => Ok(ActorAttemptCancellationReason::CycleCancellation),
         3 => Ok(ActorAttemptCancellationReason::LeaseContainment),
         _ => Err(StoreError::InvalidStoredValue),
