@@ -1081,15 +1081,19 @@ deterministic Rust/XSH product judges <-------- execution
                        SQLite + content objects          Git worktrees/target
 ```
 
-`societyd` is the sole SQLite writer, content-store writer, child-process owner,
-and Git materializer. `societyctl` and the Grand Architect adapter connect over
-one permissioned Unix-domain socket. The local wire format is a versioned,
-length-prefixed tagged protocol with checked lengths, closed command/query
-discriminants, fixed integer encodings, UTF-8 validation, correlation id, and
-generation. It has no generic JSON envelope or opaque payload variant. Each
-wire body decodes directly into one closed Rust request type; unknown versions,
-tags, trailing bytes, oversized frames, and missing required fields fail before
-authorization.
+`societyd` is the sole SQLite writer and will become the content-store writer,
+child-process owner, and Git materializer as those tranches land. Its named
+`0600` Unix socket is a query-only public monitor surface used by `societyctl`;
+it has no mutation tag. Commands arrive only over a distinct pre-opened
+connected `AF_UNIX` supervisor stream. Stream type, peer family, same effective
+UID, and close-on-exec are checked, but descriptor provenance remains a trusted
+spawner/process-boundary assumption—same-UID is attribution, not hostile-user
+containment. Both local wire formats are versioned, length-prefixed tagged
+protocols with checked lengths, closed discriminants, fixed integer encodings,
+UTF-8 validation, correlation id, and generation. They have no generic JSON
+envelope or opaque payload variant. Each wire body decodes directly into one
+closed Rust request type; unknown versions, tags, trailing bytes, oversized
+frames, and missing required fields fail before authorization.
 
 Task actors receive no socket path or daemon credential. The Pi adapter reads a
 closed `submission.json` only after its child settles and submits the parsed
@@ -3031,6 +3035,17 @@ An enclosing milestone remains open until its exit judge passes.
 | `b96b545` | deterministic behavior/documentation, fluency, curation-shape, uptake-shape, and disclosure-frontier fixture judges, including C01-C19 rejection controls | kernel admission, process-group reaping, actor/treatment identity, curation authority, real disclosure enforcement, and the Milestone-7 end-to-end judge |
 | `f7873e3` | pinned Pi 0.83.0 TypeScript host construction and lifecycle, exact model/catalog policy, closed JSONL, lossless SDK-event projection, transcript/usage receipts, terminal outcome classification, and output-loss containment across 43 provider-free tests | Rust peer, durable correlation and charging, process supervision, sealed evidence, package-advisory resolution, native qualification, and Milestone 5 as a whole |
 | `3cabe90` | typed founding bootstrap, exact qualification/live cycle treatments, occupancy-scoped authority, Office session/turn and cancellation terminal facts, cross-cutting budget freeze/Postmortem resolution, one-to-one command/event bodies, idempotent receipts, and fresh SQLite replay across 17 integration tests | remaining Milestone-1 graph/project/evidence/product domains; daemon authentication/recovery; child, signal, reap, and evidence-sealing transitions; qualification prerequisite and sub-reservations |
+| `62a8bbe` | byte-sealed Rust Pi-boundary peer with exact child/runtime/profile validation, fail-closed JSONL decoding, pending-command and ordered-turn lifecycles, prompt-attributed monotonic usage, closed downstream observations, and symmetric host hardening; 48 TypeScript tests, 36 Rust unit tests, a public-consumer test, and a real provider-free `CreateSession` to `Dispose` pipe test | durable stream/transcript objects, ledger correlation, budget reservation and charging, process ownership/reaping, package-advisory resolution, native qualification, and Milestone 5 as a whole |
+| `8c5f4f4` | root-workspace resident single-writer spine with a query-only named socket, distinct supervisor command stream, one-writer/runtime-file enforcement, replay-fenced restart, crash seams, fixed INFO+ monitor, signal wakeup, and literal no-child empty-cycle closure across 11 integration tests | content/object store, outbox/projections, Pi/process ownership and reaping, recovery reconciliation, full typed notices/spans/redaction, and an external trusted supervisor launcher |
+| `1c12b84` | typed Project/Ticket planning, Observation/Hypothesis revision bodies in named one-to-one tables, finite edge matrix, Episode, conservative review/Postmortem blockers, exact authority/provenance, migration-step fencing, and semantic replay/tamper detection across 20 integration tests | independent Actor provisioning, WorkItem/Attempt and Ticket execution, review execution/resolution, evidence/delivery, content/outbox, supervision, recovery, and remaining Milestone-1 domains |
+
+The current M2 coordination kernel is a typed planning and closure-blocker
+foundation only. `Challenged` is a closed Project planning gate, not evidence
+that an independent Adversarial Review occurred. The kernel cannot yet
+provision a non-Grand-Architect actor, so reviewer assignment intentionally
+rejects the only actor and the unresolved review conservatively blocks Project
+closure. Actor/WorkItem/Attempt, review execution, evidence, delivery,
+content/outbox, process supervision, and recovery are still open.
 
 ### Milestone 1: contracts in executable form
 

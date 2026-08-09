@@ -52,19 +52,23 @@ rust-toolchain.toml        exact Rust toolchain for trusted physics
 Cargo.toml                 Rust workspace manifest
 crates/society-kernel/     implemented bootstrap/cycle/ledger foundation;
                            remaining Milestone-1 domains grow here
-migrations/                normalized monotonic SQLite migrations; migration 1
-                           currently owns the kernel foundation schema
+migrations/                normalized monotonic SQLite migrations; migrations
+                           1 and 2 own the current kernel foundation schema
 
 packages/society-pi-host/  implemented and provider-free-audited Pi SDK host;
-                           Rust authority remains outside this boundary
+                           durable Rust authority remains outside this boundary
 circuits/vs-001-spawn-stderr/
                            implemented deterministic fixture/evaluator tranche;
                            process ownership and authority remain outside it
 
-crates/society-pi/         planned typed Rust peer for the Pi SDK-host boundary
-crates/societyd/           planned resident authority and process supervisor
-crates/societyctl/         planned typed local control/query client
-tests/                     planned cross-crate and end-to-end integration fixtures
+crates/society-pi/         implemented provider-free-audited typed Rust peer;
+                           durable sealing, charging, and process ownership remain
+                           in the planned resident authority
+crates/societyd/           implemented bounded resident SQLite authority and
+                           monitor; Pi/content/recovery supervision remains
+crates/societyctl/         implemented public query and supervisor-stream client
+tests/daemon/              implemented resident-protocol integration fixtures
+tests/                     remaining cross-crate and end-to-end fixtures grow here
 var/                       ignored runtime database, objects, sessions, workspaces
 ```
 
@@ -77,8 +81,16 @@ Run the narrowest relevant judge first, then broaden:
 
 ```text
 cargo test -p society-kernel --test <contract>
-cargo test --workspace
+cargo test -p society-pi --lib
 npm test --prefix packages/society-pi-host
+
+pi_host_entry="$PWD/packages/society-pi-host/dist/src/main.js"
+pi_host_digest="$(shasum -a 256 "$pi_host_entry" | awk '{print $1}')"
+SOCIETY_PI_HOST_ENTRYPOINT="$pi_host_entry" \
+SOCIETY_PI_HOST_BUILD_SHA256="$pi_host_digest" \
+cargo test --workspace
+
+cargo clippy --workspace --all-targets -- -D warnings
 git diff --check
 ```
 

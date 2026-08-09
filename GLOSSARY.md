@@ -363,6 +363,17 @@ those bytes into typed values before they can affect SQLite state. No Pi CLI
 mode and no other durable V2 workflow uses JSON payloads, columns, manifests,
 or projections.
 
+### Pi boundary peer
+
+The typed Rust state machine in `crates/society-pi/` that admits and seals exact
+stdin/stdout records at the Pi boundary. It verifies the expected child PID,
+spawn nonce, runtime and model-catalog identities, sequence and correlation,
+one-prompt-at-a-time lifecycle, terminal event ordering, and monotonic
+prompt-attributed usage before returning a closed observation to `societyd`.
+It is deliberately not the durable supervisor: process ownership, SQLite
+correlation, evidence-object sealing, budget charging, and reaping remain
+`PiSupervisor` responsibilities.
+
 ### Pi SDK host
 
 The V2-owned TypeScript executable `society-pi-host`, pinned with
@@ -439,6 +450,14 @@ observability: always available for derivation and explanation, but only
 semantically admitted and curated distinctions may acquire actionable
 influence.
 
+### Public monitor socket
+
+The `0600` named Unix socket exposed by the resident `societyd`. Its closed
+protocol can query daemon status and durable command receipts only; it has no
+execute tag and cannot submit a claimed principal, grant, capability, or kernel
+command. Same-UID peer checks provide attribution, not containment against a
+hostile process running as that user.
+
 ### Quiescence
 
 The reversible Operating Cycle condition in which the kernel has incremented
@@ -446,6 +465,13 @@ the admission generation and admits no new task work while already running work
 settles. Only bounded Grand Architect recovery, cancellation, or closure turns
 may occur. Quiescence is not cancellation and does not imply that Projects or
 causal Episodes are complete.
+
+### Recovery-fenced
+
+The current conservative daemon startup mode for any nonempty ledger. Replay
+and public monitoring remain available, and an exact duplicate command can
+recover its receipt, but new mutation is refused until a future typed recovery
+workflow proves the interrupted process, session, budget, and evidence state.
 
 ### Retrospective
 
@@ -482,6 +508,16 @@ checked culture, scarce resources, and product artifacts. The term licenses
 only mechanisms with demonstrated engineering value; it does not imply money,
 trade, electoral politics, simulated emotions, autonomous demography, or a
 general social world simulator.
+
+### Supervisor authority channel
+
+The pre-opened connected Unix stream over which a trusted process supervisor
+may submit the resident daemon's closed command language. It has no path or
+credential-file constructor, is validated as a same-UID `AF_UNIX` stream, and
+is marked close-on-exec. Those checks do not prove how the descriptor was
+created or inherited: trusted spawner custody is the process-boundary
+assumption. Loss, malformed framing, or reply failure permanently closes that
+daemon instance's mutation admission while its public monitor remains alive.
 
 ### Ticket
 

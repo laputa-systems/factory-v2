@@ -602,11 +602,13 @@ Content-sensitive idempotency prevents one command identifier from being reused
 with different semantics.
 
 `CommandBody` is a closed Rust enum whose variants contain named structs with
-domain newtypes. `societyctl` exposes corresponding closed subcommands and
-typed flags over a local Unix-domain control socket; it does not serialize the
-enum into a generic command document. The versioned wire frame is
+domain newtypes. The named local Unix socket is a query-only monitor surface;
+the trusted process supervisor submits the closed mutation language over a
+separate pre-opened Unix stream. `societyctl` exposes the public queries and a
+typed library peer for that supervisor-held stream; neither serializes the enum
+into a generic command document. Both versioned wire frames are
 length-prefixed and tag-discriminated, with explicit encodings for domain
-newtypes and no JSON. The exact codec remains inside the Rust protocol crate so
+newtypes and no JSON. The exact codecs remain inside the Rust protocol crate so
 clients cannot invent fields. SQLite
 uses normalized tables, foreign keys, checked enum representations, unique
 constraints, and explicit nullable-state rules. V2 permits no JSON columns,
