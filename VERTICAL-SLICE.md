@@ -90,9 +90,13 @@ session; Office identity does not exempt its occupant from the Universe Seed.
 
 The bootstrap transaction creates exactly one active seed, installs exactly
 one Grand Architect Office and actor occupant, and records
-`ActorModelPolicyV1` and the society hard cost ceiling. A subsequent transaction
-admits `OC-VS-001` with the exact seed, Office occupancy, organization
-configuration, model policy, trace policy, Project envelope, WIP limits,
+`ActorModelPolicyV1` and the society hard cost ceiling of
+`UsdMicros(1_030_000)`. That `$1.03` ceiling is the cross-cutting authorization
+for the separate `$0.03` qualification cycle plus the `$1.00` live slice; it is
+not a spend target, and neither child envelope may borrow from the other. A
+subsequent transaction admits `OC-VS-001` with the exact seed, Office
+occupancy, organization configuration, model policy, trace policy, Project
+envelope, WIP limits,
 admission generation, and cancellation root. Every Project, Ticket, Episode,
 Decision, ReviewChallenge, Postmortem, ActorAttempt, and OfficeTurn below stores
 that seed revision; every paid execution also stores the Operating Cycle.
@@ -2722,7 +2726,7 @@ S1 produces attention/retrieval candidate IC1 for T01/cartographer context
 S2 produces attention/retrieval candidate IC2 for T02/skeptic context
 GA1 charter plus readiness and reservations authorize T01/T02
 
-E1 produces observations O-B1..O-B10
+E1 produces observations O-B1..O-B11
 E2 produces observation O-D1
 inquiry attempts produce arguments A1 and A2
 O-D1 contradicts current LANG proposal revision
@@ -3017,6 +3021,17 @@ the deterministic test oracle.
 
 ## Implementation order
 
+### Landed implementation evidence
+
+This ledger records bounded implementation evidence, not milestone waivers.
+An enclosing milestone remains open until its exit judge passes.
+
+| Commit | Boundary proven | Explicitly still open |
+| --- | --- | --- |
+| `b96b545` | deterministic behavior/documentation, fluency, curation-shape, uptake-shape, and disclosure-frontier fixture judges, including C01-C19 rejection controls | kernel admission, process-group reaping, actor/treatment identity, curation authority, real disclosure enforcement, and the Milestone-7 end-to-end judge |
+| `f7873e3` | pinned Pi 0.83.0 TypeScript host construction and lifecycle, exact model/catalog policy, closed JSONL, lossless SDK-event projection, transcript/usage receipts, terminal outcome classification, and output-loss containment across 43 provider-free tests | Rust peer, durable correlation and charging, process supervision, sealed evidence, package-advisory resolution, native qualification, and Milestone 5 as a whole |
+| `3cabe90` | typed founding bootstrap, exact qualification/live cycle treatments, occupancy-scoped authority, Office session/turn and cancellation terminal facts, cross-cutting budget freeze/Postmortem resolution, one-to-one command/event bodies, idempotent receipts, and fresh SQLite replay across 17 integration tests | remaining Milestone-1 graph/project/evidence/product domains; daemon authentication/recovery; child, signal, reap, and evidence-sealing transitions; qualification prerequisite and sub-reservations |
+
 ### Milestone 1: contracts in executable form
 
 Write observable transition tests first, then implement newtypes, closed enums,
@@ -3181,16 +3196,20 @@ could be honest.
 
 ## Dependency gate
 
-The architecture already authorizes `tracing`, `tracing-subscriber`, and—by the
-explicit SDK decision—an exact locked installation of
-`@earendil-works/pi-coding-agent` 0.83.0 plus the minimal TypeScript/Node build
-surface required by `society-pi-host`. The Rust kernel will also need an SQLite
-binding and ordinary Pi-boundary JSON/hash support unless those already exist
-in the chosen workspace. This document does not
-authorize an async runtime, tracing appender, process-control framework, ORM,
-workflow engine, or any other crate. Before implementation, the exact minimal
-crate set, versions, feature/vendoring policy, and migration tooling must be
-presented to the user in accordance with the repository working contract.
+The dependency gate is resolved by `DEPENDENCIES.md` and the exact workspace
+pins in `Cargo.toml`. The allowed Rust surface is `rusqlite` with bundled SQLite
+and default features disabled, `thiserror`, `sha2`, `tracing`,
+`tracing-subscriber`, Pi-boundary-only `serde`/`serde_json`, and narrow Unix
+`libc` calls. The TypeScript package exact-pins
+`@earendil-works/pi-coding-agent` 0.83.0 and its build/test support in
+`package-lock.json`. Migrations are monotonic embedded SQL run by the kernel;
+there is no migration framework.
+
+This decision does not authorize an async runtime, tracing appender,
+process-control framework, ORM, workflow engine, generic schema framework, or
+any other crate. Any addition or version change reopens the gate and must
+update `DEPENDENCIES.md`, the relevant lockfile, boundary tests, and execution
+profile qualification before paid use.
 
 ## Completion statement
 

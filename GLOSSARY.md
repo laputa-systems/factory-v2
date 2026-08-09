@@ -203,6 +203,14 @@ The append-only record of accepted commands, state transitions, resources,
 authority, and responsible principals. It establishes operational history; it
 is not by itself the society's world model.
 
+### Final assistant outcome
+
+The closed terminal model observation associated with the non-retried Pi
+`agent_end`: `stop`, `length`, `error`, or `aborted`. It is carried separately
+from SDK-promise resolution, `agent_settled`, host-process exit, submission
+validity, and Attempt success. Missing or contradictory terminal evidence
+makes the SDK-host session protocol-failed and unavailable for further spend.
+
 ### Forensic evidence
 
 Sealed source material preserved so a later judge can support, defeat, or
@@ -280,6 +288,16 @@ The purpose and worldview content inside the Universe Seed: why XSH exists,
 who it serves, what domain it claims, what it preserves, what it rejects, and
 what it refuses to optimize away.
 
+### Model catalog policy
+
+The non-secret, qualified identity of the exact Pi model catalog bytes and the
+effective model treatment selected from them: provider, endpoint, API shape,
+requested model, canonical provider slug, context and completion limits, input
+kinds, and every present or absent billing rate. `ModelCatalogPolicyV1` binds
+configuration to a SHA-256 digest and is checked before and after SDK model
+resolution. It is not authentication material, an ambient `models.json`, or a
+provider-discovery result.
+
 ### North-star alignment
 
 The operational test derived from the mission. A project, ticket, decision,
@@ -306,6 +324,13 @@ policies, budget, WIP, start cursor, rollover conditions, and one cancellation
 root. Actor attempts belong to exactly one Operating Cycle; Projects, causal
 Episodes, lessons, and outcome obligations may span many. It is not a product
 quota or one fixed workflow.
+
+### Operating Cycle treatment
+
+A closed admission policy selecting the purpose and exact hard ceiling of one
+Operating Cycle. VS-001 initially admits only `PiSdkQualificationV1` at
+`UsdMicros(30_000)` or `Vs001LiveV1` at `UsdMicros(1_000_000)`. A treatment is
+durable authority, not a caller-provided label or an arbitrary budget value.
 
 ### Operational audit
 
@@ -345,6 +370,15 @@ The V2-owned TypeScript executable `society-pi-host`, pinned with
 embeds one SDK `AgentSession`; task hosts are one-shot and the Grand Architect
 host persists for one Operating Cycle. It is a trusted execution-evidence
 adapter but has no database, capability, budget, scheduling, or Git authority.
+
+### Pi transcript flush receipt
+
+A closed host-boundary observation emitted only after Pi session disposal and
+transcript verification. It distinguishes an intentionally unmaterialized
+pre-prompt session from a canonical SessionManager JSONL file whose session
+identity, real path, header cwd and timestamp, file digest, and first user
+prompt have been checked. It proves what the host observed; Rust must still
+seal and admit the bytes.
 
 ### Pi supervisor
 

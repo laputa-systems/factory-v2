@@ -35,7 +35,9 @@ canonical.
 
 ## Code map
 
-The repository is currently at the executable-contract stage. Update this map
+The repository is implementing the executable contract in bounded tranches.
+`implemented` below means only the stated boundary has passed its own judge; it
+does not imply that the enclosing milestone is complete. Update this map
 whenever a tranche creates, moves, or retires an implementation boundary.
 
 ```text
@@ -44,25 +46,30 @@ ARCHITECTURE.md            general society architecture
 GLOSSARY.md                canonical domain vocabulary
 VERTICAL-SLICE.md          VS-001 executable specification and progress gates
 RSI.md                     research source conversation
+DEPENDENCIES.md            exact trusted dependency and vendoring contract
 rust-toolchain.toml        exact Rust toolchain for trusted physics
 
-Cargo.toml                 Rust workspace manifest (Milestone 1)
-crates/society-kernel/     domain types, transitions, SQLite, ledger, content
-crates/society-pi/         typed Rust peer for the Pi SDK-host boundary
-crates/societyd/           resident authority and process supervisor
-crates/societyctl/         typed local control/query client
-migrations/                normalized monotonic SQLite migrations
+Cargo.toml                 Rust workspace manifest
+crates/society-kernel/     implemented bootstrap/cycle/ledger foundation;
+                           remaining Milestone-1 domains grow here
+migrations/                normalized monotonic SQLite migrations; migration 1
+                           currently owns the kernel foundation schema
 
-packages/society-pi-host/  pinned TypeScript Pi SDK execution adapter
+packages/society-pi-host/  implemented and provider-free-audited Pi SDK host;
+                           Rust authority remains outside this boundary
 circuits/vs-001-spawn-stderr/
-                           VS-001 prompts, fixtures, judges, and projections
-tests/                     cross-crate and end-to-end integration fixtures
+                           implemented deterministic fixture/evaluator tranche;
+                           process ownership and authority remain outside it
+
+crates/society-pi/         planned typed Rust peer for the Pi SDK-host boundary
+crates/societyd/           planned resident authority and process supervisor
+crates/societyctl/         planned typed local control/query client
+tests/                     planned cross-crate and end-to-end integration fixtures
 var/                       ignored runtime database, objects, sessions, workspaces
 ```
 
-Paths marked with a milestone may not exist yet. Remove that annotation once
-the boundary is implemented; never keep both a legacy and replacement path
-unmarked.
+Planned paths may not exist yet. Remove that annotation only when the boundary
+it names has landed; never keep both a legacy and replacement path unmarked.
 
 ## Nearest hard judges
 
