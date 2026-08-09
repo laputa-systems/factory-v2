@@ -41,10 +41,22 @@ identifier!(CapabilityGrantId);
 identifier!(BudgetEnvelopeId);
 identifier!(BudgetReservationId);
 identifier!(CancellationRequestId);
-identifier!(PostmortemId);
+identifier!(CostPostmortemId);
 identifier!(GrandArchitectOfficeSessionId);
 identifier!(OfficeTurnId);
 identifier!(EventId);
+identifier!(ProjectId);
+identifier!(ProjectMilestoneId);
+identifier!(TicketId);
+identifier!(GraphObjectId);
+identifier!(GraphRevisionId);
+identifier!(GraphEdgeId);
+identifier!(CausalEpisodeId);
+identifier!(AdversarialReviewId);
+identifier!(ReviewChallengeId);
+identifier!(PostmortemId);
+identifier!(PostmortemCausalClaimId);
+identifier!(PostmortemActionProposalId);
 
 impl PrincipalId {
     /// The compiled, local founding authority. It is installed by migration,
@@ -110,6 +122,42 @@ impl PrincipalDisplayName {
         &self.0
     }
 }
+
+macro_rules! coordination_text {
+    ($name:ident) => {
+        #[derive(Clone, Debug, Eq, Hash, PartialEq)]
+        pub struct $name(String);
+
+        impl $name {
+            pub fn parse(value: impl Into<String>) -> Result<Self, DomainValueError> {
+                let value = value.into();
+                if value.trim().is_empty() || value.len() > 1_024 || value.contains('\0') {
+                    return Err(DomainValueError::InvalidCoordinationText {
+                        type_name: stringify!($name),
+                    });
+                }
+                Ok(Self(value))
+            }
+
+            pub fn as_str(&self) -> &str {
+                &self.0
+            }
+        }
+    };
+}
+
+coordination_text!(ProjectName);
+coordination_text!(ProjectObjectiveText);
+coordination_text!(ProjectMilestoneName);
+coordination_text!(ProjectStopConditionText);
+coordination_text!(TicketTitle);
+coordination_text!(TicketAcceptanceConditionText);
+coordination_text!(ObservationRevisionText);
+coordination_text!(HypothesisRevisionText);
+coordination_text!(ReviewFailureHypothesis);
+coordination_text!(ReviewResponseText);
+coordination_text!(PostmortemCausalClaimText);
+coordination_text!(PostmortemActionProposalText);
 
 #[derive(Clone, Copy, Eq, Hash, PartialEq)]
 pub struct Sha256Digest([u8; 32]);
@@ -235,6 +283,31 @@ pub enum Capability {
     ReconcileCancellation = 21,
     RecordOfficeSessionTerminal = 22,
     CloseCostPostmortem = 23,
+    CreateProject = 24,
+    CharterProject = 25,
+    TransitionProject = 26,
+    CompleteProjectMilestone = 27,
+    ReopenProject = 28,
+    CreateTicket = 29,
+    TransitionTicket = 30,
+    AddGraphObjectRevision = 31,
+    CommitGraphRevision = 32,
+    AddGraphEdge = 33,
+    CreateEpisode = 34,
+    TransitionEpisode = 35,
+    ReopenEpisode = 36,
+    RequestAdversarialReview = 37,
+    SubmitReviewChallenge = 38,
+    RespondToReviewChallenge = 39,
+    DispositionReviewChallenge = 40,
+    ResolveAdversarialReview = 41,
+    TriggerPostmortem = 42,
+    RecordPostmortemCausalClaim = 43,
+    ProposePostmortemAction = 44,
+    ClosePostmortem = 45,
+    /// Kernel-owned assignment makes an adversarial finding attributable to
+    /// the exact reviewer authorized for its Review, rather than to any actor.
+    AssignAdversarialReviewer = 46,
 }
 
 impl Capability {
@@ -249,7 +322,7 @@ impl Capability {
         Self::AdmitOperatingCycle,
     ];
 
-    pub const GRAND_ARCHITECT: [Self; 11] = [
+    pub const GRAND_ARCHITECT: [Self; 32] = [
         Self::ProposeOperatingCycle,
         Self::AdmitOperatingCycle,
         Self::QuiesceOperatingCycle,
@@ -261,15 +334,38 @@ impl Capability {
         Self::RequestCancellation,
         Self::ReserveBudget,
         Self::CloseCostPostmortem,
+        Self::CreateProject,
+        Self::CharterProject,
+        Self::TransitionProject,
+        Self::CompleteProjectMilestone,
+        Self::ReopenProject,
+        Self::CreateTicket,
+        Self::TransitionTicket,
+        Self::AddGraphObjectRevision,
+        Self::CommitGraphRevision,
+        Self::AddGraphEdge,
+        Self::CreateEpisode,
+        Self::TransitionEpisode,
+        Self::ReopenEpisode,
+        Self::RequestAdversarialReview,
+        Self::RespondToReviewChallenge,
+        Self::DispositionReviewChallenge,
+        Self::ResolveAdversarialReview,
+        Self::TriggerPostmortem,
+        Self::RecordPostmortemCausalClaim,
+        Self::ProposePostmortemAction,
+        Self::ClosePostmortem,
     ];
 
-    pub const KERNEL_SERVICE: [Self; 6] = [
+    pub const KERNEL_SERVICE: [Self; 8] = [
         Self::RecordCycleDrained,
         Self::RecordOfficeSessionReady,
         Self::SettleOfficeTurn,
         Self::ReconcileBudget,
         Self::ReconcileCancellation,
         Self::RecordOfficeSessionTerminal,
+        Self::SubmitReviewChallenge,
+        Self::AssignAdversarialReviewer,
     ];
 
     pub const fn requires_consumption(self) -> bool {
@@ -327,6 +423,206 @@ impl OperatingCycleState {
 pub enum OperatingCycleTreatment {
     PiSdkQualificationV1 = 1,
     Vs001LiveV1 = 2,
+}
+
+/// M2 contains the planning and closure-blocker portion of the Project
+/// lifecycle. Product execution and delivery remain at later typed Actor,
+/// WorkItem, and Attempt boundaries; these states do not claim completion.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum ProjectState {
+    Proposed = 1,
+    Challenged = 2,
+    Chartered = 3,
+    Active = 4,
+    Paused = 5,
+    Observing = 6,
+    Closed = 7,
+    Terminated = 8,
+    Reopened = 9,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum ProjectMilestoneState {
+    Pending = 1,
+    Completed = 2,
+}
+
+/// The execution labels are retained as closed domain vocabulary, but M2
+/// permits only preparation/cancellation transitions. Claim, work, validation,
+/// delivery, and retry need later typed Actor, WorkItem, and Attempt commands.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum TicketState {
+    Draft = 1,
+    Admitted = 2,
+    Ready = 3,
+    Claimed = 4,
+    Submitted = 5,
+    Verified = 6,
+    Completed = 7,
+    ChangesRequested = 8,
+    Expired = 9,
+    Cancelled = 10,
+    Failed = 11,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum GraphObjectKind {
+    Observation = 1,
+    Hypothesis = 2,
+}
+
+/// The M2 graph intentionally supports only the two epistemic bodies its
+/// coordination proof can faithfully create. The common revision row carries
+/// identity and lifecycle only; this closed body chooses the named, semantic
+/// one-to-one revision table.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum GraphRevisionBody {
+    Observation {
+        observation: ObservationRevisionText,
+    },
+    Hypothesis {
+        hypothesis: HypothesisRevisionText,
+    },
+}
+
+impl GraphRevisionBody {
+    pub const fn object_kind(&self) -> GraphObjectKind {
+        match self {
+            Self::Observation { .. } => GraphObjectKind::Observation,
+            Self::Hypothesis { .. } => GraphObjectKind::Hypothesis,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum GraphRevisionState {
+    Draft = 1,
+    Committed = 2,
+}
+
+/// The graph is deliberately not a universal relation bucket. Each edge kind
+/// has a finite endpoint matrix enforced by the kernel before it is stored.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum GraphEdgeKind {
+    Supports = 1,
+    Challenges = 2,
+}
+
+impl GraphEdgeKind {
+    pub const fn allows(self, from: GraphObjectKind, to: GraphObjectKind) -> bool {
+        match self {
+            Self::Supports => matches!(
+                (from, to),
+                (
+                    GraphObjectKind::Observation | GraphObjectKind::Hypothesis,
+                    GraphObjectKind::Hypothesis
+                )
+            ),
+            Self::Challenges => matches!(
+                (from, to),
+                (GraphObjectKind::Observation, GraphObjectKind::Hypothesis)
+            ),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum EpisodeState {
+    Framed = 1,
+    Admitted = 2,
+    Investigating = 3,
+    PrototypeDeliberating = 4,
+    Prototyping = 5,
+    CandidateValidating = 6,
+    DeliveryDeliberating = 7,
+    DeliveryAuthorized = 8,
+    Materializing = 9,
+    Observing = 10,
+    Learning = 11,
+    Closed = 12,
+    ClosedNoAction = 13,
+    ClosedNoDelivery = 14,
+    Abandoned = 15,
+    Reverted = 16,
+    Reopened = 17,
+}
+
+/// M2 keeps Reviews as durable adverse findings and Project-close blockers.
+/// Complete Review resolution awaits a later typed independent Actor,
+/// WorkItem, and Attempt path; this tranche does not fabricate one.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum AdversarialReviewState {
+    Requested = 1,
+    Assigned = 2,
+    Active = 3,
+    FindingsSubmitted = 4,
+    ResponsesDue = 5,
+    Resolved = 6,
+    AcceptedRisk = 7,
+    Superseded = 8,
+    Escalated = 9,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum ReviewChallengeSeverity {
+    Low = 1,
+    Moderate = 2,
+    High = 3,
+    Critical = 4,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum ReviewChallengeResponseState {
+    Pending = 1,
+    Responded = 2,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum ReviewDispositionKind {
+    Addressed = 1,
+    RejectedWithDissentPreserved = 2,
+    AcceptedRisk = 3,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum ReviewResolutionKind {
+    Resolved = 1,
+    AcceptedRisk = 2,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum PostmortemState {
+    Triggered = 1,
+    Investigating = 2,
+    Closed = 3,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum PostmortemCausalClaimKind {
+    ContributingCondition = 1,
+    Counterfactual = 2,
+    Containment = 3,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum PostmortemActionKind {
+    CreateFollowUpTicket = 1,
+    ChangePolicyProposal = 2,
 }
 
 impl OperatingCycleTreatment {
@@ -433,7 +729,7 @@ pub enum CostPostmortemResolution {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(i64)]
-pub enum PostmortemState {
+pub enum CostPostmortemState {
     Open = 1,
     Closed = 2,
 }
@@ -556,8 +852,129 @@ pub enum CommandBody {
         cancellation_request_id: CancellationRequestId,
     },
     CloseCostPostmortem {
-        postmortem_id: PostmortemId,
+        postmortem_id: CostPostmortemId,
         resolution: CostPostmortemResolution,
+    },
+    CreateProject {
+        operating_cycle_id: OperatingCycleId,
+        project_name: ProjectName,
+    },
+    CharterProject {
+        operating_cycle_id: OperatingCycleId,
+        project_id: ProjectId,
+        objective: ProjectObjectiveText,
+        initial_milestone: ProjectMilestoneName,
+        stop_condition: ProjectStopConditionText,
+    },
+    TransitionProject {
+        operating_cycle_id: OperatingCycleId,
+        project_id: ProjectId,
+        target: ProjectState,
+    },
+    CompleteProjectMilestone {
+        operating_cycle_id: OperatingCycleId,
+        project_milestone_id: ProjectMilestoneId,
+    },
+    ReopenProject {
+        operating_cycle_id: OperatingCycleId,
+        project_id: ProjectId,
+    },
+    CreateTicket {
+        operating_cycle_id: OperatingCycleId,
+        project_id: ProjectId,
+        ticket_title: TicketTitle,
+        acceptance_condition: TicketAcceptanceConditionText,
+        prerequisite_ticket_id: Option<TicketId>,
+    },
+    TransitionTicket {
+        operating_cycle_id: OperatingCycleId,
+        ticket_id: TicketId,
+        target: TicketState,
+    },
+    AddGraphObjectRevision {
+        operating_cycle_id: OperatingCycleId,
+        project_id: ProjectId,
+        causal_episode_id: Option<CausalEpisodeId>,
+        graph_object_id: Option<GraphObjectId>,
+        body: GraphRevisionBody,
+    },
+    CommitGraphRevision {
+        operating_cycle_id: OperatingCycleId,
+        graph_revision_id: GraphRevisionId,
+    },
+    AddGraphEdge {
+        operating_cycle_id: OperatingCycleId,
+        project_id: ProjectId,
+        from_graph_revision_id: GraphRevisionId,
+        to_graph_revision_id: GraphRevisionId,
+        edge_kind: GraphEdgeKind,
+    },
+    CreateEpisode {
+        operating_cycle_id: OperatingCycleId,
+        project_id: ProjectId,
+    },
+    TransitionEpisode {
+        operating_cycle_id: OperatingCycleId,
+        causal_episode_id: CausalEpisodeId,
+        target: EpisodeState,
+    },
+    ReopenEpisode {
+        operating_cycle_id: OperatingCycleId,
+        causal_episode_id: CausalEpisodeId,
+    },
+    RequestAdversarialReview {
+        operating_cycle_id: OperatingCycleId,
+        project_id: ProjectId,
+        target_graph_revision_id: GraphRevisionId,
+    },
+    AssignAdversarialReviewer {
+        operating_cycle_id: OperatingCycleId,
+        adversarial_review_id: AdversarialReviewId,
+        reviewer_principal_id: PrincipalId,
+    },
+    SubmitReviewChallenge {
+        operating_cycle_id: OperatingCycleId,
+        adversarial_review_id: AdversarialReviewId,
+        target_graph_revision_id: GraphRevisionId,
+        author_principal_id: PrincipalId,
+        severity: ReviewChallengeSeverity,
+        failure_hypothesis: ReviewFailureHypothesis,
+    },
+    RespondToReviewChallenge {
+        operating_cycle_id: OperatingCycleId,
+        review_challenge_id: ReviewChallengeId,
+        response: ReviewResponseText,
+    },
+    DispositionReviewChallenge {
+        operating_cycle_id: OperatingCycleId,
+        review_challenge_id: ReviewChallengeId,
+        disposition: ReviewDispositionKind,
+    },
+    ResolveAdversarialReview {
+        operating_cycle_id: OperatingCycleId,
+        adversarial_review_id: AdversarialReviewId,
+        resolution: ReviewResolutionKind,
+    },
+    TriggerPostmortem {
+        operating_cycle_id: OperatingCycleId,
+        project_id: ProjectId,
+        causal_episode_id: Option<CausalEpisodeId>,
+    },
+    RecordPostmortemCausalClaim {
+        operating_cycle_id: OperatingCycleId,
+        postmortem_id: PostmortemId,
+        claim_kind: PostmortemCausalClaimKind,
+        claim: PostmortemCausalClaimText,
+    },
+    ProposePostmortemAction {
+        operating_cycle_id: OperatingCycleId,
+        postmortem_id: PostmortemId,
+        action_kind: PostmortemActionKind,
+        action: PostmortemActionProposalText,
+    },
+    ClosePostmortem {
+        operating_cycle_id: OperatingCycleId,
+        postmortem_id: PostmortemId,
     },
 }
 
@@ -589,6 +1006,29 @@ impl CommandBody {
             Self::RequestCancellation { .. } => CommandKind::RequestCancellation,
             Self::ReconcileCancellation { .. } => CommandKind::ReconcileCancellation,
             Self::CloseCostPostmortem { .. } => CommandKind::CloseCostPostmortem,
+            Self::CreateProject { .. } => CommandKind::CreateProject,
+            Self::CharterProject { .. } => CommandKind::CharterProject,
+            Self::TransitionProject { .. } => CommandKind::TransitionProject,
+            Self::CompleteProjectMilestone { .. } => CommandKind::CompleteProjectMilestone,
+            Self::ReopenProject { .. } => CommandKind::ReopenProject,
+            Self::CreateTicket { .. } => CommandKind::CreateTicket,
+            Self::TransitionTicket { .. } => CommandKind::TransitionTicket,
+            Self::AddGraphObjectRevision { .. } => CommandKind::AddGraphObjectRevision,
+            Self::CommitGraphRevision { .. } => CommandKind::CommitGraphRevision,
+            Self::AddGraphEdge { .. } => CommandKind::AddGraphEdge,
+            Self::CreateEpisode { .. } => CommandKind::CreateEpisode,
+            Self::TransitionEpisode { .. } => CommandKind::TransitionEpisode,
+            Self::ReopenEpisode { .. } => CommandKind::ReopenEpisode,
+            Self::RequestAdversarialReview { .. } => CommandKind::RequestAdversarialReview,
+            Self::AssignAdversarialReviewer { .. } => CommandKind::AssignAdversarialReviewer,
+            Self::SubmitReviewChallenge { .. } => CommandKind::SubmitReviewChallenge,
+            Self::RespondToReviewChallenge { .. } => CommandKind::RespondToReviewChallenge,
+            Self::DispositionReviewChallenge { .. } => CommandKind::DispositionReviewChallenge,
+            Self::ResolveAdversarialReview { .. } => CommandKind::ResolveAdversarialReview,
+            Self::TriggerPostmortem { .. } => CommandKind::TriggerPostmortem,
+            Self::RecordPostmortemCausalClaim { .. } => CommandKind::RecordPostmortemCausalClaim,
+            Self::ProposePostmortemAction { .. } => CommandKind::ProposePostmortemAction,
+            Self::ClosePostmortem { .. } => CommandKind::ClosePostmortem,
         }
     }
 
@@ -619,6 +1059,29 @@ impl CommandBody {
             Self::RequestCancellation { .. } => Capability::RequestCancellation,
             Self::ReconcileCancellation { .. } => Capability::ReconcileCancellation,
             Self::CloseCostPostmortem { .. } => Capability::CloseCostPostmortem,
+            Self::CreateProject { .. } => Capability::CreateProject,
+            Self::CharterProject { .. } => Capability::CharterProject,
+            Self::TransitionProject { .. } => Capability::TransitionProject,
+            Self::CompleteProjectMilestone { .. } => Capability::CompleteProjectMilestone,
+            Self::ReopenProject { .. } => Capability::ReopenProject,
+            Self::CreateTicket { .. } => Capability::CreateTicket,
+            Self::TransitionTicket { .. } => Capability::TransitionTicket,
+            Self::AddGraphObjectRevision { .. } => Capability::AddGraphObjectRevision,
+            Self::CommitGraphRevision { .. } => Capability::CommitGraphRevision,
+            Self::AddGraphEdge { .. } => Capability::AddGraphEdge,
+            Self::CreateEpisode { .. } => Capability::CreateEpisode,
+            Self::TransitionEpisode { .. } => Capability::TransitionEpisode,
+            Self::ReopenEpisode { .. } => Capability::ReopenEpisode,
+            Self::RequestAdversarialReview { .. } => Capability::RequestAdversarialReview,
+            Self::AssignAdversarialReviewer { .. } => Capability::AssignAdversarialReviewer,
+            Self::SubmitReviewChallenge { .. } => Capability::SubmitReviewChallenge,
+            Self::RespondToReviewChallenge { .. } => Capability::RespondToReviewChallenge,
+            Self::DispositionReviewChallenge { .. } => Capability::DispositionReviewChallenge,
+            Self::ResolveAdversarialReview { .. } => Capability::ResolveAdversarialReview,
+            Self::TriggerPostmortem { .. } => Capability::TriggerPostmortem,
+            Self::RecordPostmortemCausalClaim { .. } => Capability::RecordPostmortemCausalClaim,
+            Self::ProposePostmortemAction { .. } => Capability::ProposePostmortemAction,
+            Self::ClosePostmortem { .. } => Capability::ClosePostmortem,
         }
     }
 }
@@ -649,6 +1112,29 @@ pub enum CommandKind {
     ReconcileCancellation = 21,
     RecordOfficeSessionTerminal = 22,
     CloseCostPostmortem = 23,
+    CreateProject = 24,
+    CharterProject = 25,
+    TransitionProject = 26,
+    CompleteProjectMilestone = 27,
+    ReopenProject = 28,
+    CreateTicket = 29,
+    TransitionTicket = 30,
+    AddGraphObjectRevision = 31,
+    CommitGraphRevision = 32,
+    AddGraphEdge = 33,
+    CreateEpisode = 34,
+    TransitionEpisode = 35,
+    ReopenEpisode = 36,
+    RequestAdversarialReview = 37,
+    SubmitReviewChallenge = 38,
+    RespondToReviewChallenge = 39,
+    DispositionReviewChallenge = 40,
+    ResolveAdversarialReview = 41,
+    TriggerPostmortem = 42,
+    RecordPostmortemCausalClaim = 43,
+    ProposePostmortemAction = 44,
+    ClosePostmortem = 45,
+    AssignAdversarialReviewer = 46,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -698,6 +1184,14 @@ pub enum Rejection {
     BudgetPolicyViolation = 17,
     CostPostmortemNotOpen = 18,
     InvalidCostPostmortemResolution = 19,
+    ProjectCloseBlocked = 20,
+    TicketPrerequisiteIncomplete = 21,
+    GraphRevisionNotCommitted = 22,
+    IllegalGraphEdgeEndpoint = 23,
+    ReviewSelfDispositionDenied = 24,
+    ReviewDispositionIncomplete = 25,
+    PostmortemCloseBlocked = 26,
+    ReviewAssignmentNotIndependent = 27,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -762,7 +1256,7 @@ pub enum EventBody {
         reservation_id: BudgetReservationId,
         cycle_id: OperatingCycleId,
         cancellation_request_id: CancellationRequestId,
-        postmortem_id: PostmortemId,
+        postmortem_id: CostPostmortemId,
         reason: BudgetFreezeReason,
     },
     CancellationRequested {
@@ -776,11 +1270,84 @@ pub enum EventBody {
         cycle_id: OperatingCycleId,
     },
     CostPostmortemClosed {
-        postmortem_id: PostmortemId,
+        postmortem_id: CostPostmortemId,
         reservation_id: BudgetReservationId,
         cycle_id: OperatingCycleId,
         resolution: CostPostmortemResolution,
         charged: UsdMicros,
+    },
+    ProjectCreated {
+        project_id: ProjectId,
+    },
+    ProjectChartered {
+        project_id: ProjectId,
+    },
+    ProjectStateChanged {
+        project_id: ProjectId,
+        state: ProjectState,
+    },
+    ProjectMilestoneCompleted {
+        project_milestone_id: ProjectMilestoneId,
+    },
+    TicketCreated {
+        ticket_id: TicketId,
+        project_id: ProjectId,
+    },
+    TicketStateChanged {
+        ticket_id: TicketId,
+        state: TicketState,
+    },
+    GraphObjectRevisionAdded {
+        graph_object_id: GraphObjectId,
+        graph_revision_id: GraphRevisionId,
+    },
+    GraphRevisionCommitted {
+        graph_revision_id: GraphRevisionId,
+    },
+    GraphEdgeAdded {
+        graph_edge_id: GraphEdgeId,
+    },
+    EpisodeCreated {
+        causal_episode_id: CausalEpisodeId,
+        project_id: ProjectId,
+    },
+    EpisodeStateChanged {
+        causal_episode_id: CausalEpisodeId,
+        state: EpisodeState,
+    },
+    AdversarialReviewRequested {
+        adversarial_review_id: AdversarialReviewId,
+    },
+    AdversarialReviewerAssigned {
+        adversarial_review_id: AdversarialReviewId,
+        reviewer_principal_id: PrincipalId,
+    },
+    ReviewChallengeSubmitted {
+        review_challenge_id: ReviewChallengeId,
+        author_principal_id: PrincipalId,
+    },
+    ReviewChallengeResponded {
+        review_challenge_id: ReviewChallengeId,
+    },
+    ReviewChallengeDispositioned {
+        review_challenge_id: ReviewChallengeId,
+        disposition: ReviewDispositionKind,
+    },
+    AdversarialReviewResolved {
+        adversarial_review_id: AdversarialReviewId,
+        state: AdversarialReviewState,
+    },
+    PostmortemTriggered {
+        postmortem_id: PostmortemId,
+    },
+    PostmortemCausalClaimRecorded {
+        postmortem_causal_claim_id: PostmortemCausalClaimId,
+    },
+    PostmortemActionProposed {
+        postmortem_action_proposal_id: PostmortemActionProposalId,
+    },
+    PostmortemClosed {
+        postmortem_id: PostmortemId,
     },
 }
 
@@ -805,6 +1372,27 @@ pub enum EventKind {
     CancellationRequested = 16,
     CancellationReconciled = 17,
     CostPostmortemClosed = 18,
+    ProjectCreated = 19,
+    ProjectChartered = 20,
+    ProjectStateChanged = 21,
+    ProjectMilestoneCompleted = 22,
+    TicketCreated = 23,
+    TicketStateChanged = 24,
+    GraphObjectRevisionAdded = 25,
+    GraphRevisionCommitted = 26,
+    GraphEdgeAdded = 27,
+    EpisodeCreated = 28,
+    EpisodeStateChanged = 29,
+    AdversarialReviewRequested = 30,
+    ReviewChallengeSubmitted = 31,
+    ReviewChallengeResponded = 32,
+    ReviewChallengeDispositioned = 33,
+    AdversarialReviewResolved = 34,
+    PostmortemTriggered = 35,
+    PostmortemCausalClaimRecorded = 36,
+    PostmortemActionProposed = 37,
+    PostmortemClosed = 38,
+    AdversarialReviewerAssigned = 39,
 }
 
 impl EventBody {
@@ -832,6 +1420,27 @@ impl EventBody {
             Self::CancellationRequested { .. } => EventKind::CancellationRequested,
             Self::CancellationReconciled { .. } => EventKind::CancellationReconciled,
             Self::CostPostmortemClosed { .. } => EventKind::CostPostmortemClosed,
+            Self::ProjectCreated { .. } => EventKind::ProjectCreated,
+            Self::ProjectChartered { .. } => EventKind::ProjectChartered,
+            Self::ProjectStateChanged { .. } => EventKind::ProjectStateChanged,
+            Self::ProjectMilestoneCompleted { .. } => EventKind::ProjectMilestoneCompleted,
+            Self::TicketCreated { .. } => EventKind::TicketCreated,
+            Self::TicketStateChanged { .. } => EventKind::TicketStateChanged,
+            Self::GraphObjectRevisionAdded { .. } => EventKind::GraphObjectRevisionAdded,
+            Self::GraphRevisionCommitted { .. } => EventKind::GraphRevisionCommitted,
+            Self::GraphEdgeAdded { .. } => EventKind::GraphEdgeAdded,
+            Self::EpisodeCreated { .. } => EventKind::EpisodeCreated,
+            Self::EpisodeStateChanged { .. } => EventKind::EpisodeStateChanged,
+            Self::AdversarialReviewRequested { .. } => EventKind::AdversarialReviewRequested,
+            Self::AdversarialReviewerAssigned { .. } => EventKind::AdversarialReviewerAssigned,
+            Self::ReviewChallengeSubmitted { .. } => EventKind::ReviewChallengeSubmitted,
+            Self::ReviewChallengeResponded { .. } => EventKind::ReviewChallengeResponded,
+            Self::ReviewChallengeDispositioned { .. } => EventKind::ReviewChallengeDispositioned,
+            Self::AdversarialReviewResolved { .. } => EventKind::AdversarialReviewResolved,
+            Self::PostmortemTriggered { .. } => EventKind::PostmortemTriggered,
+            Self::PostmortemCausalClaimRecorded { .. } => EventKind::PostmortemCausalClaimRecorded,
+            Self::PostmortemActionProposed { .. } => EventKind::PostmortemActionProposed,
+            Self::PostmortemClosed { .. } => EventKind::PostmortemClosed,
         }
     }
 }
@@ -853,6 +1462,8 @@ pub enum DomainValueError {
     InvalidSocietyName,
     #[error("principal display name must be nonblank, shorter than 161 bytes, and contain no NUL")]
     InvalidPrincipalDisplayName,
+    #[error("{type_name} must be nonblank, shorter than 1025 bytes, and contain no NUL")]
+    InvalidCoordinationText { type_name: &'static str },
     #[error("micro-US-dollars cannot be negative: {0}")]
     NegativeUsdMicros(i64),
     #[error("admission generation cannot be negative: {0}")]

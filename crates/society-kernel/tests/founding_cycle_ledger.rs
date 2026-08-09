@@ -8,14 +8,20 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use rusqlite::Connection;
 use society_kernel::{
-    AdmissionGeneration, BudgetFreezeReason, BudgetReservationId, CancellationRequestId,
-    Capability, CommandBody, CommandDisposition, CommandId, CommandReceipt, CommandRequest,
-    CostObservation, CostPostmortemResolution, CostUnavailableReason, CostUnknownReason, EventBody,
-    ExpectedGeneration, GrandArchitectOfficeSessionId, KernelStore, OfficeSessionTerminalState,
+    AdmissionGeneration, AdversarialReviewId, BudgetFreezeReason, BudgetReservationId,
+    CancellationRequestId, Capability, CausalEpisodeId, CommandBody, CommandDisposition, CommandId,
+    CommandReceipt, CommandRequest, CostObservation, CostPostmortemResolution,
+    CostUnavailableReason, CostUnknownReason, EpisodeState, EventBody, ExpectedGeneration,
+    GrandArchitectOfficeSessionId, GraphEdgeKind, GraphRevisionBody, GraphRevisionId,
+    HypothesisRevisionText, KernelStore, ObservationRevisionText, OfficeSessionTerminalState,
     OfficeTurnId, OfficeTurnPurpose, OperatingCycleId, OperatingCycleState,
-    OperatingCycleTreatment, PrincipalDisplayName, PrincipalId, Rejection, Sha256Digest,
-    SocietyName, UsdMicros,
+    OperatingCycleTreatment, PostmortemActionKind, PostmortemActionProposalText,
+    PostmortemCausalClaimKind, PostmortemCausalClaimText, PostmortemId, PrincipalDisplayName,
+    PrincipalId, ProjectId, ProjectMilestoneName, ProjectName, ProjectObjectiveText, ProjectState,
+    ProjectStopConditionText, Rejection, ReviewChallengeSeverity, ReviewFailureHypothesis,
+    Sha256Digest, SocietyName, StoreError, UsdMicros,
 };
 
 fn submit(
@@ -255,6 +261,523 @@ fn founding_cycle_is_idempotent_fenced_and_replayable() {
     )));
     assert!(store.validate_replayed_materialized_state().is_ok());
     assert_eq!(store.command_count().unwrap(), 16);
+}
+
+#[test]
+fn project_charter_activation_and_close_blocker_are_typed_and_replayable() {
+    let path = std::env::temp_dir().join(format!(
+        "xsh-typed-graph-revisions-{}-{}.sqlite",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let mut store = KernelStore::open(&path).unwrap();
+    let (grand_architect, cycle_id) = found_cycle(&mut store);
+    let generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
+    accepted(
+        &mut store,
+        "coord-start-session",
+        grand_architect,
+        Capability::StartGrandArchitectOfficeSession,
+        generation,
+        CommandBody::StartGrandArchitectOfficeSession { cycle_id },
+    );
+    accepted(
+        &mut store,
+        "coord-create-project",
+        grand_architect,
+        Capability::CreateProject,
+        generation,
+        CommandBody::CreateProject {
+            operating_cycle_id: cycle_id,
+            project_name: ProjectName::parse("coordination spine").unwrap(),
+        },
+    );
+    let project_id = ProjectId::new(1).unwrap();
+    rejected(
+        &mut store,
+        "coord-charter-proposed-rejected",
+        grand_architect,
+        Capability::CharterProject,
+        generation,
+        CommandBody::CharterProject {
+            operating_cycle_id: cycle_id,
+            project_id,
+            objective: ProjectObjectiveText::parse("Exercise durable coordination.").unwrap(),
+            initial_milestone: ProjectMilestoneName::parse("Charter accepted").unwrap(),
+            stop_condition: ProjectStopConditionText::parse("No reliable path remains.").unwrap(),
+        },
+        Rejection::InvalidLifecycleTransition,
+    );
+    accepted(
+        &mut store,
+        "coord-challenge-project",
+        grand_architect,
+        Capability::TransitionProject,
+        generation,
+        CommandBody::TransitionProject {
+            operating_cycle_id: cycle_id,
+            project_id,
+            target: ProjectState::Challenged,
+        },
+    );
+    accepted(
+        &mut store,
+        "coord-charter-project",
+        grand_architect,
+        Capability::CharterProject,
+        generation,
+        CommandBody::CharterProject {
+            operating_cycle_id: cycle_id,
+            project_id,
+            objective: ProjectObjectiveText::parse("Exercise durable coordination.").unwrap(),
+            initial_milestone: ProjectMilestoneName::parse("Charter accepted").unwrap(),
+            stop_condition: ProjectStopConditionText::parse("No reliable path remains.").unwrap(),
+        },
+    );
+    accepted(
+        &mut store,
+        "coord-activate-project",
+        grand_architect,
+        Capability::TransitionProject,
+        generation,
+        CommandBody::TransitionProject {
+            operating_cycle_id: cycle_id,
+            project_id,
+            target: ProjectState::Active,
+        },
+    );
+    accepted(
+        &mut store,
+        "coord-create-episode",
+        grand_architect,
+        Capability::CreateEpisode,
+        generation,
+        CommandBody::CreateEpisode {
+            operating_cycle_id: cycle_id,
+            project_id,
+        },
+    );
+    let episode_id = CausalEpisodeId::new(1).unwrap();
+    accepted(
+        &mut store,
+        "coord-admit-episode",
+        grand_architect,
+        Capability::TransitionEpisode,
+        generation,
+        CommandBody::TransitionEpisode {
+            operating_cycle_id: cycle_id,
+            causal_episode_id: episode_id,
+            target: EpisodeState::Admitted,
+        },
+    );
+    accepted(
+        &mut store,
+        "coord-add-observation",
+        grand_architect,
+        Capability::AddGraphObjectRevision,
+        generation,
+        CommandBody::AddGraphObjectRevision {
+            operating_cycle_id: cycle_id,
+            project_id,
+            causal_episode_id: Some(episode_id),
+            graph_object_id: None,
+            body: GraphRevisionBody::Observation {
+                observation: ObservationRevisionText::parse("Observed a reproducible constraint.")
+                    .unwrap(),
+            },
+        },
+    );
+    accepted(
+        &mut store,
+        "coord-add-hypothesis",
+        grand_architect,
+        Capability::AddGraphObjectRevision,
+        generation,
+        CommandBody::AddGraphObjectRevision {
+            operating_cycle_id: cycle_id,
+            project_id,
+            causal_episode_id: None,
+            graph_object_id: None,
+            body: GraphRevisionBody::Hypothesis {
+                hypothesis: HypothesisRevisionText::parse("A bounded change may resolve it.")
+                    .unwrap(),
+            },
+        },
+    );
+    let observation = GraphRevisionId::new(1).unwrap();
+    let hypothesis = GraphRevisionId::new(2).unwrap();
+    for (id, revision) in [
+        ("coord-commit-observation", observation),
+        ("coord-commit-hypothesis", hypothesis),
+    ] {
+        accepted(
+            &mut store,
+            id,
+            grand_architect,
+            Capability::CommitGraphRevision,
+            generation,
+            CommandBody::CommitGraphRevision {
+                operating_cycle_id: cycle_id,
+                graph_revision_id: revision,
+            },
+        );
+    }
+    accepted(
+        &mut store,
+        "coord-support-edge",
+        grand_architect,
+        Capability::AddGraphEdge,
+        generation,
+        CommandBody::AddGraphEdge {
+            operating_cycle_id: cycle_id,
+            project_id,
+            from_graph_revision_id: observation,
+            to_graph_revision_id: hypothesis,
+            edge_kind: GraphEdgeKind::Supports,
+        },
+    );
+    accepted(
+        &mut store,
+        "coord-request-review",
+        grand_architect,
+        Capability::RequestAdversarialReview,
+        generation,
+        CommandBody::RequestAdversarialReview {
+            operating_cycle_id: cycle_id,
+            project_id,
+            target_graph_revision_id: hypothesis,
+        },
+    );
+    accepted(
+        &mut store,
+        "coord-trigger-postmortem",
+        grand_architect,
+        Capability::TriggerPostmortem,
+        generation,
+        CommandBody::TriggerPostmortem {
+            operating_cycle_id: cycle_id,
+            project_id,
+            causal_episode_id: None,
+        },
+    );
+    let postmortem_id = PostmortemId::new(1).unwrap();
+    accepted(
+        &mut store,
+        "coord-record-causal-claim",
+        grand_architect,
+        Capability::RecordPostmortemCausalClaim,
+        generation,
+        CommandBody::RecordPostmortemCausalClaim {
+            operating_cycle_id: cycle_id,
+            postmortem_id,
+            claim_kind: PostmortemCausalClaimKind::ContributingCondition,
+            claim: PostmortemCausalClaimText::parse("The review exposed a missing discriminant.")
+                .unwrap(),
+        },
+    );
+    accepted(
+        &mut store,
+        "coord-propose-postmortem-action",
+        grand_architect,
+        Capability::ProposePostmortemAction,
+        generation,
+        CommandBody::ProposePostmortemAction {
+            operating_cycle_id: cycle_id,
+            postmortem_id,
+            action_kind: PostmortemActionKind::CreateFollowUpTicket,
+            action: PostmortemActionProposalText::parse(
+                "Create a separately admitted follow-up Ticket.",
+            )
+            .unwrap(),
+        },
+    );
+    accepted(
+        &mut store,
+        "coord-close-postmortem",
+        grand_architect,
+        Capability::ClosePostmortem,
+        generation,
+        CommandBody::ClosePostmortem {
+            operating_cycle_id: cycle_id,
+            postmortem_id,
+        },
+    );
+    let review_id = AdversarialReviewId::new(1).unwrap();
+    rejected(
+        &mut store,
+        "coord-unassigned-reviewer-cannot-submit",
+        PrincipalId::KERNEL,
+        Capability::SubmitReviewChallenge,
+        generation,
+        CommandBody::SubmitReviewChallenge {
+            operating_cycle_id: cycle_id,
+            adversarial_review_id: review_id,
+            target_graph_revision_id: hypothesis,
+            author_principal_id: grand_architect,
+            severity: ReviewChallengeSeverity::High,
+            failure_hypothesis: ReviewFailureHypothesis::parse(
+                "The causal direction may be inverted.",
+            )
+            .unwrap(),
+        },
+        Rejection::CapabilityNotGranted,
+    );
+    rejected(
+        &mut store,
+        "coord-reject-self-assigned-adversarial-reviewer",
+        PrincipalId::KERNEL,
+        Capability::AssignAdversarialReviewer,
+        generation,
+        CommandBody::AssignAdversarialReviewer {
+            operating_cycle_id: cycle_id,
+            adversarial_review_id: review_id,
+            reviewer_principal_id: grand_architect,
+        },
+        Rejection::ReviewAssignmentNotIndependent,
+    );
+    accepted(
+        &mut store,
+        "coord-observe-project",
+        grand_architect,
+        Capability::TransitionProject,
+        generation,
+        CommandBody::TransitionProject {
+            operating_cycle_id: cycle_id,
+            project_id,
+            target: ProjectState::Observing,
+        },
+    );
+    rejected(
+        &mut store,
+        "coord-close-with-milestone",
+        grand_architect,
+        Capability::TransitionProject,
+        generation,
+        CommandBody::TransitionProject {
+            operating_cycle_id: cycle_id,
+            project_id,
+            target: ProjectState::Closed,
+        },
+        Rejection::ProjectCloseBlocked,
+    );
+    accepted(
+        &mut store,
+        "coord-complete-milestone",
+        grand_architect,
+        Capability::CompleteProjectMilestone,
+        generation,
+        CommandBody::CompleteProjectMilestone {
+            operating_cycle_id: cycle_id,
+            project_milestone_id: society_kernel::ProjectMilestoneId::new(1).unwrap(),
+        },
+    );
+    rejected(
+        &mut store,
+        "coord-close-project-with-open-review",
+        grand_architect,
+        Capability::TransitionProject,
+        generation,
+        CommandBody::TransitionProject {
+            operating_cycle_id: cycle_id,
+            project_id,
+            target: ProjectState::Closed,
+        },
+        Rejection::ProjectCloseBlocked,
+    );
+    assert!(store.validate_replayed_materialized_state().is_ok());
+    drop(store);
+
+    // A hostile direct writer can remove a schema trigger; fresh replay still
+    // reconstructs the typed command body and catches a changed semantic body.
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch(
+            "DROP TRIGGER observation_revision_cannot_update;
+             UPDATE observation_revisions
+             SET observation_text = 'tampered observation body'
+             WHERE graph_revision_id = 1;",
+        )
+        .unwrap();
+    drop(connection);
+    assert!(
+        KernelStore::open(&path)
+            .unwrap()
+            .validate_replayed_materialized_state()
+            .is_err()
+    );
+
+    // The nested typed command body participates in its parent command's
+    // request fingerprint, so an in-place semantic edit is replay corruption.
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch(
+            "UPDATE observation_revisions
+             SET observation_text = 'Observed a reproducible constraint.'
+             WHERE graph_revision_id = 1;
+             UPDATE command_add_observation_revision
+             SET observation_text = 'tampered command body'
+             WHERE command_row_id = (SELECT command_row_id FROM commands WHERE command_id = 'coord-add-observation');",
+        )
+        .unwrap();
+    drop(connection);
+    assert!(KernelStore::open(&path).unwrap().replay_ledger().is_err());
+
+    // Cardinality is independently checked: even after bypassing the schema
+    // matching trigger, a second kind body makes ledger replay corrupt.
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch(
+            "UPDATE command_add_observation_revision
+             SET observation_text = 'Observed a reproducible constraint.'
+             WHERE command_row_id = (SELECT command_row_id FROM commands WHERE command_id = 'coord-add-observation');
+             DROP TRIGGER hypothesis_revision_matches_object_kind;
+             INSERT INTO hypothesis_revisions(graph_revision_id, hypothesis_text)
+             VALUES (1, 'forged second body');",
+        )
+        .unwrap();
+    drop(connection);
+    assert!(KernelStore::open(&path).unwrap().replay_ledger().is_err());
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn empty_schema_one_upgrades_as_an_atomic_version_two_step() {
+    let path = std::env::temp_dir().join(format!(
+        "xsh-society-m2-upgrade-{}-{}.sqlite",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch(include_str!("../../../migrations/0001_kernel.sql"))
+        .unwrap();
+    assert_eq!(
+        connection
+            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
+    drop(connection);
+    drop(KernelStore::open(&path).unwrap());
+    let upgraded = Connection::open(&path).unwrap();
+    assert_eq!(
+        upgraded
+            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        upgraded
+            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap(),
+        0
+    );
+    let objects_table: String = upgraded
+        .query_row(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'objects'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(objects_table, "objects");
+    drop(upgraded);
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn nonempty_schema_one_ledger_is_refused_without_mutation() {
+    let path = std::env::temp_dir().join(format!(
+        "xsh-society-m1-ledger-refusal-{}-{}.sqlite",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch(include_str!("../../../migrations/0001_kernel.sql"))
+        .unwrap();
+    // This is a genuine M1 appointment and a subsequent accepted Grand
+    // Architect cycle-proposal receipt. M2 does not rewrite its fingerprints
+    // or claim replay parity for the old ledger representation.
+    connection
+        .execute_batch(
+            "
+            INSERT INTO societies(society_id, name, lifecycle_state) VALUES (1, 'legacy society', 1);
+            INSERT INTO universe_seeds(universe_seed_id, society_id, revision, rendering_digest, active, installed_by_command_id) VALUES (1, 1, 1, zeroblob(32), 1, 1);
+            INSERT INTO office_contracts(office_id, office_kind, installed_by_command_id) VALUES (1, 1, 1);
+            INSERT INTO principals(principal_id, principal_kind, display_name, active) VALUES (3, 3, 'legacy grand architect', 1);
+            INSERT INTO office_occupancies(office_occupancy_id, office_id, principal_id, active, appointed_by_command_id) VALUES (1, 1, 3, 1, 1);
+            INSERT INTO society_bootstraps(society_id, universe_seed_id, office_id, office_occupancy_id, hard_ceiling_micros, bootstrapped_by_command_id) VALUES (1, 1, 1, 1, 1030000, 1);
+            INSERT INTO capability_grants(capability_grant_id, principal_id, capability_kind, office_occupancy_id, grant_state, granted_by_command_id, consumed_by_command_id) VALUES (100, 3, 7, 1, 1, 1, NULL);
+            INSERT INTO operating_cycles(operating_cycle_id, society_id, universe_seed_id, office_occupancy_id, treatment, lifecycle_state, admission_generation, proposed_by_command_id, last_transition_command_id) VALUES (1, 1, 1, 1, 1, 1, 0, 2, 2);
+            INSERT INTO commands(command_row_id, command_id, principal_id, capability_grant_id, capability_kind, expected_generation, command_kind, request_fingerprint, command_status, rejection_code, accepted_event_id) VALUES
+                (1, 'm1-appoint-grand-architect', 1, 4, 4, NULL, 4, zeroblob(32), 1, NULL, 1),
+                (2, 'm1-grand-architect-propose-cycle', 3, 100, 7, NULL, 7, zeroblob(32), 1, NULL, 2);
+            INSERT INTO events(event_id, command_row_id, event_kind, event_sequence, event_fingerprint) VALUES
+                (1, 1, 4, 1, zeroblob(32)),
+                (2, 2, 7, 2, zeroblob(32));
+            INSERT INTO command_appoint_initial_grand_architect(command_row_id, actor_display_name) VALUES (1, 'legacy grand architect');
+            INSERT INTO command_propose_operating_cycle(command_row_id, treatment) VALUES (2, 1);
+            INSERT INTO event_grand_architect_appointed(event_id, office_occupancy_id, principal_id) VALUES (1, 1, 3);
+            INSERT INTO event_operating_cycle_proposed(event_id, operating_cycle_id, admission_generation, treatment) VALUES (2, 1, 0, 1);
+            ",
+        )
+        .unwrap();
+    drop(connection);
+    let before = fs::read(&path).unwrap();
+
+    assert!(matches!(
+        KernelStore::open(&path),
+        Err(StoreError::NonemptySchemaV1LedgerUpgradeRefused {
+            command_count: 2,
+            event_count: 2,
+        })
+    ));
+    assert_eq!(fs::read(&path).unwrap(), before);
+
+    let reopened = Connection::open(&path).unwrap();
+    assert_eq!(
+        reopened
+            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        reopened
+            .query_row("SELECT COUNT(*) FROM commands", [], |row| row
+                .get::<_, i64>(0))
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        reopened
+            .query_row("SELECT COUNT(*) FROM events", [], |row| row
+                .get::<_, i64>(0))
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        reopened
+            .query_row(
+                "SELECT COUNT(*) FROM command_appoint_initial_grand_architect a JOIN event_grand_architect_appointed e ON e.event_id = 1 JOIN command_propose_operating_cycle p ON p.command_row_id = 2 WHERE a.command_row_id = 1 AND e.principal_id = 3 AND p.treatment = 1",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+        1
+    );
+    drop(reopened);
+    fs::remove_file(path).unwrap();
 }
 
 #[test]

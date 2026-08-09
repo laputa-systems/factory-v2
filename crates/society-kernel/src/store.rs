@@ -7,21 +7,29 @@ use rusqlite::{
 use thiserror::Error;
 
 use crate::{
-    AdmissionGeneration, BudgetEnvelopeId, BudgetFreezeReason, BudgetReservationId,
-    BudgetReservationState, CancellationMode, CancellationRequestId, CancellationState, Capability,
-    CommandBody, CommandDisposition, CommandId, CommandKind, CommandReceipt, CommandRequest,
-    CostObservation, CostPostmortemCause, CostPostmortemResolution, CostUnavailableReason,
-    CostUnknownReason, EventBody, EventId, EventKind, ExpectedGeneration,
-    GrandArchitectOfficeSessionId, LedgerEvent, OfficeId, OfficeKind, OfficeOccupancyId,
-    OfficeSessionState, OfficeSessionTerminalState, OfficeTurnId, OfficeTurnPurpose,
-    OfficeTurnState, OperatingCycleId, OperatingCycleState, OperatingCycleTreatment, PostmortemId,
-    PostmortemState, PrincipalId, PrincipalKind, Rejection, Sha256Digest, SocietyId, SocietyName,
-    UniverseSeedId, UsdMicros,
+    AdmissionGeneration, AdversarialReviewId, AdversarialReviewState, BudgetEnvelopeId,
+    BudgetFreezeReason, BudgetReservationId, BudgetReservationState, CancellationMode,
+    CancellationRequestId, CancellationState, Capability, CausalEpisodeId, CommandBody,
+    CommandDisposition, CommandId, CommandKind, CommandReceipt, CommandRequest, CostObservation,
+    CostPostmortemCause, CostPostmortemId, CostPostmortemResolution, CostPostmortemState,
+    CostUnavailableReason, CostUnknownReason, EpisodeState, EventBody, EventId, EventKind,
+    ExpectedGeneration, GrandArchitectOfficeSessionId, GraphEdgeId, GraphEdgeKind, GraphObjectId,
+    GraphObjectKind, GraphRevisionBody, GraphRevisionId, GraphRevisionState,
+    HypothesisRevisionText, LedgerEvent, ObservationRevisionText, OfficeId, OfficeKind,
+    OfficeOccupancyId, OfficeSessionState, OfficeSessionTerminalState, OfficeTurnId,
+    OfficeTurnPurpose, OfficeTurnState, OperatingCycleId, OperatingCycleState,
+    OperatingCycleTreatment, PostmortemActionKind, PostmortemActionProposalId,
+    PostmortemCausalClaimId, PostmortemCausalClaimKind, PostmortemId, PostmortemState, PrincipalId,
+    PrincipalKind, ProjectId, ProjectMilestoneId, ProjectMilestoneState, ProjectState, Rejection,
+    ReviewChallengeId, ReviewChallengeResponseState, ReviewChallengeSeverity,
+    ReviewDispositionKind, ReviewResolutionKind, Sha256Digest, SocietyId, SocietyName, TicketId,
+    TicketState, UniverseSeedId, UsdMicros,
 };
 
 const MIGRATION_1: &str = include_str!("../../../migrations/0001_kernel.sql");
+const MIGRATION_2: &str = include_str!("../../../migrations/0002_coordination_graph.sql");
 
-const COMMAND_BODY_TABLES: [&str; 23] = [
+const COMMAND_BODY_TABLES: [&str; 46] = [
     "command_create_society_identity",
     "command_install_grand_architect_office",
     "command_install_founding_universe_seed",
@@ -45,9 +53,32 @@ const COMMAND_BODY_TABLES: [&str; 23] = [
     "command_reconcile_cancellation",
     "command_record_office_session_terminal",
     "command_close_cost_postmortem",
+    "command_create_project",
+    "command_charter_project",
+    "command_transition_project",
+    "command_complete_project_milestone",
+    "command_reopen_project",
+    "command_create_ticket",
+    "command_transition_ticket",
+    "command_add_graph_object_revision",
+    "command_commit_graph_revision",
+    "command_add_graph_edge",
+    "command_create_episode",
+    "command_transition_episode",
+    "command_reopen_episode",
+    "command_request_adversarial_review",
+    "command_submit_review_challenge",
+    "command_respond_to_review_challenge",
+    "command_disposition_review_challenge",
+    "command_resolve_adversarial_review",
+    "command_trigger_postmortem",
+    "command_record_postmortem_causal_claim",
+    "command_propose_postmortem_action",
+    "command_close_postmortem",
+    "command_assign_adversarial_reviewer",
 ];
 
-const EVENT_BODY_TABLES: [&str; 18] = [
+const EVENT_BODY_TABLES: [&str; 39] = [
     "event_society_identity_created",
     "event_grand_architect_office_installed",
     "event_founding_universe_seed_installed",
@@ -66,7 +97,30 @@ const EVENT_BODY_TABLES: [&str; 18] = [
     "event_cancellation_requested",
     "event_cancellation_reconciled",
     "event_cost_postmortem_closed",
+    "event_project_created",
+    "event_project_chartered",
+    "event_project_state_changed",
+    "event_project_milestone_completed",
+    "event_ticket_created",
+    "event_ticket_state_changed",
+    "event_graph_object_revision_added",
+    "event_graph_revision_committed",
+    "event_graph_edge_added",
+    "event_episode_created",
+    "event_episode_state_changed",
+    "event_adversarial_review_requested",
+    "event_review_challenge_submitted",
+    "event_review_challenge_responded",
+    "event_review_challenge_dispositioned",
+    "event_adversarial_review_resolved",
+    "event_postmortem_triggered",
+    "event_postmortem_causal_claim_recorded",
+    "event_postmortem_action_proposed",
+    "event_postmortem_closed",
+    "event_adversarial_reviewer_assigned",
 ];
+
+const GRAPH_REVISION_BODY_TABLES: [&str; 2] = ["observation_revisions", "hypothesis_revisions"];
 
 /// The SQLite implementation of trusted physics. `societyd` will be its only
 /// production owner; this crate deliberately accepts an already-opened local
@@ -82,6 +136,13 @@ pub enum StoreError {
     Database(#[from] rusqlite::Error),
     #[error("database has unsupported schema version {0}")]
     UnsupportedSchemaVersion(i64),
+    #[error(
+        "refusing schema-v1 upgrade with a nonempty ledger ({command_count} commands, {event_count} events)"
+    )]
+    NonemptySchemaV1LedgerUpgradeRefused {
+        command_count: i64,
+        event_count: i64,
+    },
     #[error("command id was already used with a different typed request")]
     IdempotencyConflict,
     #[error("ledger corruption: {0}")]
@@ -93,7 +154,7 @@ pub enum StoreError {
 #[derive(Clone, Copy)]
 struct CycleRow {
     society_id: SocietyId,
-    _seed_id: UniverseSeedId,
+    seed_id: UniverseSeedId,
     occupancy_id: OfficeOccupancyId,
     _treatment: OperatingCycleTreatment,
     state: OperatingCycleState,
@@ -122,9 +183,38 @@ impl KernelStore {
         let schema_version: i64 =
             connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
         match schema_version {
-            0 => connection.execute_batch(MIGRATION_1)?,
-            1 => {}
+            0 => {
+                // A fresh database crosses two ordered commit boundaries, not
+                // one fictional atomic 0 -> 2 boundary. Each migration either
+                // commits its own version or rolls back so reopening can retry
+                // that exact version step.
+                apply_migration_1(&connection)?;
+                apply_migration_2(&connection)?;
+            }
+            1 => {
+                let (command_count, event_count) = schema_v1_ledger_counts(&connection)?;
+                if command_count != 0 || event_count != 0 {
+                    // M2 changes the command/event representation. There is
+                    // no trustworthy fingerprint rewrite for an M1 ledger, so
+                    // preserve it exactly rather than implying replay parity.
+                    return Err(StoreError::NonemptySchemaV1LedgerUpgradeRefused {
+                        command_count,
+                        event_count,
+                    });
+                }
+                apply_migration_2(&connection)?;
+            }
+            2 => {}
             other => return Err(StoreError::UnsupportedSchemaVersion(other)),
+        }
+        let foreign_key_violations: i64 =
+            connection.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get(0)
+            })?;
+        if foreign_key_violations != 0 {
+            return Err(StoreError::LedgerCorruption(
+                "migration left foreign-key violations",
+            ));
         }
         Ok(Self { connection })
     }
@@ -269,6 +359,7 @@ impl KernelStore {
     /// performs the separate fresh-state reconstruction and comparison.
     pub fn replay_ledger(&self) -> Result<Vec<LedgerEvent>, StoreError> {
         verify_command_bodies(&self.connection)?;
+        verify_graph_revision_bodies(&self.connection)?;
         let mut statement = self.connection.prepare(
             "SELECT e.event_id, c.command_id, e.event_kind, e.event_sequence
              FROM events e
@@ -385,6 +476,36 @@ impl KernelStore {
     }
 }
 
+fn schema_v1_ledger_counts(connection: &Connection) -> Result<(i64, i64), StoreError> {
+    Ok((
+        connection.query_row("SELECT COUNT(*) FROM commands", [], |row| row.get(0))?,
+        connection.query_row("SELECT COUNT(*) FROM events", [], |row| row.get(0))?,
+    ))
+}
+
+fn apply_migration_1(connection: &Connection) -> Result<(), StoreError> {
+    connection.execute_batch("BEGIN IMMEDIATE")?;
+    if let Err(error) = connection.execute_batch(MIGRATION_1) {
+        let _ = connection.execute_batch("ROLLBACK");
+        return Err(error.into());
+    }
+    connection.execute_batch("COMMIT")?;
+    Ok(())
+}
+
+/// Migration 2 owns its explicit SQLite transaction because it temporarily
+/// disables foreign-key rewriting while rebuilding common ledger tables. On a
+/// failure, reset both the transaction and connection-local FK mode; a reopen
+/// can then retry version 2 from a complete version-1 database.
+fn apply_migration_2(connection: &Connection) -> Result<(), StoreError> {
+    if let Err(error) = connection.execute_batch(MIGRATION_2) {
+        let _ = connection.execute_batch("ROLLBACK");
+        let _ = connection.pragma_update(None, "foreign_keys", "ON");
+        return Err(error.into());
+    }
+    Ok(())
+}
+
 fn apply_command(
     transaction: &Transaction<'_>,
     command_row_id: i64,
@@ -407,6 +528,29 @@ fn apply_command(
             | CommandBody::ReserveBudget { .. }
             | CommandBody::RequestCancellation { .. }
             | CommandBody::CloseCostPostmortem { .. }
+            | CommandBody::CreateProject { .. }
+            | CommandBody::CharterProject { .. }
+            | CommandBody::TransitionProject { .. }
+            | CommandBody::CompleteProjectMilestone { .. }
+            | CommandBody::ReopenProject { .. }
+            | CommandBody::CreateTicket { .. }
+            | CommandBody::TransitionTicket { .. }
+            | CommandBody::AddGraphObjectRevision { .. }
+            | CommandBody::CommitGraphRevision { .. }
+            | CommandBody::AddGraphEdge { .. }
+            | CommandBody::CreateEpisode { .. }
+            | CommandBody::TransitionEpisode { .. }
+            | CommandBody::ReopenEpisode { .. }
+            | CommandBody::RequestAdversarialReview { .. }
+            | CommandBody::AssignAdversarialReviewer { .. }
+            | CommandBody::SubmitReviewChallenge { .. }
+            | CommandBody::RespondToReviewChallenge { .. }
+            | CommandBody::DispositionReviewChallenge { .. }
+            | CommandBody::ResolveAdversarialReview { .. }
+            | CommandBody::TriggerPostmortem { .. }
+            | CommandBody::RecordPostmortemCausalClaim { .. }
+            | CommandBody::ProposePostmortemAction { .. }
+            | CommandBody::ClosePostmortem { .. }
     ) != matches!(request.expected_generation, ExpectedGeneration::Exact(_))
     {
         return Ok(Err(Rejection::InvalidExpectedGeneration));
@@ -567,6 +711,295 @@ fn apply_command(
             request.expected_generation,
             *postmortem_id,
             *resolution,
+        ),
+        CommandBody::CreateProject {
+            operating_cycle_id,
+            project_name,
+        } => create_project(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *operating_cycle_id,
+            project_name.as_str(),
+        ),
+        CommandBody::CharterProject {
+            operating_cycle_id,
+            project_id,
+            objective,
+            initial_milestone,
+            stop_condition,
+        } => charter_project(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *operating_cycle_id,
+            *project_id,
+            objective.as_str(),
+            initial_milestone.as_str(),
+            stop_condition.as_str(),
+        ),
+        CommandBody::TransitionProject {
+            operating_cycle_id,
+            project_id,
+            target,
+        } => transition_project(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *operating_cycle_id,
+            *project_id,
+            *target,
+        ),
+        CommandBody::CompleteProjectMilestone {
+            operating_cycle_id,
+            project_milestone_id,
+        } => complete_project_milestone(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *operating_cycle_id,
+            *project_milestone_id,
+        ),
+        CommandBody::ReopenProject {
+            operating_cycle_id,
+            project_id,
+        } => reopen_project(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *operating_cycle_id,
+            *project_id,
+        ),
+        CommandBody::CreateTicket {
+            operating_cycle_id,
+            project_id,
+            ticket_title,
+            acceptance_condition,
+            prerequisite_ticket_id,
+        } => create_ticket(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *operating_cycle_id,
+            *project_id,
+            ticket_title.as_str(),
+            acceptance_condition.as_str(),
+            *prerequisite_ticket_id,
+        ),
+        CommandBody::TransitionTicket {
+            operating_cycle_id,
+            ticket_id,
+            target,
+        } => transition_ticket(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *operating_cycle_id,
+            *ticket_id,
+            *target,
+        ),
+        CommandBody::AddGraphObjectRevision {
+            operating_cycle_id,
+            project_id,
+            causal_episode_id,
+            graph_object_id,
+            body,
+        } => add_graph_object_revision(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *operating_cycle_id,
+            *project_id,
+            *causal_episode_id,
+            *graph_object_id,
+            body,
+        ),
+        CommandBody::CommitGraphRevision {
+            operating_cycle_id,
+            graph_revision_id,
+        } => commit_graph_revision(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *operating_cycle_id,
+            *graph_revision_id,
+        ),
+        CommandBody::AddGraphEdge {
+            operating_cycle_id,
+            project_id,
+            from_graph_revision_id,
+            to_graph_revision_id,
+            edge_kind,
+        } => add_graph_edge(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *operating_cycle_id,
+            *project_id,
+            *from_graph_revision_id,
+            *to_graph_revision_id,
+            *edge_kind,
+        ),
+        CommandBody::CreateEpisode {
+            operating_cycle_id,
+            project_id,
+        } => create_episode(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *operating_cycle_id,
+            *project_id,
+        ),
+        CommandBody::TransitionEpisode {
+            operating_cycle_id,
+            causal_episode_id,
+            target,
+        } => transition_episode(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *operating_cycle_id,
+            *causal_episode_id,
+            *target,
+        ),
+        CommandBody::ReopenEpisode {
+            operating_cycle_id,
+            causal_episode_id,
+        } => reopen_episode(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *operating_cycle_id,
+            *causal_episode_id,
+        ),
+        CommandBody::RequestAdversarialReview {
+            operating_cycle_id,
+            project_id,
+            target_graph_revision_id,
+        } => request_adversarial_review(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *operating_cycle_id,
+            *project_id,
+            *target_graph_revision_id,
+        ),
+        CommandBody::AssignAdversarialReviewer {
+            operating_cycle_id,
+            adversarial_review_id,
+            reviewer_principal_id,
+        } => assign_adversarial_reviewer(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *operating_cycle_id,
+            *adversarial_review_id,
+            *reviewer_principal_id,
+        ),
+        CommandBody::SubmitReviewChallenge {
+            operating_cycle_id,
+            adversarial_review_id,
+            target_graph_revision_id,
+            author_principal_id,
+            severity,
+            failure_hypothesis,
+        } => submit_review_challenge(
+            transaction,
+            command_row_id,
+            *author_principal_id,
+            request.expected_generation,
+            *operating_cycle_id,
+            *adversarial_review_id,
+            *target_graph_revision_id,
+            *severity,
+            failure_hypothesis.as_str(),
+        ),
+        CommandBody::RespondToReviewChallenge {
+            operating_cycle_id,
+            review_challenge_id,
+            response,
+        } => respond_to_review_challenge(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *operating_cycle_id,
+            *review_challenge_id,
+            response.as_str(),
+        ),
+        CommandBody::DispositionReviewChallenge {
+            operating_cycle_id,
+            review_challenge_id,
+            disposition,
+        } => disposition_review_challenge(
+            transaction,
+            command_row_id,
+            request.principal_id,
+            request.expected_generation,
+            *operating_cycle_id,
+            *review_challenge_id,
+            *disposition,
+        ),
+        CommandBody::ResolveAdversarialReview {
+            operating_cycle_id,
+            adversarial_review_id,
+            resolution,
+        } => resolve_adversarial_review(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *operating_cycle_id,
+            *adversarial_review_id,
+            *resolution,
+        ),
+        CommandBody::TriggerPostmortem {
+            operating_cycle_id,
+            project_id,
+            causal_episode_id,
+        } => trigger_postmortem(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *operating_cycle_id,
+            *project_id,
+            *causal_episode_id,
+        ),
+        CommandBody::RecordPostmortemCausalClaim {
+            operating_cycle_id,
+            postmortem_id,
+            claim_kind,
+            claim,
+        } => record_postmortem_causal_claim(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *operating_cycle_id,
+            *postmortem_id,
+            *claim_kind,
+            claim.as_str(),
+        ),
+        CommandBody::ProposePostmortemAction {
+            operating_cycle_id,
+            postmortem_id,
+            action_kind,
+            action,
+        } => propose_postmortem_action(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *operating_cycle_id,
+            *postmortem_id,
+            *action_kind,
+            action.as_str(),
+        ),
+        CommandBody::ClosePostmortem {
+            operating_cycle_id,
+            postmortem_id,
+        } => close_postmortem(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *operating_cycle_id,
+            *postmortem_id,
         ),
     };
 
@@ -1382,7 +1815,7 @@ fn freeze_budget_admission(
             reserved_amount.value(),
             unknown,
             unavailable,
-            PostmortemState::Open as i64,
+            CostPostmortemState::Open as i64,
             command_row_id,
         ],
     ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
@@ -1390,7 +1823,7 @@ fn freeze_budget_admission(
         reservation_id,
         cycle_id,
         cancellation_request_id,
-        postmortem_id: id_from_last_insert::<PostmortemId>(transaction)?,
+        postmortem_id: id_from_last_insert::<CostPostmortemId>(transaction)?,
         reason,
     })
 }
@@ -1511,7 +1944,7 @@ fn close_cost_postmortem(
     transaction: &Transaction<'_>,
     command_row_id: i64,
     expected_generation: ExpectedGeneration,
-    postmortem_id: PostmortemId,
+    postmortem_id: CostPostmortemId,
     resolution: CostPostmortemResolution,
 ) -> Result<EventBody, Rejection> {
     let (reservation_id, cycle_id, cause, observed, reserved, state) = transaction
@@ -1534,7 +1967,7 @@ fn close_cost_postmortem(
         .optional()
         .map_err(|_| Rejection::SubjectNotFound)?
         .ok_or(Rejection::SubjectNotFound)?;
-    if state != PostmortemState::Open as i64 {
+    if state != CostPostmortemState::Open as i64 {
         return Err(Rejection::CostPostmortemNotOpen);
     }
     let reservation_id =
@@ -1613,7 +2046,7 @@ fn close_cost_postmortem(
             "UPDATE cost_postmortems SET lifecycle_state = ?1, closed_by_command_id = ?2
              WHERE postmortem_id = ?3",
             params![
-                PostmortemState::Closed as i64,
+                CostPostmortemState::Closed as i64,
                 command_row_id,
                 postmortem_id.value(),
             ],
@@ -1639,6 +2072,1214 @@ fn close_cost_postmortem(
         resolution,
         charged,
     })
+}
+
+/// Every coordination command is attributed to the exact Operating Cycle in
+/// which it acted. Projects and causal Episodes intentionally retain only
+/// their seed/project identity, so a successor cycle does not rewrite their
+/// historical scope into a false single-cycle ownership claim.
+fn coordination_cycle(
+    transaction: &Transaction<'_>,
+    expected_generation: ExpectedGeneration,
+    operating_cycle_id: OperatingCycleId,
+) -> Result<CycleRow, Rejection> {
+    let cycle = cycle_for_generation(transaction, operating_cycle_id, expected_generation)?;
+    if !cycle.state.admits_task_work() {
+        return Err(Rejection::InvalidLifecycleTransition);
+    }
+    Ok(cycle)
+}
+
+fn record_coordination_provenance(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    cycle: CycleRow,
+    operating_cycle_id: OperatingCycleId,
+    project_id: Option<ProjectId>,
+) -> Result<(), Rejection> {
+    transaction.execute(
+        "INSERT INTO coordination_command_provenance(command_row_id, universe_seed_id, operating_cycle_id, project_id)
+         VALUES (?1, ?2, ?3, ?4)",
+        params![command_row_id, cycle.seed_id.value(), operating_cycle_id.value(), project_id.map(ProjectId::value)],
+    ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
+    Ok(())
+}
+
+fn project_row(
+    transaction: &Transaction<'_>,
+    project_id: ProjectId,
+) -> Result<(ProjectState, UniverseSeedId), Rejection> {
+    let row = transaction
+        .query_row(
+            "SELECT lifecycle_state, universe_seed_id FROM projects WHERE project_id = ?1",
+            [project_id.value()],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+        )
+        .optional()
+        .map_err(|_| Rejection::SubjectNotFound)?
+        .ok_or(Rejection::SubjectNotFound)?;
+    Ok((
+        project_state_from_i64(row.0).map_err(|_| Rejection::SubjectNotFound)?,
+        UniverseSeedId::try_from(row.1).map_err(|_| Rejection::SubjectNotFound)?,
+    ))
+}
+
+fn create_project(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    operating_cycle_id: OperatingCycleId,
+    project_name: &str,
+) -> Result<EventBody, Rejection> {
+    let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
+    transaction.execute(
+        "INSERT INTO projects(project_name, universe_seed_id, lifecycle_state, created_by_command_id, last_transition_command_id)
+         VALUES (?1, ?2, ?3, ?4, ?4)",
+        params![project_name, cycle.seed_id.value(), ProjectState::Proposed as i64, command_row_id],
+    ).map_err(|_| Rejection::FoundingInvariant)?;
+    let project_id = id_from_last_insert::<ProjectId>(transaction)?;
+    record_coordination_provenance(
+        transaction,
+        command_row_id,
+        cycle,
+        operating_cycle_id,
+        Some(project_id),
+    )?;
+    Ok(EventBody::ProjectCreated { project_id })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn charter_project(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    operating_cycle_id: OperatingCycleId,
+    project_id: ProjectId,
+    objective: &str,
+    milestone: &str,
+    stop_condition: &str,
+) -> Result<EventBody, Rejection> {
+    let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
+    let (state, _) = project_row(transaction, project_id)?;
+    if state != ProjectState::Challenged {
+        return Err(Rejection::InvalidLifecycleTransition);
+    }
+    transaction.execute(
+        "UPDATE projects SET lifecycle_state = ?1, last_transition_command_id = ?2 WHERE project_id = ?3",
+        params![ProjectState::Chartered as i64, command_row_id, project_id.value()],
+    ).map_err(|_| Rejection::SubjectNotFound)?;
+    transaction.execute(
+        "INSERT INTO project_objectives(project_id, objective_text, chartered_by_command_id) VALUES (?1, ?2, ?3)",
+        params![project_id.value(), objective, command_row_id],
+    ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
+    transaction.execute(
+        "INSERT INTO project_milestones(project_id, milestone_name, lifecycle_state, chartered_by_command_id, completed_by_command_id)
+         VALUES (?1, ?2, 1, ?3, NULL)",
+        params![project_id.value(), milestone, command_row_id],
+    ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
+    transaction.execute(
+        "INSERT INTO project_stop_conditions(project_id, stop_condition_text, chartered_by_command_id) VALUES (?1, ?2, ?3)",
+        params![project_id.value(), stop_condition, command_row_id],
+    ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
+    record_coordination_provenance(
+        transaction,
+        command_row_id,
+        cycle,
+        operating_cycle_id,
+        Some(project_id),
+    )?;
+    Ok(EventBody::ProjectChartered { project_id })
+}
+
+fn project_close_blocked(
+    transaction: &Transaction<'_>,
+    project_id: ProjectId,
+) -> Result<bool, Rejection> {
+    let incomplete_milestones: i64 = transaction.query_row(
+        "SELECT COUNT(*) FROM project_milestones WHERE project_id = ?1 AND lifecycle_state != 2",
+        [project_id.value()], |row| row.get(0),
+    ).map_err(|_| Rejection::SubjectNotFound)?;
+    let incomplete_tickets: i64 = transaction
+        .query_row(
+            "SELECT COUNT(*) FROM tickets WHERE project_id = ?1 AND lifecycle_state != ?2",
+            params![project_id.value(), TicketState::Completed as i64],
+            |row| row.get(0),
+        )
+        .map_err(|_| Rejection::SubjectNotFound)?;
+    let open_reviews: i64 = transaction.query_row(
+        "SELECT COUNT(*) FROM adversarial_reviews WHERE project_id = ?1 AND lifecycle_state NOT IN (6, 7, 8)",
+        [project_id.value()], |row| row.get(0),
+    ).map_err(|_| Rejection::SubjectNotFound)?;
+    let open_postmortems: i64 = transaction
+        .query_row(
+            "SELECT COUNT(*) FROM postmortems WHERE project_id = ?1 AND lifecycle_state != 3",
+            [project_id.value()],
+            |row| row.get(0),
+        )
+        .map_err(|_| Rejection::SubjectNotFound)?;
+    Ok(incomplete_milestones != 0
+        || incomplete_tickets != 0
+        || open_reviews != 0
+        || open_postmortems != 0)
+}
+
+fn project_transition_allowed(from: ProjectState, to: ProjectState) -> bool {
+    matches!(
+        (from, to),
+        (ProjectState::Proposed, ProjectState::Challenged)
+            | (ProjectState::Chartered, ProjectState::Active)
+            | (
+                ProjectState::Active,
+                ProjectState::Paused | ProjectState::Observing | ProjectState::Terminated
+            )
+            | (
+                ProjectState::Paused,
+                ProjectState::Active | ProjectState::Terminated
+            )
+            | (
+                ProjectState::Observing,
+                ProjectState::Closed | ProjectState::Terminated
+            )
+            | (ProjectState::Chartered, ProjectState::Terminated)
+            | (ProjectState::Reopened, ProjectState::Active)
+    )
+}
+
+/// This M2 planning/blocker-only transition layer expresses charter and
+/// closure control, not product execution or delivery. Ticket execution and
+/// complete Review resolution remain unavailable until typed Actor, WorkItem,
+/// and Attempt commands establish their own authority and evidence.
+fn transition_project(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    operating_cycle_id: OperatingCycleId,
+    project_id: ProjectId,
+    target: ProjectState,
+) -> Result<EventBody, Rejection> {
+    let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
+    let (state, _) = project_row(transaction, project_id)?;
+    if !project_transition_allowed(state, target) {
+        return Err(Rejection::InvalidLifecycleTransition);
+    }
+    if target == ProjectState::Closed && project_close_blocked(transaction, project_id)? {
+        return Err(Rejection::ProjectCloseBlocked);
+    }
+    transaction.execute("UPDATE projects SET lifecycle_state = ?1, last_transition_command_id = ?2 WHERE project_id = ?3", params![target as i64, command_row_id, project_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    record_coordination_provenance(
+        transaction,
+        command_row_id,
+        cycle,
+        operating_cycle_id,
+        Some(project_id),
+    )?;
+    Ok(EventBody::ProjectStateChanged {
+        project_id,
+        state: target,
+    })
+}
+
+fn complete_project_milestone(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    operating_cycle_id: OperatingCycleId,
+    project_milestone_id: ProjectMilestoneId,
+) -> Result<EventBody, Rejection> {
+    let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
+    let (project, state) = transaction.query_row(
+        "SELECT project_id, lifecycle_state FROM project_milestones WHERE project_milestone_id = ?1",
+        [project_milestone_id.value()], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+    ).optional().map_err(|_| Rejection::SubjectNotFound)?.ok_or(Rejection::SubjectNotFound)?;
+    let project_id = ProjectId::try_from(project).map_err(|_| Rejection::SubjectNotFound)?;
+    if state != ProjectMilestoneState::Pending as i64 {
+        return Err(Rejection::InvalidLifecycleTransition);
+    }
+    transaction.execute("UPDATE project_milestones SET lifecycle_state = 2, completed_by_command_id = ?1 WHERE project_milestone_id = ?2", params![command_row_id, project_milestone_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    record_coordination_provenance(
+        transaction,
+        command_row_id,
+        cycle,
+        operating_cycle_id,
+        Some(project_id),
+    )?;
+    Ok(EventBody::ProjectMilestoneCompleted {
+        project_milestone_id,
+    })
+}
+
+fn reopen_project(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    operating_cycle_id: OperatingCycleId,
+    project_id: ProjectId,
+) -> Result<EventBody, Rejection> {
+    let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
+    let (state, _) = project_row(transaction, project_id)?;
+    if !matches!(state, ProjectState::Closed | ProjectState::Terminated) {
+        return Err(Rejection::InvalidLifecycleTransition);
+    }
+    transaction.execute("UPDATE projects SET lifecycle_state = ?1, last_transition_command_id = ?2 WHERE project_id = ?3", params![ProjectState::Reopened as i64, command_row_id, project_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    record_coordination_provenance(
+        transaction,
+        command_row_id,
+        cycle,
+        operating_cycle_id,
+        Some(project_id),
+    )?;
+    Ok(EventBody::ProjectStateChanged {
+        project_id,
+        state: ProjectState::Reopened,
+    })
+}
+
+fn ticket_row(
+    transaction: &Transaction<'_>,
+    ticket_id: TicketId,
+) -> Result<(ProjectId, TicketState), Rejection> {
+    let row = transaction
+        .query_row(
+            "SELECT project_id, lifecycle_state FROM tickets WHERE ticket_id = ?1",
+            [ticket_id.value()],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+        )
+        .optional()
+        .map_err(|_| Rejection::SubjectNotFound)?
+        .ok_or(Rejection::SubjectNotFound)?;
+    Ok((
+        ProjectId::try_from(row.0).map_err(|_| Rejection::SubjectNotFound)?,
+        ticket_state_from_i64(row.1).map_err(|_| Rejection::SubjectNotFound)?,
+    ))
+}
+
+fn project_is_active(
+    transaction: &Transaction<'_>,
+    project_id: ProjectId,
+) -> Result<(), Rejection> {
+    let (state, _) = project_row(transaction, project_id)?;
+    if state != ProjectState::Active {
+        return Err(Rejection::InvalidLifecycleTransition);
+    }
+    Ok(())
+}
+
+fn ticket_prerequisites_complete(
+    transaction: &Transaction<'_>,
+    ticket_id: TicketId,
+) -> Result<bool, Rejection> {
+    let incomplete: i64 = transaction.query_row(
+        "SELECT COUNT(*) FROM ticket_prerequisites p JOIN tickets t ON t.ticket_id = p.prerequisite_ticket_id
+         WHERE p.ticket_id = ?1 AND t.lifecycle_state != ?2",
+        params![ticket_id.value(), TicketState::Completed as i64], |row| row.get(0),
+    ).map_err(|_| Rejection::SubjectNotFound)?;
+    Ok(incomplete == 0)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn create_ticket(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    operating_cycle_id: OperatingCycleId,
+    project_id: ProjectId,
+    ticket_title: &str,
+    acceptance_condition: &str,
+    prerequisite_ticket_id: Option<TicketId>,
+) -> Result<EventBody, Rejection> {
+    let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
+    project_is_active(transaction, project_id)?;
+    if let Some(prerequisite_ticket_id) = prerequisite_ticket_id {
+        let (prerequisite_project, _) = ticket_row(transaction, prerequisite_ticket_id)?;
+        if prerequisite_project != project_id {
+            return Err(Rejection::SubjectNotFound);
+        }
+    }
+    transaction.execute(
+        "INSERT INTO tickets(project_id, ticket_title, lifecycle_state, created_by_command_id, last_transition_command_id)
+         VALUES (?1, ?2, ?3, ?4, ?4)",
+        params![project_id.value(), ticket_title, TicketState::Draft as i64, command_row_id],
+    ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
+    let ticket_id = id_from_last_insert::<TicketId>(transaction)?;
+    transaction.execute(
+        "INSERT INTO ticket_acceptance_conditions(ticket_id, condition_text, lifecycle_state, created_by_command_id, satisfied_by_command_id)
+         VALUES (?1, ?2, 1, ?3, NULL)",
+        params![ticket_id.value(), acceptance_condition, command_row_id],
+    ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
+    if let Some(prerequisite_ticket_id) = prerequisite_ticket_id {
+        transaction.execute(
+            "INSERT INTO ticket_prerequisites(ticket_id, prerequisite_ticket_id, created_by_command_id) VALUES (?1, ?2, ?3)",
+            params![ticket_id.value(), prerequisite_ticket_id.value(), command_row_id],
+        ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
+    }
+    record_coordination_provenance(
+        transaction,
+        command_row_id,
+        cycle,
+        operating_cycle_id,
+        Some(project_id),
+    )?;
+    Ok(EventBody::TicketCreated {
+        ticket_id,
+        project_id,
+    })
+}
+
+fn transition_ticket(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    operating_cycle_id: OperatingCycleId,
+    ticket_id: TicketId,
+    target: TicketState,
+) -> Result<EventBody, Rejection> {
+    let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
+    let (project_id, state) = ticket_row(transaction, ticket_id)?;
+    project_is_active(transaction, project_id)?;
+    // This M2 planning/blocker-only layer can prepare a Ticket, but it cannot
+    // smuggle execution through a generic transition. Ticket execution states
+    // require later typed Actor, WorkItem, and Attempt commands with their
+    // own assignment, lease, configuration, and budget evidence.
+    let allowed = match (state, target) {
+        (TicketState::Draft, TicketState::Admitted)
+        | (
+            TicketState::Draft | TicketState::Admitted | TicketState::Ready,
+            TicketState::Cancelled,
+        )
+        | (TicketState::Cancelled, TicketState::Admitted) => true,
+        (TicketState::Admitted, TicketState::Ready) => {
+            ticket_prerequisites_complete(transaction, ticket_id)?
+        }
+        _ => false,
+    };
+    if !allowed {
+        return if state == TicketState::Admitted && target == TicketState::Ready {
+            Err(Rejection::TicketPrerequisiteIncomplete)
+        } else {
+            Err(Rejection::InvalidLifecycleTransition)
+        };
+    }
+    transaction.execute(
+        "UPDATE tickets SET lifecycle_state = ?1, last_transition_command_id = ?2 WHERE ticket_id = ?3",
+        params![target as i64, command_row_id, ticket_id.value()],
+    ).map_err(|_| Rejection::SubjectNotFound)?;
+    record_coordination_provenance(
+        transaction,
+        command_row_id,
+        cycle,
+        operating_cycle_id,
+        Some(project_id),
+    )?;
+    Ok(EventBody::TicketStateChanged {
+        ticket_id,
+        state: target,
+    })
+}
+
+fn graph_revision_row(
+    transaction: &Transaction<'_>,
+    graph_revision_id: GraphRevisionId,
+) -> Result<
+    (
+        GraphObjectId,
+        ProjectId,
+        GraphObjectKind,
+        GraphRevisionState,
+    ),
+    Rejection,
+> {
+    let row = transaction
+        .query_row(
+            "SELECT r.graph_object_id, o.project_id, o.object_kind, r.lifecycle_state
+         FROM object_revisions r JOIN objects o ON o.graph_object_id = r.graph_object_id
+         WHERE r.graph_revision_id = ?1",
+            [graph_revision_id.value()],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|_| Rejection::SubjectNotFound)?
+        .ok_or(Rejection::SubjectNotFound)?;
+    Ok((
+        GraphObjectId::try_from(row.0).map_err(|_| Rejection::SubjectNotFound)?,
+        ProjectId::try_from(row.1).map_err(|_| Rejection::SubjectNotFound)?,
+        graph_object_kind_from_i64(row.2).map_err(|_| Rejection::SubjectNotFound)?,
+        graph_revision_state_from_i64(row.3).map_err(|_| Rejection::SubjectNotFound)?,
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn add_graph_object_revision(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    operating_cycle_id: OperatingCycleId,
+    project_id: ProjectId,
+    causal_episode_id: Option<CausalEpisodeId>,
+    existing_graph_object_id: Option<GraphObjectId>,
+    body: &GraphRevisionBody,
+) -> Result<EventBody, Rejection> {
+    let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
+    let object_kind = body.object_kind();
+    project_is_active(transaction, project_id)?;
+    if let Some(episode_id) = causal_episode_id {
+        let episode_project: i64 = transaction
+            .query_row(
+                "SELECT project_id FROM episodes WHERE causal_episode_id = ?1",
+                [episode_id.value()],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|_| Rejection::SubjectNotFound)?
+            .ok_or(Rejection::SubjectNotFound)?;
+        if episode_project != project_id.value() {
+            return Err(Rejection::SubjectNotFound);
+        }
+    }
+    let graph_object_id = match existing_graph_object_id {
+        Some(graph_object_id) => {
+            let (object_project, stored_kind): (i64, i64) = transaction
+                .query_row(
+                    "SELECT project_id, object_kind FROM objects WHERE graph_object_id = ?1",
+                    [graph_object_id.value()],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()
+                .map_err(|_| Rejection::SubjectNotFound)?
+                .ok_or(Rejection::SubjectNotFound)?;
+            if object_project != project_id.value() || stored_kind != object_kind as i64 {
+                return Err(Rejection::SubjectNotFound);
+            }
+            graph_object_id
+        }
+        None => {
+            transaction.execute(
+                "INSERT INTO objects(project_id, causal_episode_id, universe_seed_id, object_kind, created_by_command_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![project_id.value(), causal_episode_id.map(CausalEpisodeId::value), cycle.seed_id.value(), object_kind as i64, command_row_id],
+            ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
+            id_from_last_insert::<GraphObjectId>(transaction)?
+        }
+    };
+    let next_ordinal: i64 = transaction.query_row(
+        "SELECT COALESCE(MAX(revision_ordinal), 0) + 1 FROM object_revisions WHERE graph_object_id = ?1",
+        [graph_object_id.value()], |row| row.get(0),
+    ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
+    transaction.execute(
+        "INSERT INTO object_revisions(graph_object_id, revision_ordinal, lifecycle_state, created_by_command_id, committed_by_command_id)
+         VALUES (?1, ?2, 1, ?3, NULL)",
+        params![graph_object_id.value(), next_ordinal, command_row_id],
+    ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
+    let graph_revision_id = id_from_last_insert::<GraphRevisionId>(transaction)?;
+    match body {
+        GraphRevisionBody::Observation { observation } => {
+            transaction.execute(
+                "INSERT INTO observation_revisions(graph_revision_id, observation_text) VALUES (?1, ?2)",
+                params![graph_revision_id.value(), observation.as_str()],
+            ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
+        }
+        GraphRevisionBody::Hypothesis { hypothesis } => {
+            transaction.execute(
+                "INSERT INTO hypothesis_revisions(graph_revision_id, hypothesis_text) VALUES (?1, ?2)",
+                params![graph_revision_id.value(), hypothesis.as_str()],
+            ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
+        }
+    }
+    record_coordination_provenance(
+        transaction,
+        command_row_id,
+        cycle,
+        operating_cycle_id,
+        Some(project_id),
+    )?;
+    Ok(EventBody::GraphObjectRevisionAdded {
+        graph_object_id,
+        graph_revision_id,
+    })
+}
+
+fn commit_graph_revision(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    operating_cycle_id: OperatingCycleId,
+    graph_revision_id: GraphRevisionId,
+) -> Result<EventBody, Rejection> {
+    let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
+    let (_, project_id, _, state) = graph_revision_row(transaction, graph_revision_id)?;
+    project_is_active(transaction, project_id)?;
+    if state != GraphRevisionState::Draft {
+        return Err(Rejection::InvalidLifecycleTransition);
+    }
+    transaction.execute(
+        "UPDATE object_revisions SET lifecycle_state = 2, committed_by_command_id = ?1 WHERE graph_revision_id = ?2",
+        params![command_row_id, graph_revision_id.value()],
+    ).map_err(|_| Rejection::SubjectNotFound)?;
+    record_coordination_provenance(
+        transaction,
+        command_row_id,
+        cycle,
+        operating_cycle_id,
+        Some(project_id),
+    )?;
+    Ok(EventBody::GraphRevisionCommitted { graph_revision_id })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn add_graph_edge(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    operating_cycle_id: OperatingCycleId,
+    project_id: ProjectId,
+    from_graph_revision_id: GraphRevisionId,
+    to_graph_revision_id: GraphRevisionId,
+    edge_kind: GraphEdgeKind,
+) -> Result<EventBody, Rejection> {
+    let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
+    project_is_active(transaction, project_id)?;
+    let (_, from_project, from_kind, from_state) =
+        graph_revision_row(transaction, from_graph_revision_id)?;
+    let (_, to_project, to_kind, to_state) = graph_revision_row(transaction, to_graph_revision_id)?;
+    if from_project != project_id || to_project != project_id {
+        return Err(Rejection::SubjectNotFound);
+    }
+    if from_state != GraphRevisionState::Committed || to_state != GraphRevisionState::Committed {
+        return Err(Rejection::GraphRevisionNotCommitted);
+    }
+    if !edge_kind.allows(from_kind, to_kind) {
+        return Err(Rejection::IllegalGraphEdgeEndpoint);
+    }
+    transaction.execute(
+        "INSERT INTO edges(project_id, from_graph_revision_id, to_graph_revision_id, edge_kind, created_by_command_id) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![project_id.value(), from_graph_revision_id.value(), to_graph_revision_id.value(), edge_kind as i64, command_row_id],
+    ).map_err(|_| Rejection::IllegalGraphEdgeEndpoint)?;
+    let graph_edge_id = id_from_last_insert::<GraphEdgeId>(transaction)?;
+    record_coordination_provenance(
+        transaction,
+        command_row_id,
+        cycle,
+        operating_cycle_id,
+        Some(project_id),
+    )?;
+    Ok(EventBody::GraphEdgeAdded { graph_edge_id })
+}
+
+fn episode_row(
+    transaction: &Transaction<'_>,
+    episode_id: CausalEpisodeId,
+) -> Result<(ProjectId, EpisodeState), Rejection> {
+    let row: (i64, i64) = transaction
+        .query_row(
+            "SELECT project_id, lifecycle_state FROM episodes WHERE causal_episode_id = ?1",
+            [episode_id.value()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(|_| Rejection::SubjectNotFound)?
+        .ok_or(Rejection::SubjectNotFound)?;
+    Ok((
+        ProjectId::try_from(row.0).map_err(|_| Rejection::SubjectNotFound)?,
+        episode_state_from_i64(row.1).map_err(|_| Rejection::SubjectNotFound)?,
+    ))
+}
+
+fn episode_transition_allowed(from: EpisodeState, to: EpisodeState) -> bool {
+    matches!(
+        (from, to),
+        (
+            EpisodeState::Framed,
+            EpisodeState::Admitted | EpisodeState::Abandoned
+        ) | (
+            EpisodeState::Admitted,
+            EpisodeState::Investigating | EpisodeState::Abandoned
+        ) | (
+            EpisodeState::Investigating,
+            EpisodeState::PrototypeDeliberating
+                | EpisodeState::ClosedNoAction
+                | EpisodeState::Abandoned
+        ) | (
+            EpisodeState::PrototypeDeliberating,
+            EpisodeState::Prototyping | EpisodeState::ClosedNoAction | EpisodeState::Abandoned
+        ) | (
+            EpisodeState::Prototyping,
+            EpisodeState::CandidateValidating | EpisodeState::Reverted | EpisodeState::Abandoned
+        ) | (
+            EpisodeState::CandidateValidating,
+            EpisodeState::DeliveryDeliberating | EpisodeState::Reverted | EpisodeState::Abandoned
+        ) | (
+            EpisodeState::DeliveryDeliberating,
+            EpisodeState::DeliveryAuthorized
+                | EpisodeState::ClosedNoDelivery
+                | EpisodeState::Abandoned
+        ) | (
+            EpisodeState::DeliveryAuthorized,
+            EpisodeState::Materializing | EpisodeState::Abandoned
+        ) | (
+            EpisodeState::Materializing,
+            EpisodeState::Observing | EpisodeState::Abandoned
+        ) | (
+            EpisodeState::Observing,
+            EpisodeState::Learning | EpisodeState::Closed | EpisodeState::Abandoned
+        ) | (
+            EpisodeState::Learning,
+            EpisodeState::Closed | EpisodeState::Abandoned
+        ) | (
+            EpisodeState::Reopened,
+            EpisodeState::Investigating | EpisodeState::Abandoned
+        )
+    )
+}
+
+fn create_episode(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    operating_cycle_id: OperatingCycleId,
+    project_id: ProjectId,
+) -> Result<EventBody, Rejection> {
+    let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
+    project_is_active(transaction, project_id)?;
+    transaction.execute(
+        "INSERT INTO episodes(project_id, universe_seed_id, lifecycle_state, created_by_command_id, last_transition_command_id) VALUES (?1, ?2, 1, ?3, ?3)",
+        params![project_id.value(), cycle.seed_id.value(), command_row_id],
+    ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
+    let causal_episode_id = id_from_last_insert::<CausalEpisodeId>(transaction)?;
+    record_coordination_provenance(
+        transaction,
+        command_row_id,
+        cycle,
+        operating_cycle_id,
+        Some(project_id),
+    )?;
+    Ok(EventBody::EpisodeCreated {
+        causal_episode_id,
+        project_id,
+    })
+}
+
+fn transition_episode(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    operating_cycle_id: OperatingCycleId,
+    causal_episode_id: CausalEpisodeId,
+    target: EpisodeState,
+) -> Result<EventBody, Rejection> {
+    let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
+    let (project_id, state) = episode_row(transaction, causal_episode_id)?;
+    if !episode_transition_allowed(state, target) {
+        return Err(Rejection::InvalidLifecycleTransition);
+    }
+    transaction.execute("UPDATE episodes SET lifecycle_state = ?1, last_transition_command_id = ?2 WHERE causal_episode_id = ?3", params![target as i64, command_row_id, causal_episode_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    record_coordination_provenance(
+        transaction,
+        command_row_id,
+        cycle,
+        operating_cycle_id,
+        Some(project_id),
+    )?;
+    Ok(EventBody::EpisodeStateChanged {
+        causal_episode_id,
+        state: target,
+    })
+}
+
+fn reopen_episode(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    operating_cycle_id: OperatingCycleId,
+    causal_episode_id: CausalEpisodeId,
+) -> Result<EventBody, Rejection> {
+    let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
+    let (project_id, state) = episode_row(transaction, causal_episode_id)?;
+    if !matches!(
+        state,
+        EpisodeState::Closed
+            | EpisodeState::ClosedNoAction
+            | EpisodeState::ClosedNoDelivery
+            | EpisodeState::Reverted
+    ) {
+        return Err(Rejection::InvalidLifecycleTransition);
+    }
+    transaction.execute("UPDATE episodes SET lifecycle_state = ?1, last_transition_command_id = ?2 WHERE causal_episode_id = ?3", params![EpisodeState::Reopened as i64, command_row_id, causal_episode_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    record_coordination_provenance(
+        transaction,
+        command_row_id,
+        cycle,
+        operating_cycle_id,
+        Some(project_id),
+    )?;
+    Ok(EventBody::EpisodeStateChanged {
+        causal_episode_id,
+        state: EpisodeState::Reopened,
+    })
+}
+
+fn review_row(
+    transaction: &Transaction<'_>,
+    review_id: AdversarialReviewId,
+) -> Result<(ProjectId, GraphRevisionId, AdversarialReviewState), Rejection> {
+    let row: (i64, i64, i64) = transaction.query_row(
+        "SELECT project_id, target_graph_revision_id, lifecycle_state FROM adversarial_reviews WHERE adversarial_review_id = ?1",
+        [review_id.value()], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    ).optional().map_err(|_| Rejection::SubjectNotFound)?.ok_or(Rejection::SubjectNotFound)?;
+    Ok((
+        ProjectId::try_from(row.0).map_err(|_| Rejection::SubjectNotFound)?,
+        GraphRevisionId::try_from(row.1).map_err(|_| Rejection::SubjectNotFound)?,
+        adversarial_review_state_from_i64(row.2).map_err(|_| Rejection::SubjectNotFound)?,
+    ))
+}
+
+fn request_adversarial_review(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    operating_cycle_id: OperatingCycleId,
+    project_id: ProjectId,
+    target_graph_revision_id: GraphRevisionId,
+) -> Result<EventBody, Rejection> {
+    let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
+    project_is_active(transaction, project_id)?;
+    let (_, revision_project, _, revision_state) =
+        graph_revision_row(transaction, target_graph_revision_id)?;
+    if revision_project != project_id {
+        return Err(Rejection::SubjectNotFound);
+    }
+    if revision_state != GraphRevisionState::Committed {
+        return Err(Rejection::GraphRevisionNotCommitted);
+    }
+    transaction.execute(
+        "INSERT INTO adversarial_reviews(project_id, target_graph_revision_id, lifecycle_state, requested_by_command_id, assigned_reviewer_principal_id, resolved_by_command_id) VALUES (?1, ?2, 1, ?3, NULL, NULL)",
+        params![project_id.value(), target_graph_revision_id.value(), command_row_id],
+    ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
+    let adversarial_review_id = id_from_last_insert::<AdversarialReviewId>(transaction)?;
+    record_coordination_provenance(
+        transaction,
+        command_row_id,
+        cycle,
+        operating_cycle_id,
+        Some(project_id),
+    )?;
+    Ok(EventBody::AdversarialReviewRequested {
+        adversarial_review_id,
+    })
+}
+
+fn assign_adversarial_reviewer(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    operating_cycle_id: OperatingCycleId,
+    adversarial_review_id: AdversarialReviewId,
+    reviewer_principal_id: PrincipalId,
+) -> Result<EventBody, Rejection> {
+    let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
+    let (project_id, _, review_state) = review_row(transaction, adversarial_review_id)?;
+    if review_state != AdversarialReviewState::Requested {
+        return Err(Rejection::InvalidLifecycleTransition);
+    }
+    let cycle_grand_architect: i64 = transaction
+        .query_row(
+            "SELECT principal_id FROM office_occupancies WHERE office_occupancy_id = ?1",
+            [cycle.occupancy_id.value()],
+            |row| row.get(0),
+        )
+        .map_err(|_| Rejection::SubjectNotFound)?;
+    if reviewer_principal_id.value() == cycle_grand_architect {
+        return Err(Rejection::ReviewAssignmentNotIndependent);
+    }
+    // The service assigns a named, active Actor. The author check at finding
+    // submission compares against this durable assignment; Principal kind is
+    // only a prerequisite, never reviewer jurisdiction by itself.
+    let eligible: bool = transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM principals WHERE principal_id = ?1 AND principal_kind = ?2 AND active = 1)",
+            params![reviewer_principal_id.value(), PrincipalKind::Actor as i64],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|_| Rejection::SubjectNotFound)?
+        != 0;
+    if !eligible {
+        return Err(Rejection::SubjectNotFound);
+    }
+    transaction
+        .execute(
+            "UPDATE adversarial_reviews SET lifecycle_state = ?1, assigned_reviewer_principal_id = ?2 WHERE adversarial_review_id = ?3",
+            params![
+                AdversarialReviewState::Assigned as i64,
+                reviewer_principal_id.value(),
+                adversarial_review_id.value()
+            ],
+        )
+        .map_err(|_| Rejection::SubjectNotFound)?;
+    record_coordination_provenance(
+        transaction,
+        command_row_id,
+        cycle,
+        operating_cycle_id,
+        Some(project_id),
+    )?;
+    Ok(EventBody::AdversarialReviewerAssigned {
+        adversarial_review_id,
+        reviewer_principal_id,
+    })
+}
+
+/// Review records are a planning/blocker institution in M2. Their durable
+/// assignment and finding lineage prevent false self-review, but complete
+/// Review resolution requires later typed Actor, WorkItem, and Attempt
+/// commands to provision an independent reviewer and its execution evidence.
+#[allow(clippy::too_many_arguments)]
+fn submit_review_challenge(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    author_principal_id: PrincipalId,
+    expected_generation: ExpectedGeneration,
+    operating_cycle_id: OperatingCycleId,
+    adversarial_review_id: AdversarialReviewId,
+    target_graph_revision_id: GraphRevisionId,
+    severity: ReviewChallengeSeverity,
+    failure_hypothesis: &str,
+) -> Result<EventBody, Rejection> {
+    let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
+    let (project_id, review_target, review_state) = review_row(transaction, adversarial_review_id)?;
+    let assigned_reviewer: Option<i64> = transaction
+        .query_row(
+            "SELECT assigned_reviewer_principal_id FROM adversarial_reviews WHERE adversarial_review_id = ?1",
+            [adversarial_review_id.value()],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|_| Rejection::SubjectNotFound)?
+        .ok_or(Rejection::SubjectNotFound)?;
+    if assigned_reviewer != Some(author_principal_id.value()) {
+        return Err(Rejection::CapabilityNotGranted);
+    }
+    if review_target != target_graph_revision_id
+        || !matches!(
+            review_state,
+            AdversarialReviewState::Assigned
+                | AdversarialReviewState::Active
+                | AdversarialReviewState::FindingsSubmitted
+                | AdversarialReviewState::ResponsesDue
+        )
+    {
+        return Err(Rejection::InvalidLifecycleTransition);
+    }
+    let (_, revision_project, _, revision_state) =
+        graph_revision_row(transaction, target_graph_revision_id)?;
+    if revision_project != project_id {
+        return Err(Rejection::SubjectNotFound);
+    }
+    if revision_state != GraphRevisionState::Committed {
+        return Err(Rejection::GraphRevisionNotCommitted);
+    }
+    transaction.execute(
+        "INSERT INTO review_challenges(adversarial_review_id, target_graph_revision_id, author_principal_id, severity, failure_hypothesis, response_state, submitted_by_command_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6)",
+        params![adversarial_review_id.value(), target_graph_revision_id.value(), author_principal_id.value(), severity as i64, failure_hypothesis, command_row_id],
+    ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
+    let review_challenge_id = id_from_last_insert::<ReviewChallengeId>(transaction)?;
+    transaction
+        .execute(
+            "UPDATE adversarial_reviews SET lifecycle_state = 5 WHERE adversarial_review_id = ?1",
+            [adversarial_review_id.value()],
+        )
+        .map_err(|_| Rejection::SubjectNotFound)?;
+    record_coordination_provenance(
+        transaction,
+        command_row_id,
+        cycle,
+        operating_cycle_id,
+        Some(project_id),
+    )?;
+    Ok(EventBody::ReviewChallengeSubmitted {
+        review_challenge_id,
+        author_principal_id,
+    })
+}
+
+fn review_challenge_row(
+    transaction: &Transaction<'_>,
+    challenge_id: ReviewChallengeId,
+) -> Result<
+    (
+        AdversarialReviewId,
+        ProjectId,
+        PrincipalId,
+        ReviewChallengeResponseState,
+    ),
+    Rejection,
+> {
+    let row: (i64, i64, i64, i64) = transaction.query_row(
+        "SELECT c.adversarial_review_id, r.project_id, c.author_principal_id, c.response_state
+         FROM review_challenges c JOIN adversarial_reviews r ON r.adversarial_review_id = c.adversarial_review_id
+         WHERE c.review_challenge_id = ?1",
+        [challenge_id.value()], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    ).optional().map_err(|_| Rejection::SubjectNotFound)?.ok_or(Rejection::SubjectNotFound)?;
+    Ok((
+        AdversarialReviewId::try_from(row.0).map_err(|_| Rejection::SubjectNotFound)?,
+        ProjectId::try_from(row.1).map_err(|_| Rejection::SubjectNotFound)?,
+        PrincipalId::try_from(row.2).map_err(|_| Rejection::SubjectNotFound)?,
+        review_challenge_response_state_from_i64(row.3).map_err(|_| Rejection::SubjectNotFound)?,
+    ))
+}
+
+fn respond_to_review_challenge(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    operating_cycle_id: OperatingCycleId,
+    review_challenge_id: ReviewChallengeId,
+    response: &str,
+) -> Result<EventBody, Rejection> {
+    let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
+    let (_, project_id, _, response_state) =
+        review_challenge_row(transaction, review_challenge_id)?;
+    if response_state != ReviewChallengeResponseState::Pending {
+        return Err(Rejection::InvalidLifecycleTransition);
+    }
+    transaction.execute("INSERT INTO review_challenge_responses(review_challenge_id, response_text, responded_by_command_id) VALUES (?1, ?2, ?3)", params![review_challenge_id.value(), response, command_row_id]).map_err(|_| Rejection::InvalidLifecycleTransition)?;
+    transaction
+        .execute(
+            "UPDATE review_challenges SET response_state = 2 WHERE review_challenge_id = ?1",
+            [review_challenge_id.value()],
+        )
+        .map_err(|_| Rejection::SubjectNotFound)?;
+    record_coordination_provenance(
+        transaction,
+        command_row_id,
+        cycle,
+        operating_cycle_id,
+        Some(project_id),
+    )?;
+    Ok(EventBody::ReviewChallengeResponded {
+        review_challenge_id,
+    })
+}
+
+fn disposition_review_challenge(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    principal_id: PrincipalId,
+    expected_generation: ExpectedGeneration,
+    operating_cycle_id: OperatingCycleId,
+    review_challenge_id: ReviewChallengeId,
+    disposition: ReviewDispositionKind,
+) -> Result<EventBody, Rejection> {
+    let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
+    let (_, project_id, author, response_state) =
+        review_challenge_row(transaction, review_challenge_id)?;
+    if principal_id == author {
+        return Err(Rejection::ReviewSelfDispositionDenied);
+    }
+    if response_state != ReviewChallengeResponseState::Responded {
+        return Err(Rejection::ReviewDispositionIncomplete);
+    }
+    transaction.execute("INSERT INTO review_dispositions(review_challenge_id, disposition_kind, disposed_by_principal_id, disposed_by_command_id) VALUES (?1, ?2, ?3, ?4)", params![review_challenge_id.value(), disposition as i64, principal_id.value(), command_row_id]).map_err(|_| Rejection::ReviewDispositionIncomplete)?;
+    record_coordination_provenance(
+        transaction,
+        command_row_id,
+        cycle,
+        operating_cycle_id,
+        Some(project_id),
+    )?;
+    Ok(EventBody::ReviewChallengeDispositioned {
+        review_challenge_id,
+        disposition,
+    })
+}
+
+fn resolve_adversarial_review(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    operating_cycle_id: OperatingCycleId,
+    adversarial_review_id: AdversarialReviewId,
+    resolution: ReviewResolutionKind,
+) -> Result<EventBody, Rejection> {
+    let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
+    let (project_id, _, state) = review_row(transaction, adversarial_review_id)?;
+    if state != AdversarialReviewState::ResponsesDue {
+        return Err(Rejection::InvalidLifecycleTransition);
+    }
+    let missing: i64 = transaction.query_row(
+        "SELECT COUNT(*) FROM review_challenges c LEFT JOIN review_dispositions d ON d.review_challenge_id = c.review_challenge_id
+         WHERE c.adversarial_review_id = ?1 AND (c.response_state != 2 OR d.review_disposition_id IS NULL)",
+        [adversarial_review_id.value()], |row| row.get(0),
+    ).map_err(|_| Rejection::SubjectNotFound)?;
+    if missing != 0 {
+        return Err(Rejection::ReviewDispositionIncomplete);
+    }
+    let target_state = match resolution {
+        ReviewResolutionKind::Resolved => AdversarialReviewState::Resolved,
+        ReviewResolutionKind::AcceptedRisk => AdversarialReviewState::AcceptedRisk,
+    };
+    transaction.execute("UPDATE adversarial_reviews SET lifecycle_state = ?1, resolved_by_command_id = ?2 WHERE adversarial_review_id = ?3", params![target_state as i64, command_row_id, adversarial_review_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    record_coordination_provenance(
+        transaction,
+        command_row_id,
+        cycle,
+        operating_cycle_id,
+        Some(project_id),
+    )?;
+    Ok(EventBody::AdversarialReviewResolved {
+        adversarial_review_id,
+        state: target_state,
+    })
+}
+
+fn postmortem_row(
+    transaction: &Transaction<'_>,
+    postmortem_id: PostmortemId,
+) -> Result<(ProjectId, PostmortemState), Rejection> {
+    let row: (i64, i64) = transaction
+        .query_row(
+            "SELECT project_id, lifecycle_state FROM postmortems WHERE postmortem_id = ?1",
+            [postmortem_id.value()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(|_| Rejection::SubjectNotFound)?
+        .ok_or(Rejection::SubjectNotFound)?;
+    Ok((
+        ProjectId::try_from(row.0).map_err(|_| Rejection::SubjectNotFound)?,
+        postmortem_state_from_i64(row.1).map_err(|_| Rejection::SubjectNotFound)?,
+    ))
+}
+
+fn trigger_postmortem(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    operating_cycle_id: OperatingCycleId,
+    project_id: ProjectId,
+    causal_episode_id: Option<CausalEpisodeId>,
+) -> Result<EventBody, Rejection> {
+    let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
+    project_is_active(transaction, project_id)?;
+    if let Some(episode) = causal_episode_id
+        && episode_row(transaction, episode)?.0 != project_id
+    {
+        return Err(Rejection::SubjectNotFound);
+    }
+    transaction.execute("INSERT INTO postmortems(project_id, causal_episode_id, universe_seed_id, lifecycle_state, triggered_by_command_id, closed_by_command_id) VALUES (?1, ?2, ?3, 1, ?4, NULL)", params![project_id.value(), causal_episode_id.map(CausalEpisodeId::value), cycle.seed_id.value(), command_row_id]).map_err(|_| Rejection::InvalidLifecycleTransition)?;
+    let postmortem_id = id_from_last_insert::<PostmortemId>(transaction)?;
+    record_coordination_provenance(
+        transaction,
+        command_row_id,
+        cycle,
+        operating_cycle_id,
+        Some(project_id),
+    )?;
+    Ok(EventBody::PostmortemTriggered { postmortem_id })
+}
+
+fn record_postmortem_causal_claim(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    operating_cycle_id: OperatingCycleId,
+    postmortem_id: PostmortemId,
+    claim_kind: PostmortemCausalClaimKind,
+    claim: &str,
+) -> Result<EventBody, Rejection> {
+    let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
+    let (project_id, state) = postmortem_row(transaction, postmortem_id)?;
+    if state == PostmortemState::Closed {
+        return Err(Rejection::InvalidLifecycleTransition);
+    }
+    transaction.execute("INSERT INTO postmortem_causal_claims(postmortem_id, claim_kind, claim_text, recorded_by_command_id) VALUES (?1, ?2, ?3, ?4)", params![postmortem_id.value(), claim_kind as i64, claim, command_row_id]).map_err(|_| Rejection::InvalidLifecycleTransition)?;
+    let postmortem_causal_claim_id = id_from_last_insert::<PostmortemCausalClaimId>(transaction)?;
+    transaction
+        .execute(
+            "UPDATE postmortems SET lifecycle_state = 2 WHERE postmortem_id = ?1",
+            [postmortem_id.value()],
+        )
+        .map_err(|_| Rejection::SubjectNotFound)?;
+    record_coordination_provenance(
+        transaction,
+        command_row_id,
+        cycle,
+        operating_cycle_id,
+        Some(project_id),
+    )?;
+    Ok(EventBody::PostmortemCausalClaimRecorded {
+        postmortem_causal_claim_id,
+    })
+}
+
+fn propose_postmortem_action(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    operating_cycle_id: OperatingCycleId,
+    postmortem_id: PostmortemId,
+    action_kind: PostmortemActionKind,
+    action: &str,
+) -> Result<EventBody, Rejection> {
+    let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
+    let (project_id, state) = postmortem_row(transaction, postmortem_id)?;
+    if state == PostmortemState::Closed {
+        return Err(Rejection::InvalidLifecycleTransition);
+    }
+    transaction.execute("INSERT INTO postmortem_action_proposals(postmortem_id, action_kind, action_text, proposed_by_command_id) VALUES (?1, ?2, ?3, ?4)", params![postmortem_id.value(), action_kind as i64, action, command_row_id]).map_err(|_| Rejection::InvalidLifecycleTransition)?;
+    let postmortem_action_proposal_id =
+        id_from_last_insert::<PostmortemActionProposalId>(transaction)?;
+    transaction
+        .execute(
+            "UPDATE postmortems SET lifecycle_state = 2 WHERE postmortem_id = ?1",
+            [postmortem_id.value()],
+        )
+        .map_err(|_| Rejection::SubjectNotFound)?;
+    record_coordination_provenance(
+        transaction,
+        command_row_id,
+        cycle,
+        operating_cycle_id,
+        Some(project_id),
+    )?;
+    Ok(EventBody::PostmortemActionProposed {
+        postmortem_action_proposal_id,
+    })
+}
+
+fn close_postmortem(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    operating_cycle_id: OperatingCycleId,
+    postmortem_id: PostmortemId,
+) -> Result<EventBody, Rejection> {
+    let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
+    let (project_id, state) = postmortem_row(transaction, postmortem_id)?;
+    if state == PostmortemState::Closed {
+        return Err(Rejection::InvalidLifecycleTransition);
+    }
+    let counts: (i64, i64) = transaction.query_row(
+        "SELECT (SELECT COUNT(*) FROM postmortem_causal_claims WHERE postmortem_id = ?1), (SELECT COUNT(*) FROM postmortem_action_proposals WHERE postmortem_id = ?1)",
+        [postmortem_id.value()], |row| Ok((row.get(0)?, row.get(1)?)),
+    ).map_err(|_| Rejection::SubjectNotFound)?;
+    if counts.0 == 0 || counts.1 == 0 {
+        return Err(Rejection::PostmortemCloseBlocked);
+    }
+    transaction.execute("UPDATE postmortems SET lifecycle_state = 3, closed_by_command_id = ?1 WHERE postmortem_id = ?2", params![command_row_id, postmortem_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    record_coordination_provenance(
+        transaction,
+        command_row_id,
+        cycle,
+        operating_cycle_id,
+        Some(project_id),
+    )?;
+    Ok(EventBody::PostmortemClosed { postmortem_id })
 }
 
 fn capability_grant(
@@ -1735,6 +3376,77 @@ fn command_target_occupancy(
                 .occupancy_id,
             ))
         }
+        CommandBody::CreateProject {
+            operating_cycle_id, ..
+        }
+        | CommandBody::CharterProject {
+            operating_cycle_id, ..
+        }
+        | CommandBody::TransitionProject {
+            operating_cycle_id, ..
+        }
+        | CommandBody::CompleteProjectMilestone {
+            operating_cycle_id, ..
+        }
+        | CommandBody::ReopenProject {
+            operating_cycle_id, ..
+        }
+        | CommandBody::CreateTicket {
+            operating_cycle_id, ..
+        }
+        | CommandBody::TransitionTicket {
+            operating_cycle_id, ..
+        }
+        | CommandBody::AddGraphObjectRevision {
+            operating_cycle_id, ..
+        }
+        | CommandBody::CommitGraphRevision {
+            operating_cycle_id, ..
+        }
+        | CommandBody::AddGraphEdge {
+            operating_cycle_id, ..
+        }
+        | CommandBody::CreateEpisode {
+            operating_cycle_id, ..
+        }
+        | CommandBody::TransitionEpisode {
+            operating_cycle_id, ..
+        }
+        | CommandBody::ReopenEpisode {
+            operating_cycle_id, ..
+        }
+        | CommandBody::RequestAdversarialReview {
+            operating_cycle_id, ..
+        }
+        | CommandBody::AssignAdversarialReviewer {
+            operating_cycle_id, ..
+        }
+        | CommandBody::SubmitReviewChallenge {
+            operating_cycle_id, ..
+        }
+        | CommandBody::RespondToReviewChallenge {
+            operating_cycle_id, ..
+        }
+        | CommandBody::DispositionReviewChallenge {
+            operating_cycle_id, ..
+        }
+        | CommandBody::ResolveAdversarialReview {
+            operating_cycle_id, ..
+        }
+        | CommandBody::TriggerPostmortem {
+            operating_cycle_id, ..
+        }
+        | CommandBody::RecordPostmortemCausalClaim {
+            operating_cycle_id, ..
+        }
+        | CommandBody::ProposePostmortemAction {
+            operating_cycle_id, ..
+        }
+        | CommandBody::ClosePostmortem {
+            operating_cycle_id, ..
+        } => Ok(Some(
+            cycle_row(transaction, *operating_cycle_id)?.occupancy_id,
+        )),
         _ => Ok(None),
     }
 }
@@ -1835,10 +3547,7 @@ fn cycle_row(
     ).optional().map_err(|_| Rejection::SubjectNotFound)?.ok_or(Rejection::SubjectNotFound)?;
     Ok(CycleRow {
         society_id: SocietyId::try_from(row.0).map_err(|_| Rejection::SubjectNotFound)?,
-        // The pinned seed is queried with the cycle so malformed storage is
-        // detected before a lifecycle transition, even though this first
-        // kernel tranche does not otherwise need to return it to the caller.
-        _seed_id: UniverseSeedId::try_from(row.1).map_err(|_| Rejection::SubjectNotFound)?,
+        seed_id: UniverseSeedId::try_from(row.1).map_err(|_| Rejection::SubjectNotFound)?,
         occupancy_id: OfficeOccupancyId::try_from(row.2).map_err(|_| Rejection::SubjectNotFound)?,
         _treatment: operating_cycle_treatment_from_i64(row.3)
             .map_err(|_| Rejection::SubjectNotFound)?,
@@ -2182,6 +3891,234 @@ fn request_fingerprint(request: &CommandRequest) -> Sha256Digest {
             put_i64(&mut bytes, postmortem_id.value());
             put_i64(&mut bytes, *resolution as i64);
         }
+        CommandBody::CreateProject {
+            operating_cycle_id,
+            project_name,
+        } => {
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_bytes(&mut bytes, project_name.as_str().as_bytes());
+        }
+        CommandBody::CharterProject {
+            operating_cycle_id,
+            project_id,
+            objective,
+            initial_milestone,
+            stop_condition,
+        } => {
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, project_id.value());
+            put_bytes(&mut bytes, objective.as_str().as_bytes());
+            put_bytes(&mut bytes, initial_milestone.as_str().as_bytes());
+            put_bytes(&mut bytes, stop_condition.as_str().as_bytes());
+        }
+        CommandBody::TransitionProject {
+            operating_cycle_id,
+            project_id,
+            target,
+        } => {
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, project_id.value());
+            put_i64(&mut bytes, *target as i64);
+        }
+        CommandBody::CompleteProjectMilestone {
+            operating_cycle_id,
+            project_milestone_id,
+        } => {
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, project_milestone_id.value());
+        }
+        CommandBody::ReopenProject {
+            operating_cycle_id,
+            project_id,
+        } => {
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, project_id.value());
+        }
+        CommandBody::CreateTicket {
+            operating_cycle_id,
+            project_id,
+            ticket_title,
+            acceptance_condition,
+            prerequisite_ticket_id,
+        } => {
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, project_id.value());
+            put_bytes(&mut bytes, ticket_title.as_str().as_bytes());
+            put_bytes(&mut bytes, acceptance_condition.as_str().as_bytes());
+            put_optional_i64(&mut bytes, prerequisite_ticket_id.map(TicketId::value));
+        }
+        CommandBody::TransitionTicket {
+            operating_cycle_id,
+            ticket_id,
+            target,
+        } => {
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, ticket_id.value());
+            put_i64(&mut bytes, *target as i64);
+        }
+        CommandBody::AddGraphObjectRevision {
+            operating_cycle_id,
+            project_id,
+            causal_episode_id,
+            graph_object_id,
+            body,
+        } => {
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, project_id.value());
+            put_optional_i64(&mut bytes, causal_episode_id.map(CausalEpisodeId::value));
+            put_optional_i64(&mut bytes, graph_object_id.map(GraphObjectId::value));
+            match body {
+                GraphRevisionBody::Observation { observation } => {
+                    put_i64(&mut bytes, GraphObjectKind::Observation as i64);
+                    put_bytes(&mut bytes, observation.as_str().as_bytes());
+                }
+                GraphRevisionBody::Hypothesis { hypothesis } => {
+                    put_i64(&mut bytes, GraphObjectKind::Hypothesis as i64);
+                    put_bytes(&mut bytes, hypothesis.as_str().as_bytes());
+                }
+            }
+        }
+        CommandBody::CommitGraphRevision {
+            operating_cycle_id,
+            graph_revision_id,
+        } => {
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, graph_revision_id.value());
+        }
+        CommandBody::AddGraphEdge {
+            operating_cycle_id,
+            project_id,
+            from_graph_revision_id,
+            to_graph_revision_id,
+            edge_kind,
+        } => {
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, project_id.value());
+            put_i64(&mut bytes, from_graph_revision_id.value());
+            put_i64(&mut bytes, to_graph_revision_id.value());
+            put_i64(&mut bytes, *edge_kind as i64);
+        }
+        CommandBody::CreateEpisode {
+            operating_cycle_id,
+            project_id,
+        } => {
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, project_id.value());
+        }
+        CommandBody::TransitionEpisode {
+            operating_cycle_id,
+            causal_episode_id,
+            target,
+        } => {
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, causal_episode_id.value());
+            put_i64(&mut bytes, *target as i64);
+        }
+        CommandBody::ReopenEpisode {
+            operating_cycle_id,
+            causal_episode_id,
+        } => {
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, causal_episode_id.value());
+        }
+        CommandBody::RequestAdversarialReview {
+            operating_cycle_id,
+            project_id,
+            target_graph_revision_id,
+        } => {
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, project_id.value());
+            put_i64(&mut bytes, target_graph_revision_id.value());
+        }
+        CommandBody::AssignAdversarialReviewer {
+            operating_cycle_id,
+            adversarial_review_id,
+            reviewer_principal_id,
+        } => {
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, adversarial_review_id.value());
+            put_i64(&mut bytes, reviewer_principal_id.value());
+        }
+        CommandBody::SubmitReviewChallenge {
+            operating_cycle_id,
+            adversarial_review_id,
+            target_graph_revision_id,
+            author_principal_id,
+            severity,
+            failure_hypothesis,
+        } => {
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, adversarial_review_id.value());
+            put_i64(&mut bytes, target_graph_revision_id.value());
+            put_i64(&mut bytes, author_principal_id.value());
+            put_i64(&mut bytes, *severity as i64);
+            put_bytes(&mut bytes, failure_hypothesis.as_str().as_bytes());
+        }
+        CommandBody::RespondToReviewChallenge {
+            operating_cycle_id,
+            review_challenge_id,
+            response,
+        } => {
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, review_challenge_id.value());
+            put_bytes(&mut bytes, response.as_str().as_bytes());
+        }
+        CommandBody::DispositionReviewChallenge {
+            operating_cycle_id,
+            review_challenge_id,
+            disposition,
+        } => {
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, review_challenge_id.value());
+            put_i64(&mut bytes, *disposition as i64);
+        }
+        CommandBody::ResolveAdversarialReview {
+            operating_cycle_id,
+            adversarial_review_id,
+            resolution,
+        } => {
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, adversarial_review_id.value());
+            put_i64(&mut bytes, *resolution as i64);
+        }
+        CommandBody::TriggerPostmortem {
+            operating_cycle_id,
+            project_id,
+            causal_episode_id,
+        } => {
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, project_id.value());
+            put_optional_i64(&mut bytes, causal_episode_id.map(CausalEpisodeId::value));
+        }
+        CommandBody::RecordPostmortemCausalClaim {
+            operating_cycle_id,
+            postmortem_id,
+            claim_kind,
+            claim,
+        } => {
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, postmortem_id.value());
+            put_i64(&mut bytes, *claim_kind as i64);
+            put_bytes(&mut bytes, claim.as_str().as_bytes());
+        }
+        CommandBody::ProposePostmortemAction {
+            operating_cycle_id,
+            postmortem_id,
+            action_kind,
+            action,
+        } => {
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, postmortem_id.value());
+            put_i64(&mut bytes, *action_kind as i64);
+            put_bytes(&mut bytes, action.as_str().as_bytes());
+        }
+        CommandBody::ClosePostmortem {
+            operating_cycle_id,
+            postmortem_id,
+        } => {
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, postmortem_id.value());
+        }
     }
     Sha256Digest::of_bytes(&bytes)
 }
@@ -2339,17 +4276,117 @@ fn event_fingerprint(event_id: EventId, command_id: &CommandId, body: &EventBody
             put_i64(&mut bytes, *resolution as i64);
             put_i64(&mut bytes, charged.value());
         }
+        EventBody::ProjectCreated { project_id } | EventBody::ProjectChartered { project_id } => {
+            put_i64(&mut bytes, project_id.value())
+        }
+        EventBody::ProjectStateChanged { project_id, state } => {
+            put_i64(&mut bytes, project_id.value());
+            put_i64(&mut bytes, *state as i64);
+        }
+        EventBody::ProjectMilestoneCompleted {
+            project_milestone_id,
+        } => put_i64(&mut bytes, project_milestone_id.value()),
+        EventBody::TicketCreated {
+            ticket_id,
+            project_id,
+        } => {
+            put_i64(&mut bytes, ticket_id.value());
+            put_i64(&mut bytes, project_id.value());
+        }
+        EventBody::TicketStateChanged { ticket_id, state } => {
+            put_i64(&mut bytes, ticket_id.value());
+            put_i64(&mut bytes, *state as i64);
+        }
+        EventBody::GraphObjectRevisionAdded {
+            graph_object_id,
+            graph_revision_id,
+        } => {
+            put_i64(&mut bytes, graph_object_id.value());
+            put_i64(&mut bytes, graph_revision_id.value());
+        }
+        EventBody::GraphRevisionCommitted { graph_revision_id } => {
+            put_i64(&mut bytes, graph_revision_id.value())
+        }
+        EventBody::GraphEdgeAdded { graph_edge_id } => put_i64(&mut bytes, graph_edge_id.value()),
+        EventBody::EpisodeCreated {
+            causal_episode_id,
+            project_id,
+        } => {
+            put_i64(&mut bytes, causal_episode_id.value());
+            put_i64(&mut bytes, project_id.value());
+        }
+        EventBody::EpisodeStateChanged {
+            causal_episode_id,
+            state,
+        } => {
+            put_i64(&mut bytes, causal_episode_id.value());
+            put_i64(&mut bytes, *state as i64);
+        }
+        EventBody::AdversarialReviewRequested {
+            adversarial_review_id,
+        } => put_i64(&mut bytes, adversarial_review_id.value()),
+        EventBody::AdversarialReviewerAssigned {
+            adversarial_review_id,
+            reviewer_principal_id,
+        } => {
+            put_i64(&mut bytes, adversarial_review_id.value());
+            put_i64(&mut bytes, reviewer_principal_id.value());
+        }
+        EventBody::AdversarialReviewResolved {
+            adversarial_review_id,
+            state,
+        } => {
+            put_i64(&mut bytes, adversarial_review_id.value());
+            put_i64(&mut bytes, *state as i64);
+        }
+        EventBody::ReviewChallengeSubmitted {
+            review_challenge_id,
+            author_principal_id,
+        } => {
+            put_i64(&mut bytes, review_challenge_id.value());
+            put_i64(&mut bytes, author_principal_id.value());
+        }
+        EventBody::ReviewChallengeResponded {
+            review_challenge_id,
+        } => put_i64(&mut bytes, review_challenge_id.value()),
+        EventBody::ReviewChallengeDispositioned {
+            review_challenge_id,
+            disposition,
+        } => {
+            put_i64(&mut bytes, review_challenge_id.value());
+            put_i64(&mut bytes, *disposition as i64);
+        }
+        EventBody::PostmortemTriggered { postmortem_id }
+        | EventBody::PostmortemClosed { postmortem_id } => {
+            put_i64(&mut bytes, postmortem_id.value())
+        }
+        EventBody::PostmortemCausalClaimRecorded {
+            postmortem_causal_claim_id,
+        } => put_i64(&mut bytes, postmortem_causal_claim_id.value()),
+        EventBody::PostmortemActionProposed {
+            postmortem_action_proposal_id,
+        } => put_i64(&mut bytes, postmortem_action_proposal_id.value()),
     }
     Sha256Digest::of_bytes(&bytes)
+}
+
+fn put_bytes(bytes: &mut Vec<u8>, value: &[u8]) {
+    put_i64(bytes, value.len() as i64);
+    bytes.extend_from_slice(value);
 }
 
 fn put_i64(bytes: &mut Vec<u8>, value: i64) {
     bytes.extend_from_slice(&value.to_be_bytes());
 }
 
-fn put_bytes(bytes: &mut Vec<u8>, value: &[u8]) {
-    put_i64(bytes, value.len() as i64);
-    bytes.extend_from_slice(value);
+fn put_optional_i64(bytes: &mut Vec<u8>, value: Option<i64>) {
+    match value {
+        Some(value) => {
+            put_i64(bytes, 1);
+            put_i64(bytes, value);
+        }
+        None => put_i64(bytes, 0),
+    }
 }
 
 fn insert_command_body(
@@ -2455,6 +4492,376 @@ fn insert_command_body(
             resolution,
         } => {
             transaction.execute("INSERT INTO command_close_cost_postmortem(command_row_id, postmortem_id, resolution_kind) VALUES (?1, ?2, ?3)", params![command_row_id, postmortem_id.value(), *resolution as i64])?;
+        }
+        CommandBody::CreateProject {
+            operating_cycle_id,
+            project_name,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_create_project VALUES (?1, ?2, ?3)",
+                params![
+                    command_row_id,
+                    operating_cycle_id.value(),
+                    project_name.as_str()
+                ],
+            )?;
+        }
+        CommandBody::CharterProject {
+            operating_cycle_id,
+            project_id,
+            objective,
+            initial_milestone,
+            stop_condition,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_charter_project VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    command_row_id,
+                    operating_cycle_id.value(),
+                    project_id.value(),
+                    objective.as_str(),
+                    initial_milestone.as_str(),
+                    stop_condition.as_str()
+                ],
+            )?;
+        }
+        CommandBody::TransitionProject {
+            operating_cycle_id,
+            project_id,
+            target,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_transition_project VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    command_row_id,
+                    operating_cycle_id.value(),
+                    project_id.value(),
+                    *target as i64
+                ],
+            )?;
+        }
+        CommandBody::CompleteProjectMilestone {
+            operating_cycle_id,
+            project_milestone_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_complete_project_milestone VALUES (?1, ?2, ?3)",
+                params![
+                    command_row_id,
+                    operating_cycle_id.value(),
+                    project_milestone_id.value()
+                ],
+            )?;
+        }
+        CommandBody::ReopenProject {
+            operating_cycle_id,
+            project_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_reopen_project VALUES (?1, ?2, ?3)",
+                params![
+                    command_row_id,
+                    operating_cycle_id.value(),
+                    project_id.value()
+                ],
+            )?;
+        }
+        CommandBody::CreateTicket {
+            operating_cycle_id,
+            project_id,
+            ticket_title,
+            acceptance_condition,
+            prerequisite_ticket_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_create_ticket VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    command_row_id,
+                    operating_cycle_id.value(),
+                    project_id.value(),
+                    ticket_title.as_str(),
+                    acceptance_condition.as_str(),
+                    prerequisite_ticket_id.map(TicketId::value)
+                ],
+            )?;
+        }
+        CommandBody::TransitionTicket {
+            operating_cycle_id,
+            ticket_id,
+            target,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_transition_ticket VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    command_row_id,
+                    operating_cycle_id.value(),
+                    ticket_id.value(),
+                    *target as i64
+                ],
+            )?;
+        }
+        CommandBody::AddGraphObjectRevision {
+            operating_cycle_id,
+            project_id,
+            causal_episode_id,
+            graph_object_id,
+            body,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_add_graph_object_revision VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    command_row_id,
+                    operating_cycle_id.value(),
+                    project_id.value(),
+                    causal_episode_id.map(CausalEpisodeId::value),
+                    graph_object_id.map(GraphObjectId::value)
+                ],
+            )?;
+            match body {
+                GraphRevisionBody::Observation { observation } => {
+                    transaction.execute(
+                        "INSERT INTO command_add_observation_revision VALUES (?1, ?2)",
+                        params![command_row_id, observation.as_str()],
+                    )?;
+                }
+                GraphRevisionBody::Hypothesis { hypothesis } => {
+                    transaction.execute(
+                        "INSERT INTO command_add_hypothesis_revision VALUES (?1, ?2)",
+                        params![command_row_id, hypothesis.as_str()],
+                    )?;
+                }
+            }
+        }
+        CommandBody::CommitGraphRevision {
+            operating_cycle_id,
+            graph_revision_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_commit_graph_revision VALUES (?1, ?2, ?3)",
+                params![
+                    command_row_id,
+                    operating_cycle_id.value(),
+                    graph_revision_id.value()
+                ],
+            )?;
+        }
+        CommandBody::AddGraphEdge {
+            operating_cycle_id,
+            project_id,
+            from_graph_revision_id,
+            to_graph_revision_id,
+            edge_kind,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_add_graph_edge VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    command_row_id,
+                    operating_cycle_id.value(),
+                    project_id.value(),
+                    from_graph_revision_id.value(),
+                    to_graph_revision_id.value(),
+                    *edge_kind as i64
+                ],
+            )?;
+        }
+        CommandBody::CreateEpisode {
+            operating_cycle_id,
+            project_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_create_episode VALUES (?1, ?2, ?3)",
+                params![
+                    command_row_id,
+                    operating_cycle_id.value(),
+                    project_id.value()
+                ],
+            )?;
+        }
+        CommandBody::TransitionEpisode {
+            operating_cycle_id,
+            causal_episode_id,
+            target,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_transition_episode VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    command_row_id,
+                    operating_cycle_id.value(),
+                    causal_episode_id.value(),
+                    *target as i64
+                ],
+            )?;
+        }
+        CommandBody::ReopenEpisode {
+            operating_cycle_id,
+            causal_episode_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_reopen_episode VALUES (?1, ?2, ?3)",
+                params![
+                    command_row_id,
+                    operating_cycle_id.value(),
+                    causal_episode_id.value()
+                ],
+            )?;
+        }
+        CommandBody::RequestAdversarialReview {
+            operating_cycle_id,
+            project_id,
+            target_graph_revision_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_request_adversarial_review VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    command_row_id,
+                    operating_cycle_id.value(),
+                    project_id.value(),
+                    target_graph_revision_id.value()
+                ],
+            )?;
+        }
+        CommandBody::AssignAdversarialReviewer {
+            operating_cycle_id,
+            adversarial_review_id,
+            reviewer_principal_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_assign_adversarial_reviewer VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    command_row_id,
+                    operating_cycle_id.value(),
+                    adversarial_review_id.value(),
+                    reviewer_principal_id.value()
+                ],
+            )?;
+        }
+        CommandBody::SubmitReviewChallenge {
+            operating_cycle_id,
+            adversarial_review_id,
+            target_graph_revision_id,
+            author_principal_id,
+            severity,
+            failure_hypothesis,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_submit_review_challenge VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    command_row_id,
+                    operating_cycle_id.value(),
+                    adversarial_review_id.value(),
+                    target_graph_revision_id.value(),
+                    author_principal_id.value(),
+                    *severity as i64,
+                    failure_hypothesis.as_str()
+                ],
+            )?;
+        }
+        CommandBody::RespondToReviewChallenge {
+            operating_cycle_id,
+            review_challenge_id,
+            response,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_respond_to_review_challenge VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    command_row_id,
+                    operating_cycle_id.value(),
+                    review_challenge_id.value(),
+                    response.as_str()
+                ],
+            )?;
+        }
+        CommandBody::DispositionReviewChallenge {
+            operating_cycle_id,
+            review_challenge_id,
+            disposition,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_disposition_review_challenge VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    command_row_id,
+                    operating_cycle_id.value(),
+                    review_challenge_id.value(),
+                    *disposition as i64
+                ],
+            )?;
+        }
+        CommandBody::ResolveAdversarialReview {
+            operating_cycle_id,
+            adversarial_review_id,
+            resolution,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_resolve_adversarial_review VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    command_row_id,
+                    operating_cycle_id.value(),
+                    adversarial_review_id.value(),
+                    *resolution as i64
+                ],
+            )?;
+        }
+        CommandBody::TriggerPostmortem {
+            operating_cycle_id,
+            project_id,
+            causal_episode_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_trigger_postmortem VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    command_row_id,
+                    operating_cycle_id.value(),
+                    project_id.value(),
+                    causal_episode_id.map(CausalEpisodeId::value)
+                ],
+            )?;
+        }
+        CommandBody::RecordPostmortemCausalClaim {
+            operating_cycle_id,
+            postmortem_id,
+            claim_kind,
+            claim,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_record_postmortem_causal_claim VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    command_row_id,
+                    operating_cycle_id.value(),
+                    postmortem_id.value(),
+                    *claim_kind as i64,
+                    claim.as_str()
+                ],
+            )?;
+        }
+        CommandBody::ProposePostmortemAction {
+            operating_cycle_id,
+            postmortem_id,
+            action_kind,
+            action,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_propose_postmortem_action VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    command_row_id,
+                    operating_cycle_id.value(),
+                    postmortem_id.value(),
+                    *action_kind as i64,
+                    action.as_str()
+                ],
+            )?;
+        }
+        CommandBody::ClosePostmortem {
+            operating_cycle_id,
+            postmortem_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_close_postmortem VALUES (?1, ?2, ?3)",
+                params![
+                    command_row_id,
+                    operating_cycle_id.value(),
+                    postmortem_id.value()
+                ],
+            )?;
         }
     }
     Ok(())
@@ -2613,6 +5020,190 @@ fn insert_event_body(
         } => {
             transaction.execute("INSERT INTO event_cost_postmortem_closed(event_id, postmortem_id, budget_reservation_id, operating_cycle_id, resolution_kind, charged_micros) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![event_id.value(), postmortem_id.value(), reservation_id.value(), cycle_id.value(), *resolution as i64, charged.value()])?;
         }
+        EventBody::ProjectCreated { project_id } => {
+            transaction.execute(
+                "INSERT INTO event_project_created VALUES (?1, ?2)",
+                params![event_id.value(), project_id.value()],
+            )?;
+        }
+        EventBody::ProjectChartered { project_id } => {
+            transaction.execute(
+                "INSERT INTO event_project_chartered VALUES (?1, ?2)",
+                params![event_id.value(), project_id.value()],
+            )?;
+        }
+        EventBody::ProjectStateChanged { project_id, state } => {
+            transaction.execute(
+                "INSERT INTO event_project_state_changed VALUES (?1, ?2, ?3)",
+                params![event_id.value(), project_id.value(), *state as i64],
+            )?;
+        }
+        EventBody::ProjectMilestoneCompleted {
+            project_milestone_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_project_milestone_completed VALUES (?1, ?2)",
+                params![event_id.value(), project_milestone_id.value()],
+            )?;
+        }
+        EventBody::TicketCreated {
+            ticket_id,
+            project_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_ticket_created VALUES (?1, ?2, ?3)",
+                params![event_id.value(), ticket_id.value(), project_id.value()],
+            )?;
+        }
+        EventBody::TicketStateChanged { ticket_id, state } => {
+            transaction.execute(
+                "INSERT INTO event_ticket_state_changed VALUES (?1, ?2, ?3)",
+                params![event_id.value(), ticket_id.value(), *state as i64],
+            )?;
+        }
+        EventBody::GraphObjectRevisionAdded {
+            graph_object_id,
+            graph_revision_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_graph_object_revision_added VALUES (?1, ?2, ?3)",
+                params![
+                    event_id.value(),
+                    graph_object_id.value(),
+                    graph_revision_id.value()
+                ],
+            )?;
+        }
+        EventBody::GraphRevisionCommitted { graph_revision_id } => {
+            transaction.execute(
+                "INSERT INTO event_graph_revision_committed VALUES (?1, ?2)",
+                params![event_id.value(), graph_revision_id.value()],
+            )?;
+        }
+        EventBody::GraphEdgeAdded { graph_edge_id } => {
+            transaction.execute(
+                "INSERT INTO event_graph_edge_added VALUES (?1, ?2)",
+                params![event_id.value(), graph_edge_id.value()],
+            )?;
+        }
+        EventBody::EpisodeCreated {
+            causal_episode_id,
+            project_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_episode_created VALUES (?1, ?2, ?3)",
+                params![
+                    event_id.value(),
+                    causal_episode_id.value(),
+                    project_id.value()
+                ],
+            )?;
+        }
+        EventBody::EpisodeStateChanged {
+            causal_episode_id,
+            state,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_episode_state_changed VALUES (?1, ?2, ?3)",
+                params![event_id.value(), causal_episode_id.value(), *state as i64],
+            )?;
+        }
+        EventBody::AdversarialReviewRequested {
+            adversarial_review_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_adversarial_review_requested VALUES (?1, ?2)",
+                params![event_id.value(), adversarial_review_id.value()],
+            )?;
+        }
+        EventBody::AdversarialReviewerAssigned {
+            adversarial_review_id,
+            reviewer_principal_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_adversarial_reviewer_assigned VALUES (?1, ?2, ?3)",
+                params![
+                    event_id.value(),
+                    adversarial_review_id.value(),
+                    reviewer_principal_id.value()
+                ],
+            )?;
+        }
+        EventBody::ReviewChallengeSubmitted {
+            review_challenge_id,
+            author_principal_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_review_challenge_submitted VALUES (?1, ?2, ?3)",
+                params![
+                    event_id.value(),
+                    review_challenge_id.value(),
+                    author_principal_id.value()
+                ],
+            )?;
+        }
+        EventBody::ReviewChallengeResponded {
+            review_challenge_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_review_challenge_responded VALUES (?1, ?2)",
+                params![event_id.value(), review_challenge_id.value()],
+            )?;
+        }
+        EventBody::ReviewChallengeDispositioned {
+            review_challenge_id,
+            disposition,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_review_challenge_dispositioned VALUES (?1, ?2, ?3)",
+                params![
+                    event_id.value(),
+                    review_challenge_id.value(),
+                    *disposition as i64
+                ],
+            )?;
+        }
+        EventBody::AdversarialReviewResolved {
+            adversarial_review_id,
+            state,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_adversarial_review_resolved VALUES (?1, ?2, ?3)",
+                params![
+                    event_id.value(),
+                    adversarial_review_id.value(),
+                    *state as i64
+                ],
+            )?;
+        }
+        EventBody::PostmortemTriggered { postmortem_id } => {
+            transaction.execute(
+                "INSERT INTO event_postmortem_triggered VALUES (?1, ?2)",
+                params![event_id.value(), postmortem_id.value()],
+            )?;
+        }
+        EventBody::PostmortemCausalClaimRecorded {
+            postmortem_causal_claim_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_postmortem_causal_claim_recorded VALUES (?1, ?2)",
+                params![event_id.value(), postmortem_causal_claim_id.value()],
+            )?;
+        }
+        EventBody::PostmortemActionProposed {
+            postmortem_action_proposal_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_postmortem_action_proposed VALUES (?1, ?2)",
+                params![event_id.value(), postmortem_action_proposal_id.value()],
+            )?;
+        }
+        EventBody::PostmortemClosed { postmortem_id } => {
+            transaction.execute(
+                "INSERT INTO event_postmortem_closed VALUES (?1, ?2)",
+                params![event_id.value(), postmortem_id.value()],
+            )?;
+        }
     }
     Ok(())
 }
@@ -2756,7 +5347,7 @@ fn decode_event_body(
                     .map_err(|_| StoreError::InvalidStoredValue)?,
                 cancellation_request_id: CancellationRequestId::try_from(cancellation_request)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
-                postmortem_id: PostmortemId::try_from(postmortem)
+                postmortem_id: CostPostmortemId::try_from(postmortem)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
                 reason: budget_freeze_reason_from_sql(
                     reason_kind,
@@ -2791,7 +5382,7 @@ fn decode_event_body(
         EventKind::CostPostmortemClosed => {
             let (postmortem, reservation, cycle, resolution, charged) = connection.query_row("SELECT postmortem_id, budget_reservation_id, operating_cycle_id, resolution_kind, charged_micros FROM event_cost_postmortem_closed WHERE event_id = ?1", [event_id], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing cost postmortem closed event body"))?;
             EventBody::CostPostmortemClosed {
-                postmortem_id: PostmortemId::try_from(postmortem)
+                postmortem_id: CostPostmortemId::try_from(postmortem)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
                 reservation_id: BudgetReservationId::try_from(reservation)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -2802,6 +5393,184 @@ fn decode_event_body(
                     .map_err(|_| StoreError::InvalidStoredValue)?,
             }
         }
+        EventKind::ProjectCreated => EventBody::ProjectCreated {
+            project_id: query_event_id(
+                connection,
+                "event_project_created",
+                "project_id",
+                event_id_typed,
+            )?,
+        },
+        EventKind::ProjectChartered => EventBody::ProjectChartered {
+            project_id: query_event_id(
+                connection,
+                "event_project_chartered",
+                "project_id",
+                event_id_typed,
+            )?,
+        },
+        EventKind::ProjectStateChanged => {
+            let (id, state) =
+                query_event_pair(connection, "event_project_state_changed", event_id)?;
+            EventBody::ProjectStateChanged {
+                project_id: ProjectId::try_from(id).map_err(|_| StoreError::InvalidStoredValue)?,
+                state: project_state_from_i64(state)?,
+            }
+        }
+        EventKind::ProjectMilestoneCompleted => EventBody::ProjectMilestoneCompleted {
+            project_milestone_id: query_event_id(
+                connection,
+                "event_project_milestone_completed",
+                "project_milestone_id",
+                event_id_typed,
+            )?,
+        },
+        EventKind::TicketCreated => {
+            let (id, project) = query_event_pair(connection, "event_ticket_created", event_id)?;
+            EventBody::TicketCreated {
+                ticket_id: TicketId::try_from(id).map_err(|_| StoreError::InvalidStoredValue)?,
+                project_id: ProjectId::try_from(project)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        EventKind::TicketStateChanged => {
+            let (id, state) = query_event_pair(connection, "event_ticket_state_changed", event_id)?;
+            EventBody::TicketStateChanged {
+                ticket_id: TicketId::try_from(id).map_err(|_| StoreError::InvalidStoredValue)?,
+                state: ticket_state_from_i64(state)?,
+            }
+        }
+        EventKind::GraphObjectRevisionAdded => {
+            let (object, revision) =
+                query_event_pair(connection, "event_graph_object_revision_added", event_id)?;
+            EventBody::GraphObjectRevisionAdded {
+                graph_object_id: GraphObjectId::try_from(object)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                graph_revision_id: GraphRevisionId::try_from(revision)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        EventKind::GraphRevisionCommitted => EventBody::GraphRevisionCommitted {
+            graph_revision_id: query_event_id(
+                connection,
+                "event_graph_revision_committed",
+                "graph_revision_id",
+                event_id_typed,
+            )?,
+        },
+        EventKind::GraphEdgeAdded => EventBody::GraphEdgeAdded {
+            graph_edge_id: query_event_id(
+                connection,
+                "event_graph_edge_added",
+                "graph_edge_id",
+                event_id_typed,
+            )?,
+        },
+        EventKind::EpisodeCreated => {
+            let (episode, project) =
+                query_event_pair(connection, "event_episode_created", event_id)?;
+            EventBody::EpisodeCreated {
+                causal_episode_id: CausalEpisodeId::try_from(episode)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                project_id: ProjectId::try_from(project)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        EventKind::EpisodeStateChanged => {
+            let (episode, state) =
+                query_event_pair(connection, "event_episode_state_changed", event_id)?;
+            EventBody::EpisodeStateChanged {
+                causal_episode_id: CausalEpisodeId::try_from(episode)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                state: episode_state_from_i64(state)?,
+            }
+        }
+        EventKind::AdversarialReviewRequested => EventBody::AdversarialReviewRequested {
+            adversarial_review_id: query_event_id(
+                connection,
+                "event_adversarial_review_requested",
+                "adversarial_review_id",
+                event_id_typed,
+            )?,
+        },
+        EventKind::AdversarialReviewerAssigned => {
+            let (review, reviewer) =
+                query_event_pair(connection, "event_adversarial_reviewer_assigned", event_id)?;
+            EventBody::AdversarialReviewerAssigned {
+                adversarial_review_id: AdversarialReviewId::try_from(review)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                reviewer_principal_id: PrincipalId::try_from(reviewer)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        EventKind::ReviewChallengeSubmitted => {
+            let (challenge, author) =
+                query_event_pair(connection, "event_review_challenge_submitted", event_id)?;
+            EventBody::ReviewChallengeSubmitted {
+                review_challenge_id: ReviewChallengeId::try_from(challenge)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                author_principal_id: PrincipalId::try_from(author)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        EventKind::ReviewChallengeResponded => EventBody::ReviewChallengeResponded {
+            review_challenge_id: query_event_id(
+                connection,
+                "event_review_challenge_responded",
+                "review_challenge_id",
+                event_id_typed,
+            )?,
+        },
+        EventKind::ReviewChallengeDispositioned => {
+            let (id, disposition) =
+                query_event_pair(connection, "event_review_challenge_dispositioned", event_id)?;
+            EventBody::ReviewChallengeDispositioned {
+                review_challenge_id: ReviewChallengeId::try_from(id)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                disposition: review_disposition_kind_from_i64(disposition)?,
+            }
+        }
+        EventKind::AdversarialReviewResolved => {
+            let (id, state) =
+                query_event_pair(connection, "event_adversarial_review_resolved", event_id)?;
+            EventBody::AdversarialReviewResolved {
+                adversarial_review_id: AdversarialReviewId::try_from(id)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                state: adversarial_review_state_from_i64(state)?,
+            }
+        }
+        EventKind::PostmortemTriggered => EventBody::PostmortemTriggered {
+            postmortem_id: query_event_id(
+                connection,
+                "event_postmortem_triggered",
+                "postmortem_id",
+                event_id_typed,
+            )?,
+        },
+        EventKind::PostmortemCausalClaimRecorded => EventBody::PostmortemCausalClaimRecorded {
+            postmortem_causal_claim_id: query_event_id(
+                connection,
+                "event_postmortem_causal_claim_recorded",
+                "postmortem_causal_claim_id",
+                event_id_typed,
+            )?,
+        },
+        EventKind::PostmortemActionProposed => EventBody::PostmortemActionProposed {
+            postmortem_action_proposal_id: query_event_id(
+                connection,
+                "event_postmortem_action_proposed",
+                "postmortem_action_proposal_id",
+                event_id_typed,
+            )?,
+        },
+        EventKind::PostmortemClosed => EventBody::PostmortemClosed {
+            postmortem_id: query_event_id(
+                connection,
+                "event_postmortem_closed",
+                "postmortem_id",
+                event_id_typed,
+            )?,
+        },
     };
     let stored_fingerprint: Vec<u8> = connection.query_row(
         "SELECT event_fingerprint FROM events WHERE event_id = ?1",
@@ -2827,8 +5596,7 @@ fn verify_command_bodies(connection: &Connection) -> Result<(), StoreError> {
         "SELECT command_row_id, command_id, principal_id, capability_grant_id,
                 capability_kind, expected_generation, command_kind,
                 request_fingerprint, command_status, accepted_event_id
-         FROM commands
-         ORDER BY command_row_id ASC",
+         FROM commands ORDER BY command_row_id ASC",
     )?;
     let rows = statement.query_map([], |row| {
         Ok((
@@ -2991,7 +5759,7 @@ fn replay_command_requests(
     Ok(commands)
 }
 
-const MATERIALIZED_TABLES: [&str; 19] = [
+const MATERIALIZED_TABLES: [&str; 40] = [
     "principals",
     "societies",
     "office_contracts",
@@ -3011,6 +5779,27 @@ const MATERIALIZED_TABLES: [&str; 19] = [
     "cancellation_requests",
     "cost_postmortems",
     "cost_postmortem_resolutions",
+    "projects",
+    "project_objectives",
+    "project_milestones",
+    "project_stop_conditions",
+    "tickets",
+    "ticket_acceptance_conditions",
+    "ticket_prerequisites",
+    "objects",
+    "object_revisions",
+    "observation_revisions",
+    "hypothesis_revisions",
+    "edges",
+    "episodes",
+    "adversarial_reviews",
+    "review_challenges",
+    "review_challenge_responses",
+    "review_dispositions",
+    "postmortems",
+    "postmortem_causal_claims",
+    "postmortem_action_proposals",
+    "coordination_command_provenance",
 ];
 
 fn materialized_state_digest(connection: &Connection) -> Result<Sha256Digest, StoreError> {
@@ -3308,9 +6097,309 @@ fn decode_command_body(
                     "missing cost postmortem close command body",
                 ))?;
             CommandBody::CloseCostPostmortem {
-                postmortem_id: PostmortemId::try_from(postmortem_id)
+                postmortem_id: CostPostmortemId::try_from(postmortem_id)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
                 resolution: cost_postmortem_resolution_from_i64(resolution)?,
+            }
+        }
+        CommandKind::CreateProject => {
+            let (cycle, name) =
+                query_command_i64_text(connection, "command_create_project", command_row_id)?;
+            CommandBody::CreateProject {
+                operating_cycle_id: OperatingCycleId::try_from(cycle)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                project_name: crate::ProjectName::parse(name)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::CharterProject => {
+            let row = query_command_six(connection, "command_charter_project", command_row_id)?;
+            CommandBody::CharterProject {
+                operating_cycle_id: OperatingCycleId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                project_id: ProjectId::try_from(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                objective: crate::ProjectObjectiveText::parse(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                initial_milestone: crate::ProjectMilestoneName::parse(row.3)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                stop_condition: crate::ProjectStopConditionText::parse(row.4)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::TransitionProject => {
+            let (cycle, id, state) =
+                query_command_three(connection, "command_transition_project", command_row_id)?;
+            CommandBody::TransitionProject {
+                operating_cycle_id: OperatingCycleId::try_from(cycle)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                project_id: ProjectId::try_from(id).map_err(|_| StoreError::InvalidStoredValue)?,
+                target: project_state_from_i64(state)?,
+            }
+        }
+        CommandKind::CompleteProjectMilestone => {
+            let (cycle, id) = query_command_pair(
+                connection,
+                "command_complete_project_milestone",
+                command_row_id,
+            )?;
+            CommandBody::CompleteProjectMilestone {
+                operating_cycle_id: OperatingCycleId::try_from(cycle)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                project_milestone_id: ProjectMilestoneId::try_from(id)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::ReopenProject => {
+            let (cycle, id) =
+                query_command_pair(connection, "command_reopen_project", command_row_id)?;
+            CommandBody::ReopenProject {
+                operating_cycle_id: OperatingCycleId::try_from(cycle)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                project_id: ProjectId::try_from(id).map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::CreateTicket => {
+            let (cycle, project, title, condition, prerequisite) =
+                query_create_ticket(connection, command_row_id)?;
+            CommandBody::CreateTicket {
+                operating_cycle_id: OperatingCycleId::try_from(cycle)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                project_id: ProjectId::try_from(project)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                ticket_title: crate::TicketTitle::parse(title)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                acceptance_condition: crate::TicketAcceptanceConditionText::parse(condition)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                prerequisite_ticket_id: prerequisite
+                    .map(TicketId::try_from)
+                    .transpose()
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::TransitionTicket => {
+            let (cycle, id, state) =
+                query_command_three(connection, "command_transition_ticket", command_row_id)?;
+            CommandBody::TransitionTicket {
+                operating_cycle_id: OperatingCycleId::try_from(cycle)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                ticket_id: TicketId::try_from(id).map_err(|_| StoreError::InvalidStoredValue)?,
+                target: ticket_state_from_i64(state)?,
+            }
+        }
+        CommandKind::AddGraphObjectRevision => {
+            let (cycle, project, episode, object) =
+                query_graph_revision_command(connection, command_row_id)?;
+            CommandBody::AddGraphObjectRevision {
+                operating_cycle_id: OperatingCycleId::try_from(cycle)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                project_id: ProjectId::try_from(project)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                causal_episode_id: episode
+                    .map(CausalEpisodeId::try_from)
+                    .transpose()
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                graph_object_id: object
+                    .map(GraphObjectId::try_from)
+                    .transpose()
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                body: query_graph_revision_command_body(connection, command_row_id)?,
+            }
+        }
+        CommandKind::CommitGraphRevision => {
+            let (cycle, id) =
+                query_command_pair(connection, "command_commit_graph_revision", command_row_id)?;
+            CommandBody::CommitGraphRevision {
+                operating_cycle_id: OperatingCycleId::try_from(cycle)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                graph_revision_id: GraphRevisionId::try_from(id)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::AddGraphEdge => {
+            let (cycle, project, from, to, kind) = query_edge_command(connection, command_row_id)?;
+            CommandBody::AddGraphEdge {
+                operating_cycle_id: OperatingCycleId::try_from(cycle)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                project_id: ProjectId::try_from(project)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                from_graph_revision_id: GraphRevisionId::try_from(from)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                to_graph_revision_id: GraphRevisionId::try_from(to)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                edge_kind: graph_edge_kind_from_i64(kind)?,
+            }
+        }
+        CommandKind::CreateEpisode => {
+            let (cycle, project) =
+                query_command_pair(connection, "command_create_episode", command_row_id)?;
+            CommandBody::CreateEpisode {
+                operating_cycle_id: OperatingCycleId::try_from(cycle)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                project_id: ProjectId::try_from(project)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::TransitionEpisode => {
+            let (cycle, episode, state) =
+                query_command_three(connection, "command_transition_episode", command_row_id)?;
+            CommandBody::TransitionEpisode {
+                operating_cycle_id: OperatingCycleId::try_from(cycle)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                causal_episode_id: CausalEpisodeId::try_from(episode)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                target: episode_state_from_i64(state)?,
+            }
+        }
+        CommandKind::ReopenEpisode => {
+            let (cycle, episode) =
+                query_command_pair(connection, "command_reopen_episode", command_row_id)?;
+            CommandBody::ReopenEpisode {
+                operating_cycle_id: OperatingCycleId::try_from(cycle)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                causal_episode_id: CausalEpisodeId::try_from(episode)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::RequestAdversarialReview => {
+            let (cycle, project, revision) = query_command_three(
+                connection,
+                "command_request_adversarial_review",
+                command_row_id,
+            )?;
+            CommandBody::RequestAdversarialReview {
+                operating_cycle_id: OperatingCycleId::try_from(cycle)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                project_id: ProjectId::try_from(project)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                target_graph_revision_id: GraphRevisionId::try_from(revision)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::AssignAdversarialReviewer => {
+            let (cycle, review, reviewer) = query_command_three(
+                connection,
+                "command_assign_adversarial_reviewer",
+                command_row_id,
+            )?;
+            CommandBody::AssignAdversarialReviewer {
+                operating_cycle_id: OperatingCycleId::try_from(cycle)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                adversarial_review_id: AdversarialReviewId::try_from(review)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                reviewer_principal_id: PrincipalId::try_from(reviewer)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::SubmitReviewChallenge => {
+            let (cycle, review, revision, author, severity, hypothesis) =
+                query_review_submit(connection, command_row_id)?;
+            CommandBody::SubmitReviewChallenge {
+                operating_cycle_id: OperatingCycleId::try_from(cycle)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                adversarial_review_id: AdversarialReviewId::try_from(review)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                target_graph_revision_id: GraphRevisionId::try_from(revision)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                author_principal_id: PrincipalId::try_from(author)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                severity: review_challenge_severity_from_i64(severity)?,
+                failure_hypothesis: crate::ReviewFailureHypothesis::parse(hypothesis)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::RespondToReviewChallenge => {
+            let (cycle, challenge, response): (i64, i64, String) = connection.query_row("SELECT operating_cycle_id, review_challenge_id, response_text FROM command_respond_to_review_challenge WHERE command_row_id = ?1", [command_row_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing review response command body"))?;
+            CommandBody::RespondToReviewChallenge {
+                operating_cycle_id: OperatingCycleId::try_from(cycle)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                review_challenge_id: ReviewChallengeId::try_from(challenge)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                response: crate::ReviewResponseText::parse(response)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::DispositionReviewChallenge => {
+            let (cycle, challenge, disposition) = query_command_three(
+                connection,
+                "command_disposition_review_challenge",
+                command_row_id,
+            )?;
+            CommandBody::DispositionReviewChallenge {
+                operating_cycle_id: OperatingCycleId::try_from(cycle)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                review_challenge_id: ReviewChallengeId::try_from(challenge)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                disposition: review_disposition_kind_from_i64(disposition)?,
+            }
+        }
+        CommandKind::ResolveAdversarialReview => {
+            let (cycle, review, resolution) = query_command_three(
+                connection,
+                "command_resolve_adversarial_review",
+                command_row_id,
+            )?;
+            CommandBody::ResolveAdversarialReview {
+                operating_cycle_id: OperatingCycleId::try_from(cycle)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                adversarial_review_id: AdversarialReviewId::try_from(review)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                resolution: review_resolution_kind_from_i64(resolution)?,
+            }
+        }
+        CommandKind::TriggerPostmortem => {
+            let (cycle, project, episode) = query_postmortem_trigger(connection, command_row_id)?;
+            CommandBody::TriggerPostmortem {
+                operating_cycle_id: OperatingCycleId::try_from(cycle)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                project_id: ProjectId::try_from(project)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                causal_episode_id: episode
+                    .map(CausalEpisodeId::try_from)
+                    .transpose()
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::RecordPostmortemCausalClaim => {
+            let (cycle, postmortem, kind, text) = query_postmortem_text_command(
+                connection,
+                "command_record_postmortem_causal_claim",
+                command_row_id,
+            )?;
+            CommandBody::RecordPostmortemCausalClaim {
+                operating_cycle_id: OperatingCycleId::try_from(cycle)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                postmortem_id: PostmortemId::try_from(postmortem)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                claim_kind: postmortem_causal_claim_kind_from_i64(kind)?,
+                claim: crate::PostmortemCausalClaimText::parse(text)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::ProposePostmortemAction => {
+            let (cycle, postmortem, kind, text) = query_postmortem_text_command(
+                connection,
+                "command_propose_postmortem_action",
+                command_row_id,
+            )?;
+            CommandBody::ProposePostmortemAction {
+                operating_cycle_id: OperatingCycleId::try_from(cycle)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                postmortem_id: PostmortemId::try_from(postmortem)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                action_kind: postmortem_action_kind_from_i64(kind)?,
+                action: crate::PostmortemActionProposalText::parse(text)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::ClosePostmortem => {
+            let (cycle, postmortem) =
+                query_command_pair(connection, "command_close_postmortem", command_row_id)?;
+            CommandBody::ClosePostmortem {
+                operating_cycle_id: OperatingCycleId::try_from(cycle)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                postmortem_id: PostmortemId::try_from(postmortem)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
             }
         }
     };
@@ -3331,6 +6420,149 @@ where
         .query_row(&query, [command_row_id], |row| row.get(0))
         .optional()?
         .ok_or(StoreError::LedgerCorruption("missing simple command body"))
+}
+
+fn query_event_pair(
+    connection: &Connection,
+    table: &str,
+    event_id: i64,
+) -> Result<(i64, i64), StoreError> {
+    let query = format!("SELECT * FROM {table} WHERE event_id = ?1");
+    connection
+        .query_row(&query, [event_id], |row| Ok((row.get(1)?, row.get(2)?)))
+        .optional()?
+        .ok_or(StoreError::LedgerCorruption("missing two-field event body"))
+}
+
+fn query_command_pair(
+    connection: &Connection,
+    table: &str,
+    id: i64,
+) -> Result<(i64, i64), StoreError> {
+    let query = format!("SELECT * FROM {table} WHERE command_row_id = ?1");
+    connection
+        .query_row(&query, [id], |r| Ok((r.get(1)?, r.get(2)?)))
+        .optional()?
+        .ok_or(StoreError::LedgerCorruption(
+            "missing two-field command body",
+        ))
+}
+fn query_command_three(
+    connection: &Connection,
+    table: &str,
+    id: i64,
+) -> Result<(i64, i64, i64), StoreError> {
+    let query = format!("SELECT * FROM {table} WHERE command_row_id = ?1");
+    connection
+        .query_row(&query, [id], |r| Ok((r.get(1)?, r.get(2)?, r.get(3)?)))
+        .optional()?
+        .ok_or(StoreError::LedgerCorruption(
+            "missing three-field command body",
+        ))
+}
+fn query_command_i64_text(
+    connection: &Connection,
+    table: &str,
+    id: i64,
+) -> Result<(i64, String), StoreError> {
+    let query = format!("SELECT * FROM {table} WHERE command_row_id = ?1");
+    connection
+        .query_row(&query, [id], |r| Ok((r.get(1)?, r.get(2)?)))
+        .optional()?
+        .ok_or(StoreError::LedgerCorruption("missing text command body"))
+}
+fn query_command_six(
+    connection: &Connection,
+    table: &str,
+    id: i64,
+) -> Result<(i64, i64, String, String, String), StoreError> {
+    let query = format!("SELECT * FROM {table} WHERE command_row_id = ?1");
+    connection
+        .query_row(&query, [id], |r| {
+            Ok((r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
+        })
+        .optional()?
+        .ok_or(StoreError::LedgerCorruption("missing charter command body"))
+}
+fn query_create_ticket(
+    connection: &Connection,
+    id: i64,
+) -> Result<(i64, i64, String, String, Option<i64>), StoreError> {
+    connection.query_row("SELECT operating_cycle_id, project_id, ticket_title, acceptance_condition_text, prerequisite_ticket_id FROM command_create_ticket WHERE command_row_id = ?1", [id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing ticket command body"))
+}
+type GraphRevisionCommandRow = (i64, i64, Option<i64>, Option<i64>);
+
+fn query_graph_revision_command(
+    connection: &Connection,
+    id: i64,
+) -> Result<GraphRevisionCommandRow, StoreError> {
+    connection.query_row("SELECT operating_cycle_id, project_id, causal_episode_id, graph_object_id FROM command_add_graph_object_revision WHERE command_row_id = ?1", [id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing revision command body"))
+}
+
+fn query_graph_revision_command_body(
+    connection: &Connection,
+    command_row_id: i64,
+) -> Result<GraphRevisionBody, StoreError> {
+    let observation: Option<String> = connection
+        .query_row(
+            "SELECT observation_text FROM command_add_observation_revision WHERE command_row_id = ?1",
+            [command_row_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let hypothesis: Option<String> = connection
+        .query_row(
+            "SELECT hypothesis_text FROM command_add_hypothesis_revision WHERE command_row_id = ?1",
+            [command_row_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    match (observation, hypothesis) {
+        (Some(observation), None) => Ok(GraphRevisionBody::Observation {
+            observation: ObservationRevisionText::parse(observation)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+        }),
+        (None, Some(hypothesis)) => Ok(GraphRevisionBody::Hypothesis {
+            hypothesis: HypothesisRevisionText::parse(hypothesis)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+        }),
+        _ => Err(StoreError::LedgerCorruption(
+            "graph revision command has missing or ambiguous typed body",
+        )),
+    }
+}
+fn query_edge_command(
+    connection: &Connection,
+    id: i64,
+) -> Result<(i64, i64, i64, i64, i64), StoreError> {
+    connection.query_row("SELECT operating_cycle_id, project_id, from_graph_revision_id, to_graph_revision_id, edge_kind FROM command_add_graph_edge WHERE command_row_id = ?1", [id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing edge command body"))
+}
+fn query_review_submit(
+    connection: &Connection,
+    id: i64,
+) -> Result<(i64, i64, i64, i64, i64, String), StoreError> {
+    connection.query_row("SELECT operating_cycle_id, adversarial_review_id, target_graph_revision_id, author_principal_id, severity, failure_hypothesis FROM command_submit_review_challenge WHERE command_row_id = ?1", [id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing review command body"))
+}
+fn query_postmortem_trigger(
+    connection: &Connection,
+    id: i64,
+) -> Result<(i64, i64, Option<i64>), StoreError> {
+    connection.query_row("SELECT operating_cycle_id, project_id, causal_episode_id FROM command_trigger_postmortem WHERE command_row_id = ?1", [id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing postmortem trigger command body"))
+}
+fn query_postmortem_text_command(
+    connection: &Connection,
+    table: &str,
+    id: i64,
+) -> Result<(i64, i64, i64, String), StoreError> {
+    let query = format!("SELECT * FROM {table} WHERE command_row_id = ?1");
+    connection
+        .query_row(&query, [id], |r| {
+            Ok((r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+        })
+        .optional()?
+        .ok_or(StoreError::LedgerCorruption(
+            "missing postmortem text command body",
+        ))
 }
 
 fn query_command_id<T>(
@@ -3370,6 +6602,62 @@ fn verify_exact_event_body(
         expected_table,
         &EVENT_BODY_TABLES,
     )
+}
+
+/// Graph revision semantics are deliberately outside the shared revision row.
+/// Replay therefore proves the selected object kind owns exactly one matching
+/// named body and that the stored semantic field still decodes as its closed
+/// Rust type. This catches missing, duplicate, and cross-kind body tampering.
+fn verify_graph_revision_bodies(connection: &Connection) -> Result<(), StoreError> {
+    let mut statement = connection.prepare(
+        "SELECT r.graph_revision_id, o.object_kind
+         FROM object_revisions r
+         JOIN objects o ON o.graph_object_id = r.graph_object_id
+         ORDER BY r.graph_revision_id",
+    )?;
+    let rows = statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))?;
+    for row in rows {
+        let (graph_revision_id, object_kind) = row?;
+        let object_kind = graph_object_kind_from_i64(object_kind)?;
+        let expected_table = match object_kind {
+            GraphObjectKind::Observation => "observation_revisions",
+            GraphObjectKind::Hypothesis => "hypothesis_revisions",
+        };
+        let mut body_count = 0_i64;
+        let mut expected_present = false;
+        for table in GRAPH_REVISION_BODY_TABLES {
+            let query = format!("SELECT COUNT(*) FROM {table} WHERE graph_revision_id = ?1");
+            let count: i64 = connection.query_row(&query, [graph_revision_id], |row| row.get(0))?;
+            body_count += count;
+            if table == expected_table {
+                expected_present = count == 1;
+            }
+        }
+        if body_count != 1 || !expected_present {
+            return Err(StoreError::LedgerCorruption(
+                "graph revision typed body is missing, duplicated, or mismatched",
+            ));
+        }
+        match object_kind {
+            GraphObjectKind::Observation => {
+                let text: String = connection.query_row(
+                    "SELECT observation_text FROM observation_revisions WHERE graph_revision_id = ?1",
+                    [graph_revision_id],
+                    |row| row.get(0),
+                )?;
+                ObservationRevisionText::parse(text).map_err(|_| StoreError::InvalidStoredValue)?;
+            }
+            GraphObjectKind::Hypothesis => {
+                let text: String = connection.query_row(
+                    "SELECT hypothesis_text FROM hypothesis_revisions WHERE graph_revision_id = ?1",
+                    [graph_revision_id],
+                    |row| row.get(0),
+                )?;
+                HypothesisRevisionText::parse(text).map_err(|_| StoreError::InvalidStoredValue)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The table names are compiled constants, never protocol input. Counting all
@@ -3442,6 +6730,29 @@ fn command_kind_from_i64(value: i64) -> Result<CommandKind, StoreError> {
         21 => Ok(CommandKind::ReconcileCancellation),
         22 => Ok(CommandKind::RecordOfficeSessionTerminal),
         23 => Ok(CommandKind::CloseCostPostmortem),
+        24 => Ok(CommandKind::CreateProject),
+        25 => Ok(CommandKind::CharterProject),
+        26 => Ok(CommandKind::TransitionProject),
+        27 => Ok(CommandKind::CompleteProjectMilestone),
+        28 => Ok(CommandKind::ReopenProject),
+        29 => Ok(CommandKind::CreateTicket),
+        30 => Ok(CommandKind::TransitionTicket),
+        31 => Ok(CommandKind::AddGraphObjectRevision),
+        32 => Ok(CommandKind::CommitGraphRevision),
+        33 => Ok(CommandKind::AddGraphEdge),
+        34 => Ok(CommandKind::CreateEpisode),
+        35 => Ok(CommandKind::TransitionEpisode),
+        36 => Ok(CommandKind::ReopenEpisode),
+        37 => Ok(CommandKind::RequestAdversarialReview),
+        38 => Ok(CommandKind::SubmitReviewChallenge),
+        39 => Ok(CommandKind::RespondToReviewChallenge),
+        40 => Ok(CommandKind::DispositionReviewChallenge),
+        41 => Ok(CommandKind::ResolveAdversarialReview),
+        42 => Ok(CommandKind::TriggerPostmortem),
+        43 => Ok(CommandKind::RecordPostmortemCausalClaim),
+        44 => Ok(CommandKind::ProposePostmortemAction),
+        45 => Ok(CommandKind::ClosePostmortem),
+        46 => Ok(CommandKind::AssignAdversarialReviewer),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }
@@ -3471,6 +6782,29 @@ fn capability_from_i64(value: i64) -> Result<Capability, StoreError> {
         21 => Ok(Capability::ReconcileCancellation),
         22 => Ok(Capability::RecordOfficeSessionTerminal),
         23 => Ok(Capability::CloseCostPostmortem),
+        24 => Ok(Capability::CreateProject),
+        25 => Ok(Capability::CharterProject),
+        26 => Ok(Capability::TransitionProject),
+        27 => Ok(Capability::CompleteProjectMilestone),
+        28 => Ok(Capability::ReopenProject),
+        29 => Ok(Capability::CreateTicket),
+        30 => Ok(Capability::TransitionTicket),
+        31 => Ok(Capability::AddGraphObjectRevision),
+        32 => Ok(Capability::CommitGraphRevision),
+        33 => Ok(Capability::AddGraphEdge),
+        34 => Ok(Capability::CreateEpisode),
+        35 => Ok(Capability::TransitionEpisode),
+        36 => Ok(Capability::ReopenEpisode),
+        37 => Ok(Capability::RequestAdversarialReview),
+        38 => Ok(Capability::SubmitReviewChallenge),
+        39 => Ok(Capability::RespondToReviewChallenge),
+        40 => Ok(Capability::DispositionReviewChallenge),
+        41 => Ok(Capability::ResolveAdversarialReview),
+        42 => Ok(Capability::TriggerPostmortem),
+        43 => Ok(Capability::RecordPostmortemCausalClaim),
+        44 => Ok(Capability::ProposePostmortemAction),
+        45 => Ok(Capability::ClosePostmortem),
+        46 => Ok(Capability::AssignAdversarialReviewer),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }
@@ -3566,6 +6900,14 @@ fn rejection_from_i64(value: i64) -> Result<Rejection, StoreError> {
         17 => Ok(Rejection::BudgetPolicyViolation),
         18 => Ok(Rejection::CostPostmortemNotOpen),
         19 => Ok(Rejection::InvalidCostPostmortemResolution),
+        20 => Ok(Rejection::ProjectCloseBlocked),
+        21 => Ok(Rejection::TicketPrerequisiteIncomplete),
+        22 => Ok(Rejection::GraphRevisionNotCommitted),
+        23 => Ok(Rejection::IllegalGraphEdgeEndpoint),
+        24 => Ok(Rejection::ReviewSelfDispositionDenied),
+        25 => Ok(Rejection::ReviewDispositionIncomplete),
+        26 => Ok(Rejection::PostmortemCloseBlocked),
+        27 => Ok(Rejection::ReviewAssignmentNotIndependent),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }
@@ -3590,6 +6932,27 @@ fn event_kind_from_i64(value: i64) -> Result<EventKind, StoreError> {
         16 => Ok(EventKind::CancellationRequested),
         17 => Ok(EventKind::CancellationReconciled),
         18 => Ok(EventKind::CostPostmortemClosed),
+        19 => Ok(EventKind::ProjectCreated),
+        20 => Ok(EventKind::ProjectChartered),
+        21 => Ok(EventKind::ProjectStateChanged),
+        22 => Ok(EventKind::ProjectMilestoneCompleted),
+        23 => Ok(EventKind::TicketCreated),
+        24 => Ok(EventKind::TicketStateChanged),
+        25 => Ok(EventKind::GraphObjectRevisionAdded),
+        26 => Ok(EventKind::GraphRevisionCommitted),
+        27 => Ok(EventKind::GraphEdgeAdded),
+        28 => Ok(EventKind::EpisodeCreated),
+        29 => Ok(EventKind::EpisodeStateChanged),
+        30 => Ok(EventKind::AdversarialReviewRequested),
+        31 => Ok(EventKind::ReviewChallengeSubmitted),
+        32 => Ok(EventKind::ReviewChallengeResponded),
+        33 => Ok(EventKind::ReviewChallengeDispositioned),
+        34 => Ok(EventKind::AdversarialReviewResolved),
+        35 => Ok(EventKind::PostmortemTriggered),
+        36 => Ok(EventKind::PostmortemCausalClaimRecorded),
+        37 => Ok(EventKind::PostmortemActionProposed),
+        38 => Ok(EventKind::PostmortemClosed),
+        39 => Ok(EventKind::AdversarialReviewerAssigned),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }
@@ -3759,6 +7122,152 @@ fn cost_unavailable_reason_from_i64(value: i64) -> Result<CostUnavailableReason,
         1 => Ok(CostUnavailableReason::ProviderUnavailable),
         2 => Ok(CostUnavailableReason::CredentialUnavailable),
         3 => Ok(CostUnavailableReason::QualificationRejected),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+
+fn project_state_from_i64(value: i64) -> Result<ProjectState, StoreError> {
+    match value {
+        1 => Ok(ProjectState::Proposed),
+        2 => Ok(ProjectState::Challenged),
+        3 => Ok(ProjectState::Chartered),
+        4 => Ok(ProjectState::Active),
+        5 => Ok(ProjectState::Paused),
+        6 => Ok(ProjectState::Observing),
+        7 => Ok(ProjectState::Closed),
+        8 => Ok(ProjectState::Terminated),
+        9 => Ok(ProjectState::Reopened),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+fn ticket_state_from_i64(value: i64) -> Result<TicketState, StoreError> {
+    match value {
+        1 => Ok(TicketState::Draft),
+        2 => Ok(TicketState::Admitted),
+        3 => Ok(TicketState::Ready),
+        4 => Ok(TicketState::Claimed),
+        5 => Ok(TicketState::Submitted),
+        6 => Ok(TicketState::Verified),
+        7 => Ok(TicketState::Completed),
+        8 => Ok(TicketState::ChangesRequested),
+        9 => Ok(TicketState::Expired),
+        10 => Ok(TicketState::Cancelled),
+        11 => Ok(TicketState::Failed),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+fn graph_object_kind_from_i64(value: i64) -> Result<GraphObjectKind, StoreError> {
+    match value {
+        1 => Ok(GraphObjectKind::Observation),
+        2 => Ok(GraphObjectKind::Hypothesis),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+fn graph_revision_state_from_i64(value: i64) -> Result<GraphRevisionState, StoreError> {
+    match value {
+        1 => Ok(GraphRevisionState::Draft),
+        2 => Ok(GraphRevisionState::Committed),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+fn graph_edge_kind_from_i64(value: i64) -> Result<GraphEdgeKind, StoreError> {
+    match value {
+        1 => Ok(GraphEdgeKind::Supports),
+        2 => Ok(GraphEdgeKind::Challenges),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+fn episode_state_from_i64(value: i64) -> Result<EpisodeState, StoreError> {
+    match value {
+        1 => Ok(EpisodeState::Framed),
+        2 => Ok(EpisodeState::Admitted),
+        3 => Ok(EpisodeState::Investigating),
+        4 => Ok(EpisodeState::PrototypeDeliberating),
+        5 => Ok(EpisodeState::Prototyping),
+        6 => Ok(EpisodeState::CandidateValidating),
+        7 => Ok(EpisodeState::DeliveryDeliberating),
+        8 => Ok(EpisodeState::DeliveryAuthorized),
+        9 => Ok(EpisodeState::Materializing),
+        10 => Ok(EpisodeState::Observing),
+        11 => Ok(EpisodeState::Learning),
+        12 => Ok(EpisodeState::Closed),
+        13 => Ok(EpisodeState::ClosedNoAction),
+        14 => Ok(EpisodeState::ClosedNoDelivery),
+        15 => Ok(EpisodeState::Abandoned),
+        16 => Ok(EpisodeState::Reverted),
+        17 => Ok(EpisodeState::Reopened),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+fn adversarial_review_state_from_i64(value: i64) -> Result<AdversarialReviewState, StoreError> {
+    match value {
+        1 => Ok(AdversarialReviewState::Requested),
+        2 => Ok(AdversarialReviewState::Assigned),
+        3 => Ok(AdversarialReviewState::Active),
+        4 => Ok(AdversarialReviewState::FindingsSubmitted),
+        5 => Ok(AdversarialReviewState::ResponsesDue),
+        6 => Ok(AdversarialReviewState::Resolved),
+        7 => Ok(AdversarialReviewState::AcceptedRisk),
+        8 => Ok(AdversarialReviewState::Superseded),
+        9 => Ok(AdversarialReviewState::Escalated),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+fn review_challenge_severity_from_i64(value: i64) -> Result<ReviewChallengeSeverity, StoreError> {
+    match value {
+        1 => Ok(ReviewChallengeSeverity::Low),
+        2 => Ok(ReviewChallengeSeverity::Moderate),
+        3 => Ok(ReviewChallengeSeverity::High),
+        4 => Ok(ReviewChallengeSeverity::Critical),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+fn review_challenge_response_state_from_i64(
+    value: i64,
+) -> Result<ReviewChallengeResponseState, StoreError> {
+    match value {
+        1 => Ok(ReviewChallengeResponseState::Pending),
+        2 => Ok(ReviewChallengeResponseState::Responded),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+fn review_disposition_kind_from_i64(value: i64) -> Result<ReviewDispositionKind, StoreError> {
+    match value {
+        1 => Ok(ReviewDispositionKind::Addressed),
+        2 => Ok(ReviewDispositionKind::RejectedWithDissentPreserved),
+        3 => Ok(ReviewDispositionKind::AcceptedRisk),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+fn review_resolution_kind_from_i64(value: i64) -> Result<ReviewResolutionKind, StoreError> {
+    match value {
+        1 => Ok(ReviewResolutionKind::Resolved),
+        2 => Ok(ReviewResolutionKind::AcceptedRisk),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+fn postmortem_state_from_i64(value: i64) -> Result<PostmortemState, StoreError> {
+    match value {
+        1 => Ok(PostmortemState::Triggered),
+        2 => Ok(PostmortemState::Investigating),
+        3 => Ok(PostmortemState::Closed),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+fn postmortem_causal_claim_kind_from_i64(
+    value: i64,
+) -> Result<PostmortemCausalClaimKind, StoreError> {
+    match value {
+        1 => Ok(PostmortemCausalClaimKind::ContributingCondition),
+        2 => Ok(PostmortemCausalClaimKind::Counterfactual),
+        3 => Ok(PostmortemCausalClaimKind::Containment),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+fn postmortem_action_kind_from_i64(value: i64) -> Result<PostmortemActionKind, StoreError> {
+    match value {
+        1 => Ok(PostmortemActionKind::CreateFollowUpTicket),
+        2 => Ok(PostmortemActionKind::ChangePolicyProposal),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }
