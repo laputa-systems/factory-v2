@@ -66,6 +66,14 @@ identifier!(WorkItemId);
 identifier!(WorkLeaseId);
 identifier!(ActorAttemptId);
 identifier!(OutcomeObligationId);
+identifier!(ContentSealReceiptId);
+identifier!(ContentObjectId);
+identifier!(ForensicManifestId);
+identifier!(DeterministicExperimentId);
+identifier!(EvaluatorRevisionId);
+identifier!(InputManifestId);
+identifier!(DeterministicEvaluationReceiptId);
+identifier!(EvidenceAdmissionId);
 
 impl ExecutionProfileId {
     /// A provider-free process-double profile for deterministic fixture work.
@@ -179,6 +187,7 @@ coordination_text!(PostmortemActionProposalText);
 coordination_text!(ActorConfigurationName);
 coordination_text!(WorkAssignmentText);
 coordination_text!(OutcomeObligationText);
+coordination_text!(EvidenceLimitationText);
 
 #[derive(Clone, Copy, Eq, Hash, PartialEq)]
 pub struct Sha256Digest([u8; 32]);
@@ -344,6 +353,15 @@ pub enum Capability {
     CancelActorAttempt = 59,
     RegisterOutcomeObligation = 60,
     ResolveOutcomeObligation = 61,
+    /// Records a content-store receipt only. It never asserts that bytes were
+    /// read, evaluated, admitted, curated, or placed in the graph.
+    RecordContentSealReceipt = 62,
+    RegisterContentObject = 63,
+    RegisterForensicManifest = 64,
+    RegisterDeterministicExperiment = 65,
+    RecordDeterministicEvaluationReceipt = 66,
+    AdmitDeterministicEvidence = 67,
+    CloseDeterministicExperiment = 68,
 }
 
 impl Capability {
@@ -358,7 +376,7 @@ impl Capability {
         Self::AdmitOperatingCycle,
     ];
 
-    pub const GRAND_ARCHITECT: [Self; 42] = [
+    pub const GRAND_ARCHITECT: [Self; 44] = [
         Self::ProposeOperatingCycle,
         Self::AdmitOperatingCycle,
         Self::QuiesceOperatingCycle,
@@ -401,9 +419,11 @@ impl Capability {
         Self::CompleteTicket,
         Self::RegisterOutcomeObligation,
         Self::ResolveOutcomeObligation,
+        Self::RegisterDeterministicExperiment,
+        Self::CloseDeterministicExperiment,
     ];
 
-    pub const KERNEL_SERVICE: [Self; 12] = [
+    pub const KERNEL_SERVICE: [Self; 17] = [
         Self::RecordCycleDrained,
         Self::RecordOfficeSessionReady,
         Self::SettleOfficeTurn,
@@ -416,6 +436,11 @@ impl Capability {
         Self::ValidateTicketAttempt,
         Self::ExpireWorkLease,
         Self::CancelActorAttempt,
+        Self::RecordContentSealReceipt,
+        Self::RegisterContentObject,
+        Self::RegisterForensicManifest,
+        Self::RecordDeterministicEvaluationReceipt,
+        Self::AdmitDeterministicEvidence,
     ];
 
     pub const fn requires_consumption(self) -> bool {
@@ -749,6 +774,53 @@ impl ActorAttemptState {
     pub const fn is_live(self) -> bool {
         matches!(self, Self::Running | Self::CancellationRequested)
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+/// A validated use contract on an evaluator revision, input-manifest binding,
+/// or manifest member. It never classifies the global `ContentObject` bytes.
+pub enum ContentMediaSchemaContract {
+    DeterministicEvaluatorV1 = 1,
+    DeterministicInputManifestV1 = 2,
+    DeterministicEvaluatorOutputV1 = 3,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum RetentionAccessClass {
+    ForensicRestricted = 1,
+    ProjectScoped = 2,
+}
+
+/// A manifest is a forensic inventory with a bounded capture policy. It is
+/// not a curation account and cannot make an object decision-relevant.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum ForensicManifestCapturePolicy {
+    DeterministicExperimentEvaluatorV1 = 1,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum DeterministicExperimentState {
+    Registered = 1,
+    EvidenceAdmitted = 2,
+    Closed = 3,
+}
+
+/// The only M4 semantic admission role. Graph nodes, curation, influence,
+/// epistemic truth, and decision relevance remain intentionally separate.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum EvidenceSemanticRole {
+    DeterministicObservation = 1,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum EvidenceApplicability {
+    TestsTargetHypothesis = 1,
 }
 
 /// This is a kernel-service terminal attestation, not a claim that Pi or a
@@ -1310,6 +1382,61 @@ pub enum CommandBody {
         outcome_obligation_id: OutcomeObligationId,
         disposition: OutcomeObligationDisposition,
     },
+    /// A later content-store integration attests an already-sealed digest.
+    /// This command intentionally does not receive bytes or claim physical
+    /// sealing/evaluator execution happened inside the kernel. A digest is a
+    /// global byte identity, so producer/capture occurrence belongs on a
+    /// `ForensicManifest`, never on this receipt.
+    RecordContentSealReceipt {
+        digest: Sha256Digest,
+    },
+    /// Turns a verified digest receipt into a global content identity. This is
+    /// still forensic storage identity, not an occurrence-specific schema,
+    /// retention policy, evidence admission, or graph node.
+    RegisterContentObject {
+        content_seal_receipt_id: ContentSealReceiptId,
+    },
+    RegisterForensicManifest {
+        operating_cycle_id: OperatingCycleId,
+        producing_deterministic_experiment_id: DeterministicExperimentId,
+        capture_policy: ForensicManifestCapturePolicy,
+        retention_access_class: RetentionAccessClass,
+        evaluator_output_content_object_id: ContentObjectId,
+    },
+    RegisterDeterministicExperiment {
+        operating_cycle_id: OperatingCycleId,
+        project_id: ProjectId,
+        ticket_id: TicketId,
+        target_graph_revision_id: GraphRevisionId,
+        evaluator_content_object_id: ContentObjectId,
+        input_manifest_content_object_id: ContentObjectId,
+    },
+    /// A kernel-service binding fact supplied by a later evaluator adapter.
+    /// It does not execute an evaluator or establish the observation's truth.
+    RecordDeterministicEvaluationReceipt {
+        operating_cycle_id: OperatingCycleId,
+        deterministic_experiment_id: DeterministicExperimentId,
+        evaluator_revision_id: EvaluatorRevisionId,
+        input_manifest_id: InputManifestId,
+        forensic_manifest_id: ForensicManifestId,
+        evaluator_output_content_object_id: ContentObjectId,
+    },
+    AdmitDeterministicEvidence {
+        operating_cycle_id: OperatingCycleId,
+        deterministic_evaluation_receipt_id: DeterministicEvaluationReceiptId,
+        deterministic_experiment_id: DeterministicExperimentId,
+        evaluator_revision_id: EvaluatorRevisionId,
+        input_manifest_id: InputManifestId,
+        evaluator_output_content_object_id: ContentObjectId,
+        related_graph_revision_id: GraphRevisionId,
+        semantic_role: EvidenceSemanticRole,
+        applicability: EvidenceApplicability,
+        limitation: EvidenceLimitationText,
+    },
+    CloseDeterministicExperiment {
+        operating_cycle_id: OperatingCycleId,
+        deterministic_experiment_id: DeterministicExperimentId,
+    },
 }
 
 impl CommandBody {
@@ -1378,6 +1505,17 @@ impl CommandBody {
             Self::CancelActorAttempt { .. } => CommandKind::CancelActorAttempt,
             Self::RegisterOutcomeObligation { .. } => CommandKind::RegisterOutcomeObligation,
             Self::ResolveOutcomeObligation { .. } => CommandKind::ResolveOutcomeObligation,
+            Self::RecordContentSealReceipt { .. } => CommandKind::RecordContentSealReceipt,
+            Self::RegisterContentObject { .. } => CommandKind::RegisterContentObject,
+            Self::RegisterForensicManifest { .. } => CommandKind::RegisterForensicManifest,
+            Self::RegisterDeterministicExperiment { .. } => {
+                CommandKind::RegisterDeterministicExperiment
+            }
+            Self::RecordDeterministicEvaluationReceipt { .. } => {
+                CommandKind::RecordDeterministicEvaluationReceipt
+            }
+            Self::AdmitDeterministicEvidence { .. } => CommandKind::AdmitDeterministicEvidence,
+            Self::CloseDeterministicExperiment { .. } => CommandKind::CloseDeterministicExperiment,
         }
     }
 
@@ -1446,6 +1584,17 @@ impl CommandBody {
             Self::CancelActorAttempt { .. } => Capability::CancelActorAttempt,
             Self::RegisterOutcomeObligation { .. } => Capability::RegisterOutcomeObligation,
             Self::ResolveOutcomeObligation { .. } => Capability::ResolveOutcomeObligation,
+            Self::RecordContentSealReceipt { .. } => Capability::RecordContentSealReceipt,
+            Self::RegisterContentObject { .. } => Capability::RegisterContentObject,
+            Self::RegisterForensicManifest { .. } => Capability::RegisterForensicManifest,
+            Self::RegisterDeterministicExperiment { .. } => {
+                Capability::RegisterDeterministicExperiment
+            }
+            Self::RecordDeterministicEvaluationReceipt { .. } => {
+                Capability::RecordDeterministicEvaluationReceipt
+            }
+            Self::AdmitDeterministicEvidence { .. } => Capability::AdmitDeterministicEvidence,
+            Self::CloseDeterministicExperiment { .. } => Capability::CloseDeterministicExperiment,
         }
     }
 }
@@ -1514,6 +1663,13 @@ pub enum CommandKind {
     CancelActorAttempt = 59,
     RegisterOutcomeObligation = 60,
     ResolveOutcomeObligation = 61,
+    RecordContentSealReceipt = 62,
+    RegisterContentObject = 63,
+    RegisterForensicManifest = 64,
+    RegisterDeterministicExperiment = 65,
+    RecordDeterministicEvaluationReceipt = 66,
+    AdmitDeterministicEvidence = 67,
+    CloseDeterministicExperiment = 68,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1580,6 +1736,12 @@ pub enum Rejection {
     ExecutionProfileIneligible = 34,
     TicketAcceptanceConditionUnsatisfied = 35,
     QualificationTreatmentRestricted = 36,
+    ContentSealReceiptMissing = 37,
+    ContentObjectNotSealed = 38,
+    ForensicManifestBindingMismatch = 39,
+    DeterministicExperimentBindingMismatch = 40,
+    DeterministicEvaluationBindingMismatch = 41,
+    EvidenceAdmissionRequired = 42,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1801,6 +1963,37 @@ pub enum EventBody {
         outcome_obligation_id: OutcomeObligationId,
         state: OutcomeObligationState,
     },
+    ContentSealReceiptRecorded {
+        content_seal_receipt_id: ContentSealReceiptId,
+        digest: Sha256Digest,
+    },
+    ContentObjectRegistered {
+        content_object_id: ContentObjectId,
+        content_seal_receipt_id: ContentSealReceiptId,
+    },
+    ForensicManifestRegistered {
+        forensic_manifest_id: ForensicManifestId,
+        producing_deterministic_experiment_id: DeterministicExperimentId,
+        evaluator_output_content_object_id: ContentObjectId,
+    },
+    DeterministicExperimentRegistered {
+        deterministic_experiment_id: DeterministicExperimentId,
+        evaluator_revision_id: EvaluatorRevisionId,
+        input_manifest_id: InputManifestId,
+    },
+    DeterministicEvaluationReceiptRecorded {
+        deterministic_evaluation_receipt_id: DeterministicEvaluationReceiptId,
+        deterministic_experiment_id: DeterministicExperimentId,
+    },
+    DeterministicEvidenceAdmitted {
+        evidence_admission_id: EvidenceAdmissionId,
+        deterministic_evaluation_receipt_id: DeterministicEvaluationReceiptId,
+        semantic_role: EvidenceSemanticRole,
+        applicability: EvidenceApplicability,
+    },
+    DeterministicExperimentClosed {
+        deterministic_experiment_id: DeterministicExperimentId,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1860,6 +2053,13 @@ pub enum EventKind {
     ActorAttemptCancellationRequested = 52,
     OutcomeObligationRegistered = 53,
     OutcomeObligationResolved = 54,
+    ContentSealReceiptRecorded = 55,
+    ContentObjectRegistered = 56,
+    ForensicManifestRegistered = 57,
+    DeterministicExperimentRegistered = 58,
+    DeterministicEvaluationReceiptRecorded = 59,
+    DeterministicEvidenceAdmitted = 60,
+    DeterministicExperimentClosed = 61,
 }
 
 impl EventBody {
@@ -1925,6 +2125,17 @@ impl EventBody {
             }
             Self::OutcomeObligationRegistered { .. } => EventKind::OutcomeObligationRegistered,
             Self::OutcomeObligationResolved { .. } => EventKind::OutcomeObligationResolved,
+            Self::ContentSealReceiptRecorded { .. } => EventKind::ContentSealReceiptRecorded,
+            Self::ContentObjectRegistered { .. } => EventKind::ContentObjectRegistered,
+            Self::ForensicManifestRegistered { .. } => EventKind::ForensicManifestRegistered,
+            Self::DeterministicExperimentRegistered { .. } => {
+                EventKind::DeterministicExperimentRegistered
+            }
+            Self::DeterministicEvaluationReceiptRecorded { .. } => {
+                EventKind::DeterministicEvaluationReceiptRecorded
+            }
+            Self::DeterministicEvidenceAdmitted { .. } => EventKind::DeterministicEvidenceAdmitted,
+            Self::DeterministicExperimentClosed { .. } => EventKind::DeterministicExperimentClosed,
         }
     }
 }

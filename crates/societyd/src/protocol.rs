@@ -1017,6 +1017,7 @@ fn operating_cycle_treatment_from_u8(value: u8) -> Result<OperatingCycleTreatmen
     match value {
         1 => Ok(OperatingCycleTreatment::PiSdkQualificationV1),
         2 => Ok(OperatingCycleTreatment::Vs001LiveV1),
+        3 => Ok(OperatingCycleTreatment::Vs001DeterministicV1),
         _ => Err(WireError::InvalidValue),
     }
 }
@@ -1076,6 +1077,22 @@ fn rejection_from_u8(value: u8) -> Result<Rejection, WireError> {
         24 => Ok(Rejection::ReviewSelfDispositionDenied),
         25 => Ok(Rejection::ReviewDispositionIncomplete),
         26 => Ok(Rejection::PostmortemCloseBlocked),
+        27 => Ok(Rejection::ReviewAssignmentNotIndependent),
+        28 => Ok(Rejection::ActorJurisdictionDenied),
+        29 => Ok(Rejection::WorkLeaseUnavailable),
+        30 => Ok(Rejection::ActorAttemptNotTerminal),
+        31 => Ok(Rejection::ActorAttemptNotValidatable),
+        32 => Ok(Rejection::OutcomeObligationOpen),
+        33 => Ok(Rejection::ReviewAssignmentEvidenceMissing),
+        34 => Ok(Rejection::ExecutionProfileIneligible),
+        35 => Ok(Rejection::TicketAcceptanceConditionUnsatisfied),
+        36 => Ok(Rejection::QualificationTreatmentRestricted),
+        37 => Ok(Rejection::ContentSealReceiptMissing),
+        38 => Ok(Rejection::ContentObjectNotSealed),
+        39 => Ok(Rejection::ForensicManifestBindingMismatch),
+        40 => Ok(Rejection::DeterministicExperimentBindingMismatch),
+        41 => Ok(Rejection::DeterministicEvaluationBindingMismatch),
+        42 => Ok(Rejection::EvidenceAdmissionRequired),
         _ => Err(WireError::InvalidValue),
     }
 }

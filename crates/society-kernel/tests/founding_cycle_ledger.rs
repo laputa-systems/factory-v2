@@ -672,7 +672,7 @@ fn empty_schema_one_upgrades_as_atomic_version_steps() {
         upgraded
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        3
+        4
     );
     assert_eq!(
         upgraded
@@ -917,7 +917,146 @@ fn failed_migration_three_rolls_back_its_version_step_and_a_reopen_retries() {
         retried
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
+        4
+    );
+    drop(retried);
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn nonempty_schema_three_ledger_is_refused_before_migration_four_mutates_it() {
+    let path = std::env::temp_dir().join(format!(
+        "xsh-society-m3-ledger-refusal-{}-{}.sqlite",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch(include_str!("../../../migrations/0001_kernel.sql"))
+        .unwrap();
+    connection
+        .execute_batch(include_str!(
+            "../../../migrations/0002_coordination_graph.sql"
+        ))
+        .unwrap();
+    connection
+        .execute_batch(include_str!(
+            "../../../migrations/0003_execution_foundation.sql"
+        ))
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO commands(command_id, principal_id, capability_grant_id, capability_kind,
+                                  expected_generation, command_kind, request_fingerprint, command_status,
+                                  rejection_code, accepted_event_id)
+             VALUES ('m3-historical-rejected', 1, 1, 1, NULL, 1, zeroblob(32), 2, 16, NULL)",
+            [],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO command_create_society_identity(command_row_id, name) VALUES (1, 'historic')",
+            [],
+        )
+        .unwrap();
+    assert_eq!(
+        connection
+            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
         3
+    );
+    drop(connection);
+
+    assert!(matches!(
+        KernelStore::open(&path),
+        Err(
+            society_kernel::StoreError::NonemptySchemaV3LedgerUpgradeRefused {
+                command_count: 1,
+                event_count: 0,
+            }
+        )
+    ));
+    let inspect = Connection::open(&path).unwrap();
+    assert_eq!(
+        inspect
+            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        3
+    );
+    assert_eq!(
+        inspect
+            .query_row("SELECT COUNT(*) FROM commands", [], |row| row
+                .get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
+    drop(inspect);
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn failed_migration_four_rolls_back_its_version_step_and_an_empty_reopen_retries() {
+    let path = std::env::temp_dir().join(format!(
+        "xsh-society-m4-atomicity-{}-{}.sqlite",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch(include_str!("../../../migrations/0001_kernel.sql"))
+        .unwrap();
+    connection
+        .execute_batch(include_str!(
+            "../../../migrations/0002_coordination_graph.sql"
+        ))
+        .unwrap();
+    connection
+        .execute_batch(include_str!(
+            "../../../migrations/0003_execution_foundation.sql"
+        ))
+        .unwrap();
+    let injected_failure = include_str!("../../../migrations/0004_content_evidence_foundation.sql")
+        .replacen(
+            "CREATE TABLE content_seal_receipts (",
+            "SELECT missing_migration_four_fault();\nCREATE TABLE content_seal_receipts (",
+            1,
+        );
+    assert!(connection.execute_batch(&injected_failure).is_err());
+    connection
+        .execute_batch("ROLLBACK; PRAGMA foreign_keys = ON;")
+        .unwrap();
+    assert_eq!(
+        connection
+            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        3
+    );
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'table' AND name = 'content_seal_receipts'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+        0
+    );
+    drop(connection);
+
+    drop(KernelStore::open(&path).unwrap());
+    let retried = Connection::open(&path).unwrap();
+    assert_eq!(
+        retried
+            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        4
     );
     drop(retried);
     fs::remove_file(path).unwrap();

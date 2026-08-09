@@ -13,12 +13,16 @@ use society_kernel::{
     ActorAttemptCancellationReason, ActorAttemptId, ActorAttemptTerminalKind,
     ActorConfigurationName, ActorConfigurationRevisionId, ActorInstanceId, ActorModelPolicy,
     AdmissionGeneration, AdversarialReviewId, Capability, CommandBody, CommandDisposition,
-    CommandId, CommandReceipt, CommandRequest, ContextPackPurpose, DevelopmentalAttractor,
-    EventBody, ExecutionProfileId, ExpectedGeneration, GraphRevisionBody, GraphRevisionId,
-    HypothesisRevisionText, KernelStore, OperatingCycleId, OperatingCycleTreatment,
-    OutcomeObligationDisposition, OutcomeObligationId, OutcomeObligationText, PrincipalDisplayName,
-    PrincipalId, ProjectId, ProjectMilestoneId, ProjectMilestoneName, ProjectName,
-    ProjectObjectiveText, ProjectState, ProjectStopConditionText, Rejection, ReviewChallengeId,
+    CommandId, CommandReceipt, CommandRequest, ContentObjectId, ContentSealReceiptId,
+    ContextPackPurpose, DeterministicEvaluationReceiptId, DeterministicExperimentId,
+    DevelopmentalAttractor, EvaluatorRevisionId, EventBody, EvidenceApplicability,
+    EvidenceLimitationText, EvidenceSemanticRole, ExecutionProfileId, ExpectedGeneration,
+    ForensicManifestCapturePolicy, ForensicManifestId, GraphRevisionBody, GraphRevisionId,
+    HypothesisRevisionText, InputManifestId, KernelStore, OperatingCycleId,
+    OperatingCycleTreatment, OutcomeObligationDisposition, OutcomeObligationId,
+    OutcomeObligationText, PrincipalDisplayName, PrincipalId, ProjectId, ProjectMilestoneId,
+    ProjectMilestoneName, ProjectName, ProjectObjectiveText, ProjectState,
+    ProjectStopConditionText, Rejection, RetentionAccessClass, ReviewChallengeId,
     ReviewChallengeSeverity, ReviewDispositionKind, ReviewFailureHypothesis, ReviewResolutionKind,
     ReviewResponseText, Sha256Digest, SocietyName, TicketAcceptanceConditionText, TicketId,
     TicketTitle, UsdMicros, WorkAssignmentText, WorkItemId, WorkItemKind, WorkLeaseId,
@@ -667,6 +671,301 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
         },
     );
 
+    // M4 separates a content-store receipt, durable ContentObject identity,
+    // deterministic evaluator binding, forensic manifest, and semantic
+    // admission. None of these commands executes Pi or an evaluator; the
+    // kernel-service facts are narrow receipt seams for later integration.
+    let evaluator_digest = Sha256Digest::of_bytes(b"m4-evaluator-revision");
+    accepted(
+        &mut store,
+        "m4-seal-evaluator",
+        PrincipalId::KERNEL,
+        Capability::RecordContentSealReceipt,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::RecordContentSealReceipt {
+            digest: evaluator_digest,
+        },
+    );
+    let changed_content_request = request(
+        &mut store,
+        "m4-seal-evaluator",
+        PrincipalId::KERNEL,
+        Capability::RecordContentSealReceipt,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::RecordContentSealReceipt {
+            digest: Sha256Digest::of_bytes(b"m4-substituted-evaluator"),
+        },
+    );
+    assert!(matches!(
+        store.execute(changed_content_request),
+        Err(society_kernel::StoreError::IdempotencyConflict)
+    ));
+    accepted(
+        &mut store,
+        "m4-register-evaluator",
+        PrincipalId::KERNEL,
+        Capability::RegisterContentObject,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::RegisterContentObject {
+            content_seal_receipt_id: ContentSealReceiptId::new(1).unwrap(),
+        },
+    );
+    accepted(
+        &mut store,
+        "m4-seal-input",
+        PrincipalId::KERNEL,
+        Capability::RecordContentSealReceipt,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::RecordContentSealReceipt {
+            digest: Sha256Digest::of_bytes(b"m4-input-manifest"),
+        },
+    );
+    accepted(
+        &mut store,
+        "m4-register-input",
+        PrincipalId::KERNEL,
+        Capability::RegisterContentObject,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::RegisterContentObject {
+            content_seal_receipt_id: ContentSealReceiptId::new(2).unwrap(),
+        },
+    );
+    accepted(
+        &mut store,
+        "m4-experiment-register-first",
+        architect,
+        Capability::RegisterDeterministicExperiment,
+        generation,
+        CommandBody::RegisterDeterministicExperiment {
+            operating_cycle_id: cycle,
+            project_id: project,
+            ticket_id: ticket,
+            target_graph_revision_id: target,
+            evaluator_content_object_id: ContentObjectId::new(1).unwrap(),
+            input_manifest_content_object_id: ContentObjectId::new(2).unwrap(),
+        },
+    );
+    accepted(
+        &mut store,
+        "m4-experiment-register-second",
+        architect,
+        Capability::RegisterDeterministicExperiment,
+        generation,
+        CommandBody::RegisterDeterministicExperiment {
+            operating_cycle_id: cycle,
+            project_id: project,
+            ticket_id: ticket,
+            target_graph_revision_id: target,
+            evaluator_content_object_id: ContentObjectId::new(1).unwrap(),
+            input_manifest_content_object_id: ContentObjectId::new(2).unwrap(),
+        },
+    );
+    let first_experiment = DeterministicExperimentId::new(1).unwrap();
+    let second_experiment = DeterministicExperimentId::new(2).unwrap();
+    accepted(
+        &mut store,
+        "m4-seal-shared-output",
+        PrincipalId::KERNEL,
+        Capability::RecordContentSealReceipt,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::RecordContentSealReceipt {
+            digest: Sha256Digest::of_bytes(b"m4-identical-evaluator-output"),
+        },
+    );
+    accepted(
+        &mut store,
+        "m4-register-shared-output",
+        PrincipalId::KERNEL,
+        Capability::RegisterContentObject,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::RegisterContentObject {
+            content_seal_receipt_id: ContentSealReceiptId::new(3).unwrap(),
+        },
+    );
+    accepted(
+        &mut store,
+        "m4-seal-recombined-output",
+        PrincipalId::KERNEL,
+        Capability::RecordContentSealReceipt,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::RecordContentSealReceipt {
+            digest: Sha256Digest::of_bytes(b"m4-recombined-output"),
+        },
+    );
+    accepted(
+        &mut store,
+        "m4-register-recombined-output",
+        PrincipalId::KERNEL,
+        Capability::RegisterContentObject,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::RegisterContentObject {
+            content_seal_receipt_id: ContentSealReceiptId::new(4).unwrap(),
+        },
+    );
+    accepted(
+        &mut store,
+        "m4-manifest-register-first",
+        PrincipalId::KERNEL,
+        Capability::RegisterForensicManifest,
+        generation,
+        CommandBody::RegisterForensicManifest {
+            operating_cycle_id: cycle,
+            producing_deterministic_experiment_id: first_experiment,
+            capture_policy: ForensicManifestCapturePolicy::DeterministicExperimentEvaluatorV1,
+            retention_access_class: RetentionAccessClass::ProjectScoped,
+            evaluator_output_content_object_id: ContentObjectId::new(3).unwrap(),
+        },
+    );
+    // Byte identity is global. Two exact deterministic runs may emit the same
+    // digest, but each manifest remains a separate producer occurrence.
+    accepted(
+        &mut store,
+        "m4-manifest-register-second-shared-output",
+        PrincipalId::KERNEL,
+        Capability::RegisterForensicManifest,
+        generation,
+        CommandBody::RegisterForensicManifest {
+            operating_cycle_id: cycle,
+            producing_deterministic_experiment_id: second_experiment,
+            capture_policy: ForensicManifestCapturePolicy::DeterministicExperimentEvaluatorV1,
+            retention_access_class: RetentionAccessClass::ForensicRestricted,
+            evaluator_output_content_object_id: ContentObjectId::new(3).unwrap(),
+        },
+    );
+    rejected(
+        &mut store,
+        "m4-evaluation-wrong-evaluator",
+        PrincipalId::KERNEL,
+        Capability::RecordDeterministicEvaluationReceipt,
+        generation,
+        CommandBody::RecordDeterministicEvaluationReceipt {
+            operating_cycle_id: cycle,
+            deterministic_experiment_id: first_experiment,
+            evaluator_revision_id: EvaluatorRevisionId::new(2).unwrap(),
+            input_manifest_id: InputManifestId::new(1).unwrap(),
+            forensic_manifest_id: ForensicManifestId::new(1).unwrap(),
+            evaluator_output_content_object_id: ContentObjectId::new(3).unwrap(),
+        },
+        Rejection::DeterministicEvaluationBindingMismatch,
+    );
+    rejected(
+        &mut store,
+        "m4-evaluation-recombined-digest",
+        PrincipalId::KERNEL,
+        Capability::RecordDeterministicEvaluationReceipt,
+        generation,
+        CommandBody::RecordDeterministicEvaluationReceipt {
+            operating_cycle_id: cycle,
+            deterministic_experiment_id: first_experiment,
+            evaluator_revision_id: EvaluatorRevisionId::new(1).unwrap(),
+            input_manifest_id: InputManifestId::new(1).unwrap(),
+            forensic_manifest_id: ForensicManifestId::new(1).unwrap(),
+            evaluator_output_content_object_id: ContentObjectId::new(4).unwrap(),
+        },
+        Rejection::DeterministicEvaluationBindingMismatch,
+    );
+    rejected(
+        &mut store,
+        "m4-evaluation-wrong-run-manifest",
+        PrincipalId::KERNEL,
+        Capability::RecordDeterministicEvaluationReceipt,
+        generation,
+        CommandBody::RecordDeterministicEvaluationReceipt {
+            operating_cycle_id: cycle,
+            deterministic_experiment_id: second_experiment,
+            evaluator_revision_id: EvaluatorRevisionId::new(1).unwrap(),
+            input_manifest_id: InputManifestId::new(1).unwrap(),
+            forensic_manifest_id: ForensicManifestId::new(1).unwrap(),
+            evaluator_output_content_object_id: ContentObjectId::new(3).unwrap(),
+        },
+        Rejection::DeterministicEvaluationBindingMismatch,
+    );
+    rejected(
+        &mut store,
+        "m4-validate-before-admission",
+        PrincipalId::KERNEL,
+        Capability::ValidateTicketAttempt,
+        generation,
+        CommandBody::ValidateTicketAttempt {
+            operating_cycle_id: cycle,
+            actor_attempt_id: second_attempt,
+        },
+        Rejection::EvidenceAdmissionRequired,
+    );
+    accepted(
+        &mut store,
+        "m4-evaluation-record",
+        PrincipalId::KERNEL,
+        Capability::RecordDeterministicEvaluationReceipt,
+        generation,
+        CommandBody::RecordDeterministicEvaluationReceipt {
+            operating_cycle_id: cycle,
+            deterministic_experiment_id: first_experiment,
+            evaluator_revision_id: EvaluatorRevisionId::new(1).unwrap(),
+            input_manifest_id: InputManifestId::new(1).unwrap(),
+            forensic_manifest_id: ForensicManifestId::new(1).unwrap(),
+            evaluator_output_content_object_id: ContentObjectId::new(3).unwrap(),
+        },
+    );
+    accepted(
+        &mut store,
+        "m4-evidence-admit",
+        PrincipalId::KERNEL,
+        Capability::AdmitDeterministicEvidence,
+        generation,
+        CommandBody::AdmitDeterministicEvidence {
+            operating_cycle_id: cycle,
+            deterministic_evaluation_receipt_id: DeterministicEvaluationReceiptId::new(1).unwrap(),
+            deterministic_experiment_id: first_experiment,
+            evaluator_revision_id: EvaluatorRevisionId::new(1).unwrap(),
+            input_manifest_id: InputManifestId::new(1).unwrap(),
+            evaluator_output_content_object_id: ContentObjectId::new(3).unwrap(),
+            related_graph_revision_id: target,
+            semantic_role: EvidenceSemanticRole::DeterministicObservation,
+            applicability: EvidenceApplicability::TestsTargetHypothesis,
+            limitation: EvidenceLimitationText::parse(
+                "Receipt binds a deterministic evaluator identity but does not assert truth or curation.",
+            )
+            .unwrap(),
+        },
+    );
+    accepted(
+        &mut store,
+        "m4-evaluation-record-second",
+        PrincipalId::KERNEL,
+        Capability::RecordDeterministicEvaluationReceipt,
+        generation,
+        CommandBody::RecordDeterministicEvaluationReceipt {
+            operating_cycle_id: cycle,
+            deterministic_experiment_id: second_experiment,
+            evaluator_revision_id: EvaluatorRevisionId::new(1).unwrap(),
+            input_manifest_id: InputManifestId::new(1).unwrap(),
+            forensic_manifest_id: ForensicManifestId::new(2).unwrap(),
+            evaluator_output_content_object_id: ContentObjectId::new(3).unwrap(),
+        },
+    );
+    accepted(
+        &mut store,
+        "m4-evidence-admit-second",
+        PrincipalId::KERNEL,
+        Capability::AdmitDeterministicEvidence,
+        generation,
+        CommandBody::AdmitDeterministicEvidence {
+            operating_cycle_id: cycle,
+            deterministic_evaluation_receipt_id: DeterministicEvaluationReceiptId::new(2).unwrap(),
+            deterministic_experiment_id: second_experiment,
+            evaluator_revision_id: EvaluatorRevisionId::new(1).unwrap(),
+            input_manifest_id: InputManifestId::new(1).unwrap(),
+            evaluator_output_content_object_id: ContentObjectId::new(3).unwrap(),
+            related_graph_revision_id: target,
+            semantic_role: EvidenceSemanticRole::DeterministicObservation,
+            applicability: EvidenceApplicability::TestsTargetHypothesis,
+            limitation: EvidenceLimitationText::parse(
+                "The same bytes are independently bound to this second deterministic run.",
+            )
+            .unwrap(),
+        },
+    );
     let self_validation = CommandRequest {
         command_id: CommandId::parse("m3-attempt-validate-ga-self-attest").unwrap(),
         principal_id: architect,
@@ -781,6 +1080,54 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
             disposition: OutcomeObligationDisposition::Satisfied,
         },
     );
+    rejected(
+        &mut store,
+        "m4-project-close-open-experiment",
+        architect,
+        Capability::TransitionProject,
+        generation,
+        CommandBody::TransitionProject {
+            operating_cycle_id: cycle,
+            project_id: project,
+            target: ProjectState::Closed,
+        },
+        Rejection::ProjectCloseBlocked,
+    );
+    accepted(
+        &mut store,
+        "m4-experiment-close",
+        architect,
+        Capability::CloseDeterministicExperiment,
+        generation,
+        CommandBody::CloseDeterministicExperiment {
+            operating_cycle_id: cycle,
+            deterministic_experiment_id: first_experiment,
+        },
+    );
+    rejected(
+        &mut store,
+        "m4-project-close-second-experiment-still-open",
+        architect,
+        Capability::TransitionProject,
+        generation,
+        CommandBody::TransitionProject {
+            operating_cycle_id: cycle,
+            project_id: project,
+            target: ProjectState::Closed,
+        },
+        Rejection::ProjectCloseBlocked,
+    );
+    accepted(
+        &mut store,
+        "m4-experiment-close-second",
+        architect,
+        Capability::CloseDeterministicExperiment,
+        generation,
+        CommandBody::CloseDeterministicExperiment {
+            operating_cycle_id: cycle,
+            deterministic_experiment_id: second_experiment,
+        },
+    );
     accepted(
         &mut store,
         "m3-project-close",
@@ -802,6 +1149,16 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
             .iter()
             .any(|event| matches!(event.body, EventBody::AdversarialReviewResolved { .. }))
     );
+    assert!(store.replay_ledger().unwrap().iter().any(|event| {
+        matches!(
+            event.body,
+            EventBody::DeterministicEvidenceAdmitted {
+                semantic_role: EvidenceSemanticRole::DeterministicObservation,
+                applicability: EvidenceApplicability::TestsTargetHypothesis,
+                ..
+            }
+        )
+    }));
     drop(store);
 
     let inspect = Connection::open(&path).unwrap();
@@ -831,6 +1188,80 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
         )
         .unwrap();
     assert_eq!(acceptance_satisfied_by, "m3-attempt-validate");
+    let shared_output_occurrences: i64 = inspect
+        .query_row(
+            "SELECT COUNT(*) FROM forensic_manifest_objects
+             WHERE content_object_id = 3 AND object_role = 1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(shared_output_occurrences, 2);
+    let distinct_producing_runs: i64 = inspect
+        .query_row(
+            "SELECT COUNT(DISTINCT manifest.producing_deterministic_experiment_id)
+             FROM forensic_manifests manifest
+             JOIN forensic_manifest_objects object
+               ON object.forensic_manifest_id = manifest.forensic_manifest_id
+             WHERE object.content_object_id = 3",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(distinct_producing_runs, 2);
+    let manifest_retention_classes: Vec<i64> = inspect
+        .prepare(
+            "SELECT retention_access_class FROM forensic_manifests
+             WHERE forensic_manifest_id IN (1, 2)
+             ORDER BY forensic_manifest_id",
+        )
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(manifest_retention_classes, vec![2, 1]);
+    let occurrence_policy_columns_on_content: i64 = inspect
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('content_objects')
+             WHERE name IN ('media_schema_contract', 'retention_access_class')",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(occurrence_policy_columns_on_content, 0);
+    assert!(
+        inspect
+            .execute(
+                "UPDATE forensic_manifest_objects
+             SET media_schema_contract = 1
+             WHERE forensic_manifest_id = 1",
+                [],
+            )
+            .is_err()
+    );
+    inspect
+        .execute(
+            "UPDATE evidence_admissions SET limitation_text = 'tampered M4 limitation'",
+            [],
+        )
+        .unwrap();
+    drop(inspect);
+    assert!(
+        KernelStore::open(&path)
+            .unwrap()
+            .validate_replayed_materialized_state()
+            .is_err()
+    );
+    let repair_content = Connection::open(&path).unwrap();
+    repair_content
+        .execute(
+            "UPDATE evidence_admissions SET limitation_text = ?1",
+            ["Receipt binds a deterministic evaluator identity but does not assert truth or curation."],
+        )
+        .unwrap();
+    drop(repair_content);
+    let inspect = Connection::open(&path).unwrap();
     inspect.execute("UPDATE command_start_actor_attempt SET reservation_micros = 4999 WHERE command_row_id = (SELECT command_row_id FROM commands WHERE command_id = 'm3-attempt-start-retry')", []).unwrap();
     drop(inspect);
     assert!(KernelStore::open(&path).unwrap().replay_ledger().is_err());

@@ -13,19 +13,23 @@ use crate::{
     BudgetEnvelopeId, BudgetFreezeReason, BudgetReservationId, BudgetReservationState,
     CancellationMode, CancellationRequestId, CancellationState, Capability, CausalEpisodeId,
     CommandBody, CommandDisposition, CommandId, CommandKind, CommandReceipt, CommandRequest,
-    ContextPackId, ContextPackPurpose, CostObservation, CostPostmortemCause, CostPostmortemId,
+    ContentMediaSchemaContract, ContentObjectId, ContentSealReceiptId, ContextPackId,
+    ContextPackPurpose, CostObservation, CostPostmortemCause, CostPostmortemId,
     CostPostmortemResolution, CostPostmortemState, CostUnavailableReason, CostUnknownReason,
-    DevelopmentalAttractor, EpisodeState, EventBody, EventId, EventKind, ExecutionProfileId,
+    DeterministicEvaluationReceiptId, DeterministicExperimentId, DeterministicExperimentState,
+    DevelopmentalAttractor, EpisodeState, EvaluatorRevisionId, EventBody, EventId, EventKind,
+    EvidenceAdmissionId, EvidenceLimitationText, EvidenceSemanticRole, ExecutionProfileId,
     ExecutionProfileKind, ExecutionProfileReadiness, ExpectedGeneration,
-    GrandArchitectOfficeSessionId, GraphEdgeId, GraphEdgeKind, GraphObjectId, GraphObjectKind,
-    GraphRevisionBody, GraphRevisionId, GraphRevisionState, HypothesisRevisionText, LedgerEvent,
+    ForensicManifestCapturePolicy, ForensicManifestId, GrandArchitectOfficeSessionId, GraphEdgeId,
+    GraphEdgeKind, GraphObjectId, GraphObjectKind, GraphRevisionBody, GraphRevisionId,
+    GraphRevisionState, HypothesisRevisionText, InputManifestId, LedgerEvent,
     ObservationRevisionText, OfficeId, OfficeKind, OfficeOccupancyId, OfficeSessionState,
     OfficeSessionTerminalState, OfficeTurnId, OfficeTurnPurpose, OfficeTurnState, OperatingCycleId,
     OperatingCycleState, OperatingCycleTreatment, OutcomeObligationDisposition,
     OutcomeObligationId, OutcomeObligationState, PostmortemActionKind, PostmortemActionProposalId,
     PostmortemCausalClaimId, PostmortemCausalClaimKind, PostmortemId, PostmortemState, PrincipalId,
     PrincipalKind, ProjectId, ProjectMilestoneId, ProjectMilestoneState, ProjectState, Rejection,
-    ReviewChallengeId, ReviewChallengeResponseState, ReviewChallengeSeverity,
+    RetentionAccessClass, ReviewChallengeId, ReviewChallengeResponseState, ReviewChallengeSeverity,
     ReviewDispositionKind, ReviewResolutionKind, Sha256Digest, SocietyId, SocietyName, TicketId,
     TicketState, UniverseSeedId, UsdMicros, WorkItemId, WorkItemKind, WorkItemState, WorkLeaseId,
     WorkLeaseState,
@@ -34,8 +38,9 @@ use crate::{
 const MIGRATION_1: &str = include_str!("../../../migrations/0001_kernel.sql");
 const MIGRATION_2: &str = include_str!("../../../migrations/0002_coordination_graph.sql");
 const MIGRATION_3: &str = include_str!("../../../migrations/0003_execution_foundation.sql");
+const MIGRATION_4: &str = include_str!("../../../migrations/0004_content_evidence_foundation.sql");
 
-const COMMAND_BODY_TABLES: [&str; 61] = [
+const COMMAND_BODY_TABLES: [&str; 68] = [
     "command_create_society_identity",
     "command_install_grand_architect_office",
     "command_install_founding_universe_seed",
@@ -97,9 +102,16 @@ const COMMAND_BODY_TABLES: [&str; 61] = [
     "command_cancel_actor_attempt",
     "command_register_outcome_obligation",
     "command_resolve_outcome_obligation",
+    "command_record_content_seal_receipt",
+    "command_register_content_object",
+    "command_register_forensic_manifest",
+    "command_register_deterministic_experiment",
+    "command_record_deterministic_evaluation_receipt",
+    "command_admit_deterministic_evidence",
+    "command_close_deterministic_experiment",
 ];
 
-const EVENT_BODY_TABLES: [&str; 54] = [
+const EVENT_BODY_TABLES: [&str; 61] = [
     "event_society_identity_created",
     "event_grand_architect_office_installed",
     "event_founding_universe_seed_installed",
@@ -154,6 +166,13 @@ const EVENT_BODY_TABLES: [&str; 54] = [
     "event_actor_attempt_cancellation_requested",
     "event_outcome_obligation_registered",
     "event_outcome_obligation_resolved",
+    "event_content_seal_receipt_recorded",
+    "event_content_object_registered",
+    "event_forensic_manifest_registered",
+    "event_deterministic_experiment_registered",
+    "event_deterministic_evaluation_receipt_recorded",
+    "event_deterministic_evidence_admitted",
+    "event_deterministic_experiment_closed",
 ];
 
 const GRAPH_REVISION_BODY_TABLES: [&str; 2] = ["observation_revisions", "hypothesis_revisions"];
@@ -183,6 +202,13 @@ pub enum StoreError {
         "refusing schema-v2 upgrade with a nonempty ledger ({command_count} commands, {event_count} events)"
     )]
     NonemptySchemaV2LedgerUpgradeRefused {
+        command_count: i64,
+        event_count: i64,
+    },
+    #[error(
+        "refusing schema-v3 upgrade with a nonempty ledger ({command_count} commands, {event_count} events)"
+    )]
+    NonemptySchemaV3LedgerUpgradeRefused {
         command_count: i64,
         event_count: i64,
     },
@@ -242,12 +268,13 @@ impl KernelStore {
         match schema_version {
             0 => {
                 // A fresh database crosses ordered versioned commit boundaries,
-                // not one fictional atomic 0 -> 3 boundary. Each migration either
+                // not one fictional atomic 0 -> 4 boundary. Each migration either
                 // commits its own version or rolls back so reopening can retry
                 // that exact version step.
                 apply_migration_1(&connection)?;
                 apply_migration_2(&connection)?;
                 apply_migration_3(&connection)?;
+                apply_migration_4(&connection)?;
             }
             1 => {
                 let (command_count, event_count) = schema_v1_ledger_counts(&connection)?;
@@ -262,6 +289,7 @@ impl KernelStore {
                 }
                 apply_migration_2(&connection)?;
                 apply_migration_3(&connection)?;
+                apply_migration_4(&connection)?;
             }
             2 => {
                 let (command_count, event_count) = schema_v1_ledger_counts(&connection)?;
@@ -272,8 +300,19 @@ impl KernelStore {
                     });
                 }
                 apply_migration_3(&connection)?;
+                apply_migration_4(&connection)?;
             }
-            3 => {}
+            3 => {
+                let (command_count, event_count) = schema_v1_ledger_counts(&connection)?;
+                if command_count != 0 || event_count != 0 {
+                    return Err(StoreError::NonemptySchemaV3LedgerUpgradeRefused {
+                        command_count,
+                        event_count,
+                    });
+                }
+                apply_migration_4(&connection)?;
+            }
+            4 => {}
             other => return Err(StoreError::UnsupportedSchemaVersion(other)),
         }
         let foreign_key_violations: i64 =
@@ -732,6 +771,21 @@ fn command_operating_cycle_for_treatment(
         }
         | CommandBody::ResolveOutcomeObligation {
             operating_cycle_id, ..
+        }
+        | CommandBody::RegisterForensicManifest {
+            operating_cycle_id, ..
+        }
+        | CommandBody::RegisterDeterministicExperiment {
+            operating_cycle_id, ..
+        }
+        | CommandBody::RecordDeterministicEvaluationReceipt {
+            operating_cycle_id, ..
+        }
+        | CommandBody::AdmitDeterministicEvidence {
+            operating_cycle_id, ..
+        }
+        | CommandBody::CloseDeterministicExperiment {
+            operating_cycle_id, ..
         } => Some(*operating_cycle_id),
         _ => None,
     };
@@ -850,6 +904,18 @@ fn apply_migration_3(connection: &Connection) -> Result<(), StoreError> {
     Ok(())
 }
 
+/// M4 widens the closed ledger ranges and installs new named body tables. It
+/// is atomic per version step and is deliberately fenced from a nonempty M3
+/// ledger rather than inventing a historical fingerprint transformation.
+fn apply_migration_4(connection: &Connection) -> Result<(), StoreError> {
+    if let Err(error) = connection.execute_batch(MIGRATION_4) {
+        let _ = connection.execute_batch("ROLLBACK");
+        let _ = connection.pragma_update(None, "foreign_keys", "ON");
+        return Err(error.into());
+    }
+    Ok(())
+}
+
 fn apply_command(
     transaction: &Transaction<'_>,
     command_row_id: i64,
@@ -906,6 +972,11 @@ fn apply_command(
             | CommandBody::CompleteTicket { .. }
             | CommandBody::RegisterOutcomeObligation { .. }
             | CommandBody::ResolveOutcomeObligation { .. }
+            | CommandBody::RegisterForensicManifest { .. }
+            | CommandBody::RegisterDeterministicExperiment { .. }
+            | CommandBody::RecordDeterministicEvaluationReceipt { .. }
+            | CommandBody::AdmitDeterministicEvidence { .. }
+            | CommandBody::CloseDeterministicExperiment { .. }
     ) != matches!(request.expected_generation, ExpectedGeneration::Exact(_))
     {
         return Ok(Err(Rejection::InvalidExpectedGeneration));
@@ -1528,6 +1599,100 @@ fn apply_command(
             *operating_cycle_id,
             *outcome_obligation_id,
             *disposition,
+        ),
+        CommandBody::RecordContentSealReceipt { digest } => {
+            record_content_seal_receipt(transaction, command_row_id, *digest)
+        }
+        CommandBody::RegisterContentObject {
+            content_seal_receipt_id,
+        } => register_content_object(transaction, command_row_id, *content_seal_receipt_id),
+        CommandBody::RegisterForensicManifest {
+            operating_cycle_id,
+            producing_deterministic_experiment_id,
+            capture_policy,
+            retention_access_class,
+            evaluator_output_content_object_id,
+        } => register_forensic_manifest(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *operating_cycle_id,
+            *producing_deterministic_experiment_id,
+            *capture_policy,
+            *retention_access_class,
+            *evaluator_output_content_object_id,
+        ),
+        CommandBody::RegisterDeterministicExperiment {
+            operating_cycle_id,
+            project_id,
+            ticket_id,
+            target_graph_revision_id,
+            evaluator_content_object_id,
+            input_manifest_content_object_id,
+        } => register_deterministic_experiment(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *operating_cycle_id,
+            *project_id,
+            *ticket_id,
+            *target_graph_revision_id,
+            *evaluator_content_object_id,
+            *input_manifest_content_object_id,
+        ),
+        CommandBody::RecordDeterministicEvaluationReceipt {
+            operating_cycle_id,
+            deterministic_experiment_id,
+            evaluator_revision_id,
+            input_manifest_id,
+            forensic_manifest_id,
+            evaluator_output_content_object_id,
+        } => record_deterministic_evaluation_receipt(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *operating_cycle_id,
+            *deterministic_experiment_id,
+            *evaluator_revision_id,
+            *input_manifest_id,
+            *forensic_manifest_id,
+            *evaluator_output_content_object_id,
+        ),
+        CommandBody::AdmitDeterministicEvidence {
+            operating_cycle_id,
+            deterministic_evaluation_receipt_id,
+            deterministic_experiment_id,
+            evaluator_revision_id,
+            input_manifest_id,
+            evaluator_output_content_object_id,
+            related_graph_revision_id,
+            semantic_role,
+            applicability,
+            limitation,
+        } => admit_deterministic_evidence(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *operating_cycle_id,
+            *deterministic_evaluation_receipt_id,
+            *deterministic_experiment_id,
+            *evaluator_revision_id,
+            *input_manifest_id,
+            *evaluator_output_content_object_id,
+            *related_graph_revision_id,
+            *semantic_role,
+            *applicability,
+            limitation,
+        ),
+        CommandBody::CloseDeterministicExperiment {
+            operating_cycle_id,
+            deterministic_experiment_id,
+        } => close_deterministic_experiment(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *operating_cycle_id,
+            *deterministic_experiment_id,
         ),
     };
 
@@ -2770,6 +2935,13 @@ fn project_close_blocked(
         "SELECT COUNT(*) FROM outcome_obligations WHERE project_id = ?1 AND lifecycle_state = 1",
         [project_id.value()], |row| row.get(0),
     ).map_err(|_| Rejection::SubjectNotFound)?;
+    // An admitted observation is not yet a closed Experiment. The Project
+    // cannot discard an evidence-producing experiment while its explicit
+    // lifecycle remains open.
+    let open_deterministic_experiments: i64 = transaction.query_row(
+        "SELECT COUNT(*) FROM deterministic_experiments WHERE project_id = ?1 AND lifecycle_state != 3",
+        [project_id.value()], |row| row.get(0),
+    ).map_err(|_| Rejection::SubjectNotFound)?;
     Ok(incomplete_milestones != 0
         || incomplete_tickets != 0
         || open_reviews != 0
@@ -2777,7 +2949,8 @@ fn project_close_blocked(
         || live_attempts != 0
         || active_leases != 0
         || unreconciled_attempt_reservations != 0
-        || open_outcomes != 0)
+        || open_outcomes != 0
+        || open_deterministic_experiments != 0)
 }
 
 fn project_transition_allowed(from: ProjectState, to: ProjectState) -> bool {
@@ -4368,6 +4541,13 @@ fn validate_ticket_attempt(
     {
         return Err(Rejection::ActorAttemptNotValidatable);
     }
+    let evidence_pending: i64 = transaction.query_row(
+        "SELECT COUNT(*) FROM deterministic_experiments WHERE ticket_id = ?1 AND lifecycle_state = 1",
+        [ticket_id.value()], |row| row.get(0),
+    ).map_err(|_| Rejection::SubjectNotFound)?;
+    if evidence_pending != 0 {
+        return Err(Rejection::EvidenceAdmissionRequired);
+    }
     transaction.execute("UPDATE attempts SET lifecycle_state = 9, validated_by_command_id = ?1 WHERE actor_attempt_id = ?2", params![command_row_id, actor_attempt_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
     transaction.execute("UPDATE ticket_acceptance_conditions SET lifecycle_state = 2, satisfied_by_command_id = ?1 WHERE ticket_id = ?2 AND lifecycle_state = 1", params![command_row_id, ticket_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
     transaction.execute("UPDATE tickets SET lifecycle_state = ?1, last_transition_command_id = ?2 WHERE ticket_id = ?3", params![TicketState::Verified as i64, command_row_id, ticket_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
@@ -4592,6 +4772,422 @@ fn resolve_outcome_obligation(
     Ok(EventBody::OutcomeObligationResolved {
         outcome_obligation_id,
         state,
+    })
+}
+
+/// Stores a narrow receipt from the later `society-content` boundary. The
+/// kernel has no byte stream here and therefore cannot honestly call this a
+/// physical seal operation. This is byte identity only: a later forensic
+/// manifest records each specific production/capture occurrence.
+fn record_content_seal_receipt(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    digest: Sha256Digest,
+) -> Result<EventBody, Rejection> {
+    let duplicate: i64 = transaction
+        .query_row(
+            "SELECT COUNT(*) FROM content_seal_receipts WHERE digest = ?1",
+            [digest.as_bytes().as_slice()],
+            |row| row.get(0),
+        )
+        .map_err(|_| Rejection::ContentObjectNotSealed)?;
+    if duplicate != 0 {
+        return Err(Rejection::ContentObjectNotSealed);
+    }
+    transaction
+        .execute(
+            "INSERT INTO content_seal_receipts(digest, attested_by_command_id)
+             VALUES (?1, ?2)",
+            params![digest.as_bytes().as_slice(), command_row_id],
+        )
+        .map_err(|_| Rejection::ContentObjectNotSealed)?;
+    let content_seal_receipt_id = id_from_last_insert::<ContentSealReceiptId>(transaction)?;
+    Ok(EventBody::ContentSealReceiptRecorded {
+        content_seal_receipt_id,
+        digest,
+    })
+}
+
+fn register_content_object(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    content_seal_receipt_id: ContentSealReceiptId,
+) -> Result<EventBody, Rejection> {
+    let present: bool = transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM content_seal_receipts WHERE content_seal_receipt_id = ?1)",
+            [content_seal_receipt_id.value()],
+            |row| row.get(0),
+        )
+        .map_err(|_| Rejection::ContentSealReceiptMissing)?;
+    if !present {
+        return Err(Rejection::ContentSealReceiptMissing);
+    }
+    let registered: bool = transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM content_objects WHERE content_seal_receipt_id = ?1)",
+            [content_seal_receipt_id.value()],
+            |row| row.get(0),
+        )
+        .map_err(|_| Rejection::ContentObjectNotSealed)?;
+    if registered {
+        return Err(Rejection::ContentObjectNotSealed);
+    }
+    transaction
+        .execute(
+            "INSERT INTO content_objects(content_seal_receipt_id, registered_by_command_id)
+             VALUES (?1, ?2)",
+            params![content_seal_receipt_id.value(), command_row_id],
+        )
+        .map_err(|_| Rejection::ContentObjectNotSealed)?;
+    let content_object_id = id_from_last_insert::<ContentObjectId>(transaction)?;
+    Ok(EventBody::ContentObjectRegistered {
+        content_object_id,
+        content_seal_receipt_id,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn register_forensic_manifest(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    operating_cycle_id: OperatingCycleId,
+    producing_deterministic_experiment_id: DeterministicExperimentId,
+    capture_policy: ForensicManifestCapturePolicy,
+    retention_access_class: RetentionAccessClass,
+    evaluator_output_content_object_id: ContentObjectId,
+) -> Result<EventBody, Rejection> {
+    let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
+    let experiment: Option<(i64, i64)> = transaction.query_row(
+        "SELECT project_id, operating_cycle_id FROM deterministic_experiments WHERE deterministic_experiment_id = ?1 AND lifecycle_state = 1",
+        [producing_deterministic_experiment_id.value()], |row| Ok((row.get(0)?, row.get(1)?)),
+    ).optional().map_err(|_| Rejection::ForensicManifestBindingMismatch)?;
+    let (project, experiment_cycle) =
+        experiment.ok_or(Rejection::ForensicManifestBindingMismatch)?;
+    if experiment_cycle != operating_cycle_id.value() {
+        return Err(Rejection::ForensicManifestBindingMismatch);
+    }
+    let project_id = ProjectId::try_from(project).map_err(|_| Rejection::SubjectNotFound)?;
+    let object_exists: bool = transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM content_objects WHERE content_object_id = ?1)",
+            [evaluator_output_content_object_id.value()],
+            |row| row.get(0),
+        )
+        .map_err(|_| Rejection::ContentObjectNotSealed)?;
+    if !object_exists {
+        return Err(Rejection::ForensicManifestBindingMismatch);
+    }
+    transaction
+        .execute(
+            "INSERT INTO forensic_manifests(producing_deterministic_experiment_id, capture_policy, retention_access_class, registered_by_command_id)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![producing_deterministic_experiment_id.value(), capture_policy as i64, retention_access_class as i64, command_row_id],
+        )
+        .map_err(|_| Rejection::ForensicManifestBindingMismatch)?;
+    let forensic_manifest_id = id_from_last_insert::<ForensicManifestId>(transaction)?;
+    transaction
+        .execute(
+            "INSERT INTO forensic_manifest_objects(forensic_manifest_id, member_ordinal, object_role, media_schema_contract, content_object_id)
+             VALUES (?1, 1, 1, ?2, ?3)",
+            params![
+                forensic_manifest_id.value(),
+                ContentMediaSchemaContract::DeterministicEvaluatorOutputV1 as i64,
+                evaluator_output_content_object_id.value()
+            ],
+        )
+        .map_err(|_| Rejection::ForensicManifestBindingMismatch)?;
+    record_coordination_provenance(
+        transaction,
+        command_row_id,
+        cycle,
+        operating_cycle_id,
+        Some(project_id),
+    )?;
+    Ok(EventBody::ForensicManifestRegistered {
+        forensic_manifest_id,
+        producing_deterministic_experiment_id,
+        evaluator_output_content_object_id,
+    })
+}
+
+fn content_object_exists(
+    transaction: &Transaction<'_>,
+    content_object_id: ContentObjectId,
+) -> Result<bool, Rejection> {
+    transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM content_objects WHERE content_object_id = ?1)",
+            [content_object_id.value()],
+            |row| row.get(0),
+        )
+        .map_err(|_| Rejection::ContentObjectNotSealed)
+}
+
+fn evaluator_revision_for_content(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    content_object_id: ContentObjectId,
+) -> Result<EvaluatorRevisionId, Rejection> {
+    let existing: Option<i64> = transaction
+        .query_row(
+            "SELECT evaluator_revision_id FROM evaluator_revisions WHERE content_object_id = ?1",
+            [content_object_id.value()],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|_| Rejection::ContentObjectNotSealed)?;
+    if let Some(existing) = existing {
+        return EvaluatorRevisionId::try_from(existing).map_err(|_| Rejection::SubjectNotFound);
+    }
+    transaction
+        .execute(
+            "INSERT INTO evaluator_revisions(content_object_id, media_schema_contract, registered_by_command_id) VALUES (?1, ?2, ?3)",
+            params![
+                content_object_id.value(),
+                ContentMediaSchemaContract::DeterministicEvaluatorV1 as i64,
+                command_row_id
+            ],
+        )
+        .map_err(|_| Rejection::ContentObjectNotSealed)?;
+    id_from_last_insert::<EvaluatorRevisionId>(transaction)
+}
+
+fn input_manifest_for_content(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    content_object_id: ContentObjectId,
+) -> Result<InputManifestId, Rejection> {
+    let existing: Option<i64> = transaction
+        .query_row(
+            "SELECT input_manifest_id FROM input_manifests WHERE content_object_id = ?1",
+            [content_object_id.value()],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|_| Rejection::ContentObjectNotSealed)?;
+    if let Some(existing) = existing {
+        return InputManifestId::try_from(existing).map_err(|_| Rejection::SubjectNotFound);
+    }
+    transaction
+        .execute(
+            "INSERT INTO input_manifests(content_object_id, media_schema_contract, registered_by_command_id) VALUES (?1, ?2, ?3)",
+            params![
+                content_object_id.value(),
+                ContentMediaSchemaContract::DeterministicInputManifestV1 as i64,
+                command_row_id
+            ],
+        )
+        .map_err(|_| Rejection::ContentObjectNotSealed)?;
+    id_from_last_insert::<InputManifestId>(transaction)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn register_deterministic_experiment(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    operating_cycle_id: OperatingCycleId,
+    project_id: ProjectId,
+    ticket_id: TicketId,
+    target_graph_revision_id: GraphRevisionId,
+    evaluator_content_object_id: ContentObjectId,
+    input_manifest_content_object_id: ContentObjectId,
+) -> Result<EventBody, Rejection> {
+    let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
+    project_is_active(transaction, project_id)?;
+    let (_, revision_project_id, _, revision_state) =
+        graph_revision_row(transaction, target_graph_revision_id)?;
+    if ticket_row(transaction, ticket_id)?.0 != project_id
+        || revision_project_id != project_id
+        || revision_state != GraphRevisionState::Committed
+        || !content_object_exists(transaction, evaluator_content_object_id)?
+        || !content_object_exists(transaction, input_manifest_content_object_id)?
+    {
+        return Err(Rejection::DeterministicExperimentBindingMismatch);
+    }
+    let evaluator_revision_id =
+        evaluator_revision_for_content(transaction, command_row_id, evaluator_content_object_id)?;
+    let input_manifest_id = input_manifest_for_content(
+        transaction,
+        command_row_id,
+        input_manifest_content_object_id,
+    )?;
+    transaction
+        .execute(
+            "INSERT INTO deterministic_experiments(operating_cycle_id, project_id, ticket_id, target_graph_revision_id, evaluator_revision_id, input_manifest_id, lifecycle_state, registered_by_command_id, last_transition_command_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+            params![operating_cycle_id.value(), project_id.value(), ticket_id.value(), target_graph_revision_id.value(), evaluator_revision_id.value(), input_manifest_id.value(), DeterministicExperimentState::Registered as i64, command_row_id],
+        )
+        .map_err(|_| Rejection::DeterministicExperimentBindingMismatch)?;
+    let deterministic_experiment_id =
+        id_from_last_insert::<DeterministicExperimentId>(transaction)?;
+    record_coordination_provenance(
+        transaction,
+        command_row_id,
+        cycle,
+        operating_cycle_id,
+        Some(project_id),
+    )?;
+    Ok(EventBody::DeterministicExperimentRegistered {
+        deterministic_experiment_id,
+        evaluator_revision_id,
+        input_manifest_id,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn record_deterministic_evaluation_receipt(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    operating_cycle_id: OperatingCycleId,
+    deterministic_experiment_id: DeterministicExperimentId,
+    evaluator_revision_id: EvaluatorRevisionId,
+    input_manifest_id: InputManifestId,
+    forensic_manifest_id: ForensicManifestId,
+    evaluator_output_content_object_id: ContentObjectId,
+) -> Result<EventBody, Rejection> {
+    let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
+    let row: Option<(i64, i64, i64, i64)> = transaction.query_row(
+        "SELECT project_id, ticket_id, evaluator_revision_id, input_manifest_id
+         FROM deterministic_experiments WHERE deterministic_experiment_id = ?1 AND operating_cycle_id = ?2 AND lifecycle_state = 1",
+        params![deterministic_experiment_id.value(), operating_cycle_id.value()],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    ).optional().map_err(|_| Rejection::DeterministicEvaluationBindingMismatch)?;
+    let (project, _ticket, evaluator, input) =
+        row.ok_or(Rejection::DeterministicEvaluationBindingMismatch)?;
+    if evaluator != evaluator_revision_id.value() || input != input_manifest_id.value() {
+        return Err(Rejection::DeterministicEvaluationBindingMismatch);
+    }
+    let manifest_experiment: Option<i64> = transaction.query_row(
+        "SELECT producing_deterministic_experiment_id FROM forensic_manifests WHERE forensic_manifest_id = ?1",
+        [forensic_manifest_id.value()], |row| row.get(0),
+    ).optional().map_err(|_| Rejection::DeterministicEvaluationBindingMismatch)?;
+    if manifest_experiment != Some(deterministic_experiment_id.value()) {
+        return Err(Rejection::DeterministicEvaluationBindingMismatch);
+    }
+    let output_in_manifest: bool = transaction.query_row(
+        "SELECT EXISTS(SELECT 1 FROM forensic_manifest_objects WHERE forensic_manifest_id = ?1 AND content_object_id = ?2 AND object_role = 1 AND media_schema_contract = 3)",
+        params![forensic_manifest_id.value(), evaluator_output_content_object_id.value()],
+        |row| row.get(0),
+    ).map_err(|_| Rejection::DeterministicEvaluationBindingMismatch)?;
+    if !output_in_manifest {
+        return Err(Rejection::DeterministicEvaluationBindingMismatch);
+    }
+    transaction.execute(
+        "INSERT INTO deterministic_evaluation_receipts(deterministic_experiment_id, evaluator_revision_id, input_manifest_id, forensic_manifest_id, evaluator_output_content_object_id, attested_by_command_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![deterministic_experiment_id.value(), evaluator_revision_id.value(), input_manifest_id.value(), forensic_manifest_id.value(), evaluator_output_content_object_id.value(), command_row_id],
+    ).map_err(|_| Rejection::DeterministicEvaluationBindingMismatch)?;
+    let deterministic_evaluation_receipt_id =
+        id_from_last_insert::<DeterministicEvaluationReceiptId>(transaction)?;
+    record_coordination_provenance(
+        transaction,
+        command_row_id,
+        cycle,
+        operating_cycle_id,
+        Some(ProjectId::try_from(project).map_err(|_| Rejection::SubjectNotFound)?),
+    )?;
+    Ok(EventBody::DeterministicEvaluationReceiptRecorded {
+        deterministic_evaluation_receipt_id,
+        deterministic_experiment_id,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn admit_deterministic_evidence(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    operating_cycle_id: OperatingCycleId,
+    deterministic_evaluation_receipt_id: DeterministicEvaluationReceiptId,
+    deterministic_experiment_id: DeterministicExperimentId,
+    evaluator_revision_id: EvaluatorRevisionId,
+    input_manifest_id: InputManifestId,
+    evaluator_output_content_object_id: ContentObjectId,
+    related_graph_revision_id: GraphRevisionId,
+    semantic_role: EvidenceSemanticRole,
+    applicability: crate::EvidenceApplicability,
+    limitation: &EvidenceLimitationText,
+) -> Result<EventBody, Rejection> {
+    let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
+    let row: Option<(i64, i64, i64, i64, i64)> = transaction.query_row(
+        "SELECT e.project_id, e.target_graph_revision_id, r.deterministic_experiment_id, r.evaluator_revision_id, r.input_manifest_id
+         FROM deterministic_experiments e JOIN deterministic_evaluation_receipts r ON r.deterministic_experiment_id = e.deterministic_experiment_id
+         WHERE r.deterministic_evaluation_receipt_id = ?1 AND e.operating_cycle_id = ?2 AND e.lifecycle_state = 1",
+        params![deterministic_evaluation_receipt_id.value(), operating_cycle_id.value()],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+    ).optional().map_err(|_| Rejection::DeterministicEvaluationBindingMismatch)?;
+    let (project, target, experiment, evaluator, input) =
+        row.ok_or(Rejection::DeterministicEvaluationBindingMismatch)?;
+    if experiment != deterministic_experiment_id.value()
+        || evaluator != evaluator_revision_id.value()
+        || input != input_manifest_id.value()
+        || target != related_graph_revision_id.value()
+    {
+        return Err(Rejection::DeterministicEvaluationBindingMismatch);
+    }
+    let (_, graph_project, graph_kind, graph_state) =
+        graph_revision_row(transaction, related_graph_revision_id)?;
+    if graph_project.value() != project
+        || graph_kind != GraphObjectKind::Hypothesis
+        || graph_state != GraphRevisionState::Committed
+        || semantic_role != EvidenceSemanticRole::DeterministicObservation
+        || applicability != crate::EvidenceApplicability::TestsTargetHypothesis
+    {
+        return Err(Rejection::DeterministicEvaluationBindingMismatch);
+    }
+    let receipt_output: i64 = transaction.query_row("SELECT evaluator_output_content_object_id FROM deterministic_evaluation_receipts WHERE deterministic_evaluation_receipt_id = ?1", [deterministic_evaluation_receipt_id.value()], |row| row.get(0)).map_err(|_| Rejection::DeterministicEvaluationBindingMismatch)?;
+    if receipt_output != evaluator_output_content_object_id.value() {
+        return Err(Rejection::DeterministicEvaluationBindingMismatch);
+    }
+    transaction.execute(
+        "INSERT INTO evidence_admissions(deterministic_evaluation_receipt_id, deterministic_experiment_id, evaluator_revision_id, input_manifest_id, evaluator_output_content_object_id, related_graph_revision_id, semantic_role, applicability, limitation_text, admitted_by_command_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        params![deterministic_evaluation_receipt_id.value(), deterministic_experiment_id.value(), evaluator_revision_id.value(), input_manifest_id.value(), evaluator_output_content_object_id.value(), related_graph_revision_id.value(), semantic_role as i64, applicability as i64, limitation.as_str(), command_row_id],
+    ).map_err(|_| Rejection::DeterministicEvaluationBindingMismatch)?;
+    let evidence_admission_id = id_from_last_insert::<EvidenceAdmissionId>(transaction)?;
+    transaction.execute("UPDATE deterministic_experiments SET lifecycle_state = 2, last_transition_command_id = ?1 WHERE deterministic_experiment_id = ?2", params![command_row_id, deterministic_experiment_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    record_coordination_provenance(
+        transaction,
+        command_row_id,
+        cycle,
+        operating_cycle_id,
+        Some(ProjectId::try_from(project).map_err(|_| Rejection::SubjectNotFound)?),
+    )?;
+    Ok(EventBody::DeterministicEvidenceAdmitted {
+        evidence_admission_id,
+        deterministic_evaluation_receipt_id,
+        semantic_role,
+        applicability,
+    })
+}
+
+fn close_deterministic_experiment(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    operating_cycle_id: OperatingCycleId,
+    deterministic_experiment_id: DeterministicExperimentId,
+) -> Result<EventBody, Rejection> {
+    let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
+    let row: Option<(i64, i64)> = transaction.query_row("SELECT project_id, lifecycle_state FROM deterministic_experiments WHERE deterministic_experiment_id = ?1 AND operating_cycle_id = ?2", params![deterministic_experiment_id.value(), operating_cycle_id.value()], |row| Ok((row.get(0)?, row.get(1)?))).optional().map_err(|_| Rejection::SubjectNotFound)?;
+    let (project, state) = row.ok_or(Rejection::SubjectNotFound)?;
+    if state != DeterministicExperimentState::EvidenceAdmitted as i64 {
+        return Err(Rejection::EvidenceAdmissionRequired);
+    }
+    transaction.execute("UPDATE deterministic_experiments SET lifecycle_state = 3, last_transition_command_id = ?1 WHERE deterministic_experiment_id = ?2", params![command_row_id, deterministic_experiment_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    record_coordination_provenance(
+        transaction,
+        command_row_id,
+        cycle,
+        operating_cycle_id,
+        Some(ProjectId::try_from(project).map_err(|_| Rejection::SubjectNotFound)?),
+    )?;
+    Ok(EventBody::DeterministicExperimentClosed {
+        deterministic_experiment_id,
     })
 }
 
@@ -4820,6 +5416,12 @@ fn command_target_occupancy(
             operating_cycle_id, ..
         }
         | CommandBody::ResolveOutcomeObligation {
+            operating_cycle_id, ..
+        }
+        | CommandBody::RegisterDeterministicExperiment {
+            operating_cycle_id, ..
+        }
+        | CommandBody::CloseDeterministicExperiment {
             operating_cycle_id, ..
         } => Ok(Some(
             cycle_row(transaction, *operating_cycle_id)?.occupancy_id,
@@ -5488,6 +6090,87 @@ fn request_fingerprint(request: &CommandRequest) -> Sha256Digest {
             put_i64(&mut bytes, review_challenge_id.value());
             put_i64(&mut bytes, *disposition as i64);
         }
+        CommandBody::RecordContentSealReceipt { digest } => {
+            put_bytes(&mut bytes, &digest.as_bytes());
+        }
+        CommandBody::RegisterContentObject {
+            content_seal_receipt_id,
+        } => {
+            put_i64(&mut bytes, content_seal_receipt_id.value());
+        }
+        CommandBody::RegisterForensicManifest {
+            operating_cycle_id,
+            producing_deterministic_experiment_id,
+            capture_policy,
+            retention_access_class,
+            evaluator_output_content_object_id,
+        } => {
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, producing_deterministic_experiment_id.value());
+            put_i64(&mut bytes, *capture_policy as i64);
+            put_i64(&mut bytes, *retention_access_class as i64);
+            put_i64(&mut bytes, evaluator_output_content_object_id.value());
+        }
+        CommandBody::RegisterDeterministicExperiment {
+            operating_cycle_id,
+            project_id,
+            ticket_id,
+            target_graph_revision_id,
+            evaluator_content_object_id,
+            input_manifest_content_object_id,
+        } => {
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, project_id.value());
+            put_i64(&mut bytes, ticket_id.value());
+            put_i64(&mut bytes, target_graph_revision_id.value());
+            put_i64(&mut bytes, evaluator_content_object_id.value());
+            put_i64(&mut bytes, input_manifest_content_object_id.value());
+        }
+        CommandBody::RecordDeterministicEvaluationReceipt {
+            operating_cycle_id,
+            deterministic_experiment_id,
+            evaluator_revision_id,
+            input_manifest_id,
+            forensic_manifest_id,
+            evaluator_output_content_object_id,
+        } => {
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, deterministic_experiment_id.value());
+            put_i64(&mut bytes, evaluator_revision_id.value());
+            put_i64(&mut bytes, input_manifest_id.value());
+            put_i64(&mut bytes, forensic_manifest_id.value());
+            put_i64(&mut bytes, evaluator_output_content_object_id.value());
+        }
+        CommandBody::AdmitDeterministicEvidence {
+            operating_cycle_id,
+            deterministic_evaluation_receipt_id,
+            deterministic_experiment_id,
+            evaluator_revision_id,
+            input_manifest_id,
+            evaluator_output_content_object_id,
+            related_graph_revision_id,
+            semantic_role,
+            applicability,
+            limitation,
+        } => {
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, deterministic_evaluation_receipt_id.value());
+            put_i64(&mut bytes, deterministic_experiment_id.value());
+            put_i64(&mut bytes, evaluator_revision_id.value());
+            put_i64(&mut bytes, input_manifest_id.value());
+            put_i64(&mut bytes, evaluator_output_content_object_id.value());
+            put_i64(&mut bytes, related_graph_revision_id.value());
+            put_i64(&mut bytes, *semantic_role as i64);
+            put_i64(&mut bytes, *applicability as i64);
+            put_bytes(&mut bytes, limitation.as_str().as_bytes());
+        }
+        CommandBody::CloseDeterministicExperiment {
+            operating_cycle_id,
+            deterministic_experiment_id,
+        } => {
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, deterministic_experiment_id.value());
+        }
         CommandBody::ResolveAdversarialReview {
             operating_cycle_id,
             adversarial_review_id,
@@ -6011,6 +6694,59 @@ fn event_fingerprint(event_id: EventId, command_id: &CommandId, body: &EventBody
             put_i64(&mut bytes, outcome_obligation_id.value());
             put_i64(&mut bytes, *state as i64);
         }
+        EventBody::ContentSealReceiptRecorded {
+            content_seal_receipt_id,
+            digest,
+        } => {
+            put_i64(&mut bytes, content_seal_receipt_id.value());
+            put_bytes(&mut bytes, &digest.as_bytes());
+        }
+        EventBody::ContentObjectRegistered {
+            content_object_id,
+            content_seal_receipt_id,
+        } => {
+            put_i64(&mut bytes, content_object_id.value());
+            put_i64(&mut bytes, content_seal_receipt_id.value());
+        }
+        EventBody::ForensicManifestRegistered {
+            forensic_manifest_id,
+            producing_deterministic_experiment_id,
+            evaluator_output_content_object_id,
+        } => {
+            put_i64(&mut bytes, forensic_manifest_id.value());
+            put_i64(&mut bytes, producing_deterministic_experiment_id.value());
+            put_i64(&mut bytes, evaluator_output_content_object_id.value());
+        }
+        EventBody::DeterministicExperimentRegistered {
+            deterministic_experiment_id,
+            evaluator_revision_id,
+            input_manifest_id,
+        } => {
+            put_i64(&mut bytes, deterministic_experiment_id.value());
+            put_i64(&mut bytes, evaluator_revision_id.value());
+            put_i64(&mut bytes, input_manifest_id.value());
+        }
+        EventBody::DeterministicEvaluationReceiptRecorded {
+            deterministic_evaluation_receipt_id,
+            deterministic_experiment_id,
+        } => {
+            put_i64(&mut bytes, deterministic_evaluation_receipt_id.value());
+            put_i64(&mut bytes, deterministic_experiment_id.value());
+        }
+        EventBody::DeterministicEvidenceAdmitted {
+            evidence_admission_id,
+            deterministic_evaluation_receipt_id,
+            semantic_role,
+            applicability,
+        } => {
+            put_i64(&mut bytes, evidence_admission_id.value());
+            put_i64(&mut bytes, deterministic_evaluation_receipt_id.value());
+            put_i64(&mut bytes, *semantic_role as i64);
+            put_i64(&mut bytes, *applicability as i64);
+        }
+        EventBody::DeterministicExperimentClosed {
+            deterministic_experiment_id,
+        } => put_i64(&mut bytes, deterministic_experiment_id.value()),
     }
     Sha256Digest::of_bytes(&bytes)
 }
@@ -6148,6 +6884,86 @@ fn insert_command_body(
                     command_row_id,
                     operating_cycle_id.value(),
                     project_name.as_str()
+                ],
+            )?;
+        }
+        CommandBody::RecordContentSealReceipt { digest } => {
+            transaction.execute(
+                "INSERT INTO command_record_content_seal_receipt VALUES (?1, ?2)",
+                params![command_row_id, digest.as_bytes().as_slice()],
+            )?;
+        }
+        CommandBody::RegisterContentObject {
+            content_seal_receipt_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_register_content_object VALUES (?1, ?2)",
+                params![command_row_id, content_seal_receipt_id.value()],
+            )?;
+        }
+        CommandBody::RegisterForensicManifest {
+            operating_cycle_id,
+            producing_deterministic_experiment_id,
+            capture_policy,
+            retention_access_class,
+            evaluator_output_content_object_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_register_forensic_manifest VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    command_row_id,
+                    operating_cycle_id.value(),
+                    producing_deterministic_experiment_id.value(),
+                    *capture_policy as i64,
+                    *retention_access_class as i64,
+                    evaluator_output_content_object_id.value()
+                ],
+            )?;
+        }
+        CommandBody::RegisterDeterministicExperiment {
+            operating_cycle_id,
+            project_id,
+            ticket_id,
+            target_graph_revision_id,
+            evaluator_content_object_id,
+            input_manifest_content_object_id,
+        } => {
+            transaction.execute("INSERT INTO command_register_deterministic_experiment VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)", params![command_row_id, operating_cycle_id.value(), project_id.value(), ticket_id.value(), target_graph_revision_id.value(), evaluator_content_object_id.value(), input_manifest_content_object_id.value()])?;
+        }
+        CommandBody::RecordDeterministicEvaluationReceipt {
+            operating_cycle_id,
+            deterministic_experiment_id,
+            evaluator_revision_id,
+            input_manifest_id,
+            forensic_manifest_id,
+            evaluator_output_content_object_id,
+        } => {
+            transaction.execute("INSERT INTO command_record_deterministic_evaluation_receipt VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)", params![command_row_id, operating_cycle_id.value(), deterministic_experiment_id.value(), evaluator_revision_id.value(), input_manifest_id.value(), forensic_manifest_id.value(), evaluator_output_content_object_id.value()])?;
+        }
+        CommandBody::AdmitDeterministicEvidence {
+            operating_cycle_id,
+            deterministic_evaluation_receipt_id,
+            deterministic_experiment_id,
+            evaluator_revision_id,
+            input_manifest_id,
+            evaluator_output_content_object_id,
+            related_graph_revision_id,
+            semantic_role,
+            applicability,
+            limitation,
+        } => {
+            transaction.execute("INSERT INTO command_admit_deterministic_evidence VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)", params![command_row_id, operating_cycle_id.value(), deterministic_evaluation_receipt_id.value(), deterministic_experiment_id.value(), evaluator_revision_id.value(), input_manifest_id.value(), evaluator_output_content_object_id.value(), related_graph_revision_id.value(), *semantic_role as i64, *applicability as i64, limitation.as_str()])?;
+        }
+        CommandBody::CloseDeterministicExperiment {
+            operating_cycle_id,
+            deterministic_experiment_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_close_deterministic_experiment VALUES (?1, ?2, ?3)",
+                params![
+                    command_row_id,
+                    operating_cycle_id.value(),
+                    deterministic_experiment_id.value()
                 ],
             )?;
         }
@@ -7250,6 +8066,100 @@ fn insert_event_body(
                 ],
             )?;
         }
+        EventBody::ContentSealReceiptRecorded {
+            content_seal_receipt_id,
+            digest,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_content_seal_receipt_recorded VALUES (?1, ?2, ?3)",
+                params![
+                    event_id.value(),
+                    content_seal_receipt_id.value(),
+                    digest.as_bytes().as_slice()
+                ],
+            )?;
+        }
+        EventBody::ContentObjectRegistered {
+            content_object_id,
+            content_seal_receipt_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_content_object_registered VALUES (?1, ?2, ?3)",
+                params![
+                    event_id.value(),
+                    content_object_id.value(),
+                    content_seal_receipt_id.value()
+                ],
+            )?;
+        }
+        EventBody::ForensicManifestRegistered {
+            forensic_manifest_id,
+            producing_deterministic_experiment_id,
+            evaluator_output_content_object_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_forensic_manifest_registered VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    event_id.value(),
+                    forensic_manifest_id.value(),
+                    producing_deterministic_experiment_id.value(),
+                    evaluator_output_content_object_id.value()
+                ],
+            )?;
+        }
+        EventBody::DeterministicExperimentRegistered {
+            deterministic_experiment_id,
+            evaluator_revision_id,
+            input_manifest_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_deterministic_experiment_registered VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    event_id.value(),
+                    deterministic_experiment_id.value(),
+                    evaluator_revision_id.value(),
+                    input_manifest_id.value()
+                ],
+            )?;
+        }
+        EventBody::DeterministicEvaluationReceiptRecorded {
+            deterministic_evaluation_receipt_id,
+            deterministic_experiment_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_deterministic_evaluation_receipt_recorded VALUES (?1, ?2, ?3)",
+                params![
+                    event_id.value(),
+                    deterministic_evaluation_receipt_id.value(),
+                    deterministic_experiment_id.value()
+                ],
+            )?;
+        }
+        EventBody::DeterministicEvidenceAdmitted {
+            evidence_admission_id,
+            deterministic_evaluation_receipt_id,
+            semantic_role,
+            applicability,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_deterministic_evidence_admitted VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    event_id.value(),
+                    evidence_admission_id.value(),
+                    deterministic_evaluation_receipt_id.value(),
+                    *semantic_role as i64,
+                    *applicability as i64
+                ],
+            )?;
+        }
+        EventBody::DeterministicExperimentClosed {
+            deterministic_experiment_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_deterministic_experiment_closed VALUES (?1, ?2)",
+                params![event_id.value(), deterministic_experiment_id.value()],
+            )?;
+        }
     }
     Ok(())
 }
@@ -7780,6 +8690,84 @@ fn decode_event_body(
                 state: outcome_obligation_state_from_i64(state)?,
             }
         }
+        EventKind::ContentSealReceiptRecorded => {
+            let (receipt, digest): (i64, Vec<u8>) = connection.query_row("SELECT content_seal_receipt_id, digest FROM event_content_seal_receipt_recorded WHERE event_id = ?1", [event_id], |row| Ok((row.get(0)?, row.get(1)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing content seal receipt event body"))?;
+            EventBody::ContentSealReceiptRecorded {
+                content_seal_receipt_id: ContentSealReceiptId::try_from(receipt)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                digest: digest_from_stored_bytes(&digest)?,
+            }
+        }
+        EventKind::ContentObjectRegistered => {
+            let (object, receipt) =
+                query_event_pair(connection, "event_content_object_registered", event_id)?;
+            EventBody::ContentObjectRegistered {
+                content_object_id: ContentObjectId::try_from(object)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                content_seal_receipt_id: ContentSealReceiptId::try_from(receipt)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        EventKind::ForensicManifestRegistered => {
+            let (manifest, experiment, output): (i64, i64, i64) = connection.query_row("SELECT forensic_manifest_id, producing_deterministic_experiment_id, evaluator_output_content_object_id FROM event_forensic_manifest_registered WHERE event_id = ?1", [event_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing forensic manifest event body"))?;
+            EventBody::ForensicManifestRegistered {
+                forensic_manifest_id: ForensicManifestId::try_from(manifest)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                producing_deterministic_experiment_id: DeterministicExperimentId::try_from(
+                    experiment,
+                )
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+                evaluator_output_content_object_id: ContentObjectId::try_from(output)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        EventKind::DeterministicExperimentRegistered => {
+            let (experiment, evaluator, input): (i64,i64,i64) = connection.query_row("SELECT deterministic_experiment_id, evaluator_revision_id, input_manifest_id FROM event_deterministic_experiment_registered WHERE event_id = ?1", [event_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing deterministic experiment event body"))?;
+            EventBody::DeterministicExperimentRegistered {
+                deterministic_experiment_id: DeterministicExperimentId::try_from(experiment)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                evaluator_revision_id: EvaluatorRevisionId::try_from(evaluator)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                input_manifest_id: InputManifestId::try_from(input)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        EventKind::DeterministicEvaluationReceiptRecorded => {
+            let (receipt, experiment) = query_event_pair(
+                connection,
+                "event_deterministic_evaluation_receipt_recorded",
+                event_id,
+            )?;
+            EventBody::DeterministicEvaluationReceiptRecorded {
+                deterministic_evaluation_receipt_id: DeterministicEvaluationReceiptId::try_from(
+                    receipt,
+                )
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+                deterministic_experiment_id: DeterministicExperimentId::try_from(experiment)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        EventKind::DeterministicEvidenceAdmitted => {
+            let (admission, receipt, role, applicability): (i64,i64,i64,i64) = connection.query_row("SELECT evidence_admission_id, deterministic_evaluation_receipt_id, semantic_role, applicability FROM event_deterministic_evidence_admitted WHERE event_id = ?1", [event_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing deterministic evidence event body"))?;
+            EventBody::DeterministicEvidenceAdmitted {
+                evidence_admission_id: EvidenceAdmissionId::try_from(admission)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                deterministic_evaluation_receipt_id: DeterministicEvaluationReceiptId::try_from(
+                    receipt,
+                )
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+                semantic_role: evidence_semantic_role_from_i64(role)?,
+                applicability: evidence_applicability_from_i64(applicability)?,
+            }
+        }
+        EventKind::DeterministicExperimentClosed => EventBody::DeterministicExperimentClosed {
+            deterministic_experiment_id: query_event_id(
+                connection,
+                "event_deterministic_experiment_closed",
+                "deterministic_experiment_id",
+                event_id_typed,
+            )?,
+        },
     };
     let stored_fingerprint: Vec<u8> = connection.query_row(
         "SELECT event_fingerprint FROM events WHERE event_id = ?1",
@@ -7968,7 +8956,7 @@ fn replay_command_requests(
     Ok(commands)
 }
 
-const MATERIALIZED_TABLES: [&str; 51] = [
+const MATERIALIZED_TABLES: [&str; 60] = [
     "principals",
     "societies",
     "office_contracts",
@@ -8020,6 +9008,15 @@ const MATERIALIZED_TABLES: [&str; 51] = [
     "attempt_budget_reservations",
     "actor_attempt_terminal_facts",
     "outcome_obligations",
+    "content_seal_receipts",
+    "content_objects",
+    "forensic_manifests",
+    "forensic_manifest_objects",
+    "evaluator_revisions",
+    "input_manifests",
+    "deterministic_experiments",
+    "deterministic_evaluation_receipts",
+    "evidence_admissions",
 ];
 
 fn materialized_state_digest(connection: &Connection) -> Result<Sha256Digest, StoreError> {
@@ -8794,6 +9791,105 @@ fn decode_command_body(
                 disposition: outcome_obligation_disposition_from_i64(disposition)?,
             }
         }
+        CommandKind::RecordContentSealReceipt => {
+            let digest: Vec<u8> = connection.query_row("SELECT digest FROM command_record_content_seal_receipt WHERE command_row_id = ?1", [command_row_id], |row| row.get(0)).optional()?.ok_or(StoreError::LedgerCorruption("missing content seal command body"))?;
+            CommandBody::RecordContentSealReceipt {
+                digest: digest_from_stored_bytes(&digest)?,
+            }
+        }
+        CommandKind::RegisterContentObject => {
+            let receipt: i64 = connection.query_row("SELECT content_seal_receipt_id FROM command_register_content_object WHERE command_row_id = ?1", [command_row_id], |row| row.get(0)).optional()?.ok_or(StoreError::LedgerCorruption("missing content object command body"))?;
+            CommandBody::RegisterContentObject {
+                content_seal_receipt_id: ContentSealReceiptId::try_from(receipt)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::RegisterForensicManifest => {
+            let (cycle, experiment, policy, retention, output): (i64, i64, i64, i64, i64) = connection.query_row("SELECT operating_cycle_id, producing_deterministic_experiment_id, capture_policy, retention_access_class, evaluator_output_content_object_id FROM command_register_forensic_manifest WHERE command_row_id = ?1", [command_row_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing forensic manifest command body"))?;
+            CommandBody::RegisterForensicManifest {
+                operating_cycle_id: OperatingCycleId::try_from(cycle)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                producing_deterministic_experiment_id: DeterministicExperimentId::try_from(
+                    experiment,
+                )
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+                capture_policy: forensic_manifest_capture_policy_from_i64(policy)?,
+                retention_access_class: retention_access_class_from_i64(retention)?,
+                evaluator_output_content_object_id: ContentObjectId::try_from(output)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::RegisterDeterministicExperiment => {
+            let row: (i64,i64,i64,i64,i64,i64) = connection.query_row("SELECT operating_cycle_id, project_id, ticket_id, target_graph_revision_id, evaluator_content_object_id, input_manifest_content_object_id FROM command_register_deterministic_experiment WHERE command_row_id = ?1", [command_row_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing deterministic experiment command body"))?;
+            CommandBody::RegisterDeterministicExperiment {
+                operating_cycle_id: OperatingCycleId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                project_id: ProjectId::try_from(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                ticket_id: TicketId::try_from(row.2).map_err(|_| StoreError::InvalidStoredValue)?,
+                target_graph_revision_id: GraphRevisionId::try_from(row.3)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                evaluator_content_object_id: ContentObjectId::try_from(row.4)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                input_manifest_content_object_id: ContentObjectId::try_from(row.5)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::RecordDeterministicEvaluationReceipt => {
+            let row: (i64,i64,i64,i64,i64,i64) = connection.query_row("SELECT operating_cycle_id, deterministic_experiment_id, evaluator_revision_id, input_manifest_id, forensic_manifest_id, evaluator_output_content_object_id FROM command_record_deterministic_evaluation_receipt WHERE command_row_id = ?1", [command_row_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing deterministic evaluation receipt command body"))?;
+            CommandBody::RecordDeterministicEvaluationReceipt {
+                operating_cycle_id: OperatingCycleId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                deterministic_experiment_id: DeterministicExperimentId::try_from(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                evaluator_revision_id: EvaluatorRevisionId::try_from(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                input_manifest_id: InputManifestId::try_from(row.3)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                forensic_manifest_id: ForensicManifestId::try_from(row.4)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                evaluator_output_content_object_id: ContentObjectId::try_from(row.5)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::AdmitDeterministicEvidence => {
+            let row: (i64,i64,i64,i64,i64,i64,i64,i64,i64,String) = connection.query_row("SELECT operating_cycle_id, deterministic_evaluation_receipt_id, deterministic_experiment_id, evaluator_revision_id, input_manifest_id, evaluator_output_content_object_id, related_graph_revision_id, semantic_role, applicability, limitation_text FROM command_admit_deterministic_evidence WHERE command_row_id = ?1", [command_row_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?,row.get(7)?,row.get(8)?,row.get(9)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing deterministic evidence command body"))?;
+            CommandBody::AdmitDeterministicEvidence {
+                operating_cycle_id: OperatingCycleId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                deterministic_evaluation_receipt_id: DeterministicEvaluationReceiptId::try_from(
+                    row.1,
+                )
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+                deterministic_experiment_id: DeterministicExperimentId::try_from(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                evaluator_revision_id: EvaluatorRevisionId::try_from(row.3)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                input_manifest_id: InputManifestId::try_from(row.4)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                evaluator_output_content_object_id: ContentObjectId::try_from(row.5)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                related_graph_revision_id: GraphRevisionId::try_from(row.6)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                semantic_role: evidence_semantic_role_from_i64(row.7)?,
+                applicability: evidence_applicability_from_i64(row.8)?,
+                limitation: EvidenceLimitationText::parse(row.9)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::CloseDeterministicExperiment => {
+            let (cycle, experiment) = query_command_pair(
+                connection,
+                "command_close_deterministic_experiment",
+                command_row_id,
+            )?;
+            CommandBody::CloseDeterministicExperiment {
+                operating_cycle_id: OperatingCycleId::try_from(cycle)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                deterministic_experiment_id: DeterministicExperimentId::try_from(experiment)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
     };
     Ok(body)
 }
@@ -9160,6 +10256,13 @@ fn command_kind_from_i64(value: i64) -> Result<CommandKind, StoreError> {
         59 => Ok(CommandKind::CancelActorAttempt),
         60 => Ok(CommandKind::RegisterOutcomeObligation),
         61 => Ok(CommandKind::ResolveOutcomeObligation),
+        62 => Ok(CommandKind::RecordContentSealReceipt),
+        63 => Ok(CommandKind::RegisterContentObject),
+        64 => Ok(CommandKind::RegisterForensicManifest),
+        65 => Ok(CommandKind::RegisterDeterministicExperiment),
+        66 => Ok(CommandKind::RecordDeterministicEvaluationReceipt),
+        67 => Ok(CommandKind::AdmitDeterministicEvidence),
+        68 => Ok(CommandKind::CloseDeterministicExperiment),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }
@@ -9227,6 +10330,13 @@ fn capability_from_i64(value: i64) -> Result<Capability, StoreError> {
         59 => Ok(Capability::CancelActorAttempt),
         60 => Ok(Capability::RegisterOutcomeObligation),
         61 => Ok(Capability::ResolveOutcomeObligation),
+        62 => Ok(Capability::RecordContentSealReceipt),
+        63 => Ok(Capability::RegisterContentObject),
+        64 => Ok(Capability::RegisterForensicManifest),
+        65 => Ok(Capability::RegisterDeterministicExperiment),
+        66 => Ok(Capability::RecordDeterministicEvaluationReceipt),
+        67 => Ok(Capability::AdmitDeterministicEvidence),
+        68 => Ok(Capability::CloseDeterministicExperiment),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }
@@ -9339,6 +10449,12 @@ fn rejection_from_i64(value: i64) -> Result<Rejection, StoreError> {
         34 => Ok(Rejection::ExecutionProfileIneligible),
         35 => Ok(Rejection::TicketAcceptanceConditionUnsatisfied),
         36 => Ok(Rejection::QualificationTreatmentRestricted),
+        37 => Ok(Rejection::ContentSealReceiptMissing),
+        38 => Ok(Rejection::ContentObjectNotSealed),
+        39 => Ok(Rejection::ForensicManifestBindingMismatch),
+        40 => Ok(Rejection::DeterministicExperimentBindingMismatch),
+        41 => Ok(Rejection::DeterministicEvaluationBindingMismatch),
+        42 => Ok(Rejection::EvidenceAdmissionRequired),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }
@@ -9399,6 +10515,13 @@ fn event_kind_from_i64(value: i64) -> Result<EventKind, StoreError> {
         52 => Ok(EventKind::ActorAttemptCancellationRequested),
         53 => Ok(EventKind::OutcomeObligationRegistered),
         54 => Ok(EventKind::OutcomeObligationResolved),
+        55 => Ok(EventKind::ContentSealReceiptRecorded),
+        56 => Ok(EventKind::ContentObjectRegistered),
+        57 => Ok(EventKind::ForensicManifestRegistered),
+        58 => Ok(EventKind::DeterministicExperimentRegistered),
+        59 => Ok(EventKind::DeterministicEvaluationReceiptRecorded),
+        60 => Ok(EventKind::DeterministicEvidenceAdmitted),
+        61 => Ok(EventKind::DeterministicExperimentClosed),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }
@@ -9425,6 +10548,37 @@ fn operating_cycle_treatment_from_i64(value: i64) -> Result<OperatingCycleTreatm
         1 => Ok(OperatingCycleTreatment::PiSdkQualificationV1),
         2 => Ok(OperatingCycleTreatment::Vs001LiveV1),
         3 => Ok(OperatingCycleTreatment::Vs001DeterministicV1),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+
+fn retention_access_class_from_i64(value: i64) -> Result<RetentionAccessClass, StoreError> {
+    match value {
+        1 => Ok(RetentionAccessClass::ForensicRestricted),
+        2 => Ok(RetentionAccessClass::ProjectScoped),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+
+fn forensic_manifest_capture_policy_from_i64(
+    value: i64,
+) -> Result<ForensicManifestCapturePolicy, StoreError> {
+    match value {
+        1 => Ok(ForensicManifestCapturePolicy::DeterministicExperimentEvaluatorV1),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+
+fn evidence_semantic_role_from_i64(value: i64) -> Result<EvidenceSemanticRole, StoreError> {
+    match value {
+        1 => Ok(EvidenceSemanticRole::DeterministicObservation),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+
+fn evidence_applicability_from_i64(value: i64) -> Result<crate::EvidenceApplicability, StoreError> {
+    match value {
+        1 => Ok(crate::EvidenceApplicability::TestsTargetHypothesis),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }

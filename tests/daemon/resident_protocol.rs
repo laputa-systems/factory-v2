@@ -704,7 +704,8 @@ fn sigint_and_sigterm_request_one_orderly_process_shutdown() {
 }
 
 #[test]
-fn reconnect_is_idempotent_and_empty_qualification_then_live_cycles_close() {
+fn reconnect_is_idempotent_qualification_is_closed_and_empty_deterministic_then_live_cycles_close()
+{
     let root = temporary_runtime_root("cycles");
     let (_client, mut supervisor, shutdown, join, _socket_path, mode) =
         start(&root, FaultInjection::None);
@@ -731,15 +732,35 @@ fn reconnect_is_idempotent_and_empty_qualification_then_live_cycles_close() {
         }
     ));
 
+    let qualification = execute_with_active_grant(
+        &mut supervisor,
+        correlation(30),
+        "daemon-propose-disallowed-qualification",
+        GRAND_ARCHITECT,
+        Capability::ProposeOperatingCycle,
+        ExpectedGeneration::NotApplicable,
+        ClientCommandBody::ProposeOperatingCycle {
+            treatment: OperatingCycleTreatment::PiSdkQualificationV1,
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        qualification,
+        CommandReceiptView::Rejected {
+            rejection: society_kernel::Rejection::QualificationTreatmentRestricted,
+            idempotent: false,
+        }
+    ));
+
     admit_and_close_empty_cycle(
         &mut supervisor,
-        30,
-        OperatingCycleTreatment::PiSdkQualificationV1,
+        40,
+        OperatingCycleTreatment::Vs001DeterministicV1,
         OperatingCycleId::new(1).unwrap(),
     );
     admit_and_close_empty_cycle(
         &mut supervisor,
-        40,
+        50,
         OperatingCycleTreatment::Vs001LiveV1,
         OperatingCycleId::new(2).unwrap(),
     );
