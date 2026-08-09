@@ -1,17 +1,16 @@
 //! Guarded, provider-free Git materialization for a single authorized product
 //! change.
 //!
-//! This crate deliberately has no SQLite, capability, daemon, Pi, network, or
-//! remote authority.  A future `societyd` integration supplies the already
-//! authorized identities and persists the returned receipts.  The only side
-//! effects here are narrowly-scoped local Git worktrees, patch artifacts, and
-//! a guarded local branch fast-forward.
+//! This crate deliberately has no durable workflow, network, or remote
+//! authority. Its caller supplies already-authorized identities and persists
+//! the returned receipts. The only side effects here are narrowly-scoped local
+//! Git worktrees, patch artifacts, and a guarded local branch fast-forward.
 //!
 //! The boundary is intentionally shell-free.  Every Git operation is an argv
-//! invocation of a configured absolute Git executable. XSH/Xsht validation is
-//! declared here but executed only by a separately supervised owner; this core
-//! verifies its typed receipt against the exact prepared tree and never spawns
-//! an arbitrary validator.
+//! invocation of a configured absolute Git executable. External validation
+//! programs are declared here but executed only by a separately supervised
+//! owner; this core verifies their typed receipts against the exact prepared
+//! tree and never spawns an arbitrary validator.
 
 use std::{
     ffi::{OsStr, OsString},
@@ -44,7 +43,7 @@ pub struct ProductChangeId(String);
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct BuilderAttemptId(String);
 
-/// A closed C2 delivery-authorization identity supplied by the future kernel.
+/// A closed delivery-authorization identity supplied by the caller.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct DeliveryAuthorizationId(String);
 
@@ -482,7 +481,10 @@ impl ProductWorktreeBranch {
         change: &ProductChangeId,
         attempt: &BuilderAttemptId,
     ) -> Result<Self, ProductError> {
-        let value = format!("society-product/{}", derived_pair_name(change, attempt));
+        let value = format!(
+            "guarded-materialization/{}",
+            derived_pair_name(change, attempt)
+        );
         if !is_valid_ref_component_path_with_limit(&value, MAX_DERIVED_NAME_BYTES + 16) {
             return Err(ProductError::InvalidProductWorktreeBranch(value));
         }
@@ -648,28 +650,19 @@ impl CandidateCaptureReceipt {
 }
 
 /// Closed validation requirements for one materialized tree. `GitDiffCheck`
-/// is a bounded internal Git operation. XSH/Xsht requirements are deliberately
-/// externally supervised: this crate never owns their process groups or their
-/// output pipes, so it cannot safely execute them itself.
+/// is a bounded internal Git operation. An `ExternallySupervisedProgram`
+/// names one exact validation-program invocation, but this crate deliberately
+/// does not execute it: it never owns that program's process group or output
+/// pipes, so it cannot safely supervise it itself.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ValidationCommand {
     GitDiffCheck,
-    ExternallySupervisedXsh {
-        executable: AssignedXshBinary,
-        arguments: Vec<ValidationArgument>,
-    },
-    ExternallySupervisedXsht {
-        executable: AssignedXshtBinary,
-        arguments: Vec<ValidationArgument>,
-    },
+    ExternallySupervisedProgram(ValidationProgramInvocation),
 }
 
 impl ValidationCommand {
     const fn requires_external_supervision(&self) -> bool {
-        matches!(
-            self,
-            Self::ExternallySupervisedXsh { .. } | Self::ExternallySupervisedXsht { .. }
-        )
+        matches!(self, Self::ExternallySupervisedProgram(_))
     }
 }
 
@@ -700,37 +693,22 @@ impl ValidationProfile {
     }
 }
 
-/// An assigned absolute XSH executable.  It cannot be a shell interpreter.
+/// The exact canonical absolute executable assigned to one external validation
+/// program. It cannot be a shell interpreter.
+///
+/// Equality is the canonical path identity established by `open`, so an
+/// external receipt cannot substitute a different executable behind an alias.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AssignedXshBinary(AssignedProgram);
+pub struct AssignedValidationProgram(PathBuf);
 
-impl AssignedXshBinary {
+impl AssignedValidationProgram {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, ProductError> {
-        Ok(Self(AssignedProgram::open(path)?))
-    }
-}
-
-/// An assigned absolute Xsht executable.  It cannot be a shell interpreter.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AssignedXshtBinary(AssignedProgram);
-
-impl AssignedXshtBinary {
-    pub fn open(path: impl AsRef<Path>) -> Result<Self, ProductError> {
-        Ok(Self(AssignedProgram::open(path)?))
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct AssignedProgram(PathBuf);
-
-impl AssignedProgram {
-    fn open(path: impl AsRef<Path>) -> Result<Self, ProductError> {
         let supplied = path.as_ref();
         if !supplied.is_absolute() {
             return Err(ProductError::ProgramPathNotAbsolute(supplied.to_path_buf()));
         }
         // Canonicalizing before the shell-name check closes the easy symlink
-        // bypass (`/tmp/xsh` -> `/bin/sh`) without pretending this process
+        // bypass (`/tmp/validator` -> `/bin/sh`) without pretending this
         // boundary can attest an arbitrary executable's implementation.
         let path = fs::canonicalize(supplied).map_err(|source| ProductError::Io {
             operation: "canonicalizing assigned validation program",
@@ -759,23 +737,56 @@ impl AssignedProgram {
         }
         Ok(Self(path))
     }
+
+    /// The canonical absolute path whose identity is bound into an invocation
+    /// and its validation receipt.
+    pub fn path(&self) -> &Path {
+        &self.0
+    }
 }
 
-/// One exact argv element for an assigned XSH/Xsht validation command.
+/// One exact argv element for an assigned external validation program.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct ValidationArgument(String);
+pub struct ValidationProgramArgument(String);
 
-impl ValidationArgument {
+impl ValidationProgramArgument {
     pub fn parse(value: impl Into<String>) -> Result<Self, ProductError> {
         let value = value.into();
         if value.contains('\0') || value.len() > MAX_MESSAGE_BYTES {
-            return Err(ProductError::InvalidValidationArgument);
+            return Err(ProductError::InvalidValidationProgramArgument);
         }
         Ok(Self(value))
     }
 
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+/// An exact argv-only invocation of an assigned external validation program.
+/// The program identity and every argument have narrow types; callers cannot
+/// smuggle a shell command, argument map, or generic payload through a
+/// validation profile.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ValidationProgramInvocation {
+    program: AssignedValidationProgram,
+    arguments: Vec<ValidationProgramArgument>,
+}
+
+impl ValidationProgramInvocation {
+    pub fn new(
+        program: AssignedValidationProgram,
+        arguments: Vec<ValidationProgramArgument>,
+    ) -> Self {
+        Self { program, arguments }
+    }
+
+    pub fn program(&self) -> &AssignedValidationProgram {
+        &self.program
+    }
+
+    pub fn arguments(&self) -> &[ValidationProgramArgument] {
+        &self.arguments
     }
 }
 
@@ -802,14 +813,41 @@ impl ValidationStepReceipt {
     }
 }
 
-/// A named externally supervised step over the prepared worktree. Its output
-/// digests are supplied by the supervisor's owned process boundary; parsing
-/// this receipt does not attest that the command was actually run.
+/// A typed externally supervised validation-program step over the prepared
+/// worktree. Its output digests are supplied by the supervisor's owned process
+/// boundary; constructing this receipt does not attest that the program was
+/// actually run.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExternallySupervisedValidationStepReceipt {
-    pub command: ValidationCommand,
-    pub stdout: OutputDigest,
-    pub stderr: OutputDigest,
+    invocation: ValidationProgramInvocation,
+    stdout: OutputDigest,
+    stderr: OutputDigest,
+}
+
+impl ExternallySupervisedValidationStepReceipt {
+    pub fn new(
+        invocation: ValidationProgramInvocation,
+        stdout: OutputDigest,
+        stderr: OutputDigest,
+    ) -> Self {
+        Self {
+            invocation,
+            stdout,
+            stderr,
+        }
+    }
+
+    pub fn invocation(&self) -> &ValidationProgramInvocation {
+        &self.invocation
+    }
+
+    pub fn stdout(&self) -> &OutputDigest {
+        &self.stdout
+    }
+
+    pub fn stderr(&self) -> &OutputDigest {
+        &self.stderr
+    }
 }
 
 /// The externally supervised portion of a profile. `profile` and `tree` bind
@@ -817,9 +855,9 @@ pub struct ExternallySupervisedValidationStepReceipt {
 /// reconstruct the profile's non-Git requirements in order.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExternallySupervisedValidationReceipt {
-    pub profile: ValidationProfileId,
-    pub tree: TreeId,
-    pub steps: Vec<ExternallySupervisedValidationStepReceipt>,
+    profile: ValidationProfileId,
+    tree: TreeId,
+    steps: Vec<ExternallySupervisedValidationStepReceipt>,
 }
 
 impl ExternallySupervisedValidationReceipt {
@@ -836,6 +874,18 @@ impl ExternallySupervisedValidationReceipt {
             tree,
             steps,
         })
+    }
+
+    pub fn profile(&self) -> &ValidationProfileId {
+        &self.profile
+    }
+
+    pub fn tree(&self) -> &TreeId {
+        &self.tree
+    }
+
+    pub fn steps(&self) -> &[ExternallySupervisedValidationStepReceipt] {
+        &self.steps
     }
 }
 
@@ -1035,7 +1085,7 @@ impl ControlledCommitReceipt {
     }
 }
 
-/// C2-delivery inputs that this crate verifies but never authorizes.
+/// Delivery inputs that this crate verifies but never authorizes.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProductDeliveryAuthorization {
     id: DeliveryAuthorizationId,
@@ -1108,7 +1158,7 @@ impl ProductDeliveryAuthorization {
 }
 
 /// Successful materialization, deterministic commit construction, and cleanup
-/// facts.  This is not durable authority; the future daemon must persist it.
+/// facts. This is not durable authority; the caller must persist it.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MaterializationReceipt {
     state: ProductState,
@@ -1594,7 +1644,7 @@ impl ProductMaterializer {
     }
 
     /// Convenience closure for profiles containing only bounded internal Git
-    /// checks. Profiles with XSH/Xsht requirements must use
+    /// checks. Profiles with external-program requirements must use
     /// `prepare_materialization` and `finalize_materialization` so an owner
     /// with cancellation/process-group control can supervise those programs.
     pub fn materialize(
@@ -1629,9 +1679,9 @@ impl ProductMaterializer {
         self.finalize_materialization(prepared, validation_profile, &receipt, commit_spec)
     }
 
-    /// Creates and patches a fresh detached worktree without spawning XSH/Xsht.
-    /// The returned worktree must be finalized with a matching supervised
-    /// receipt or explicitly abandoned.
+    /// Creates and patches a fresh detached worktree without spawning an
+    /// external validation program. The returned worktree must be finalized
+    /// with a matching supervised receipt or explicitly abandoned.
     pub fn prepare_materialization(
         &self,
         authorization: ProductDeliveryAuthorization,
@@ -1692,9 +1742,10 @@ impl ProductMaterializer {
         }
     }
 
-    /// Verifies the externally supervised XSH/Xsht receipt, runs bounded Git
-    /// checks, proves the prepared worktree still names the expected tree, and
-    /// constructs one deterministic no-hook commit before cleanup.
+    /// Verifies the externally supervised validation-program receipt, runs
+    /// bounded Git checks, proves the prepared worktree still names the
+    /// expected tree, and constructs one deterministic no-hook commit before
+    /// cleanup.
     pub fn finalize_materialization(
         &self,
         prepared: PreparedMaterialization,
@@ -2009,19 +2060,22 @@ impl ProductMaterializer {
         tree: &TreeId,
         supervised: &ExternallySupervisedValidationReceipt,
     ) -> Result<(), ProductError> {
-        if supervised.profile != profile.id || supervised.tree != *tree {
+        if supervised.profile() != &profile.id || supervised.tree() != tree {
             return Err(ProductError::ExternallySupervisedValidationReceiptMismatch);
         }
         let expected: Vec<_> = profile
             .commands
             .iter()
-            .filter(|command| command.requires_external_supervision())
+            .filter_map(|command| match command {
+                ValidationCommand::GitDiffCheck => None,
+                ValidationCommand::ExternallySupervisedProgram(invocation) => Some(invocation),
+            })
             .collect();
-        if expected.len() != supervised.steps.len()
+        if expected.len() != supervised.steps().len()
             || expected
                 .iter()
-                .zip(&supervised.steps)
-                .any(|(expected, observed)| **expected != observed.command)
+                .zip(supervised.steps())
+                .any(|(expected, observed)| *expected != observed.invocation())
         {
             return Err(ProductError::ExternallySupervisedValidationReceiptMismatch);
         }
@@ -2073,7 +2127,7 @@ impl ProductMaterializer {
     ) -> Result<ValidationReceipt, ProductError> {
         self.assert_supervised_validation_matches(profile, tree, supervised)?;
         let mut completed = Vec::with_capacity(profile.commands.len());
-        let mut supervised_steps = supervised.steps.iter();
+        let mut supervised_steps = supervised.steps().iter();
         for command in &profile.commands {
             let output = match command {
                 ValidationCommand::GitDiffCheck => self.git_output(
@@ -2089,15 +2143,14 @@ impl ProductMaterializer {
                     None,
                     &[],
                 )?,
-                ValidationCommand::ExternallySupervisedXsh { .. }
-                | ValidationCommand::ExternallySupervisedXsht { .. } => {
+                ValidationCommand::ExternallySupervisedProgram(_) => {
                     let step = supervised_steps
                         .next()
                         .ok_or(ProductError::ExternallySupervisedValidationReceiptMismatch)?;
                     completed.push(ValidationStepReceipt {
-                        command: step.command.clone(),
-                        stdout: step.stdout.clone(),
-                        stderr: step.stderr.clone(),
+                        command: command.clone(),
+                        stdout: step.stdout().clone(),
+                        stderr: step.stderr().clone(),
                     });
                     continue;
                 }
@@ -2370,7 +2423,7 @@ impl ProductMaterializer {
         worktree: &ProductWorktree,
     ) -> Result<TreeId, ProductError> {
         let index_path = worktree.path().join(format!(
-            ".society-product-index-{}-{}",
+            ".guarded-materialization-index-{}-{}",
             worktree.change.as_str(),
             worktree.attempt.as_str()
         ));
@@ -2915,8 +2968,9 @@ enum HeadRefScope {
     Target,
 }
 
-/// Product-boundary failures are closed semantic outcomes; raw Git output is
-/// reduced to exact digests rather than promoted as an opaque control channel.
+/// Materialization-boundary failures are closed semantic outcomes; raw Git
+/// output is reduced to exact digests rather than promoted as an opaque control
+/// channel.
 #[derive(Debug, Error)]
 pub enum ProductError {
     #[error("invalid {kind}")]
@@ -2941,8 +2995,8 @@ pub enum ProductError {
     ProgramNotRegular(PathBuf),
     #[error("shell validation program is denied: {0}")]
     ShellValidationProgramDenied(PathBuf),
-    #[error("invalid validation argument")]
-    InvalidValidationArgument,
+    #[error("invalid validation-program argument")]
+    InvalidValidationProgramArgument,
     #[error("externally supervised validation receipt is malformed")]
     InvalidExternallySupervisedValidationReceipt,
     #[error("validation profile must contain one to {MAX_VALIDATION_STEPS} commands")]
@@ -3022,11 +3076,11 @@ pub enum ProductError {
         expected: PatchDigest,
         actual: PatchDigest,
     },
-    #[error("C2 authorization does not match the captured candidate")]
+    #[error("delivery authorization does not match the captured candidate")]
     AuthorizationDoesNotMatchCapture,
-    #[error("C2 authorization does not name the supplied validation profile")]
+    #[error("delivery authorization does not name the supplied validation profile")]
     AuthorizationDoesNotMatchValidationProfile,
-    #[error("this profile requires externally supervised XSH/Xsht validation")]
+    #[error("this profile requires externally supervised validation")]
     ExternallySupervisedValidationRequired,
     #[error("externally supervised validation receipt does not exactly match profile and tree")]
     ExternallySupervisedValidationReceiptMismatch,
@@ -3270,23 +3324,11 @@ fn validation_digest(
     for step in steps {
         match &step.command {
             ValidationCommand::GitDiffCheck => bytes.extend_from_slice(b"git-diff-check"),
-            ValidationCommand::ExternallySupervisedXsh {
-                executable,
-                arguments,
-            } => {
-                bytes.extend_from_slice(b"xsh");
+            ValidationCommand::ExternallySupervisedProgram(invocation) => {
+                bytes.extend_from_slice(b"externally-supervised-program-v1");
                 bytes.push(0);
-                bytes.extend_from_slice(executable.0.0.as_os_str().as_encoded_bytes());
-                append_arguments(&mut bytes, arguments);
-            }
-            ValidationCommand::ExternallySupervisedXsht {
-                executable,
-                arguments,
-            } => {
-                bytes.extend_from_slice(b"xsht");
-                bytes.push(0);
-                bytes.extend_from_slice(executable.0.0.as_os_str().as_encoded_bytes());
-                append_arguments(&mut bytes, arguments);
+                bytes.extend_from_slice(invocation.program.path().as_os_str().as_encoded_bytes());
+                append_arguments(&mut bytes, invocation.arguments());
             }
         }
         bytes.push(0);
@@ -3298,7 +3340,7 @@ fn validation_digest(
     ValidationDigest::of_bytes(&bytes)
 }
 
-fn append_arguments(bytes: &mut Vec<u8>, arguments: &[ValidationArgument]) {
+fn append_arguments(bytes: &mut Vec<u8>, arguments: &[ValidationProgramArgument]) {
     for argument in arguments {
         bytes.push(0);
         bytes.extend_from_slice(argument.as_str().as_bytes());

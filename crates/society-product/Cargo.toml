@@ -3,7 +3,7 @@ name = "society-product"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-description = "Provider-free guarded Git product materialization primitives for XSH Society V2"
+description = "Provider-free guarded Git materialization primitives"
 
 # This crate is intentionally its own temporary workspace.  The root workspace
 # is integrated by the owning tranche only after this narrow Git boundary has

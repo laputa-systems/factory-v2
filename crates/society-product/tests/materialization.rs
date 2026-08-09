@@ -1,8 +1,8 @@
 //! Provider-free integration evidence for the guarded local Git boundary.
 //!
 //! Every repository is created under one unique temporary directory.  These
-//! tests never touch the authoritative XSH checkout, invoke a provider, or
-//! rely on a shell for product materialization itself.
+//! tests never touch an existing checkout, invoke a provider, or rely on a
+//! shell for materialization itself.
 
 #![allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
 
@@ -15,12 +15,13 @@ use std::{
 };
 
 use society_product::{
-    AssignedXshBinary, BuilderAttemptId, CleanupEvidence, CommitIdentity, CommitMessage,
+    AssignedValidationProgram, BuilderAttemptId, CleanupEvidence, CommitIdentity, CommitMessage,
     CommitTimestamp, ControlledCommitSpec, DeliveryAuthorizationId, DeliveryDisposition,
     ExternallySupervisedValidationReceipt, ExternallySupervisedValidationStepReceipt,
     LocalBranchRef, OutputDigest, PatchArtifactRoot, ProductChangeId, ProductDeliveryAuthorization,
-    ProductError, ProductMaterializer, ProductState, ProductWorktreeBranch, ValidationArgument,
-    ValidationCommand, ValidationProfile, ValidationProfileId, WorktreeRoot,
+    ProductError, ProductMaterializer, ProductState, ProductWorktreeBranch, ValidationCommand,
+    ValidationProfile, ValidationProfileId, ValidationProgramArgument, ValidationProgramInvocation,
+    WorktreeRoot,
 };
 
 const GIT: &str = "/usr/bin/git";
@@ -303,14 +304,14 @@ fn tampered_patch_artifact_is_refused_before_any_fresh_worktree_is_created() {
 }
 
 #[test]
-fn closed_validation_profile_refuses_a_shell_even_through_a_symlink() {
+fn assigned_validation_program_refuses_a_shell_even_through_a_symlink() {
     let fixture = Fixture::new();
-    let alias = fixture.root.path().join("assigned-xsh");
+    let alias = fixture.root.path().join("assigned-validator");
     #[cfg(unix)]
     std::os::unix::fs::symlink("/bin/sh", &alias).unwrap();
     #[cfg(not(unix))]
     fs::copy("/bin/sh", &alias).unwrap();
-    let error = AssignedXshBinary::open(&alias).unwrap_err();
+    let error = AssignedValidationProgram::open(&alias).unwrap_err();
     assert!(matches!(
         error,
         ProductError::ShellValidationProgramDenied(_)
@@ -351,7 +352,7 @@ fn preexisting_temporary_index_lock_is_a_collision_and_is_never_removed() {
         fixture.create_builder(&qualification, "change-index-lock", "attempt-index-lock");
     fs::write(worktree.path().join("answer.txt"), "candidate index lock\n").unwrap();
     let index_name = format!(
-        ".society-product-index-{}-{}.lock",
+        ".guarded-materialization-index-{}-{}.lock",
         worktree.change().as_str(),
         worktree.attempt().as_str()
     );
@@ -404,7 +405,7 @@ fn dangling_preexisting_temporary_index_lock_is_rejected_and_preserved() {
     )
     .unwrap();
     let index_name = format!(
-        ".society-product-index-{}-{}.lock",
+        ".guarded-materialization-index-{}-{}.lock",
         worktree.change().as_str(),
         worktree.attempt().as_str()
     );
@@ -726,20 +727,39 @@ fn git_stdout_is_bounded_before_a_fake_git_can_exhaust_process_memory() {
 }
 
 #[test]
-fn supervised_xsh_receipt_is_required_and_bound_to_the_prepared_tree() {
+fn synthetic_aurora_catalog_product_is_validated_by_a_generic_supervised_program_and_delivered() {
     let fixture = Fixture::new();
+    fs::create_dir_all(fixture.repo.join("catalog")).unwrap();
+    fs::write(
+        fixture.repo.join("catalog/aurora.toml"),
+        "sku = \"aurora-7\"\nprice_cents = 1299\n",
+    )
+    .unwrap();
+    fixture.git_ok(["add", "catalog/aurora.toml"]);
+    fixture.git_ok(["commit", "-m", "add aurora catalog product"]);
     let qualification = fixture.qualification();
-    let worktree =
-        fixture.create_builder(&qualification, "change-supervised", "attempt-supervised");
-    fs::write(worktree.path().join("answer.txt"), "supervised candidate\n").unwrap();
+    let worktree = fixture.create_builder(
+        &qualification,
+        "aurora-catalog-release",
+        "catalog-builder-7",
+    );
+    fs::create_dir_all(worktree.path().join("catalog")).unwrap();
+    fs::write(
+        worktree.path().join("catalog/aurora.toml"),
+        "sku = \"aurora-7\"\nprice_cents = 1499\n",
+    )
+    .unwrap();
     let capture = fixture.capture(&worktree);
-    let command = ValidationCommand::ExternallySupervisedXsh {
-        executable: AssignedXshBinary::open("/bin/echo").unwrap(),
-        arguments: vec![ValidationArgument::parse("--strict").unwrap()],
-    };
+    let invocation = ValidationProgramInvocation::new(
+        AssignedValidationProgram::open("/bin/echo").unwrap(),
+        vec![ValidationProgramArgument::parse("--verify-catalog").unwrap()],
+    );
     let profile = ValidationProfile::new(
-        ValidationProfileId::parse("supervised-xsh-v1").unwrap(),
-        vec![ValidationCommand::GitDiffCheck, command.clone()],
+        ValidationProfileId::parse("aurora-catalog-policy-v1").unwrap(),
+        vec![
+            ValidationCommand::GitDiffCheck,
+            ValidationCommand::ExternallySupervisedProgram(invocation.clone()),
+        ],
     )
     .unwrap();
     let authorization = fixture.authorization_for_profile(
@@ -761,17 +781,13 @@ fn supervised_xsh_receipt_is_required_and_bound_to_the_prepared_tree() {
     let receipt = ExternallySupervisedValidationReceipt::new(
         profile.id().clone(),
         prepared.tree().clone(),
-        vec![ExternallySupervisedValidationStepReceipt {
-            command,
-            stdout: OutputDigest::parse(
-                "0000000000000000000000000000000000000000000000000000000000000000",
-            )
-            .unwrap(),
-            stderr: OutputDigest::parse(
-                "1111111111111111111111111111111111111111111111111111111111111111",
-            )
-            .unwrap(),
-        }],
+        vec![ExternallySupervisedValidationStepReceipt::new(
+            invocation.clone(),
+            OutputDigest::parse("0000000000000000000000000000000000000000000000000000000000000000")
+                .unwrap(),
+            OutputDigest::parse("1111111111111111111111111111111111111111111111111111111111111111")
+                .unwrap(),
+        )],
     )
     .unwrap();
     let materialized = fixture
@@ -782,6 +798,10 @@ fn supervised_xsh_receipt_is_required_and_bound_to_the_prepared_tree() {
         materialized.commit_validated().validation().steps().len(),
         2
     );
+    assert!(matches!(
+        materialized.commit_validated().validation().steps()[1].command(),
+        ValidationCommand::ExternallySupervisedProgram(observed) if observed == &invocation
+    ));
 
     let prepared = fixture
         .materializer
@@ -790,7 +810,7 @@ fn supervised_xsh_receipt_is_required_and_bound_to_the_prepared_tree() {
     let wrong_tree = ExternallySupervisedValidationReceipt::new(
         profile.id().clone(),
         capture.base_tree().clone(),
-        receipt.steps.clone(),
+        receipt.steps().to_vec(),
     )
     .unwrap();
     let error = fixture
@@ -802,6 +822,17 @@ fn supervised_xsh_receipt_is_required_and_bound_to_the_prepared_tree() {
         ProductError::MaterializationFailed { source, .. }
             if matches!(*source, ProductError::ExternallySupervisedValidationReceiptMismatch)
     ));
+
+    let delivery = fixture
+        .materializer
+        .deliver(&qualification, &materialized)
+        .unwrap();
+    assert_eq!(delivery.disposition(), DeliveryDisposition::FastForwarded);
+    assert_eq!(delivery.delivered_tree(), capture.candidate_tree());
+    assert_eq!(
+        fs::read_to_string(fixture.repo.join("catalog/aurora.toml")).unwrap(),
+        "sku = \"aurora-7\"\nprice_cents = 1499\n"
+    );
     fixture
         .materializer
         .retire_product_worktree(worktree)
@@ -819,7 +850,7 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
-        let root = TemporaryDirectory::new("society-product-materialization");
+        let root = TemporaryDirectory::new("guarded-materialization");
         let repo = root.path().join("source");
         let worktrees_path = root.path().join("isolated-worktrees");
         let artifacts_path = root.path().join("patch-artifacts");
@@ -927,13 +958,14 @@ impl Fixture {
 
     fn commit_spec(&self) -> ControlledCommitSpec {
         ControlledCommitSpec {
-            author: CommitIdentity::new("Society Materializer", "materializer@example.test")
+            author: CommitIdentity::new("Guarded Materializer", "materializer@example.test")
                 .unwrap(),
             author_time: CommitTimestamp::new(1_700_000_000, 0).unwrap(),
-            committer: CommitIdentity::new("Society Materializer", "materializer@example.test")
+            committer: CommitIdentity::new("Guarded Materializer", "materializer@example.test")
                 .unwrap(),
             committer_time: CommitTimestamp::new(1_700_000_000, 0).unwrap(),
-            message: CommitMessage::new("xsh: controlled candidate materialization\n").unwrap(),
+            message: CommitMessage::new("materializer: controlled candidate materialization\n")
+                .unwrap(),
         }
     }
 
