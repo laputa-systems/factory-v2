@@ -14,6 +14,13 @@ not yet clear enough to persist.
 
 ## Terms
 
+### Actor attempt
+
+One supervised execution of an actor instance against a sealed assignment,
+context pack, execution profile, and budget reservation. A retry is a new
+attempt with lineage; it never overwrites the failed attempt. Every attempt
+belongs to exactly one Operating Cycle.
+
 ### Actor configuration
 
 A versioned policy for constructing bounded cognitive work: model policy,
@@ -26,11 +33,13 @@ A principal admitted from one exact actor configuration for a bounded scope and
 lifetime. An actor instance receives authority only through explicit capability
 grants or through an office it is authorized to occupy.
 
-### Actor attempt
+### Admission generation
 
-One supervised execution of an actor instance against a sealed assignment,
-context pack, execution profile, and budget reservation. A retry is a new
-attempt with lineage; it never overwrites the failed attempt.
+A monotonically increasing fence on an admission scope. A spawn reservation
+captures the current generation, and the Rust kernel rechecks it immediately
+before permitting `society-pi-host` to construct a Pi `AgentSession`.
+Quiescence or cancellation increments the generation transactionally so stale
+readiness cannot become paid execution.
 
 ### Admitted evidence
 
@@ -55,10 +64,20 @@ can lose without the underlying evidence disappearing.
 ### Budget envelope and reservation
 
 A `BudgetEnvelope` is a hard integer-micro-dollar ceiling over one society,
-portfolio, Project, Episode/circuit, Ticket, or ActorAttempt scope. A
-`BudgetReservation` transactionally commits part of every ancestor envelope
-before paid work begins. Unknown cost is not zero; unused reservation is not a
-target to spend.
+portfolio, Project, Operating Cycle, Office session/turn, Ticket, or
+ActorAttempt scope. A `BudgetReservation` transactionally charges every
+applicable constraint before paid work begins. Most constraints are
+hierarchical, but Operating Cycle and Project constraints cross-cut the same
+execution; neither is a fictitious parent of the other. Unknown cost is not
+zero; unused reservation is not a target to spend.
+
+### Cancellation request
+
+A typed control-plane command over a named scope, represented as
+`CancellationRequest`. It records mode (`Quiesce`, `GracefulCancel`, or
+`EmergencyStop`), reason, authority or trusted breaker, admission generation,
+grace deadline, propagation rule, and evidence-retention policy. Cancellation
+is not a derived demand signal and cannot be created by signal pressure alone.
 
 ### Capability
 
@@ -207,6 +226,15 @@ coordination pulse, decisions due, strongest eligible influence and dissent,
 cost reserve, delivery blocks, and overdue outcomes. It is the office's default
 attention surface, not a model-written source of truth.
 
+### Grand Architect office session
+
+One supervised Pi SDK-host process and canonical Pi session through which an actor
+occupying `TheGrandArchitect` monitors and governs one Operating Cycle. It
+receives bounded `OperationalNotice` batches, produces separately validated
+decision submissions, has its own budget, and is sealed at cycle
+reconciliation. A user occupant uses the equivalent typed control and monitor
+interfaces without a paid Office session.
+
 ### Graph object
 
 A durable semantic identity with typed revisions, such as a Question,
@@ -270,12 +298,29 @@ occupant is human or model-based. An office differs from an actor configuration
 (how cognition is produced), a profession (a learned social interface), and a
 project role (a bounded responsibility within one project).
 
+### Operating Cycle
+
+A bounded operational epoch inside the continuously running Rust kernel. It
+pins Universe Seed, Grand Architect occupancy, organization/model/admission
+policies, budget, WIP, start cursor, rollover conditions, and one cancellation
+root. Actor attempts belong to exactly one Operating Cycle; Projects, causal
+Episodes, lessons, and outcome obligations may span many. It is not a product
+quota or one fixed workflow.
+
 ### Operational audit
 
-Kernel- or runner-produced facts establishing which command, tool, process,
+Kernel- or supervisor-produced facts establishing which command, tool, process,
 transaction, or cost event occurred. Audit data is continuously available to
 deterministic projections and forensics, but does not directly gain epistemic
 or organizational influence.
+
+### Operational notice
+
+A typed, bounded monitoring projection derived from committed lifecycle,
+denial, anomaly, or recovery events. `OperationalNotice` is the input to the live Grand
+Architect monitor and the human console. It carries stable identities and
+severity but no authority; tracing text is a rendering of it, never parsed back
+into durable state.
 
 ### Outcome obligation
 
@@ -285,11 +330,30 @@ delete it.
 
 ### Pi boundary
 
-The only V2 protocol boundary allowed to use JSON. Pi 0.83.0 emits a JSONL event
-stream and session transcript, while a bounded actor emits one closed-schema
-`submission.json`. V2 seals and parses those bytes into typed Rust values before
-they can affect SQLite state. No other durable V2 workflow uses JSON payloads,
-columns, manifests, or projections.
+The only V2 protocol boundary allowed to use JSON. Rust and the pinned
+TypeScript `society-pi-host` exchange a closed JSONL control/event protocol;
+Pi's SDK `SessionManager` writes its canonical JSONL transcript; bounded actors
+emit one closed-schema `submission.json`. The Rust kernel seals and parses
+those bytes into typed values before they can affect SQLite state. No Pi CLI
+mode and no other durable V2 workflow uses JSON payloads, columns, manifests,
+or projections.
+
+### Pi SDK host
+
+The V2-owned TypeScript executable `society-pi-host`, pinned with
+`@earendil-works/pi-coding-agent` 0.83.0 and an exact dependency lock. One host
+embeds one SDK `AgentSession`; task hosts are one-shot and the Grand Architect
+host persists for one Operating Cycle. It is a trusted execution-evidence
+adapter but has no database, capability, budget, scheduling, or Git authority.
+
+### Pi supervisor
+
+The Rust `PiSupervisor` subsystem inside `societyd`. It exclusively reserves,
+spawns, registers, observes, costs, cancels, reaps, and seals one-shot Pi task
+processes and persistent Pi SDK Office sessions. It starts each
+`society-pi-host` inert, records `AdapterReady`, rechecks admission, and only
+then permits `CreateSession`. It is trusted physics, not an actor, Office, or
+XSH program.
 
 ### Portfolio
 
@@ -341,6 +405,14 @@ observability: always available for derivation and explanation, but only
 semantically admitted and curated distinctions may acquire actionable
 influence.
 
+### Quiescence
+
+The reversible Operating Cycle condition in which the kernel has incremented
+the admission generation and admits no new task work while already running work
+settles. Only bounded Grand Architect recovery, cancellation, or closure turns
+may occur. Quiescence is not cancellation and does not imply that Projects or
+causal Episodes are complete.
+
 ### Retrospective
 
 A routine account of what an episode, project, or circuit learned. Unlike a
@@ -352,6 +424,14 @@ The typed output of adversarial review: target revision, failure hypothesis,
 scope, evidence or reproducer, severity, falsification condition, requested
 disposition, author lineage, and response state. It cannot edit the challenged
 object.
+
+### Rust kernel (`societyd`)
+
+The continuously running Rust authority that exclusively owns SQLite,
+content-object storage, typed commands, capabilities, Operating Cycles,
+budgets, work admission, Pi and deterministic child processes, sessions,
+workspaces, Git materialization, cancellation, tracing, and projections. XSH and
+actor processes are supervised clients, never co-owners of trusted state.
 
 ### Signal family
 
@@ -376,13 +456,22 @@ acceptance judge, budget, capability need, and completion evidence. A ticket is
 useful corporate machinery, not the society's ontology or a substitute for
 inquiry.
 
+### Tracing
+
+The live, redaction-safe rendering of curated Rust-kernel lifecycle and failure
+events through `tracing` and `tracing-subscriber`. `INFO` and higher form the
+mandatory Grand Architect operator stream; `DEBUG` and `TRACE` are bounded
+diagnostics. Trace text is never the event ledger, provenance, durable workflow
+state, or raw context supplied to an actor.
+
 ### Trusted physics
 
-The small Rust/SQLite substrate that makes identity, authority, transactions,
-budgets, content identity, state transitions, Git lineage, and replay real.
-Trusted physics is not a human governance tier. The Grand Architect governs
-through it and cannot cause an invalid transition by writing a persuasive
-prompt.
+The slowly changing Rust/SQLite mechanism layer that makes identity, authority,
+transactions, budgets, process ownership, cancellation, session evidence,
+content identity, state transitions, Git lineage, observability, and replay
+real. Trusted physics is not a human governance tier. The Grand Architect
+governs through it and cannot cause an invalid transition by writing a
+persuasive prompt.
 
 ### Universe Seed
 
@@ -391,7 +480,10 @@ versioned origin purpose from which a society is bootstrapped. It combines the
 XSH mission with north-star alignment, domain commitments, preserve/reject
 principles, non-goals, amendment provenance, and the Grand Architect office
 contract. Its canonical rendering is the first prompt supplied to every actor
-attempt. One society has exactly one active revision at a time.
+attempt and Grand Architect actor session. Revision 1 is installed once through
+a consumed founding-bootstrap capability because it is the input which starts
+the apparatus; descendant revisions require C4 challenge and Grand Architect
+ratification. One society has exactly one active revision at a time.
 
 ## Required distinctions
 
@@ -401,17 +493,22 @@ These pairs must not collapse in schemas or prose:
 | --- | --- |
 | Mission / north-star alignment | Purpose and worldview / operational alignment questions derived from it |
 | Grand Architect / actor | Constitutional office / whichever principal currently occupies it |
+| Office occupancy / Grand Architect office session / Office turn | Durable authority assignment / supervised Pi SDK-host lifetime / one bounded model interaction |
 | Office / profession / project role | Durable authority / learned interface / bounded responsibility |
 | Event / evidence / curated account / lesson | Occurrence / semantic admission / decision representation / proposed inheritance |
 | Content object / graph object | Immutable bytes / revisioned meaning |
 | Demand signal / command | Local need indication / authorized state mutation |
 | Derived signal / influence | Explainable input / recorded organizational consequence |
+| Event ledger / OperationalNotice / trace line | Durable accepted history / curated actionable monitoring projection / live rendering |
 | Delivery / encounter / application / causal support | Carrier arrived / actor saw it / behavior matched it / comparison supports effect |
 | Project / causal episode / ticket | Coordination envelope / knowledge-and-action chain / operational work order |
+| Operating Cycle / Project / causal episode | Finite execution epoch / coordination envelope / epistemic-action history |
+| Quiescence / cancellation / closure | Stop new admission / propagate stop control / reconcile a terminal epoch |
 | Retrospective / postmortem | Routine learning / triggered failure investigation and containment |
 | Legitimacy / correctness | Authorized process / later outcome judgment |
 | Budget / target | Maximum authorized spend / desired expenditure; V2 has only the former |
 | Model stop / attempt success | Pi stopped normally / protocol and judges accepted the attempt |
+| Process exit / reap / Pi settlement | Child stopped / parent collected status / Pi protocol reached its terminal event |
 
 ## Retired or discouraged vocabulary
 
@@ -427,3 +524,5 @@ These pairs must not collapse in schemas or prose:
 | cleanroom boolean | execution profile with explicit fields | Isolation is multidimensional |
 | `VS-001.json` | typed SQLite state plus `VS-001.md` projection | JSON is restricted to the Pi boundary |
 | standup meeting | coordination pulse | Default status synchronization is deterministic and cheap |
+| cycle | Operating Cycle, causal Episode, or propagation loop | Name the exact bounded epoch or semantic loop |
+| `native_runner.xsh` | Rust `PiSupervisor` inside `societyd` | Process ownership, session parsing, cost, and cancellation belong to trusted physics |

@@ -110,7 +110,19 @@ UniverseSeed {
     xsh_domain_scope
     grand_architect_office_contract_revision
     amendment_origin
+    activation_basis_kind: FoundingBootstrap | GrandArchitectRatification
+}
+
+UniverseSeedFoundingActivation {
+    seed_revision
+    bootstrap_command_id
+    consumed_bootstrap_capability_id
+}
+
+UniverseSeedRatifiedActivation {
+    seed_revision
     ratification_decision_id
+    grand_architect_occupancy_revision
 }
 
 UniverseSeedPrinciple {
@@ -156,15 +168,27 @@ The first authoritative commands are:
 ```text
 CreateSocietyIdentity
 InstallGrandArchitectOffice
-ProposeUniverseSeed
-RatifyUniverseSeed       # TheGrandArchitect capability
+InstallFoundingUniverseSeed  # one-time bootstrap capability
 BootstrapSociety        # consumes one active seed revision
+
+ProposeUniverseSeed     # descendant amendment path
+RatifyUniverseSeed      # TheGrandArchitect capability for a descendant
 ```
 
 `BootstrapSociety` fails unless the seed, office contract, active occupant, R0
 execution policy, and global budget ceiling are exact revisions. The resulting
 `SocietyBootstrap` records all five. Bootstrap is idempotent for those inputs
 and cannot silently pick “latest.”
+
+The founding seed is the input which starts the apparatus, so requiring an
+already-running Grand Architect actor to ratify it would create a false causal
+loop. `InstallFoundingUniverseSeed` is therefore a consumed root capability: it
+can activate exactly revision 1 exactly once and cannot amend it. This is not a
+standing human-ratification layer. After bootstrap, every descendant seed uses
+the ordinary proposal, challenge, C4 evidence, and Grand Architect
+ratification path. The two activation variants have distinct body tables so a
+missing ratification decision can never masquerade as an ordinary descendant
+activation.
 
 The canonical `UNIVERSE-SEED.md` rendering is the first prompt segment supplied
 to every actor attempt, including narrow task actors and adversarial reviewers.
@@ -393,8 +417,8 @@ The architecture has four layers with deliberately different mutation rules.
                            ^
                            |
   R2  mutable society
-      actors, professions, circuits, institutions, policies, evaluators,
-      graph views, context assembly, propagation, organization configurations
+      actor prompts and tasks, professions, circuits, institutions, projects,
+      typed policies, evaluators, context, propagation, organization configurations
                            ^
                            |
   R1  amendable constitution
@@ -403,8 +427,9 @@ The architecture has four layers with deliberately different mutation rules.
                            ^
                            |
   R0  trusted physics
-      identity, ledger, transactions, capabilities, artifacts, supervision,
-      resource accounting, Git lineage, replay, rollback
+      resident Rust authority, identity, ledger, transactions, capabilities,
+      Operating Cycles, Pi/process supervision, cancellation, observability,
+      resource accounting, content, Git lineage, replay, rollback
 ```
 
 ### R0: trusted physics
@@ -428,13 +453,18 @@ assent is not. There is no separate human veto or actor-species check.
 ### R2: mutable society
 
 R2 is the experimental phenotype. Actor configurations, routing, professions,
-communication topology, evaluators, trace curation, resource policy, and most
-decision circuits are candidates for bounded mutation.
+prompts, assignments, Projects, communication topology, evaluators, trace
+curation, resource policy, and decision circuits are candidates for bounded
+mutation. This is where evolutionary fluidity belongs: in the creative
+organization using trusted mechanisms, not in the mechanisms which decide
+whether a process is owned or a dollar was spent.
 
 ### R3: XSH world
 
-R3 is both the mission target and, increasingly, the society's policy and
-execution medium. Product mutations remain independently reviewable and
+R3 is the mission target and an optional R2 user-space medium for experiments,
+evaluators, tooling, and policy prototypes. It is not the seed language of R0
+and does not sit on an authority, persistence, supervision, cancellation, or
+evidence-critical path. Product mutations remain independently reviewable and
 revertible. Self-reference never grants additional authority.
 
 This topology resolves an otherwise dangerous ambiguity. “Immutable” does not
@@ -468,7 +498,7 @@ The evidence-to-culture path has four deliberately different depths:
 
 | Depth | Purpose | Default audience | Admission rule |
 | --- | --- | --- | --- |
-| Operational audit | Establish what command, process, tool, or transaction occurred | Kernel, runner, forensic inspection | Produced by trusted machinery |
+| Operational audit | Establish what command, process, tool, or transaction occurred | Kernel, supervisor, forensic inspection | Produced by trusted machinery |
 | Forensic evidence | Preserve source material which may later support or defeat a claim | Judges and explicit investigators | Sealed with capture method and origin |
 | Curated episode account | Preserve the few distinctions needed to understand a consequential choice | Deliberation and later replay | Selected with causal role, scope, omissions, and challenge path |
 | Cultural inheritance | Change how later citizens perceive or act | Matching future work only | Checked validation, promotion, delivery, and uptake evidence |
@@ -486,25 +516,48 @@ ability to rewrite forensic reality.
 
 ## The trusted substrate
 
-### Kernel responsibilities
+### Resident Rust authority
 
-A small V2-owned Rust kernel initially owns one organization-wide SQLite
-database and one digest-addressed content-object store. It is authoritative for:
+The kernel is a continuously running Rust service named `societyd`, not a
+library independently invoked by XSH programs and not a collection of scripts
+coordinating through files. It exclusively owns one organization-wide SQLite
+database, one digest-addressed content-object store, the live child-process
+registry, and the local command/monitor interfaces. SQLite is never opened by a
+client with write authority.
+
+The trusted core is intentionally larger than a fashionable microkernel. XSH is
+not yet a suitable seed language for authority, process supervision, or durable
+evidence physics. The criterion is not minimum Rust line count; it is whether a
+bug or mutation could forge authority, lose cost, orphan a child, rewrite
+history, or make an invalid transition appear valid.
+
+`societyd` is authoritative for:
 
 - object, revision, configuration, principal, actor, session, and episode
   identity;
 - typed graph edges and the allowed endpoint kinds for each edge;
 - commands, optimistic generations, idempotency, transactions, and ordered
   immutable events;
-- capabilities, jurisdiction, leases, claims, expiry, cancellation, and exact
-  resource ownership;
+- capabilities, Office occupancy, jurisdiction, leases, claims, expiry,
+  Operating Cycles, admission generations, cancellation, and exact resource
+  ownership;
 - budgets for model work, compute, wall time, worker slots, integration risk, and
   organizational experiments;
-- sealed input snapshots, environment manifests, raw sessions, evaluator
+- actor prompt rendering; TypeScript Pi SDK-host and deterministic process
+  spawning; process-group ownership; closed SDK-adapter protocol parsing;
+  session, event, usage, and cost normalization; graceful termination and
+  reaping;
+- workspace and Git-worktree creation, input materialization, post-run
+  inspection, content sealing, evaluator execution, controlled product
+  materialization, and cleanup eligibility;
+- sealed input snapshots, environment records, raw sessions, evaluator
   revisions, observations, Git commits, patches, and outcome artifacts;
 - state-machine validation, retries and attempt lineage, rollback references,
   and retention status;
-- scheduler-visible readiness facts and work claims; and
+- scheduler-visible readiness, work claims, cycle admission, and trusted
+  circuit breakers;
+- structured tracing, `OperationalNotice` derivation, live monitoring, and
+  Grand Architect Pi SDK Office-session supervision; and
 - projection cursors and a transactional outbox for rebuildable views and
   notifications.
 
@@ -512,9 +565,18 @@ Node-specific data that affects readiness, authority, propagation, or
 evaluation is relational and constrained. An opaque JSON field or EAV table
 must not become an escape hatch from the protocol.
 
+The kernel owns mechanisms and effects; the society owns creative content and
+strategy. Prompts, assignments, hypotheses, Project purposes, actor
+configurations, organization topology, circuit selection, curation policy,
+signal-family parameters, and proposed mutations remain versioned R2 data. The
+kernel validates and executes their closed contracts but does not hard-code the
+research answer. Moving a mechanism into Rust does not move its policy choice
+out of the evolutionary loop.
+
 ### Command boundary
 
-All durable mutation crosses one versioned command protocol:
+All durable mutation crosses one versioned command protocol served by
+`societyd`:
 
 ```text
 Command {
@@ -533,14 +595,19 @@ Command
   -> return typed receipt or explicit conflict
 ```
 
-No XSH program, actor, projection, office helper, or host-admin helper writes arbitrary SQL,
-edits workflow state files, or infers completion by scanning a directory.
+No XSH program, actor, projection, Office helper, or host-admin helper writes
+arbitrary SQL, edits workflow state files, supervises Pi independently, or
+infers completion by scanning a directory.
 Content-sensitive idempotency prevents one command identifier from being reused
 with different semantics.
 
 `CommandBody` is a closed Rust enum whose variants contain named structs with
-domain newtypes. The CLI exposes corresponding closed subcommands and typed
-flags; it does not serialize the enum into a generic command document. SQLite
+domain newtypes. `societyctl` exposes corresponding closed subcommands and
+typed flags over a local Unix-domain control socket; it does not serialize the
+enum into a generic command document. The versioned wire frame is
+length-prefixed and tag-discriminated, with explicit encodings for domain
+newtypes and no JSON. The exact codec remains inside the Rust protocol crate so
+clients cannot invent fields. SQLite
 uses normalized tables, foreign keys, checked enum representations, unique
 constraints, and explicit nullable-state rules. V2 permits no JSON columns,
 generic `payload` or `metadata` columns, EAV tables, state files, workflow
@@ -551,11 +618,13 @@ tables. Rust exhaustively decodes the matching body and ledger replay treats a
 missing, duplicate, or mismatched body as corruption. Strong typing therefore
 survives persistence; it is not lost at the first database write.
 
-The sole JSON exception is the unavoidable Pi 0.83.0 boundary: Pi's JSONL event
-stream, v3 session transcript, external `auth.json`, and the actor's bounded
-`submission.json`. The native runner treats all four as untrusted boundary
-bytes, seals them, parses them into closed Rust types, validates settlement and
-submission separately, and only then issues typed commands. No JSON object
+The sole JSON exception is the unavoidable Pi 0.83.0 boundary: the closed
+Rust-to-`society-pi-host` control stream, SDK event/result stream, the v3
+session transcript, external `auth.json`, and an actor's bounded
+`submission.json`. The Rust Pi supervisor
+treats all of them as untrusted boundary bytes, seals the evidentiary streams,
+parses them into closed Rust types, validates settlement and submission
+separately, and only then invokes the in-process typed command handler. No JSON object
 becomes durable society state merely by parsing successfully. XSH itself may
 of course manipulate JSON as part of its systems-glue mission; that product
 capability does not relax V2's persistence contract.
@@ -567,7 +636,13 @@ The following identities are distinct:
 - a `Principal` is an authenticated source of authority;
 - an `ActorConfiguration` is a versioned heritable configuration;
 - an `ActorInstance` is one admitted realization of that configuration;
-- a `Session` is one bounded model or deterministic execution attempt;
+- an `ActorAttempt` is one bounded task execution;
+- a `GrandArchitectOfficeSession` is one supervised Pi SDK-host process for an
+  agent occupant during an Operating Cycle;
+- a `PiSession` is Pi's canonical conversation/session identity and may back an
+  Actor Attempt or Grand Architect Office session;
+- an `OperatingCycle` is one resource, configuration, monitoring, and
+  cancellation epoch inside the continuous daemon;
 - an `OrganizationConfiguration` identifies the complete R2 setup relevant to
   an episode;
 - an `Episode` groups causally related inquiry and action; and
@@ -614,23 +689,118 @@ declared claim. It does not promise bit-for-bit model generation. Deterministic
 components must be exact; stochastic components must preserve model parameters,
 seeds where meaningful, sample count, and uncertainty.
 
-### Native Pi execution is the baseline
+### The Pi SDK is the actor runtime
 
-Actors run through the host-installed `pi` executable in owned native working
-directories. Product-changing actors receive dedicated Git worktrees; other
-actors receive ordinary attempt directories containing only their declared
-inputs and output contract. The runner pins Pi provider, model, thinking level,
-tool allowlist, context-discovery flags, system prompt, session path, current
-directory, environment allowlist, wall budget, and input digests in the attempt
-manifest.
+V2 installs and pins `@earendil-works/pi-coding-agent` 0.83.0 and embeds its
+TypeScript SDK through a small V2-owned executable named `society-pi-host`.
+Actors do not invoke the `pi` CLI, `--print`, or Pi RPC mode. The exact Node
+runtime, compiled host digest, package version, lockfile integrity, Pi package
+graph, and adapter-protocol version are execution-profile inputs. Pi 0.83.0
+requires Node 22.19.0 or newer; the admitted profile pins one exact qualified
+Node build rather than accepting that range at runtime.
+
+Rust cannot load a TypeScript SDK in-process without introducing a much larger
+JavaScript-runtime trust boundary. `societyd::PiSupervisor` therefore starts
+one `society-pi-host` OS process per Pi `AgentSession`. A one-shot task gets one
+host for one Attempt; an actor occupying The Grand Architect gets one long-lived
+host for its Operating Cycle. The first implementation deliberately does not
+pool unrelated sessions in one TypeScript process. Per-session processes keep
+workspace, tools, abort, crash, usage, evidence, and TERM/KILL containment
+aligned with one kernel identity. Pooling may later be tested as a C3
+efficiency mutation, not smuggled into the founding runtime.
+
+The TypeScript host is a pinned trusted **execution adapter**, but never an
+institutional authority. A defect can misrender a prompt, expose a tool, or
+misreport an SDK event, so its source, dependency lock, event conversion, and
+qualification belong to the R0 evidence boundary. It cannot open SQLite, issue
+daemon commands, allocate budget, change capabilities, admit evidence, dispose
+a review, materialize Git, or authorize delivery. Rust owns those effects and
+independently reconciles session files, process state, submissions, and costs.
+
+`society-pi-host` constructs each SDK session explicitly:
+
+```text
+ModelRuntime       exact auth/models paths and exact admitted model
+SettingsManager    in-memory, versioned retry/compaction/queue settings
+ResourceLoader     V2-owned implementation: exact system prompt, no discovery,
+                   no extensions, skills, prompt templates, themes, or context files
+SessionManager     owned persistent session file in the session workspace
+createAgentSession exact cwd, agentDir, model, thinking level, tool allowlist,
+                   runtime, loader, settings, and session manager
+```
+
+No SDK default which can discover ambient resources or choose a model is
+accepted silently. The host validates the effective provider
+`openrouter`, model `deepseek/deepseek-v4-flash-0731`, thinking `high`, tools,
+settings, cwd, system-prompt digest, and session identity before reporting the
+session ready. Model-cycling, session replacement, ambient resource loading,
+and extension-defined tools are absent from the adapter protocol.
+
+The JSON exception remains exactly at the Pi boundary. Rust and the TypeScript
+host exchange a closed, versioned JSONL protocol over kernel-owned pipes. Rust
+sends only `CreateSession`, `Prompt`, `FollowUp`, `Steer`, `Abort`,
+`GetState`, and `Dispose`; the host emits `AdapterReady`, `SessionReady`,
+`CommandResult`, an exhaustive JSON-safe projection of each
+`AgentSessionEvent`, `UsageSnapshot`, `Settled`, `Disposed`, or `Fatal`. Every
+frame has a session identity, monotonically checked sequence, and correlation
+id where applicable. Unknown event variants, missing terminal events, sequence
+gaps, invalid JSON, or incompatible adapter versions fail the session rather
+than falling through to narrative parsing.
+
+The host calls `session.prompt()`, `session.followUp()`, `session.steer()`,
+`session.abort()`, `session.subscribe()`, and `session.dispose()` directly.
+Task and Grand Architect actors therefore use the same SDK surface; “one-shot”
+versus “Office” is a V2 lifecycle policy, not two Pi CLI modes. The canonical Pi
+session file remains forensic transcript and usage evidence. Rust seals it and
+cross-checks its entries against streamed SDK events and typed usage snapshots.
+
+The Grand Architect Office session begins with the exact Universe Seed and
+cycle brief. `OperationalNotice` batches normally enter through `followUp()`
+only after the current turn settles. `steer()` is reserved for genuinely
+decision-changing urgency because interrupting active reasoning with routine
+progress damages coherence. `abort()` is the cooperative first step of graceful
+cancellation. Each Office turn has a named reason, disclosure frontier, cost
+reservation, and closed decision-submission contract.
+
+The kernel does not feed every trace line into the Office session. That would
+turn observability into context flooding and continuous token spend. A bounded
+monitor layer coalesces accepted INFO/WARN/ERROR notices by scope and reason,
+retains the strongest unresolved item, and triggers an Office turn only for a
+decision horizon, blocker/escalation, budget danger, cancellation, delivery,
+cycle rollover, or an explicit request. A user occupant sees the equivalent
+live console and typed monitor query without a paid Pi session.
+
+Process ownership begins before the SDK may create an `AgentSession` or make a
+model request:
+
+```text
+reserve Attempt/OfficeSession and admission generation in SQLite
+  -> spawn society-pi-host inert in a new owned process group
+  -> host reports AdapterReady with pid, nonce and Node/adapter/Pi identities
+  -> Rust cross-checks pid, records its own process-group identity, and rechecks
+     generation, cancellation and budget
+  -> Rust sends CreateSession as the authorization gate; host constructs the exact SDK session
+  -> Rust validates SessionReady before sending Prompt
+```
+
+If `societyd` crashes before `CreateSession`, pipe EOF makes the inert host exit
+without constructing a session. If cancellation wins the generation race, Rust
+closes or kills the host and records a cancelled pre-session Attempt. During an
+active session, cooperative cancellation calls SDK `abort()`; deadline
+escalation sends TERM and then KILL to the host process group. This removes the
+unowned paid-execution window without pretending process launch and SQLite
+commit are one OS transaction.
 
 A working directory is an ownership and reproducibility boundary, not a
 security sandbox. A Pi actor with the `bash`, `read`, `edit`, or `write` tools
 can potentially reach other host paths allowed by the host OS account.
 The first implementation relies on explicit assignments, narrow Pi tool
-profiles where practical, process supervision, before/after workspace and Git
-checks, and forensic tool events. It must not claim that kernel graph
-capabilities enforce host filesystem or network confinement.
+profiles where practical, omission of control credentials from actor
+environments, daemon-side submission on behalf of the supervised principal,
+process supervision, before/after workspace and Git checks, and forensic tool
+events. The capability system prevents unauthenticated institutional commands;
+it must not claim that application capabilities confine a hostile same-user
+native process at the OS filesystem or network layer.
 
 The Docker cleanroom used by V1 remains a valuable optional treatment for
 measuring self-sufficiency under a sparse environment. It is not the V2 worker
@@ -643,6 +813,128 @@ Environmental self-sufficiency is multidimensional. Repository visibility,
 context policy, installed tools, network access, documentation, model, host
 packages, and filesystem enforcement are recorded as separate treatment
 variables. “Cleanroom” is never one unexplained Boolean.
+
+## Kernel observability
+
+Observability covers every trusted mechanism without promoting every
+measurement into provenance. `societyd` uses the explicitly approved `tracing`
+and `tracing-subscriber` crates. No additional logging dependency is implied.
+The initial subscriber has a curated target filter compiled from trusted
+configuration, a compact INFO-and-higher console layer, and a bounded monitor
+layer which constructs `OperationalNotice` values. Ambient `RUST_LOG` may make
+local output more verbose for diagnosis but cannot suppress the fixed Grand
+Architect INFO/WARN/ERROR surface or required safety notices.
+
+### Span and correlation contract
+
+Long-lived spans mirror real ownership rather than source-module nesting:
+
+```text
+society
+  operating_cycle
+    project / ticket / causal_episode
+      actor_attempt | grand_architect_office_session | deterministic_run
+        pi_process / evaluator_process / product_materialization
+          pi_turn / tool_execution / command
+```
+
+Applicable events carry typed display fields such as:
+
+```text
+society_id operating_cycle_id universe_seed_revision
+project_id ticket_id episode_id
+actor_instance_id actor_attempt_id office_session_id office_turn_id
+pi_session_id process_id command_id budget_id
+event_id trace_correlation_id
+```
+
+Identifiers are safe display encodings, not arbitrary `Debug` output. Prompts,
+model messages, credentials, environment values, source contents, and full tool
+arguments never appear at INFO. Raw boundary content remains in sealed Pi and
+forensic objects under its access policy.
+
+### Curated level policy
+
+| Level | Intended content | Examples |
+| --- | --- | --- |
+| TRACE | High-volume protocol mechanics, disabled by default | Pi event kind, SDK-adapter frame direction/id, stream chunk metadata, SQLite statement class |
+| DEBUG | Reconstructable mechanism decisions | readiness factors, signal derivation inputs, context membership, lease poll, process receipt details |
+| INFO | Meaningful operational progress | cycle/project/ticket transition, Attempt start/settle, Office turn, decision due/made, budget reservation/summary, review, delivery, cancellation phase |
+| WARN | Degradation or attention needed | retry, blocked work, malformed boundary item, nonzero tool aggregate, unknown cost, stale lease, missed deadline, TERM-to-KILL escalation |
+| ERROR | Trusted mechanism or containment failure | database/content corruption, invalid ledger body, unowned/orphan child, evidence loss, failed reaping, invariant breach |
+
+An ordinary task failure is INFO or WARN according to its operational
+consequence; it is not an ERROR merely because the candidate was wrong. ERROR
+means trusted machinery or containment failed. Conversely, repeated retries are
+not hidden at DEBUG merely because the kernel recovered.
+
+### One fact, three surfaces
+
+For an accepted transition, the ordering is:
+
+```text
+validate command
+  -> commit materialized state + durable event + outbox atomically
+  -> construct typed OperationalNotice from the committed event
+  -> emit tracing event with the same identities
+  -> stream/render to eligible monitors
+```
+
+The ledger is durable truth. `OperationalNotice` is a bounded typed monitor
+projection. Tracing text is an ephemeral rendering. Neither notice nor text is
+parsed back to manufacture a command, graph fact, readiness condition, or
+epistemic claim. A failure before commit may be traced and noticed as
+`TransitionRejected` or `MechanismFailure`, but it cannot claim the transition
+occurred.
+
+```text
+OperationalNotice {
+    notice_id
+    source_event_id_or_failure_correlation
+    severity: Info | Warn | Error
+    kind: ClosedOperationalNoticeKind
+    scope
+    summary_template
+    typed_fields
+    first_observed_at
+    last_observed_at
+    occurrence_count
+    resolution_state
+}
+```
+
+The summary is rendered from a closed kind and typed fields, not supplied as
+arbitrary authority-bearing prose. Duplicate heartbeats and equivalent progress
+events coalesce. WARN/ERROR notices cannot be displaced by INFO volume. Each
+monitor has queue and byte limits; overflow coalesces or drops eligible INFO
+with an explicit loss counter, never blocks the state machine or silently drops
+safety notices.
+
+### Grand Architect monitoring
+
+A user occupant runs `societyctl monitor --level info` and may narrow by cycle,
+Project, Ticket, or Attempt. An actor occupant receives bounded notice batches
+through its supervised Pi SDK Office session. Both see the same notice
+identities and can expand a notice through typed queries. The actor path does
+not receive console escape sequences or depend on parsing a human log format.
+
+Default Office-turn triggers are:
+
+```text
+decision or review disposition ready
+Project/cycle blocker or deadline escalation
+50% and 80% budget-reserve warning; any unknown cost
+cancellation requested, escalated, or incompletely reconciled
+product delivery or rollback ready
+Operating Cycle quiesced, close-ready, failed, or rollover-ready
+explicit Grand Architect monitor/query request
+```
+
+Routine INFO is batched until settlement or a short bounded interval. An idle
+Office Pi process consumes no model tokens; sending progress text does. Monitor
+policy therefore records notice count, input tokens, Office-turn cost,
+decisions produced, and notices later expanded, so excessive monitoring becomes
+an observable coordination cost rather than a free aesthetic preference.
 
 ### Product boundary
 
@@ -1243,6 +1535,20 @@ merge, allocate its own budget, promote its own lesson, or change its evaluator.
 An informal role name in a prompt implies no authority. Occupancy of a typed
 Office does imply its exact capability bundle and jurisdiction. The database
 records the office contract, occupant, delegation, succession, and expiry.
+
+Native actors receive no reusable daemon credential. They write through their
+closed Pi submission boundary; `societyd` validates the submission against the
+owned process, Attempt, disclosure frontier, and expected contract, then invokes
+the typed handler on behalf of that exact principal and capability. An actor
+Grand Architect uses the same pattern for Office decision submissions over its
+supervised SDK-host session. This prevents accidental authority from being smuggled
+through `bash` or a CLI invocation.
+
+This is institutional permission enforcement, not a false OS-isolation claim.
+A hostile process running under the same host account may be able to inspect
+other host files despite lacking a valid command capability. Strong
+same-host-adversary containment would require a distinct OS execution profile;
+the evidence records whether such a boundary exists.
 
 ### The Grand Architect
 
@@ -2061,6 +2367,123 @@ work but carries no incident or containment semantics. The distinction matters:
 if every ordinary lesson becomes a postmortem, failure response becomes noise;
 if every breach becomes a retrospective, accountability and containment vanish.
 
+## Continuous service and bounded Operating Cycles
+
+`societyd` runs continuously until its host stops it. Paid and effectful work
+does not occur in one unbounded lifetime, however. It is admitted through a
+typed `OperatingCycle`: a bounded resource, configuration, monitoring,
+cancellation, and reconciliation epoch.
+
+V1's cycle preserved four valuable contracts:
+
+- one aggregate budget and admission ceiling;
+- one pinned request/configuration world;
+- one ownership root from which every descendant could be stopped; and
+- one mandatory closeout after success, failure, or partial execution.
+
+V2 retains those contracts and discards the accidental ones. An Operating Cycle
+is not one eval-to-ticket pipeline, one user prompt, a commit quota, or the
+epistemic unit of progress. It does not require all Projects to finish, convert
+inquiry into a Ticket, or produce a product change.
+
+### Operating Cycle contract
+
+```text
+OperatingCycle {
+    operating_cycle_id
+    sequence
+    universe_seed_revision
+    grand_architect_occupancy_revision
+    organization_configuration_revision
+    actor_model_policy_revision
+    admission_and_scheduling_policy_revision
+    tracing_and_monitor_policy_revision
+    resource_envelope_id
+    maximum_wip
+    start_event_cursor
+    completion_and_rollover_conditions
+    cancellation_root_id
+    predecessor_cycle_id
+    status
+}
+```
+
+An Actor Attempt, deterministic run, or product materialization belongs to
+exactly one Operating Cycle. A Project, Ticket, causal Episode, Lesson,
+Postmortem, and OutcomeObligation may span several cycles. The membership
+record says which revision was admitted, why, and under which reservation; the
+cycle never becomes the only record of the work's purpose.
+
+Initially there is at most one nonterminal Operating Cycle. This makes the
+society-wide budget, Grand Architect monitor, configuration frontier, and
+aggregate cancellation root unambiguous. Later concurrent cycles require a C3
+trial with disjoint jurisdictions and ancestor-budget proof; concurrency is not
+enabled merely to keep more agents busy.
+
+### Lifecycle
+
+```text
+proposed -> admitted -> running
+running -> quiescing -> drained
+drained -> running | reconciling
+reconciling -> closed
+
+running | quiescing | drained
+  -> cancelling -> reaping -> reconciling
+  -> cancelled | failed
+```
+
+`QuiesceOperatingCycle` atomically closes new admission while allowing already
+running children to reach their declared completion or grace deadline. A
+drained cycle may resume if its configuration and budget remain valid, or enter
+reconciliation. `CancelOperatingCycle` propagates a typed cancellation request
+to every owned descendant. `EmergencyStop` may skip cooperative grace but not
+reaping, evidence preservation, or reconciliation.
+
+Cycle reconciliation requires:
+
+```text
+no live or unowned descendant process
+every Attempt and lease has an explicit disposition
+Pi sessions/events and required partial evidence are sealed
+known/unknown cost and all reservations are reconciled
+all cancellation requests have terminal propagation state
+workspace and worktree retention/cleanup state is explicit
+Grand Architect Office session is settled, sealed, and costed when present
+open Projects/Tickets/Episodes name their successor-cycle disposition
+due decisions, blockers, challenges, and outcome obligations remain visible
+final coordination pulse, cycle report, and ledger cursor are rebuildable
+```
+
+Closing a cycle never closes a Project or outcome obligation by implication.
+The next cycle inherits them through explicit admissions or leaves them waiting
+with a reason. A failed cycle remains valid experimental history rather than a
+run directory to repair in place.
+
+### Continuous rollover
+
+After clean reconciliation, the Grand Architect may open a successor
+immediately. A versioned `CycleRolloverPolicy` may later authorize automatic
+rollover when all of these hold:
+
+```text
+predecessor reconciled without unresolved containment failure
+new exact configuration and budget are admissible
+no C4/C5 decision or Postmortem gate requires Office disposition
+Grand Architect occupancy remains valid
+host halt/quiesce has not been requested
+```
+
+Automatic rollover creates a new identity, budget, event frontier, Office
+session, and cancellation root; it never “resets” the old rows. Thus the system
+can operate continuously while keeping experiments, spend, context, and
+shutdown auditable in finite units.
+
+For an actor Grand Architect, one Pi SDK Office session normally lives exactly
+as long as the cycle. This supplies a natural context-compaction boundary:
+cycle close seals the session, and the successor begins from the active
+Universe Seed plus a curated handoff instead of accumulating an immortal chat.
+
 ## Organizational circuits
 
 A circuit is a versioned composition of institutions, actors, transitions,
@@ -2225,13 +2648,24 @@ CostObservation =
 
 BudgetEnvelope {
     budget_id
-    parent_budget_id
     scope_kind
     scope_id
     hard_cap: UsdMicros
     reserved: UsdMicros
     observed: UsdMicros
     status: Open | Exhausted | Frozen | Reconciled
+}
+
+BudgetEnvelopeConstraint {
+    constrained_budget_id
+    ancestor_or_crosscut_budget_id
+}
+
+BudgetReservationCharge {
+    reservation_id
+    budget_id
+    reserved: UsdMicros
+    observed: UsdMicros
 }
 ```
 
@@ -2241,25 +2675,28 @@ are parsed once with an exact, versioned rounding policy. `Unknown` and
 idempotently normalized by session and source-event identity so assistant,
 tool, retry, and compaction costs are not double counted.
 
-Budget control is hierarchical and precommitted:
+Budget control is compositional and precommitted. Portfolio/Project/Ticket
+constraints are mostly hierarchical; an Operating Cycle is a cross-cutting
+aggregate over every execution admitted during that epoch:
 
 ```text
 society hard ceiling
-  -> portfolio envelope
-     -> Project envelope
-        -> circuit or Episode envelope
-           -> Ticket reservation
-              -> ActorAttempt hard cap
+  ├── portfolio -> Project -> Ticket / Episode / circuit envelopes
+  └── active Operating Cycle aggregate envelope
+
+ActorAttempt or OfficeTurn reservation
+  -> charges every applicable open envelope atomically
 ```
 
 Before `StartAttempt`, the kernel transactionally reserves the attempt cap
-against every ancestor. Insufficient unreserved capacity rejects the command;
+against every applicable envelope, including its Operating Cycle and Project
+lineage. Insufficient unreserved capacity in any one rejects the command;
 “probably cheap” is not a budget. Completion reconciles known actual cost and
 returns the unused reservation. A retry, forensic re-read by a model, extended
 review, or follow-up is a new reservation. Unused money is not a mandate to run
 more agents.
 
-The native supervisor watches the Pi session and event stream continuously. On
+The Rust `PiSupervisor` watches the SDK-host event stream and Pi session continuously. On
 per-attempt or ancestor-cap breach, malformed cumulative cost, cost regression,
 or cost becoming unknown/unavailable after paid work begins, it stops admission,
 cancels descendants, terminates the owned process group, seals partial
@@ -2279,7 +2716,9 @@ authority boundary, so an agent cannot fund its own continued deliberation.
 Deterministic Rust/XSH judges, projection rebuilds, transaction tests, cached
 fixtures, and Pi doubles are the default development path. Paid calls are used
 only for preregistered actor work that a deterministic service cannot supply.
-Coordination pulses and ordinary status queries never invoke a model.
+Coordination pulses and ordinary status queries never invoke a model. An actor
+Grand Architect receives selected pulse/notice batches only through separately
+reserved Office turns.
 
 ### Resource and contribution accounting
 
@@ -2735,20 +3174,24 @@ This is a deliberately higher bar than “the system edited itself.”
 
 ### XSH's initial jurisdiction
 
-XSH is the society's policy and execution medium wherever durable transaction
-semantics do not belong in the kernel. Initial XSH-owned surfaces include:
+XSH is an R2 experimental and actor-facing medium, always supervised as a child
+of the Rust kernel. Initial XSH surfaces may include:
 
 - reproducible experiment descriptions and workload composition;
 - bounded process, filesystem, JSON, text, byte, and host-state operations;
-- policy and circuit variants expressed through typed kernel commands;
-- evaluator programs and deterministic judges;
+- proposal builders for policy and circuit variants which the kernel validates
+  as typed configuration;
+- evaluator programs and deterministic judges executed under exact profiles;
 - context and human-readable decision projections;
-- integration, replay, and outcome-observation scripts; and
+- actor tools, replay experiments, and outcome-observation scripts; and
 - the society's own native behavior tests at the XSH boundary.
 
-Rust owns SQLite, transactions, migrations, access enforcement, leases,
-content sealing, ledger replay, and crash recovery. XSH never becomes a
-database DSL or an alternate durable workflow engine.
+Rust owns `societyd`, SQLite, transactions, migrations, capabilities, Offices,
+Operating Cycles, admission, Pi/process supervision, sessions, costs,
+cancellation, tracing, workspaces, Git materialization, content sealing, ledger
+replay, and crash recovery. XSH never becomes a database DSL, alternate durable
+workflow engine, independent Pi runner, cleanup authority, or replacement for
+the trusted core merely because self-hosting feels elegant.
 
 ### XSH is cognitive and social technology
 
@@ -2799,21 +3242,24 @@ effects rather than assuming self-use makes a feature good.
 
 ### Co-evolution ladder
 
-XSH earns deeper social responsibility in stages:
+XSH may earn broader **creative** responsibility in stages without entering
+trusted physics:
 
 1. **Experimental medium**: fresh experiments and deterministic evaluators are
    written in XSH.
-2. **Policy medium**: scheduling, context, and circuit variants are XSH modules
-   over the typed protocol.
+2. **Policy-proposal medium**: scheduling, context, and circuit variants are
+   constructed or simulated in XSH and admitted as typed kernel configuration.
 3. **Cultural medium**: lessons include executable XSH examples and native
    qualification cases.
-4. **Institutional medium**: mature institutions run predominantly through
-   XSH policies while the Rust kernel retains durable physics.
+4. **Institutional user-space medium**: mature institutions may use XSH actors,
+   evaluators, and tools while Rust continues to enforce every effectful
+   transition.
 5. **Evolution medium**: organization trials can demonstrate that a candidate
    XSH feature improves institutional productivity under matched conditions.
 
-Advancement is per surface, reversible, and evidence-based. There is no
-deadline to rewrite the compiler or database kernel in XSH.
+Advancement is per surface, reversible, and evidence-based. There is no ladder
+rung for rewriting `societyd`, its database, Pi supervisor, or cancellation
+core in XSH.
 
 ### Self-hosting in the relevant sense
 
@@ -2824,8 +3270,9 @@ compiler-self-hosting milestone.
 The meaningful self-hosting invariant is instead:
 
 > The society can reconstruct, explain, test, and increasingly conduct its own
-> XSH-facing work using the version of XSH produced by its lineage, from a small
-> frozen host and kernel boundary.
+> XSH-facing creative work using the version of XSH produced by its lineage,
+> while a separately versioned Rust kernel preserves authority, execution,
+> evidence, and cancellation physics.
 
 Every generation pins a bootstrap chain and remains testable against ancestral
 workloads. A descendant cannot declare improvement by deleting a workload or
@@ -2945,6 +3392,9 @@ proxy.
 | Short-horizon selection | Durable follow-up obligations and outcome reserve |
 | Product regression | Isolated worktrees, independent tests/review, exact lineage, canary and revert |
 | Kernel corruption | External review/deployment, backups, integrity checks, ledger rebuild |
+| Stale or orphaned execution | Transactional admission generation, inert SDK-host handshake, durable child registry, process groups, recovery containment |
+| Cancellation race or partial stop | Typed propagation, abort/TERM/KILL deadlines, signal receipts, reaping, partial-evidence and cost reconciliation |
+| Observability flood or secret leak | Curated targets/levels, typed redacted fields, bounded sinks, durable OperationalNotices rather than raw trace feedback |
 
 ### Circuit breakers
 
@@ -2964,6 +3414,90 @@ Emergency action records authority and reason. It may stop harm before normal
 deliberation, but requires a later retrospective and cannot erase the evidence
 which triggered it.
 
+### Cancellation is a control-plane primitive
+
+Cancellation is designed into admission, process ownership, costs, notices,
+and coordination from the first migration. It is not cleanup after a failed
+workflow and not an ordinary `DerivedSignal`. A signal may create an attention
+bid asking the Grand Architect to quiesce or cancel; only an authorized command
+or an exact trusted circuit breaker changes control state.
+
+```text
+CancellationRequest {
+    cancellation_request_id
+    scope: Society | OperatingCycle | Project | Ticket | ActorAttempt |
+           GrandArchitectOfficeSession | DeterministicRun
+    mode: Quiesce | GracefulCancel | EmergencyStop
+    reason: ClosedCancellationReason
+    requested_by: Principal | TrustedBreaker
+    source_event_or_breaker
+    admission_generation
+    propagation_policy_revision
+    cooperative_deadline
+    term_deadline
+    evidence_retention_policy_revision
+    status
+}
+```
+
+The lifecycle separates intent, process control, and reconciliation:
+
+```text
+requested -> admission_closed -> propagating -> cooperative_stop
+cooperative_stop -> terminating -> killing -> reaping
+cooperative_stop | terminating | killing | reaping -> evidence_sealing
+evidence_sealing -> cost_reconciling -> reconciled
+
+reconciled -> cancelled_cleanly | killed_after_grace | partial_failure
+```
+
+States may be skipped only when their action is inapplicable and the receipt
+records why—for example a queued Ticket has no child to signal. `Quiesce`
+usually stops at `admission_closed` for the scope and allows active Attempts to
+finish. `GracefulCancel` asks the Pi SDK host to call `session.abort()`, closes or cancels pending
+one-shot work, then sends TERM to each exact process group after the cooperative
+deadline. `EmergencyStop` may send KILL immediately. Every mode still reaps,
+seals partial evidence, and reconciles cost.
+
+Cancellation propagation follows declared ownership edges:
+
+```text
+Society -> active Operating Cycle and all daemon-owned children
+Operating Cycle -> admitted Office session, Attempts, deterministic runs,
+                   materializations and watchers
+Project/Ticket -> only currently owned descendants across the active cycle
+ActorAttempt -> Pi SDK-host/process group, evaluator descendants and leases
+```
+
+A child failure does not cancel a sibling unless the cycle/circuit policy names
+that dependency. Epistemic objects are never cancelled; their associated work
+is. Partial observations retain their actual evidence status rather than being
+deleted or promoted to failure evidence automatically.
+
+Every admission scope has a monotonically increasing admission generation.
+A spawn reservation captures the generation; the SDK host receives
+`CreateSession` only
+after the kernel confirms it remains current. Quiesce or cancellation increments
+the generation transactionally before propagation, so a racing scheduler cannot
+start a child from a stale readiness result.
+
+The cancellation root remains nonterminal until:
+
+- every registered child is settled or explicitly classified orphaned;
+- owned process groups have been reaped or containment failure is ERROR;
+- Pi SDK-host streams, session, stderr, workspace and Git receipts are sealed
+  to the required partial-evidence policy;
+- known spend and possible unobserved exposure are reconciled;
+- leases and reservations have terminal dispositions; and
+- dependents, coordination pulse, Grand Architect notice surface, and any
+  mandatory Postmortem reflect the same cancellation identity.
+
+Host SIGINT/SIGTERM, Grand Architect commands, cycle stop conditions, budget
+breach/unknown cost, and R0 invariant failure all enter this one contract. No
+handler performs an unrecorded parallel cleanup path. Recovery after daemon
+restart resumes nonterminal requests from SQLite and compares them with the
+live process registry before taking further action.
+
 ### Safety invariants
 
 At minimum, deterministic tests prove that:
@@ -2975,6 +3509,10 @@ At minimum, deterministic tests prove that:
 - no result cites an unsealed or mismatched input/evaluator revision;
 - no product or institutional mutation promotes itself;
 - cancellation releases only exactly owned resources and preserves evidence;
+- closing or changing an admission generation prevents every stale reserved
+  spawn from executing Pi;
+- every terminated process has one owning scope, signal/escalation receipt,
+  reap result, partial-evidence disposition, and cost state;
 - a projection can rebuild and the ledger can independently reproduce current
   materialized state; and
 - a revoked invariant blocks new work and exposes every unresolved dependent.
@@ -2988,6 +3526,9 @@ interact through typed commands and rebuildable projections.
 
 Initial projections include:
 
+- an Operating Cycle monitor showing pinned configuration, admission generation,
+  Grand Architect Office session, live children, WIP, cross-cutting budgets,
+  cancellation/reconciliation state, notices, and closure blockers;
 - an episode view containing the complete decision and outcome chain;
 - a question landscape showing hypotheses, evidence coverage, and conflicts;
 - a resource view showing current leases, WIP, congestion, and obligations;
@@ -3003,15 +3544,24 @@ Initial projections include:
 - a Grand Architect review packet that links every summary claim to graph revisions and
   sealed evidence.
 
-Markdown is an excellent human-or-actor projection and XSH is an excellent
-policy and query client. Neither is durable truth. All projections carry the
-source event cursor and can be discarded and rebuilt.
+Markdown is an excellent human-or-actor projection. XSH may later become an
+actor-side query or policy-proposal surface, but not the daemon protocol,
+authority client, or durable truth. All projections carry the source event
+cursor and can be discarded and rebuilt.
 
 ### Questions the system must answer
 
 The architecture is successful only if ordinary typed queries can answer:
 
 - What did the society believe and not know before this change?
+- Which Operating Cycle and pinned policy frontier admitted each action, what
+  is alive now, and what prevents quiescence, reconciliation, or closure?
+- Which curated facts became OperationalNotices or influence, which were
+  coalesced or suppressed, and what authorized action—if any—followed?
+- Where is the Grand Architect Office session in its lifecycle, which decision
+  turn is active, and how much context, time, and money remain?
+- For a cancellation, which generation was fenced, which descendants received
+  abort/TERM/KILL, which were reaped, and which evidence or cost is incomplete?
 - Which independent evidence changed the decision?
 - What dissent was preserved and what would vindicate it?
 - Which predictions are due, failed, censored, or still unresolved?
@@ -3043,20 +3593,21 @@ than “demonstrated.”
 | Epistemic graph | Closed graph kinds, typed revisions and endpoint-checked relations, separate operational state | One complete objective-to-outcome causal episode with a preserved conflict | Ordinary queries reconstruct decisions, dependencies, dissent, and reopen consequences across many episodes without ontology escape hatches |
 | Active provenance and bounded influence | `SignalFamilyRevision`, `DerivedSignal`, `InfluenceCandidate`, eligibility, quotas, effect lineage | Two scoped demand families and one cost or contradiction signal alter a bounded surface with an explanation | Influence improves decisions or attention under matched cost without high-volume capture, contamination, or hidden scalar ranking |
 | Checked propagation | Lesson scope/status, carrier transformations, target ladder, uptake observation, symmetric retraction | One lesson is delivered, encountered, and applied once; no causal claim is made | Matched or randomized evidence supports behavior change, irrelevant scopes remain uncontaminated, and contradiction reopens every dependent carrier |
-| Backpressure and resource accounting | Integer cost, hierarchical reservations, leases, WIP, queue projections, upstream pressure, circuit breakers | Aggregate and per-attempt hard caps, unknown-cost stop, no-action validity, durable outcome capacity | Sustained work avoids unbounded evidence/integration/follow-up queues and allocation changes are attributable to real congestion |
+| Backpressure and resource accounting | Integer cost, hierarchical and cross-cutting envelope constraints, leases, WIP, queue projections, upstream pressure, circuit breakers | Aggregate, Operating Cycle, Office-session, Project, and per-attempt hard caps; unknown-cost stop; no-action validity; durable outcome capacity | Sustained work avoids unbounded evidence/integration/follow-up queues and allocation changes are attributable to real congestion |
 | Multidimensional evaluation | Charter values, hard gates, typed uncertainty, partial orders, Pareto archive, decision process | Behavior, product, discovery, agent-fluency, cost, and propagation evidence remain separate | Later outcomes calibrate tradeoffs and preserve non-dominated alternatives better than a scalar baseline |
-| Reproducible execution | Pinned snapshot, assignment, model policy, profile, Pi session, evaluator, content digests, retry lineage | Native Pi and deterministic runs replay from exact inputs; hindsight frontier is enforced | Independent re-execution reproduces relevant observations and organizational comparisons across environment upgrades |
+| Reproducible execution | Pinned snapshot, assignment, model policy, profile, Node/adapter/Pi-SDK dependency identities, Pi session, evaluator, content digests, retry lineage | Native Pi-SDK and deterministic runs replay from exact inputs; hindsight frontier is enforced | Independent re-execution reproduces relevant observations and organizational comparisons across environment upgrades |
 | Organizational polymorphism | Versioned circuits selected by problem class; Projects and Tickets are generic coordination, not one forced workflow | VS instantiates a semantic/inquiry-product circuit with two decision gates | Multiple circuit families show different non-dominated scopes under matched cases and resources |
 | Organizational heredity | Exact organization and actor configurations on attempts, decisions, products, outcomes, and influence | VS records the full configuration and produces one replayable decision world | Descendant performance can be attributed to named differences, ancestry is preserved, and failed/non-dominated branches remain reproducible |
 | Meta-experimentation | C3 hypotheses, baseline, disclosure frontier, replay/shadow/canary ladder, independent promotion | The historical seed proves outcome-sequestered replay mechanics, not an organization win | A canaried organizational mutation improves held-out or later work and survives rollback and replication criteria |
-| Trusted substrate | Rust types, normalized SQLite, ledger, capabilities, budget physics, content identity, state machines, Git lineage | Kernel tests and VS execute without JSON workflow state or direct SQL mutation | Audit reconstructs state; fault injection defeats forgery, stale writes, authority escalation, overspend, contamination, and history editing |
+| Trusted substrate | Resident Rust authority, typed local protocol, normalized SQLite, ledger, capabilities, Operating Cycles, per-session Pi SDK-host/process ownership, cancellation, tracing, budget physics, content identity, state machines, Git lineage | Kernel tests and VS execute without XSH in the trusted path, Pi CLI modes, JSON workflow state, direct SQL mutation, or unowned SDK hosts | Audit reconstructs state; fault injection defeats forgery, stale writes/spawns, authority escalation, overspend, orphan processes, cancellation loss, contamination, and history editing |
 | Governance as evaluation process | Grand Architect Office, Decision packets, typed dissent/challenge, C0–C5 classes, revisit triggers | C1 and C2 decisions answer independent challenges and retain no-change paths | Calibration and later outcomes improve without consensus erasure or a hidden actor-species veto |
 | Directed intelligence plus evolutionary search | Deliberative trunks allocate bounded speculative branches; branch width is resource policy | VS uses independent inquiry and paired candidates but makes no selection-system claim | Deterministic domains benefit from broader tournaments while ambiguous domains benefit from deliberation under comparable total cost |
 | Developmental attractors and local niches | Attractor biases, demand signals, observed phenotype evidence, profession-recognition lifecycle | Initial labels are preregistered treatment biases only | A phenotype transfers across tasks, answers stable demand cheaply, and can be recognized or dissolved without hard-coded title authority |
 | Diversity and minority preservation | Ancestry-aware independence, lineage and behavior reserves, preserved conflicts, portfolio exploration | Skeptic/adversary branches and minority arguments remain visible through C2 | Diversity prevents a later correlated failure at acceptable coordination cost and does not reduce to cloned prompt labels |
 | Scarcity-shaped corporate intelligence | Grand Architect, Projects, Tickets, pulses, reviews, postmortems, portfolio envelopes | VS runs as one budgeted Project with durable tickets and a zero-cost pulse | The structure improves coherent throughput and recovery relative to a simpler baseline without bureaucratic model-call overhead |
+| Continuous operation with finite evidence | Continuously running `societyd`; bounded Operating Cycles pin configuration, budget, Office session, cancellation root and reconciliation | VS runs one fully reconciled cycle while its delayed outcome survives closure | Successive cycles roll without idle stop/start or historical/configuration blur, and Projects safely span their frontiers |
 | Historical replay and epistemic disclosure | Immutable positive frontier, contamination probes, `DecisionWorld` export | C1 world excludes candidate, aftermath, lessons, and current source | Organizational variants can be compared on stratified histories without direct or indirect hindsight leakage |
-| XSH/product/society co-evolution | XSH product boundary, self-hosting ladder, improvement-productivity experiments | VS ships an XSH invariant and uses XSH for bounded policy/runner work | An XSH revision improves held-out society modification capacity under fixed and adaptive organization comparisons |
+| XSH/product/society co-evolution | XSH product boundary, user-space co-evolution ladder, improvement-productivity experiments | VS ships an XSH invariant and uses XSH only for bounded actor-facing experiments, workloads, or evaluators | An XSH revision improves held-out society modification capacity under fixed and adaptive organization comparisons without entering trusted kernel physics |
 | Discovery/propagation/metamorphosis rates | Separate vectors, obligations, congestion signals, and strict institutional-improvement criterion | VS measures discovery, delivery, and `applied_once`; metamorphosis remains explicitly unproven | A warranted institutional lesson changes later machinery and improves later work under a comparable envelope |
 
 The philosophical principles are also guarded explicitly:
@@ -3084,8 +3635,9 @@ decision that states which invariant and experiment replace it.
 
 ## Physical implementation map
 
-The architecture should remain logically modular even if the first deployment
-is one process and one database.
+The architecture should remain logically modular even though the first
+deployment is one resident daemon, one control client, per-session TypeScript
+Pi SDK hosts, and one database.
 
 ### Rust kernel
 
@@ -3093,12 +3645,15 @@ The first Rust workspace should expose narrow components for:
 
 ```text
 protocol        closed commands, receipts, errors, version negotiation
+wire            length-prefixed local socket frames and exhaustive codecs
+daemon          societyd startup, control/monitor sockets and recovery mode
 identity        principals, configurations, revisions, sessions, episodes
 purpose         Universe Seed revisions, sources, renderings and bootstrap
 authority       capabilities, jurisdiction, delegation, expiry
 offices         office contracts, occupancy, succession and reserved powers
 graph           node/edge contracts and revision validation
 workflow        operational state machines and readiness facts
+cycles          Operating Cycle admission, rollover and reconciliation
 corporate       Projects, Tickets, milestones and coordination pulses
 ledger          events, generations, idempotency, replay audit
 content_objects content addressing, sealing, access and retention
@@ -3107,7 +3662,11 @@ curation        accounts, exclusions, challenges and disclosure frontiers
 influence       signal families, derivation, eligibility, quotas and effects
 review          adversarial reviews, challenge dispositions and postmortems
 resources       integer budgets, reservations, leases, cancellation, accounting
-execution       manifests, attempt lineage, supervisor and workspace receipts
+supervision     child registry, process groups, SDK-host handshake and reaping
+pi              SDK-host protocol, sessions, events, usage, cost and submissions
+cancellation    generation fences, propagation, TERM/KILL and recovery
+observability   tracing spans/levels, notices, coalescing and monitor streams
+execution       typed profiles, attempt lineage, workspaces and receipts
 ecology         derived demand signals, response bids and diversity facts
 propagation     target, delivery, encounter, application and retraction state
 projections     cursors, outbox, rebuild contracts
@@ -3118,35 +3677,52 @@ Module boundaries may change; these ownership boundaries may not disappear into
 one generic job table. SQLite migrations and protocol versions are reviewed
 contracts from the first vertical slice.
 
+### TypeScript Pi SDK host
+
+The V2 repository contains a small `packages/society-pi-host/` package with a
+locked dependency on `@earendil-works/pi-coding-agent` 0.83.0. Its source owns
+only explicit SDK construction, empty resource loading, the closed JSONL
+adapter, exhaustive event conversion, submission-file validation handoff, and
+clean disposal. It has no database library, daemon client, Git delivery logic,
+organization scheduler, or authority types. Rust integration tests spawn its
+compiled entry point against provider-free model/session doubles; separate
+qualification tests exercise the real pinned SDK.
+
 ### XSH surface
 
-Initial XSH modules should own:
+XSH is an optional R2 client and experimental medium, not part of trusted
+bootstrap. Initial XSH packages may provide:
 
 ```text
-society.client       typed protocol invocation and error handling
-society.purpose      Universe Seed query, rendering and source divergence
-society.experiment   manifest construction and bounded execution requests
-society.policy       circuit, admission, and scheduling variants
-society.context      declared graph/context projections
-society.evaluate     deterministic and sampled evaluator composition
-society.product      isolated XSH change and verification workflows
-society.observe      scheduled outcome and ecosystem probes
-society.review       decision, challenge, postmortem and evidence projections
-society.coordinate   Project, Ticket and coordination-pulse projections
+society.query        read-only typed queries and projection rendering
+society.propose      untrusted proposal construction submitted to societyd
+society.experiment   actor-owned experiment and workload programs
+society.evaluate     candidate deterministic/sampled evaluators as children
+society.observe      candidate ecosystem and delayed-outcome probes
+society.actor_tools  evolving tools used inside declared actor workspaces
 ```
 
-These are domain targets, not prematurely frozen names. They use typed paths,
-structured data, explicit `Result` errors, capability-aware process execution,
-and stable content identifiers. If XSH cannot express one clearly, the gap
-becomes a Question with a minimal host boundary, not an invisible Python or
-shell escape.
+These use typed paths, structured data, explicit `Result` errors, and stable
+content identifiers. They do not open SQLite, spawn Pi, own a process registry,
+interpret capabilities, apply product commits, or decide a lifecycle
+transition. `societyd` supervises them as untrusted deterministic or actor
+children. If XSH cannot express one clearly, Rust remains the explicit host
+boundary; trusted physics is not weakened to advance a self-hosting story.
 
-### One authority, many workers
+### One resident authority, many children
 
-SQLite is initially one-writer transactional authority. Agent and deterministic
-workers are horizontally parallel outside it. They claim bounded work, execute
-in owned native directories or worktrees, and submit typed results. The design
-does not require a distributed database to demonstrate a society.
+`societyd` is the only SQLite writer, process supervisor, and content-store
+committer. `societyctl` and monitors communicate through local Unix-domain
+sockets. Agent and deterministic children are horizontally parallel outside
+the daemon. They execute in owned native directories or worktrees and return
+closed results through kernel-owned pipes/files; the daemon attributes and
+submits those results on their behalf. No child receives a reusable control
+credential merely because it has `bash`.
+
+The service can use ordinary threads and bounded channels initially. Selecting
+an async runtime, SQLite crate, or extra tracing writer is a dependency decision
+to present separately; this architecture authorizes `tracing` and
+`tracing-subscriber`, not an undeclared framework.
 
 If scale later requires another store, the migration must preserve command,
 ledger, ordering, lease, and replay semantics. Distribution is not itself an
@@ -3160,8 +3736,9 @@ uses it.
 
 ### Stage 0: install the origin contract
 
-Create the society identity, install and occupy the Grand Architect office,
-propose and ratify the initial Universe Seed, then write the node and relation
+Create the society identity, install the founding Universe Seed through its
+one-time consumed bootstrap capability, install and occupy the Grand Architect
+office, then write the node and relation
 schemas, command protocol, change classes, capability lattice, episode
 transitions, evidence-admission and curation contracts, disclosure-frontier
 rules, and V1 import contract. Define which clauses are R0, R1, or R2 before
@@ -3176,9 +3753,11 @@ Exit evidence:
 
 ### Stage 1: build trusted physics
 
-Implement the Rust kernel, SQLite migrations, content-object store, ledger,
-authority, resources, execution receipts, worktree lineage, projections, and
-replay audit.
+Implement resident `societyd`, `societyctl`, TypeScript `society-pi-host`, SQLite
+migrations, the binary local protocol, content-object store, ledger, authority,
+Operating Cycles, budgets, Pi SDK-host supervision, tracing and monitor
+notices, hierarchical cancellation, execution/worktree receipts, projections,
+recovery, and replay audit.
 Use deterministic transaction, state-machine, concurrency, recovery, and
 fault-injection tests. No paid model work is necessary.
 
@@ -3187,6 +3766,14 @@ Exit evidence:
 - an interrupted attempt recovers without duplicated work or lost evidence;
 - forged identity, stale generation, authority escalation, content mismatch,
   and resource overrun are rejected;
+- INFO-and-higher progress streams with exact IDs while raw Pi content and
+  secrets remain outside the log surface;
+- quiesce, graceful cancel, emergency stop, daemon crash before/after
+  `CreateSession`,
+  ignored TERM, orphan detection, partial sealing, and restart reconciliation
+  pass with process doubles;
+- an agent Grand Architect SDK-host double receives bounded notices, returns a typed
+  decision, and can be aborted without receiving control credentials;
 - all projections rebuild from authoritative data; and
 - an independent audit reconstructs the materialized state from the ledger.
 
@@ -3203,24 +3790,28 @@ question is:
 
 The episode must include:
 
-1. a scoped objective and resolution condition;
-2. three competing hypotheses: missing behavior, culturally stale records, and
+1. one bounded Operating Cycle inside a continuously running daemon, with an
+   aggregate budget, tracing/monitor stream, Grand Architect Office session,
+   cancellation root, and reconciliation;
+2. a scoped objective and resolution condition;
+3. three competing hypotheses: missing behavior, culturally stale records, and
    split or accidental behavior;
-3. curated V1 usage as historical evidence without importing its controller;
-4. an explicit curated account which selects consequential evidence, preserves
+4. curated V1 usage as historical evidence without importing its controller;
+5. an explicit curated account which selects consequential evidence, preserves
    dissent, and states exclusions;
-5. a deterministic behavior/documentation matrix plus a paired native-Pi
+6. a deterministic behavior/documentation matrix plus a paired native-Pi
    baseline/candidate task microprobe;
-6. a preserved conflict if the evidence is underdetermined;
-7. a decision packet with no-change option, predictions, dissent, and revisit
+7. a preserved conflict if the evidence is underdetermined;
+8. a decision packet with no-change option, predictions, dissent, and revisit
    triggers;
-8. one bounded XSH reconciliation commit if authorized;
-9. short- and delayed-horizon outcomes;
-10. one L1 lesson delivered to, encountered by, and applied once in a fresh
+9. one bounded XSH reconciliation commit if authorized;
+10. short- and delayed-horizon outcomes;
+11. one L1 lesson delivered to, encountered by, and applied once in a fresh
     matching inquiry, without overclaiming causal behavior change;
-11. an epistemic disclosure frontier which exports the episode as a future
+12. an epistemic disclosure frontier which exports the episode as a future
     blinded decision world; and
-12. a retrospective on the XSH decision, curation, and circuit used.
+13. a retrospective on the XSH decision, curation, circuit, monitoring cost,
+    cancellation readiness, and Operating Cycle used.
 
 Exit evidence:
 
@@ -3372,6 +3963,14 @@ V2 rejects:
   from commit count;
 - XSH self-use used to evade its systems-glue scope or the Rust durability
   boundary;
+- an XSH Pi runner, SQLite client, process reaper, cancellation script, or Git
+  materializer placed on the trusted path for aesthetic self-hosting;
+- an unbounded “continuous run” with no pinned Operating Cycle, finite budget,
+  cancellation root, reconciliation, or successor frontier;
+- OS signals, PID files, log messages, or process-table scraping treated as the
+  cancellation state machine;
+- tracing treated as a ledger, provenance corpus, scheduler input, or raw
+  context stream to the Grand Architect;
 - a mutable evaluator certifying itself, a circuit granting itself authority,
   or a seed amendment rewriting the purpose attributed to ancestral work; and
 - claims of autonomous improvement that omit external interventions, failed
