@@ -1,10 +1,12 @@
-# `society-product` — isolated guarded materialization core
+# `society-product` — guarded Git materialization core
 
-This standalone workspace implements only provider-free local Git
-materialization mechanics. It is not a durable authority: callers supply
-already-authorized identities and persist the returned evidence.
+This repository-root workspace member implements only provider-free local Git
+materialization mechanics. It is not a durable authority: its trusted caller
+supplies a typed `ProductChangeAuthorizationInput`, whose construction proves
+no kernel or other authority issuance, and persists the returned evidence.
+Dependency resolution is governed by the repository-root `Cargo.lock`.
 
-The public boundary accepts already-authorized identities and returns typed
+The public boundary accepts that caller-supplied input and returns typed
 receipts for:
 
 - clean source qualification at a local `refs/heads/*` head;
@@ -31,7 +33,7 @@ hooks, disabled fsmonitor/global attributes/external diff, no text conversion,
 and no remote operation. Repository config that enables a filter or included
 configuration is rejected. Git stdout (32 MiB), stderr (1 MiB), patch artifacts
 (32 MiB), and operation time (30 seconds) are bounded. The timeout owns only
-the directly spawned, trusted Git executable; this standalone crate has no
+the directly spawned, trusted Git executable; this workspace member has no
 process-group supervisor and does not claim to terminate arbitrary descendants
 of a compromised Git binary.
 
@@ -40,9 +42,9 @@ materialization, and delivery receipts have private fields with narrow
 read-only accessors. An external supervisor constructs its opaque typed
 receipt through constructors rather than mutable receipt fields. Delivery also
 independently rechecks every
-authorization-to-tree/patch/profile/validation/commit edge before its target
-branch CAS, so a receipt reconstructed by a future persistence boundary cannot
-mix an authorization from one candidate with another candidate's tree.
+authorization-input-to-tree/patch/profile/validation/commit edge before its
+target branch CAS, so a receipt reconstructed by a future persistence boundary
+cannot mix an input from one candidate with another candidate's tree.
 
 The core deliberately does not spawn external validation programs: without a
 process-group and cancellation owner it could not safely impose a deadline or
@@ -62,9 +64,9 @@ persist the resulting receipt/evidence.
 Run the provider-free contract suite from the repository root:
 
 ```text
-cargo test --manifest-path crates/society-product/Cargo.toml
-cargo clippy --manifest-path crates/society-product/Cargo.toml --all-targets -- -D warnings
-cargo fmt --manifest-path crates/society-product/Cargo.toml --check
+cargo test -p society-product
+cargo clippy -p society-product --all-targets -- -D warnings
+cargo fmt --all --check
 ```
 
 The tests require a local `/usr/bin/git` (the current macOS host path) and

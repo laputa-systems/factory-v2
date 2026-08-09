@@ -28,9 +28,27 @@ then
     exit 1
 fi
 
+# These names belonged to a former synthetic catalog application.  Even a
+# provider-free example must not smuggle product/evaluator semantics back into
+# generic crate tests under the guise of proving genericity.
+if rg -n -i 'aurora-catalog|price_cents|verify-catalog' crates migrations packages tests \
+    --glob '!generic-boundary/**' \
+    --glob '!tests/generic-boundary/**'
+then
+    echo 'generic boundary contains an application-shaped fixture' >&2
+    exit 1
+fi
+
 if rg -n 'applications/' Cargo.toml Cargo.lock
 then
     echo 'root workspace manifest or lockfile depends on an application workspace' >&2
+    exit 1
+fi
+
+
+if test -e crates/society-product/Cargo.lock
+then
+    echo 'root workspace member retains a stale nested lockfile' >&2
     exit 1
 fi
 
