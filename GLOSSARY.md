@@ -537,25 +537,35 @@ seal and admit the bytes.
 
 ### Pi supervisor
 
-The Rust `PiSupervisor` subsystem inside `societyd`. It exclusively reserves,
-spawns, registers, observes, costs, cancels, reaps, and seals one-shot Pi task
-processes and persistent Pi SDK Office sessions. It starts each
-`society-pi-host` inert, records `AdapterReady`, rechecks admission, and only
-then permits `CreateSession`. It is trusted physics, not an actor, Office, or
-XSH program.
+The Rust `PiSupervisor` subsystem inside `societyd`. It exclusively owns the
+native process-group and pipe physics for one-shot Pi task processes and
+persistent Pi SDK Office sessions: workspace custody, artifact verification,
+inert spawn, nonblocking I/O, protocol observation, signalling, waiting, and
+reaping. The daemon bridge and Rust kernel—not `PiSupervisor` alone—own durable
+admission, receipt persistence, content sealing, budgets, and eventual cost or
+semantic reconciliation. The supervisor starts each `society-pi-host` inert;
+the bridge records `AdapterReady`, rechecks admission, and only then permits
+`CreateSession`. It is trusted physics, not an actor, Office, or XSH program.
 
-The landed native process-physics boundary currently implements only owned
-workspace allocation, artifact verification, inert spawn, nonblocking control
-delivery, bounded handshake observation, process-group cancellation/reaping,
-and transient typed receipts. Its `admitted_control` capture is the logical
-JSONL frame accepted by the Rust peer; its `stdin` capture is only the exact
-byte prefix successfully written to the OS pipe. Neither capture is a sealed
-`ContentObject`. The kernel now has durable, replay-validated child admission,
-spawn/protocol, signal, reap/recovery, stream-seal, and cancellation-
-propagation transitions, but the resident daemon does not yet drive those
-transitions from `PiSupervisor`. Budget/cost reconciliation, transcript and
-stream sealing, semantic settlement, restart orchestration, and execution-
-profile qualification remain separate work.
+The landed native process-physics boundary implements owned workspace
+allocation, artifact verification, inert spawn, nonblocking control delivery,
+bounded handshake observation, process-group cancellation/reaping, and typed
+transient receipts. Its `admitted_control` capture is the logical JSONL frame
+accepted by the Rust peer; its `stdin` capture is only the exact byte prefix
+successfully written to the OS pipe.
+
+The daemon-private M5 bridge now drives one provider-free Grand Architect
+Office child through durable admission, PID/PGID registration,
+`AdapterReady`, final `CreateSession` authorization and complete physical
+delivery, `SessionReady`, a repeated live-child Office gate, `Dispose`, direct
+reap, lingering-group cleanup, four-direction content sealing, and
+finalization. A native child whose first PID/PGID receipt cannot be persisted
+is physically contained but receives no fabricated kernel child receipt; its
+admission remains unresolved and the resident becomes `RecoveryFenced`.
+There is still no resident scheduler call site, Prompt/FollowUp/Steer path,
+typed cancellation-propagation/Abort driver, usage or cost reconciliation,
+semantic settlement, transcript-file admission, restart orchestration,
+workspace disposal, or execution-profile qualification.
 
 ### Portfolio
 

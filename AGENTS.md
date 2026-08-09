@@ -64,8 +64,9 @@ circuits/vs-001-spawn-stderr/
                            process ownership and authority remain outside it
 
 crates/society-pi/         implemented provider-free-audited typed Rust peer;
-                           durable charging, transcript/evidence binding, and
-                           daemon-driver integration remain
+                           daemon-private pre-Prompt driver integration landed;
+                           charging, transcript/evidence, semantic settlement,
+                           scheduler, and restart integration remain
 crates/society-content/    implemented root-workspace physical byte-seal store;
                            it confers no evidence or provenance meaning
 crates/society-circuit/    implemented root-workspace closed VS-001 observation
@@ -74,9 +75,9 @@ crates/society-product/    implemented isolated guarded local Git
                            materialization; durable authorization remains
 crates/societyd/           implemented bounded resident SQLite authority,
                            monitor, private physical-to-kernel content writer,
-                           and native Pi child/process-group physics; durable
-                           kernel receipts now exist, but their resident driver
-                           and restart-recovery integration remain
+                           native Pi child/process-group physics, and a private
+                           same-lifetime Office receipt driver; scheduler,
+                           semantic settlement, and restart recovery remain
 crates/societyctl/         implemented public query and supervisor-stream client
 tests/daemon/              implemented resident-protocol integration fixtures
 tests/supervision/         provider-free native Pi-host process/race fixture

@@ -789,10 +789,12 @@ reserve Attempt/OfficeSession and commit exact pre-spawn admission in SQLite
   -> a distinct turn authorization is required before Prompt
 ```
 
-The current M5 kernel stores the authorized/delivered Create correlation and
-digest but does not itself observe pipe I/O. The resident driver must bind that
-delivery command to a complete physical write; until that integration lands,
-the row is typed authority vocabulary rather than independent write proof.
+The M5 kernel stores the authorized/delivered Create correlation and digest but
+does not itself observe pipe I/O. The daemon-private provider-free Office
+bridge now binds that delivery command to `PiSupervisor`'s complete physical
+write before admitting `SessionReady`. This is a same-resident-lifetime bridge,
+not an independent OS attestation or a resident scheduler: no Prompt, usage,
+cost, semantic settlement, or restart recovery follows from the row.
 
 Pipe EOF normally makes a still-inert host exit without constructing a session,
 but a daemon restart does not infer that physical outcome. A durable admission
