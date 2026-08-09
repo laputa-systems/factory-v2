@@ -859,38 +859,49 @@ retained until delivery or explicit retirement.
 task attempts and the Grand Architect SDK Office process. No XSH program, actor,
 or detached cleanup script can create a Pi `AgentSession`. For every child it:
 
-1. reserves all applicable budgets and obtains the current Operating Cycle
-   admission generation in one transaction;
+1. reserves all applicable budgets, obtains the current Operating Cycle
+   admission generation, and commits one exact pre-spawn admission binding the
+   owner, profile, workspace identity and path, supervisor epoch, Pi session,
+   and spawn nonce;
 2. creates the workspace, sealed input copies, pipes, and pre-execution
    filesystem/Git receipt;
 3. spawns the pinned compiled `society-pi-host` entry point under the exact Node
    executable as a new owned process group; the host is inert and may not call
    `createAgentSession()` yet;
-4. waits for `AdapterReady { pid, spawn_nonce, identities }`, cross-checks the
-   PID, records it with the Rust-created process group in `child_processes`, and
-   rechecks cycle state, generation, capability, reservation, and cancellation
-   ancestry;
-5. sends `CreateSession` only after that recheck; the host exits on denial or
-   control-pipe EOF, constructs the exact SDK session after authorization, and
-   must return a matching effective `SessionReady` before Rust sends `Prompt`;
-6. streams and incrementally normalizes host results, SDK event projections,
+4. immediately records the direct PID and owned process group against that
+   admission, before waiting for output, so a silent inert child remains a
+   known containment obligation;
+5. waits for `AdapterReady { pid, spawn_nonce, identities }`, cross-checks the
+   registered PID and exact identities, then commits that protocol fact;
+6. commits a final `CreateSession` authorization after rechecking cycle state,
+   generation, capability, reservation, owner, profile, and cancellation
+   ancestry; only then may the resident driver write the exact correlated
+   Create frame and, after a complete pipe write, record the separate delivery
+   attestation;
+7. requires a matching effective `SessionReady` from that still-running child
+   before the Office becomes `Ready` or a separately authorized `Prompt` may
+   begin; every later Office-turn admission repeats the live-child check;
+8. streams and incrementally normalizes host results, SDK event projections,
    the canonical SessionManager file, turns, usage, and provider cost;
-7. on normal process completion, waits and reaps the owned process group,
+9. on normal process completion, waits and reaps the owned process group,
    reconciles event settlement, final assistant stop reason, retry history,
    session entries, submission protocol, exit status, signal, duration, budget,
    and post-workspace receipt;
-8. on interruption, executes the cancellation protocol below and preserves
+10. on interruption, executes the cancellation protocol below and preserves
    partial streams, session, stderr, workspace, cost knowledge, and signal
    receipts rather than manufacturing normal settlement; and
-9. seals required forensic content, registers the manifest and normalized
+11. seals required forensic content, registers the manifest and normalized
    terminal facts, reconciles reservations, then releases the lease.
 
 The handshake closes the dangerous interval in which a stale scheduler could
-create a paid SDK session after quiescence but before the daemon records a PID.
-A generation fence alone is insufficient: reservation, child registration,
-and the final pre-`CreateSession` check are all required. Later session commands
-use the same closed adapter stream and sequence; `AdapterReady` does not imply
-that a model or session has started.
+create a paid SDK session after quiescence. A generation fence alone is
+insufficient: durable pre-spawn admission, prompt child registration, the
+verified handshake, final committed `CreateSession` authorization, and its
+delivery attestation are distinct gates. The current M5 kernel stores the
+correlation and digest but cannot independently observe pipe I/O; the still-
+open resident driver must bind that attestation to a complete physical write.
+Later session commands use the same closed adapter stream and sequence; neither
+`AdapterReady` nor `SessionReady` alone authorizes a paid model turn.
 
 Cancellation is a typed control-plane command, not a `DerivedSignal`, trace
 message, or convention. VS-001 implements:
@@ -3057,6 +3068,7 @@ An enclosing milestone remains open until its exit judge passes.
 | `7931d32` | isolated local product mechanics: clean exact-ref qualification, immutable candidate-tree capture, binary patch/path binding, opaque anti-recombination receipts, fresh materialization, bounded trusted-Git validation, externally supervised XSH/Xsht receipt seam, controlled no-hook commit, guarded CAS delivery, explicit checkout-recovery fence, and no-follow cleanup ownership across 22 provider-free tests | kernel C2/delivery authority, SQLite persistence/idempotency, daemon workspace/process custody, authentic validation/process evidence, content sealing, budgets/cancellation, outcome scheduling, remote delivery, and Milestone 6 as a whole |
 | `71ad51e` | normalized deterministic content/evidence foundation: global digest identity is separated from run-specific manifest producer/schema/retention, evaluator/input revisions and evaluation receipts are exact, evidence admission preserves semantic role/applicability/limitations, two experiments may reuse identical output bytes without merging provenance, and all command/event bodies, material replay, migration rollback, and resident rejection/treatment wire values are closed across 30 kernel and 11 daemon integration tests | physical content-store invocation, evaluator execution and artifact authentication, parsed observation persistence, Pi/process receipts, curation/graph conversion, daemon command integration, influence/disclosure/propagation, and Milestone 1 as a whole |
 | `64a5977` | root-workspace physical content integration: the resident daemon exclusively owns the physical store, seals exact bytes before issuing the existing receipt and global-object commands, resumes the closed `Absent`/`SealReceiptOnly`/`Registered` split within one live authority using retry-stable command identities, rejects tamper/symlink/limit and changed-byte recombination, and exposes no public or supervisor content mutation tag across 14 daemon integration tests plus the nine physical-store tests | post-process restart completion or reconciliation (restart remains `RecoveryFenced`); evaluator execution or artifact authentication; media/schema, producer, retention, provenance, evidence, graph, or influence meaning; durable child/process integration; and Milestone 1 as a whole |
+| `6e2931e` | durable native Pi-child and cancellation authority foundation: one restart-fenced supervisor epoch; exact pre-spawn owner/budget/profile/generation/workspace/session admission; separately recorded inert spawn, `AdapterReady`, final Create authorization and delivery, and `SessionReady`; live-child Office gates; typed four-direction stream seals; append-only liveness, Pi Abort, TERM/KILL, direct reap, recovery-containment, finalization, admitted-not-spawned, and frozen cancellation-target receipts; closed migration/body/rejection-wire/replay contracts across 42 kernel tests | resident `PiSupervisor`-to-kernel driver; actual stream/transcript sealing; Prompt/FollowUp/Steer and semantic settlement; provider cost charging; elapsed-time/deadline proof; workspace disposal; native SDK qualification; post-restart containment orchestration and successor policy; deterministic evaluator children; and Milestone 5 as a whole |
 
 The current coordination, M3 execution, and deterministic-evidence kernel is
 still a bounded foundation,
@@ -3076,17 +3088,21 @@ authenticate evaluator artifacts, persist parsed observations, or turn an
 admission into graph truth. Its two split-transition retry seams are
 same-lifetime evidence only: a restarted nonempty daemon remains
 `RecoveryFenced` and cannot complete a half-recorded content operation.
-Curation, delivery, notices/outbox, process receipt binding, native
-qualification, recovery, and the full graph vocabulary are still open.
+Curation, delivery, notices/outbox, daemon-to-kernel process receipt binding,
+native qualification, recovery orchestration, and the full graph vocabulary
+are still open.
 
 The current M4 supervisor is likewise a bounded native process-physics
-boundary, not durable supervision. `PiSupervisor` is exported by `societyd`,
-but the resident control loop does not yet reserve or register its child,
-persist stream or signal receipts, seal their bytes, reconcile cost, or recover
-the process after daemon restart. A supplied host artifact and package-set
-digest are verified bytes; this provider-free tranche does not prove that an
-arbitrary adapter dynamically imports the claimed Pi package set and does not
-qualify the native execution profile.
+boundary. The M5 kernel now supplies its durable authority and receipt
+vocabulary, replay validation, cancellation target accounting, recovery-
+containment state, and live-child Office fences, but `PiSupervisor` is not yet
+driven by the resident control loop and therefore those durable transitions do
+not yet attest real supervisor I/O. The daemon still does not seal captured
+streams/transcripts, normalize semantic settlement or cost, dispose workspaces,
+or orchestrate post-restart containment. A supplied host artifact and package-
+set digest are verified bytes; this provider-free foundation does not prove
+that an arbitrary adapter dynamically imports the claimed Pi package set and
+does not qualify the native execution profile.
 
 ### Milestone 1: contracts in executable form
 

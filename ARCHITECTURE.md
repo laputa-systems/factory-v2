@@ -776,22 +776,33 @@ Process ownership begins before the SDK may create an `AgentSession` or make a
 model request:
 
 ```text
-reserve Attempt/OfficeSession and admission generation in SQLite
+reserve Attempt/OfficeSession and commit exact pre-spawn admission in SQLite
   -> spawn society-pi-host inert in a new owned process group
+  -> immediately register direct PID and process-group ownership
   -> host reports AdapterReady with pid, nonce and Node/adapter/Pi identities
-  -> Rust cross-checks pid, records its own process-group identity, and rechecks
-     generation, cancellation and budget
-  -> Rust sends CreateSession as the authorization gate; host constructs the exact SDK session
-  -> Rust validates SessionReady before sending Prompt
+  -> Rust cross-checks pid and identities, then records AdapterReady
+  -> kernel rechecks generation, cancellation, owner, profile and budget and
+     commits final CreateSession authorization
+  -> resident driver writes the exact CreateSession frame and, only after a
+     complete pipe write, records the correlated delivery attestation
+  -> Rust validates SessionReady from the still-running child
+  -> a distinct turn authorization is required before Prompt
 ```
 
-If `societyd` crashes before `CreateSession`, pipe EOF makes the inert host exit
-without constructing a session. If cancellation wins the generation race, Rust
-closes or kills the host and records a cancelled pre-session Attempt. During an
-active session, cooperative cancellation calls SDK `abort()`; deadline
-escalation sends TERM and then KILL to the host process group. This removes the
-unowned paid-execution window without pretending process launch and SQLite
-commit are one OS transaction.
+The current M5 kernel stores the authorized/delivered Create correlation and
+digest but does not itself observe pipe I/O. The resident driver must bind that
+delivery command to a complete physical write; until that integration lands,
+the row is typed authority vocabulary rather than independent write proof.
+
+Pipe EOF normally makes a still-inert host exit without constructing a session,
+but a daemon restart does not infer that physical outcome. A durable admission
+without a spawn receipt remains an explicit unresolved obligation; a registered
+group enters recovery containment without inventing parentage or `wait(2)`.
+If cancellation wins the generation race, Rust closes or kills the host and
+records a cancelled pre-session Attempt. During an active session, cooperative
+cancellation calls SDK `abort()`; deadline escalation sends TERM and then KILL
+to the host process group. This removes the unowned paid-execution window
+without pretending process launch and SQLite commit are one OS transaction.
 
 A working directory is an ownership and reproducibility boundary, not a
 security sandbox. A Pi actor with the `bash`, `read`, `edit`, or `write` tools
@@ -3477,11 +3488,12 @@ is. Partial observations retain their actual evidence status rather than being
 deleted or promoted to failure evidence automatically.
 
 Every admission scope has a monotonically increasing admission generation.
-A spawn reservation captures the generation; the SDK host receives
-`CreateSession` only
-after the kernel confirms it remains current. Quiesce or cancellation increments
-the generation transactionally before propagation, so a racing scheduler cannot
-start a child from a stale readiness result.
+A pre-spawn admission captures the generation; the SDK host receives
+`CreateSession` only after a separately committed final authorization confirms
+it remains current. Quiesce or cancellation increments the generation
+transactionally before propagation, so a racing scheduler cannot start a child
+from a stale readiness result. Recording later buffered delivery or
+`SessionReady` evidence never reopens the cancelled authority.
 
 The cancellation root remains nonterminal until:
 

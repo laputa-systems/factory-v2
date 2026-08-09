@@ -89,11 +89,30 @@ A typed control-plane command over a named scope, represented as
 grace deadline, propagation rule, and evidence-retention policy. Cancellation
 is not a derived demand signal and cannot be created by signal pressure alone.
 
+### Cancellation propagation
+
+The durable expansion of one accepted `CancellationRequest` into an exact,
+frozen set of owner and child obligations. Each target retains its typed
+disposition—including admitted-but-not-yet-spawned work—until process,
+evidence, and containment receipts justify reconciliation. A Pi `Abort`, an OS
+signal, a direct-child reap, and post-restart absence are distinct facts and
+cannot substitute for one another.
+
 ### Capability
 
 A narrow durable permission to execute a named command over a named
 jurisdiction. Capability, jurisdiction, expiry, and current office occupancy—not
 titles in prompts—determine authority.
+
+### Child process lifecycle
+
+The generic OS-custody state of one registered native child: `Spawned`,
+`Running`, `CancellationRequested`, `DirectChildReaped`,
+`RecoveryContainmentRequired`, `LostParentage`, `ContainmentFailed`, or
+`Finalized`. Pi protocol progress is a separate one-to-one state, so a retained
+`SessionReady` fact cannot make a reaped or recovery-contained host operational.
+An Office becomes Ready and opens each new turn only while its exact child is
+both `Running` and Pi `SessionReady`.
 
 ### Causal episode
 
@@ -235,6 +254,15 @@ A heritable bias in how an actor notices, questions, experiments, checks, or
 communicates. Its realized behavior depends on local demand, culture, tools,
 peers, and resources. It is not a disguised corporate title.
 
+### Direct-child reap receipt
+
+The trusted supervisor's one-shot `wait(2)` observation for a process it still
+parents, including the closed exit/signaled/unknown wait status and process-
+group liveness before and after cleanup. Exit code zero is process physics, not
+a Pi settlement, valid submission, accepted evidence, or successful Attempt.
+After daemon parentage is lost, liveness may still be observed but this receipt
+can never be recreated.
+
 ### Disclosure frontier
 
 An immutable positive allowlist of revisions, evidence, snapshots, culture,
@@ -356,6 +384,16 @@ configuration to a SHA-256 digest and is checked before and after SDK model
 resolution. It is not authentication material, an ambient `models.json`, or a
 provider-discovery result.
 
+### Native workspace identity
+
+The opaque logical identity allocated to one supervised native workspace. It
+is stored separately from a syntactically canonical absolute path supplied by
+trusted supervisor authority, so logical identity and path spelling cannot be
+silently recombined. The M5 kernel does not perform filesystem `realpath`,
+private-root custody, or workspace creation; the still-unintegrated resident
+driver must establish those physical facts. A native workspace is not a
+security sandbox against a hostile same-UID process.
+
 ### North-star alignment
 
 The operational test derived from the mission. A project, ticket, decision,
@@ -439,6 +477,14 @@ those bytes into typed values before they can affect SQLite state. No Pi CLI
 mode and no other durable V2 workflow uses JSON payloads, columns, manifests,
 or projections.
 
+### Pi Abort control receipt
+
+The exact correlation, canonical command digest, cancellation propagation, and
+physical write outcome for one SDK-host `Abort` command. `FullyWritten`, pipe
+closure, write failure, and discarded partial write remain distinct. Any
+honest attempt may justify bounded escalation, but only a full write claims
+delivery; this is never an OS signal receipt.
+
 ### Pi boundary peer
 
 The typed Rust state machine in `crates/society-pi/` that admits and seals exact
@@ -449,6 +495,15 @@ prompt-attributed usage before returning a closed observation to `societyd`.
 It is deliberately not the durable supervisor: process ownership, SQLite
 correlation, evidence-object sealing, budget charging, and reaping remain
 `PiSupervisor` responsibilities.
+
+### Pi child spawn admission
+
+The durable pre-spawn authority binding one exact Attempt or Grand Architect
+office session to its active budget reservation, execution profile, admission
+generation, supervisor epoch, workspace, Pi session identity, and spawn nonce.
+It is not a PID claim. Native spawn is recorded separately; an admission which
+never spawns must be invalidated with a closed reason before cancellation can
+reconcile.
 
 ### Pi SDK host
 
@@ -482,9 +537,12 @@ delivery, bounded handshake observation, process-group cancellation/reaping,
 and transient typed receipts. Its `admitted_control` capture is the logical
 JSONL frame accepted by the Rust peer; its `stdin` capture is only the exact
 byte prefix successfully written to the OS pipe. Neither capture is a sealed
-`ContentObject`. Durable child registration, budget/cost reconciliation,
-content sealing, evidence admission, restart recovery, and execution-profile
-qualification remain separate kernel/daemon transitions.
+`ContentObject`. The kernel now has durable, replay-validated child admission,
+spawn/protocol, signal, reap/recovery, stream-seal, and cancellation-
+propagation transitions, but the resident daemon does not yet drive those
+transitions from `PiSupervisor`. Budget/cost reconciliation, transcript and
+stream sealing, semantic settlement, restart orchestration, and execution-
+profile qualification remain separate work.
 
 ### Portfolio
 
@@ -517,6 +575,14 @@ process escape, invariant failure, or repeated project miss. It preserves a
 ledger-derived timeline, competing causal claims, containment, contributing
 conditions, counterfactuals, and separately admitted corrective actions. It is
 not a blame ritual and cannot silently enact its recommendations.
+
+### Process signal receipt
+
+One append-only observation binding an exact child and process group to TERM,
+KILL, or lingering-group KILL; delivered, absent-before, absent-during, or
+inaccessible outcome; subsequent liveness; and either one frozen cancellation
+propagation or automatic boundary containment. It records what the OS boundary
+reported, not a clock deadline, process settlement, or semantic success.
 
 ### Principal
 
@@ -577,6 +643,14 @@ and public monitoring remain available, and an exact duplicate command can
 recover its receipt, but new mutation is refused until a future typed recovery
 workflow proves the interrupted process, session, budget, and evidence state.
 
+### Recovery containment required
+
+The nonterminal child state used after restart when parentage is lost but the
+recorded process group is still present. Only typed containment, signal, and
+liveness receipts may advance it. Pi protocol continuation and direct-child
+reaping are forbidden; later absence becomes `supervision_lost`, while
+inaccessibility becomes `containment_failed`. Neither is normal completion.
+
 ### Retrospective
 
 A routine account of what an episode, project, or circuit learned. Unlike a
@@ -612,6 +686,26 @@ checked culture, scarce resources, and product artifacts. The term licenses
 only mechanisms with demonstrated engineering value; it does not imply money,
 trade, electoral politics, simulated emotions, autonomous demography, or a
 general social world simulator.
+
+### Stream seal
+
+The typed binding between one child and one closed direction—logically
+admitted control, physical stdin, stdout, or stderr—plus its full observed
+digest, retained `ContentObject`, and completeness class. `Complete` requires
+the retained object digest to equal the full digest. `PrefixBounded` is a
+supervisor attestation of partial capture and never claims that its retained
+object equals the whole stream; the current kernel does not independently
+prove that those bytes form the physical prefix. `CountOverflow` forces
+containment failure. The resident capture/seal driver is still open, and these
+operational receipts do not automatically become provenance, graph truth, or
+actionable influence.
+
+### Supervisor epoch
+
+One exact resident-supervisor lifetime under which child admissions and
+receipts are attributed. M5 permits one restart-fenced epoch and gives it event
+ordering only: the epoch does not attest wall time, monotonic elapsed time, or
+that TERM/KILL deadlines were met.
 
 ### Supervisor authority channel
 

@@ -51,10 +51,11 @@ rust-toolchain.toml        exact Rust toolchain for trusted physics
 
 Cargo.toml                 Rust workspace manifest
 crates/society-kernel/     implemented bootstrap, coordination, bounded
-                           execution, and deterministic evidence foundations;
-                           remaining Milestone-1 domains grow here
+                           execution, deterministic evidence, and durable
+                           native Pi-child/cancellation foundations; remaining
+                           Milestone-1 domains grow here
 migrations/                normalized monotonic SQLite migrations; migrations
-                           1 through 4 own the current kernel foundation schema
+                           1 through 5 own the current kernel foundation schema
 
 packages/society-pi-host/  implemented and provider-free-audited Pi SDK host;
                            durable Rust authority remains outside this boundary
@@ -63,8 +64,8 @@ circuits/vs-001-spawn-stderr/
                            process ownership and authority remain outside it
 
 crates/society-pi/         implemented provider-free-audited typed Rust peer;
-                           durable sealing, charging, and process ownership remain
-                           in the planned resident authority
+                           durable charging, transcript/evidence binding, and
+                           daemon-driver integration remain
 crates/society-content/    implemented root-workspace physical byte-seal store;
                            it confers no evidence or provenance meaning
 crates/society-circuit/    implemented root-workspace closed VS-001 observation
@@ -74,7 +75,8 @@ crates/society-product/    implemented isolated guarded local Git
 crates/societyd/           implemented bounded resident SQLite authority,
                            monitor, private physical-to-kernel content writer,
                            and native Pi child/process-group physics; durable
-                           Pi receipt and restart-recovery integration remains
+                           kernel receipts now exist, but their resident driver
+                           and restart-recovery integration remain
 crates/societyctl/         implemented public query and supervisor-stream client
 tests/daemon/              implemented resident-protocol integration fixtures
 tests/supervision/         provider-free native Pi-host process/race fixture
