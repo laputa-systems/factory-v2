@@ -1,4 +1,4 @@
-/target/
+target/
 /var/
 /packages/society-pi-host/node_modules/
 /packages/society-pi-host/dist/

@@ -59,12 +59,18 @@ type WithoutEnvelope<T> = T extends unknown ? Omit<T, "protocolVersion" | "seque
 interface ActiveTurn {
 	readonly correlationIdentity: InboundFrame["correlationIdentity"];
 	readonly promptPurpose: "TaskAssignment" | "OfficeTurn";
-	observedAgentSettled: boolean;
-	observedAgentStarted: boolean;
+	lifecycle: TurnLifecyclePhase;
 	abortRequested: boolean;
 	/** Only the `agent_end` which will not retry may determine final success. */
 	finalAssistantOutcome: Extract<FinalAssistantOutcome, { kind: "Observed" }> | undefined;
 }
+
+/**
+ * The narrow Pi lifecycle which may admit narrative mutation. A live SDK
+ * session is not sufficient: after the final `agent_end`, transcript flush
+ * still awaits but FollowUp/Steer must not begin a new paid turn.
+ */
+type TurnLifecyclePhase = "AwaitingAgentStart" | "ActiveAttempt" | "RetryLifecycle" | "AwaitingAgentSettled" | "AwaitingSettlement";
 
 /**
  * The host reports `AdapterReady` from its constructor and remains inert until
@@ -211,8 +217,7 @@ export class PiSdkHost {
 		this.activeTurn = {
 			correlationIdentity: command.correlationIdentity,
 			promptPurpose: command.payload.purpose,
-			observedAgentSettled: false,
-			observedAgentStarted: false,
+			lifecycle: "AwaitingAgentStart",
 			abortRequested: false,
 			finalAssistantOutcome: undefined,
 		};
@@ -226,7 +231,7 @@ export class PiSdkHost {
 			await session.verifyCanonicalTranscript();
 			if (this.phase === "Fatal") return;
 			const activeTurn = this.activeTurn;
-			if (!activeTurn?.observedAgentSettled) {
+			if (activeTurn?.lifecycle !== "AwaitingSettlement") {
 				this.terminalEvidenceFailure(command.correlationIdentity, "missing_agent_settled");
 				return;
 			}
@@ -254,7 +259,7 @@ export class PiSdkHost {
 		const session = this.requireReadySession(command);
 		if (!session) return;
 		if (this.effectiveSessionKind() !== "GrandArchitectOffice") return this.reject(command, "invalid_command");
-		if (this.activeTurn === undefined || !this.activeTurn.observedAgentStarted) return this.reject(command, "invalid_state");
+		if (!this.canMutateNarrative()) return this.reject(command, "invalid_state");
 		await session.followUp(command.payload.text);
 		this.accepted(command);
 	}
@@ -263,7 +268,7 @@ export class PiSdkHost {
 		const session = this.requireReadySession(command);
 		if (!session) return;
 		if (this.effectiveSessionKind() !== "GrandArchitectOffice") return this.reject(command, "invalid_command");
-		if (this.activeTurn === undefined || !this.activeTurn.observedAgentStarted) return this.reject(command, "invalid_state");
+		if (!this.canMutateNarrative()) return this.reject(command, "invalid_state");
 		await session.steer(command.payload.text);
 		this.accepted(command);
 	}
@@ -271,6 +276,14 @@ export class PiSdkHost {
 	private async abort(command: Extract<InboundFrame, { command: "Abort" }>): Promise<void> {
 		const session = this.requireReadySession(command);
 		if (!session) return;
+		if (this.activeTurn !== undefined && !this.canAbortActiveTurn()) {
+			// Pi has already emitted the final assistant evidence. Keep the wire
+			// order useful to the supervisor (an acknowledged control snapshot),
+			// but never invoke the SDK or retroactively relabel the settled turn.
+			this.accepted(command);
+			this.emitUsage(command.correlationIdentity, session);
+			return;
+		}
 		if (this.activeTurn !== undefined) this.activeTurn.abortRequested = true;
 		await session.abort();
 		this.accepted(command);
@@ -310,14 +323,9 @@ export class PiSdkHost {
 		try {
 			assertSdkEventExecutionProfile(event);
 			const projected = projectAgentSessionEvent(event);
-			if (projected.type === "agent_settled" && this.activeTurn !== undefined) {
-				this.activeTurn.observedAgentSettled = true;
-			}
-			if (event.type === "agent_end" && !event.willRetry && this.activeTurn !== undefined) {
-				this.activeTurn.finalAssistantOutcome = finalAssistantOutcome(event.messages);
-			}
-			if (projected.type === "agent_start" && this.activeTurn !== undefined) {
-				this.activeTurn.observedAgentStarted = true;
+			if (this.activeTurn !== undefined && !this.advanceTurnLifecycle(event)) {
+				this.terminalEvidenceFailure(this.activeTurn.correlationIdentity, "missing_agent_settled");
+				return;
 			}
 			this.emit({
 				event: "AgentEvent",
@@ -350,6 +358,41 @@ export class PiSdkHost {
 			return undefined;
 		}
 		return session;
+	}
+
+	private canMutateNarrative(): boolean {
+		return this.activeTurn?.lifecycle === "ActiveAttempt" || this.activeTurn?.lifecycle === "RetryLifecycle";
+	}
+
+	private canAbortActiveTurn(): boolean {
+		return this.activeTurn?.lifecycle === "AwaitingAgentStart" || this.canMutateNarrative();
+	}
+
+	/** Returns false for a closed or impossible terminal-event ordering. */
+	private advanceTurnLifecycle(event: AgentSessionEvent): boolean {
+		const active = this.activeTurn;
+		if (active === undefined) return true;
+		switch (event.type) {
+			case "agent_start":
+				if (active.lifecycle !== "AwaitingAgentStart" && active.lifecycle !== "RetryLifecycle") return false;
+				active.lifecycle = "ActiveAttempt";
+				return true;
+			case "agent_end":
+				if (active.lifecycle !== "ActiveAttempt" && active.lifecycle !== "RetryLifecycle") return false;
+				if (event.willRetry) {
+					active.lifecycle = "RetryLifecycle";
+					return true;
+				}
+				active.finalAssistantOutcome = finalAssistantOutcome(event.messages);
+				active.lifecycle = "AwaitingAgentSettled";
+				return true;
+			case "agent_settled":
+				if (active.lifecycle !== "AwaitingAgentSettled") return false;
+				active.lifecycle = "AwaitingSettlement";
+				return true;
+			default:
+				return active.lifecycle !== "AwaitingSettlement";
+		}
 	}
 
 	private isPromptPurposeLegal(command: Extract<InboundFrame, { command: "Prompt" }>): boolean {

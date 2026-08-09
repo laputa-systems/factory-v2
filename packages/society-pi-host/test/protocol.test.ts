@@ -40,14 +40,27 @@ test("protocol: rejects noncanonical paths, model drift, and nonempty GetState p
 	assert.throws(() => decodeCommand(1, "CreateSession", relative), ProtocolDecodeError);
 	assert.throws(() => absolutePath("/tmp/xsh/../escape"), ProtocolDecodeError);
 	assert.throws(() => absolutePath("/tmp/xsh//double-separator"), ProtocolDecodeError);
+	assert.throws(() => absolutePath("/tmp/xsh/trailing/"), ProtocolDecodeError);
 	assert.throws(() => absolutePath("/tmp/xsh/\0poison"), ProtocolDecodeError);
 	assert.equal(absolutePath("/tmp/xsh/normalized"), "/tmp/xsh/normalized");
+	const trailingCreatePath = createSessionPayload();
+	trailingCreatePath.cwd = "/tmp/xsh-society/work/";
+	assert.throws(() => decodeCommand(1, "CreateSession", trailingCreatePath), ProtocolDecodeError);
 
 	const modelDrift = createSessionPayload();
 	(modelDrift.model as Record<string, unknown>).modelId = "deepseek/other";
 	assert.throws(() => decodeCommand(1, "CreateSession", modelDrift), ProtocolDecodeError);
 
 	assert.throws(() => decodeCommand(1, "GetState", { arbitrary: "no" }), ProtocolDecodeError);
+});
+
+test("protocol: rejects every lexical JSON negative-zero form before integer admission", () => {
+	for (const spelling of ["-0", "-0.0", "-0e0", "-0E+10"]) {
+		const line = `{"protocolVersion":"society-pi-host/v1","sequence":1,"sessionIdentity":"pi-session-test-001","correlationIdentity":"command-1","command":"FollowUp","payload":{"noticeDeliveryIdentity":"notice-001","ledgerFrontier":${spelling},"text":"notice"}}`;
+		assert.throws(() => decodeInboundJsonl(line), ProtocolDecodeError, spelling);
+	}
+	const nonzero = '{"protocolVersion":"society-pi-host/v1","sequence":1,"sessionIdentity":"pi-session-test-001","correlationIdentity":"command-1","command":"FollowUp","payload":{"noticeDeliveryIdentity":"notice-001","ledgerFrontier":1,"text":"notice"}}';
+	assert.equal(decodeInboundJsonl(nonzero).command, "FollowUp");
 });
 
 test("protocol: preserves provider binary64 cost observations for Rust to round upward", () => {

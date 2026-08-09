@@ -16,6 +16,12 @@ export const PINNED_CANONICAL_MODEL_SLUG = "deepseek/deepseek-v4-flash-20260731"
 export const PINNED_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1" as const;
 export const PINNED_THINKING_LEVEL = "high" as const;
 export const MAX_JSONL_FRAME_BYTES = 1024 * 1024;
+/**
+ * The duplicate-key pre-scan is intentionally stack-bounded. A deeply nested
+ * sub-megabyte record is malformed v1 input, never an opportunity to exhaust
+ * the host before it can produce its typed containment result.
+ */
+export const MAX_JSON_NESTING = 128;
 
 export type AdapterProtocolVersion = typeof ADAPTER_PROTOCOL_VERSION;
 export type AdapterVersion = typeof ADAPTER_VERSION;
@@ -85,8 +91,9 @@ export function absolutePath(value: string): AbsolutePath {
 		value.length < 2 ||
 		value.includes("\0") ||
 		!isAbsolute(value) ||
+		value.endsWith("/") ||
 		normalize(value) !== value ||
-		value.split("/").includes("..")
+		value.split("/").slice(1).some((segment) => segment === "" || segment === "." || segment === "..")
 	) {
 		throw new ProtocolDecodeError("invalid_frame");
 	}
@@ -705,9 +712,16 @@ function assertNoDuplicateObjectKeys(input: string): void {
 	const primitive = (): void => {
 		const match = /^(?:true|false|null|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)/u.exec(input.slice(cursor));
 		if (match === null) throw new Error("invalid_json");
+		// JSON.parse preserves the sign bit for -0 spellings, but later numeric
+		// operations and JSON.stringify erase it. Rust rejects every such lexical
+		// representation before decoding; so must this peer.
+		if (match[0].startsWith("-") && Object.is(Number(match[0]), -0)) {
+			throw new Error("negative_zero");
+		}
 		cursor += match[0].length;
 	};
-	const value = (): void => {
+	const value = (depth = 0): void => {
+		if (depth > MAX_JSON_NESTING) throw new Error("json_nesting_limit");
 		whitespace();
 		if (input[cursor] === '"') { string(); return; }
 		if (input[cursor] === "{") {
@@ -722,7 +736,7 @@ function assertNoDuplicateObjectKeys(input: string): void {
 				keys.add(key);
 				whitespace();
 				if (input[cursor++] !== ":") throw new Error("invalid_json");
-				value();
+				value(depth + 1);
 				whitespace();
 				if (input[cursor] === "}") { cursor += 1; return; }
 				if (input[cursor++] !== ",") throw new Error("invalid_json");
@@ -733,7 +747,7 @@ function assertNoDuplicateObjectKeys(input: string): void {
 			whitespace();
 			if (input[cursor] === "]") { cursor += 1; return; }
 			for (;;) {
-				value();
+				value(depth + 1);
 				whitespace();
 				if (input[cursor] === "]") { cursor += 1; return; }
 				if (input[cursor++] !== ",") throw new Error("invalid_json");

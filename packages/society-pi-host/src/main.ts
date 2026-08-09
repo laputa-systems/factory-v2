@@ -1,5 +1,7 @@
 /** The supervised executable. It never opens a database or a control socket. */
 
+import { isUtf8 } from "node:buffer";
+
 import { PiSdkHost, localRuntimeIdentity } from "./host.js";
 import { MAX_JSONL_FRAME_BYTES, decodeInboundJsonl, sessionIdentity, sha256Digest, spawnNonce } from "./protocol.js";
 import { PinnedPiSdkRuntime } from "./sdk.js";
@@ -55,6 +57,11 @@ export async function run(): Promise<void> {
 	);
 	if (stdoutFailed) containOutboundTransport();
 	await consumeInboundJsonl(process.stdin, (line) => {
+		if (line === undefined) {
+			host.protocolDecodeFailed();
+			process.exitCode = 1;
+			return;
+		}
 		try {
 			void host?.accept(decodeInboundJsonl(line)).catch(() => process.exitCode = 1);
 		} catch {
@@ -74,7 +81,10 @@ export async function run(): Promise<void> {
  * a line before its callback runs; this decoder abandons an overlong line as
  * soon as its byte budget is crossed and only retains bounded chunks.
  */
-export async function consumeInboundJsonl(input: AsyncIterable<Uint8Array | string>, onLine: (line: string) => void): Promise<void> {
+export async function consumeInboundJsonl(
+	input: AsyncIterable<Uint8Array | string>,
+	onLine: (line: string | undefined) => void,
+): Promise<void> {
 	let buffered: Buffer[] = [];
 	let bufferedBytes = 0;
 	let overlong = false;
@@ -99,11 +109,9 @@ export async function consumeInboundJsonl(input: AsyncIterable<Uint8Array | stri
 			}
 			if (newline === -1) break;
 			if (overlong) {
-				onLine("{"); // deterministically enters the host's typed decode-fatal path.
+				onLine(undefined);
 			} else {
-				let line = Buffer.concat(buffered, bufferedBytes).toString("utf8");
-				if (line.endsWith("\r")) line = line.slice(0, -1);
-				onLine(line);
+				onLine(decodeInboundRecord(Buffer.concat(buffered, bufferedBytes)));
 			}
 			buffered = [];
 			bufferedBytes = 0;
@@ -113,12 +121,22 @@ export async function consumeInboundJsonl(input: AsyncIterable<Uint8Array | stri
 		}
 	}
 	if (overlong) {
-		onLine("{");
+		onLine(undefined);
 	} else if (bufferedBytes !== 0) {
-		let line = Buffer.concat(buffered, bufferedBytes).toString("utf8");
-		if (line.endsWith("\r")) line = line.slice(0, -1);
-		onLine(line);
+		onLine(decodeInboundRecord(Buffer.concat(buffered, bufferedBytes)));
 	}
+}
+
+/**
+ * `Buffer#toString("utf8")` replacement-decodes invalid bytes. That would
+ * make the byte pipe and typed command protocol disagree, so validate the
+ * complete bounded record before conversion (including a final EOF fragment).
+ */
+function decodeInboundRecord(record: Buffer): string | undefined {
+	if (!isUtf8(record)) return undefined;
+	let line = record.toString("utf8");
+	if (line.endsWith("\r")) line = line.slice(0, -1);
+	return line;
 }
 
 function parseProcessArguments(argumentsValue: readonly string[]): ProcessArguments {

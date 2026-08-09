@@ -122,6 +122,45 @@ test("host: serializes command admission while allowing office controls to reach
 	}
 });
 
+test("host: terminal Pi evidence closes narrative mutation and late Abort cannot relabel completion", async () => {
+	const { frames, runtime, host } = makeHost();
+	await host.accept(decodeCommand(1, "CreateSession", createSessionPayload("GrandArchitectOffice")));
+	const session = runtime.session;
+	assert.ok(session);
+	await host.accept(decodeCommand(2, "Prompt", { purpose: "OfficeTurn", text: "initial Office turn" }));
+	session.deferCanonicalTranscriptVerification();
+	session.finishPrompt("stop");
+	await drainMicrotasks();
+	assert.equal(session.verifyCount, 1, "Prompt completion is now waiting only on transcript verification");
+
+	await host.accept(decodeCommand(3, "FollowUp", { noticeDeliveryIdentity: "notice-001", ledgerFrontier: 42, text: "too late" }));
+	await host.accept(decodeCommand(4, "Steer", { reason: "UrgentUnsafePremise", text: "too late" }));
+	await host.accept(decodeCommand(5, "Abort", { reason: "GracefulCancellation" }));
+	assert.equal(session.calls.includes("FollowUp:too late"), false);
+	assert.equal(session.calls.includes("Steer:too late"), false);
+	assert.equal(session.calls.includes("Abort"), false);
+	const lateResults = frames.filter(
+		(frame) => frame.event === "CommandResult" && ["command-3", "command-4", "command-5"].includes(frame.correlationIdentity),
+	);
+	assert.equal(lateResults.length, 3);
+	for (const result of lateResults.slice(0, 2)) {
+		assert.equal(result.event, "CommandResult");
+		if (result.event === "CommandResult") {
+			assert.equal(result.accepted, false);
+			assert.equal(result.failureCode, "invalid_state");
+		}
+	}
+	const lateAbort = lateResults[2];
+	assert.equal(lateAbort?.event, "CommandResult");
+	if (lateAbort?.event === "CommandResult") assert.equal(lateAbort.accepted, true);
+
+	session.releaseCanonicalTranscriptVerification();
+	await drainMicrotasks();
+	const settled = lastFrameOfKind(frames, "Settled");
+	assert.equal(settled?.event, "Settled");
+	if (settled?.event === "Settled") assert.equal(settled.classification, "completed");
+});
+
 test("host: a failed accepted Prompt has one CommandResult and a terminal failure", async () => {
 	const { frames, runtime, host } = makeHost();
 	await host.accept(decodeCommand(1, "CreateSession", createSessionPayload("TaskAttempt")));

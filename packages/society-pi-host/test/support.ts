@@ -112,6 +112,8 @@ export class FakeSdkSession implements SdkSession {
 	private promptRejecter: ((error: Error) => void) | undefined;
 	private idle = true;
 	private promptStartDelayed = false;
+	private transcriptVerificationDeferred = false;
+	private transcriptVerificationResolver: (() => void) | undefined;
 	private usageInvalid = false;
 	private usage: UsageTotals = {
 		inputTokens: nonNegativeInteger(11),
@@ -175,26 +177,38 @@ export class FakeSdkSession implements SdkSession {
 	async verifyCanonicalTranscript(): Promise<TranscriptFlushReceiptV1> {
 		this.calls.push("VerifyCanonicalTranscript");
 		this.verifyCount += 1;
-		if (this.firstPrompt === undefined) {
-			return {
+		const receipt: TranscriptFlushReceiptV1 = this.firstPrompt === undefined
+			? {
 				format: "pi_session_manager_jsonl_v3",
 				sessionIdentity: this.sessionIdentity,
 				sessionFile: this.sessionFile,
 				materialization: "unmaterialized_no_prompt",
 				firstUserPrompt: { kind: "absent" },
+			}
+			: {
+				format: "pi_session_manager_jsonl_v3",
+				sessionIdentity: this.sessionIdentity,
+				sessionFile: this.sessionFile,
+				materialization: "observed",
+				sessionFileSha256: sha256Digest("5".repeat(64)),
+				headerCwd: absolutePath("/tmp/xsh-society/work"),
+				firstUserPrompt: { kind: "verified", digest: sha256Digest(createHash("sha256").update(this.firstPrompt, "utf8").digest("hex")) },
 			};
+		if (this.transcriptVerificationDeferred) {
+			await new Promise<void>((resolve) => { this.transcriptVerificationResolver = resolve; });
+			this.transcriptVerificationResolver = undefined;
 		}
-		return {
-			format: "pi_session_manager_jsonl_v3",
-			sessionIdentity: this.sessionIdentity,
-			sessionFile: this.sessionFile,
-			materialization: "observed",
-			sessionFileSha256: sha256Digest("5".repeat(64)),
-			headerCwd: absolutePath("/tmp/xsh-society/work"),
-			firstUserPrompt: { kind: "verified", digest: sha256Digest(createHash("sha256").update(this.firstPrompt, "utf8").digest("hex")) },
-		};
+		return receipt;
 	}
 
+	deferCanonicalTranscriptVerification(): void {
+		this.transcriptVerificationDeferred = true;
+	}
+
+	releaseCanonicalTranscriptVerification(): void {
+		this.transcriptVerificationDeferred = false;
+		this.transcriptVerificationResolver?.();
+	}
 	finishPrompt(stopReason: "stop" | "length" | "error" | "aborted" = "stop"): void {
 		this.idle = true;
 		this.emit({ type: "agent_end", messages: [this.assistantMessage(stopReason)], willRetry: false });

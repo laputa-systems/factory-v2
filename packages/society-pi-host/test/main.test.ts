@@ -32,8 +32,36 @@ test("main: byte decoder bounds an overlong line before JSON decoding", async ()
 
 test("main: a valid final JSONL record is delivered on EOF without requiring a trailing newline", async () => {
 	const lines: string[] = [];
-	await consumeInboundJsonl(oneChunk(Buffer.from('{"final":true}', "utf8")), (line) => lines.push(line));
+	await consumeInboundJsonl(oneChunk(Buffer.from('{"final":true}', "utf8")), (line) => {
+		if (line !== undefined) lines.push(line);
+	});
 	assert.deepEqual(lines, ['{"final":true}']);
+});
+
+test("main: deeply nested sub-megabyte input terminates in a typed fatal, not a stack abort", async () => {
+	const deeplyNested = `${"[".repeat(10_000)}${"]".repeat(10_000)}`;
+	const result = await runHost([deeplyNested]);
+	assert.equal(result.stderr, "");
+	assert.equal(result.code, 1);
+	assert.deepEqual(parseFrames(result.stdout).map((frame) => frame.event), ["AdapterReady", "Fatal"]);
+});
+
+test("main: invalid UTF-8 in an otherwise-shaped Prompt is contained before command admission", async () => {
+	const prefix = Buffer.from('{"protocolVersion":"society-pi-host/v1","sequence":1,"sessionIdentity":"pipe-session-001","correlationIdentity":"prompt-001","command":"Prompt","payload":{"purpose":"TaskAssignment","text":"', "utf8");
+	const suffix = Buffer.from('"}}', "utf8");
+	const result = await runHostBytes([prefix, Buffer.from([0xff]), suffix], true);
+	assert.equal(result.stderr, "");
+	assert.equal(result.code, 1);
+	const frames = parseFrames(result.stdout);
+	assert.deepEqual(frames.map((frame) => frame.event), ["AdapterReady", "Fatal"]);
+	assert.equal(frames.some((frame) => frame.event === "SessionReady"), false);
+});
+
+test("main: invalid UTF-8 EOF fragment is contained without replacement decoding", async () => {
+	const result = await runHostBytes([Buffer.from('{"final":"', "utf8"), Buffer.from([0xff])], false);
+	assert.equal(result.stderr, "");
+	assert.equal(result.code, 1);
+	assert.deepEqual(parseFrames(result.stdout).map((frame) => frame.event), ["AdapterReady", "Fatal"]);
 });
 
 test("main: a supervisor-closed stdout pipe is contained without protocol diagnostics on stderr", async () => {
@@ -140,6 +168,10 @@ function admittedSettings() {
 }
 
 async function runHost(lines: readonly string[]): Promise<{ readonly code: number | null; readonly stdout: string; readonly stderr: string }> {
+	return runHostBytes([Buffer.from(lines.join("\n"), "utf8")], true);
+}
+
+async function runHostBytes(chunks: readonly Buffer[], trailingNewline: boolean): Promise<{ readonly code: number | null; readonly stdout: string; readonly stderr: string }> {
 	return new Promise((resolve, reject) => {
 		const child = spawn(process.execPath, [hostEntrypoint,
 			"--session-identity", "pipe-session-001", "--spawn-nonce", "pipe-spawn-001",
@@ -154,7 +186,7 @@ async function runHost(lines: readonly string[]): Promise<{ readonly code: numbe
 		child.stderr.on("data", (chunk: string) => { stderr += chunk; });
 		child.once("error", reject);
 		child.once("close", (code) => resolve({ code, stdout, stderr }));
-		child.stdin.end(`${lines.join("\n")}\n`);
+		child.stdin.end(Buffer.concat(trailingNewline ? [...chunks, Buffer.from("\n", "utf8")] : chunks));
 	});
 }
 
