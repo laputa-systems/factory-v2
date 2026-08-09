@@ -69,6 +69,8 @@ crates/society-content/    implemented isolated physical byte-seal store; it
                            confers no evidence or provenance meaning
 crates/society-circuit/    implemented isolated closed VS-001 observation
                            adapters; durable evaluator/evidence admission remains
+crates/society-product/    implemented isolated guarded local Git
+                           materialization; durable authorization remains
 crates/societyd/           implemented bounded resident SQLite authority,
                            monitor, and native Pi child/process-group physics;
                            durable Pi/content/recovery integration remains
@@ -92,6 +94,7 @@ cargo test -p society-pi --lib
 npm test --prefix packages/society-pi-host
 cargo test --manifest-path crates/society-content/Cargo.toml
 cargo test --manifest-path crates/society-circuit/Cargo.toml
+cargo test --manifest-path crates/society-product/Cargo.toml
 cargo test -p societyd --test supervision -- --test-threads=1
 
 pi_host_entry="$PWD/packages/society-pi-host/dist/src/main.js"

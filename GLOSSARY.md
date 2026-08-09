@@ -462,6 +462,24 @@ The Grand-Architect-governed set of stewardship, frontier, measurement,
 institutional, and resilience obligations under explicit resource envelopes
 and reserves. It is a partial-order allocation surface, not one scalar backlog.
 
+### Product worktree
+
+A branch worktree at the admitted XSH base, named from one authorized product
+change and builder Attempt. The builder may propose a candidate tree and
+portable patch, but cannot create the authoritative product commit or move the
+delivery ref. `society-product` currently implements the local Git mechanics;
+kernel authorization, persistence, and daemon custody remain separate gates.
+
+### Controlled product materialization
+
+The deterministic transition from an authorized base/tree/patch/validation
+profile to a fresh exact tree, externally supervised validation receipt,
+hook-free controlled commit, and guarded local compare-and-swap delivery.
+Every authorization, patch, tree, validation, parent, and commit edge is
+cross-checked before the target ref moves. A successful ref CAS followed by a
+checkout failure enters explicit recovery; an idempotent retry does not hide or
+repair that partial state.
+
 ### Postmortem
 
 A triggered, structured investigation of an incident, cost breach, revert,
