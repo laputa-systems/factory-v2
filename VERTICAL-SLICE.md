@@ -103,6 +103,15 @@ The fresh bootstrap names its single generic root-governance relation
 Those names preserve the existing single-root-office state and numeric
 protocol semantics without importing an application's institutional vocabulary.
 
+The daemon-private Pi bridge currently projects an authorized Office Prompt's
+complete physical delivery, accepted result, cumulative accounting facts, and
+closed terminal sequence into the kernel. Observed assistant results require
+`AgentSettled -> final accounting -> Settled`; SDK-unavailable results require
+the adjacent final Known usage fact and `Settled` without inventing an agent
+lifecycle. Only completed/observed-stop returns the Office to Ready. This is a
+generic execution boundary, not evidence that an application's requested work
+was correct or that a product change is authorized.
+
 The generic sequence therefore makes no claim that an application can yet run
 end to end. A product-specific executable contract must state its own admitted
 inputs, evaluators, budgets, delivery gates, and acceptance judge under

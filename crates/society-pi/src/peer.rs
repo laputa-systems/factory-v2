@@ -925,9 +925,7 @@ impl BoundaryPeer {
         {
             return Err(PeerError::MissingTerminalEvidence);
         }
-        if disposition == TurnDisposition::ProtocolFailed {
-            return Err(PeerError::MissingTerminalEvidence);
-        }
+        let session_authority_failed = disposition == TurnDisposition::ProtocolFailed;
         let receipt = TurnReceipt {
             correlation_identity: correlation,
             disposition,
@@ -935,6 +933,13 @@ impl BoundaryPeer {
         };
         self.settled_turns.push(receipt.clone());
         self.active_turn = None;
+        if session_authority_failed {
+            // The exact terminal remains evidence even though the missing
+            // assistant outcome invalidates all further session authority.
+            // Returning it alongside a Fatal phase lets the supervisor durably
+            // project the terminal before it contains the child.
+            self.fence();
+        }
         Ok(receipt)
     }
 
@@ -1849,6 +1854,38 @@ mod peer_tests {
             Err(PeerError::MissingTerminalEvidence)
         );
         assert_eq!(peer.phase(), PeerPhase::Fatal);
+    }
+
+    #[test]
+    fn protocol_failed_prompt_preserves_the_closed_terminal_before_fencing_session_authority() {
+        let mut peer = setup_ready();
+        admit_prompt(&mut peer);
+        peer.observe_outbound(frame(
+            5,
+            Some("prompt-001"),
+            OutboundEvent::UsageSnapshot {
+                usage: zero_usage(),
+            },
+        ))
+        .unwrap();
+        assert!(matches!(
+            peer.observe_outbound(frame(
+                6,
+                Some("prompt-001"),
+                OutboundEvent::Settled {
+                    classification: SettledClassification::ProtocolFailed,
+                    final_assistant_outcome: FinalAssistantOutcome::Unavailable {
+                        reason: crate::protocol::FinalAssistantUnavailableReason::MissingFinalAssistantOutcome,
+                    },
+                },
+            )),
+            Ok(Some(PeerObservation::TurnSettled(TurnReceipt {
+                disposition: TurnDisposition::ProtocolFailed,
+                ..
+            })))
+        ));
+        assert_eq!(peer.phase(), PeerPhase::Fatal);
+        assert_eq!(peer.settled_turns().len(), 1);
     }
 
     #[test]

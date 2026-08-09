@@ -1532,8 +1532,9 @@ CREATE TABLE pi_office_turn_terminal_receipts (
     child_process_id INTEGER NOT NULL REFERENCES pi_child_processes(child_process_id),
     pi_session_id INTEGER NOT NULL REFERENCES pi_child_sessions(pi_session_id),
     correlation_identity TEXT NOT NULL,
-    agent_settled_sequence INTEGER NOT NULL CHECK (agent_settled_sequence > 0),
-    final_usage_sequence INTEGER NOT NULL CHECK (final_usage_sequence > 0),
+    terminal_evidence_kind INTEGER NOT NULL CHECK (terminal_evidence_kind IN (1, 2)),
+    agent_settled_sequence INTEGER CHECK (agent_settled_sequence > 0),
+    final_accounting_sequence INTEGER NOT NULL CHECK (final_accounting_sequence > 0),
     settled_sequence INTEGER NOT NULL CHECK (settled_sequence > 0),
     final_usage_receipt_id INTEGER REFERENCES pi_office_turn_usage_receipts(pi_office_turn_usage_receipt_id),
     final_usage_failure_id INTEGER REFERENCES pi_office_turn_usage_failures(pi_office_turn_usage_failure_id),
@@ -1541,10 +1542,16 @@ CREATE TABLE pi_office_turn_terminal_receipts (
     assistant_outcome INTEGER NOT NULL CHECK (assistant_outcome BETWEEN 1 AND 6),
     transcript_disposition INTEGER NOT NULL CHECK (transcript_disposition = 1),
     recorded_by_command_id INTEGER NOT NULL REFERENCES commands(command_row_id),
-    CHECK (agent_settled_sequence < final_usage_sequence
-       AND final_usage_sequence + 1 = settled_sequence),
+    CHECK (((terminal_evidence_kind = 1
+                AND agent_settled_sequence IS NOT NULL
+                AND agent_settled_sequence < final_accounting_sequence)
+            OR (terminal_evidence_kind = 2 AND agent_settled_sequence IS NULL))
+       AND final_accounting_sequence + 1 = settled_sequence),
     CHECK ((final_usage_receipt_id IS NOT NULL AND final_usage_failure_id IS NULL)
         OR (final_usage_receipt_id IS NULL AND final_usage_failure_id IS NOT NULL)),
+    CHECK ((terminal_evidence_kind = 1 AND assistant_outcome BETWEEN 1 AND 4)
+        OR (terminal_evidence_kind = 2 AND assistant_outcome IN (5, 6))),
+    CHECK (terminal_evidence_kind != 2 OR final_usage_receipt_id IS NOT NULL),
     CHECK ((disposition = 1 AND assistant_outcome = 1)
         OR (disposition = 2 AND assistant_outcome = 2)
         OR (disposition = 3 AND assistant_outcome = 3)
@@ -1618,20 +1625,15 @@ CREATE TABLE command_record_pi_office_turn_terminal (
     command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id),
     office_turn_id INTEGER NOT NULL,
     correlation_identity TEXT NOT NULL,
-    agent_settled_sequence INTEGER NOT NULL CHECK (agent_settled_sequence > 0),
-    final_usage_sequence INTEGER NOT NULL CHECK (final_usage_sequence > 0),
+    terminal_evidence_kind INTEGER NOT NULL CHECK (terminal_evidence_kind IN (1, 2)),
+    agent_settled_sequence INTEGER CHECK (agent_settled_sequence > 0),
+    final_accounting_sequence INTEGER NOT NULL CHECK (final_accounting_sequence > 0),
     settled_sequence INTEGER NOT NULL CHECK (settled_sequence > 0),
     disposition INTEGER NOT NULL CHECK (disposition BETWEEN 1 AND 6),
     assistant_outcome INTEGER NOT NULL CHECK (assistant_outcome BETWEEN 1 AND 6),
     transcript_disposition INTEGER NOT NULL CHECK (transcript_disposition = 1),
-    CHECK (agent_settled_sequence < final_usage_sequence
-       AND final_usage_sequence + 1 = settled_sequence),
-    CHECK ((disposition = 1 AND assistant_outcome = 1)
-        OR (disposition = 2 AND assistant_outcome = 2)
-        OR (disposition = 3 AND assistant_outcome = 3)
-        OR (disposition = 4 AND assistant_outcome = 4)
-        OR (disposition = 5 AND assistant_outcome = 5)
-        OR (disposition = 6 AND assistant_outcome = 6))
+    CHECK ((terminal_evidence_kind = 1 AND agent_settled_sequence IS NOT NULL)
+        OR (terminal_evidence_kind = 2 AND agent_settled_sequence IS NULL))
 );
 
 CREATE TABLE event_pi_office_turn_prompt_authorized (
@@ -1737,6 +1739,6 @@ INSERT INTO capability_grants VALUES(45,2,88,NULL,NULL,1,3,NULL,NULL);
 INSERT INTO capability_grants VALUES(46,2,89,NULL,NULL,1,3,NULL,NULL);
 INSERT INTO capability_grants VALUES(47,2,90,NULL,NULL,1,3,NULL,NULL);
 INSERT INTO capability_grants VALUES(48,2,91,NULL,NULL,1,3,NULL,NULL);
-PRAGMA user_version = 10;
+PRAGMA user_version = 11;
 COMMIT;
 PRAGMA foreign_keys = ON;

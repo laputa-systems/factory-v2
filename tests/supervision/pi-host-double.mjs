@@ -235,6 +235,26 @@ function accept(frame) {
 				});
 				return;
 			}
+			if (sessionIdentity.includes("m6-sdk-promise-rejected-final-known")) {
+				// The real host's SDK-promise rejection path has no assistant
+				// lifecycle event. Its forced Prompt-correlated Known snapshot and
+				// immediately adjacent Settled frame are the complete peer evidence.
+				emit({
+					event: "UsageSnapshot",
+					correlationIdentity: frame.correlationIdentity,
+					usage: knownUsage(promptCount),
+				});
+				emit({
+					event: "Settled",
+					correlationIdentity: frame.correlationIdentity,
+					classification: "failed",
+					finalAssistantOutcome: {
+						kind: "Unavailable",
+						reason: "sdk_promise_rejected",
+					},
+				});
+				return;
+			}
 			const stopReason = sessionIdentity.includes("m6-prompt-error") ? "error" : "stop";
 			emit({
 				event: "AgentEvent",

@@ -40,29 +40,29 @@ use crate::{
     PiAbortControlWriteOutcome, PiBoundarySessionIdentity, PiChildNotSpawnedReason, PiChildOwner,
     PiChildSessionState, PiChildSpawnAdmissionId, PiChildSpawnAdmissionState,
     PiCorrelationIdentity, PiCumulativeUsage, PiOfficeTurnAssistantOutcome,
-    PiOfficeTurnDisposition, PiOfficeTurnPromptAuthorizationId, PiOfficeTurnTerminalReceiptId,
-    PiOfficeTurnTranscriptDisposition, PiOfficeTurnUsageFailure, PiOfficeTurnUsageFailureId,
-    PiOfficeTurnUsageReceiptId, PiOfficeTurnUsageUnavailableReason, PiOfficeTurnUsageUnknownReason,
-    PiProtocolSequence, PiSessionId, PiTokenCount, PostmortemActionKind,
-    PostmortemActionProposalId, PostmortemCausalClaimId, PostmortemCausalClaimKind, PostmortemId,
-    PostmortemState, PrincipalId, PrincipalKind, ProcessExitCode, ProcessGroupLiveness,
-    ProcessSignalAction, ProcessSignalCause, ProcessSignalDelivery, ProcessSignalNumber,
-    ProcessSignalReceiptId, ProjectId, ProjectMilestoneId, ProjectMilestoneState,
-    ProjectNorthStarAlignment, ProjectNorthStarBoundaryCommitmentAnswer,
-    ProjectNorthStarChangeAnswer, ProjectNorthStarImprovementEvidenceAnswer,
-    ProjectNorthStarRevisitAnswer, ProjectState, ProviderCostBinary64, Rejection,
-    RetentionAccessClass, ReviewChallengeId, ReviewChallengeResponseState, ReviewChallengeSeverity,
-    ReviewDispositionKind, ReviewResolutionKind, RootAuthorityOfficeSessionId, SocietyId,
-    SocietyName, SpawnNonce, SupervisedChildIdentity, SupervisorEpochId, SupervisorEpochIdentity,
-    TicketId, TicketState, UsdMicros, WorkItemId, WorkItemKind, WorkItemState, WorkLeaseId,
-    WorkLeaseState,
+    PiOfficeTurnDisposition, PiOfficeTurnPromptAuthorizationId, PiOfficeTurnTerminalEvidence,
+    PiOfficeTurnTerminalReceiptId, PiOfficeTurnTranscriptDisposition, PiOfficeTurnUsageFailure,
+    PiOfficeTurnUsageFailureId, PiOfficeTurnUsageReceiptId, PiOfficeTurnUsageUnavailableReason,
+    PiOfficeTurnUsageUnknownReason, PiProtocolSequence, PiSessionId, PiTokenCount,
+    PostmortemActionKind, PostmortemActionProposalId, PostmortemCausalClaimId,
+    PostmortemCausalClaimKind, PostmortemId, PostmortemState, PrincipalId, PrincipalKind,
+    ProcessExitCode, ProcessGroupLiveness, ProcessSignalAction, ProcessSignalCause,
+    ProcessSignalDelivery, ProcessSignalNumber, ProcessSignalReceiptId, ProjectId,
+    ProjectMilestoneId, ProjectMilestoneState, ProjectNorthStarAlignment,
+    ProjectNorthStarBoundaryCommitmentAnswer, ProjectNorthStarChangeAnswer,
+    ProjectNorthStarImprovementEvidenceAnswer, ProjectNorthStarRevisitAnswer, ProjectState,
+    ProviderCostBinary64, Rejection, RetentionAccessClass, ReviewChallengeId,
+    ReviewChallengeResponseState, ReviewChallengeSeverity, ReviewDispositionKind,
+    ReviewResolutionKind, RootAuthorityOfficeSessionId, SocietyId, SocietyName, SpawnNonce,
+    SupervisedChildIdentity, SupervisorEpochId, SupervisorEpochIdentity, TicketId, TicketState,
+    UsdMicros, WorkItemId, WorkItemKind, WorkItemState, WorkLeaseId, WorkLeaseState,
 };
 
 const CURRENT_SCHEMA: &str = include_str!("../../../migrations/0001_kernel.sql");
-// Historical prototype schemas used versions one through nine. The collapsed
+// Historical prototype schemas used versions one through ten. The collapsed
 // fresh schema deliberately occupies a noncolliding identity, so an old
 // ledger cannot be mistaken for current trusted physics.
-const CURRENT_SCHEMA_VERSION: i64 = 10;
+const CURRENT_SCHEMA_VERSION: i64 = 11;
 
 struct PiChildSpawnAdmissionInput<'a> {
     operating_cycle_id: OperatingCycleId,
@@ -113,8 +113,7 @@ struct PiOfficeTurnPromptAuthorizationInput<'a> {
 struct PiOfficeTurnTerminalInput<'a> {
     office_turn_id: OfficeTurnId,
     correlation_identity: &'a PiCorrelationIdentity,
-    agent_settled_sequence: PiProtocolSequence,
-    final_usage_sequence: PiProtocolSequence,
+    terminal_evidence: PiOfficeTurnTerminalEvidence,
     settled_sequence: PiProtocolSequence,
     disposition: PiOfficeTurnDisposition,
     assistant_outcome: PiOfficeTurnAssistantOutcome,
@@ -2192,8 +2191,7 @@ fn apply_command(
         CommandBody::RecordPiOfficeTurnTerminal {
             office_turn_id,
             correlation_identity,
-            agent_settled_sequence,
-            final_usage_sequence,
+            terminal_evidence,
             settled_sequence,
             disposition,
             assistant_outcome,
@@ -2204,8 +2202,7 @@ fn apply_command(
             PiOfficeTurnTerminalInput {
                 office_turn_id: *office_turn_id,
                 correlation_identity,
-                agent_settled_sequence: *agent_settled_sequence,
-                final_usage_sequence: *final_usage_sequence,
+                terminal_evidence: *terminal_evidence,
                 settled_sequence: *settled_sequence,
                 disposition: *disposition,
                 assistant_outcome: *assistant_outcome,
@@ -3192,7 +3189,7 @@ fn pi_office_session_max_sequence(
                  SELECT agent_settled_sequence FROM pi_office_turn_terminal_receipts
                  WHERE pi_session_id = ?1
                  UNION ALL
-                 SELECT final_usage_sequence FROM pi_office_turn_terminal_receipts
+                 SELECT final_accounting_sequence FROM pi_office_turn_terminal_receipts
                  WHERE pi_session_id = ?1
                  UNION ALL
                  SELECT settled_sequence FROM pi_office_turn_terminal_receipts
@@ -3212,16 +3209,16 @@ fn record_pi_office_turn_terminal(
     let PiOfficeTurnTerminalInput {
         office_turn_id,
         correlation_identity,
-        agent_settled_sequence,
-        final_usage_sequence,
+        terminal_evidence,
         settled_sequence,
         disposition,
         assistant_outcome,
         transcript_disposition,
     } = input;
+    let final_accounting_sequence = terminal_evidence.final_accounting_sequence();
     if !disposition.accepts(assistant_outcome)
-        || agent_settled_sequence.value() >= final_usage_sequence.value()
-        || final_usage_sequence.value().checked_add(1) != Some(settled_sequence.value())
+        || !terminal_evidence.accepts(assistant_outcome)
+        || final_accounting_sequence.value().checked_add(1) != Some(settled_sequence.value())
     {
         return Err(Rejection::PiOfficeTurnTerminalEvidenceMissing);
     }
@@ -3245,8 +3242,11 @@ fn record_pi_office_turn_terminal(
             |row| row.get(0),
         )
         .map_err(|_| Rejection::PiOfficeTurnTerminalEvidenceMissing)?;
-    if accepted_sequence >= agent_settled_sequence.value()
-        || prior_session_settled.is_some_and(|previous| agent_settled_sequence.value() <= previous)
+    let first_terminal_sequence = terminal_evidence
+        .agent_settled_sequence()
+        .unwrap_or(final_accounting_sequence);
+    if accepted_sequence >= first_terminal_sequence.value()
+        || prior_session_settled.is_some_and(|previous| first_terminal_sequence.value() <= previous)
     {
         return Err(Rejection::PiOfficeTurnTerminalEvidenceMissing);
     }
@@ -3259,7 +3259,7 @@ fn record_pi_office_turn_terminal(
                 office_turn_id.value(),
                 authorization,
                 correlation_identity.as_str(),
-                final_usage_sequence.value()
+                final_accounting_sequence.value()
             ],
             |r| r.get(0),
         )
@@ -3278,7 +3278,7 @@ fn record_pi_office_turn_terminal(
                 office_turn_id.value(),
                 authorization,
                 correlation_identity.as_str(),
-                final_usage_sequence.value()
+                final_accounting_sequence.value()
             ],
             |r| r.get(0),
         )
@@ -3289,6 +3289,16 @@ fn record_pi_office_turn_terminal(
         .transpose()
         .map_err(|_| Rejection::PiOfficeTurnTerminalEvidenceMissing)?;
     if usage_id.is_some() == failure_id.is_some() {
+        return Err(Rejection::PiOfficeTurnTerminalEvidenceMissing);
+    }
+    if matches!(
+        terminal_evidence,
+        PiOfficeTurnTerminalEvidence::UnavailableAssistant { .. }
+    ) && usage_id.is_none()
+    {
+        // The host emits an unavailable assistant terminal only after its
+        // forced final Known snapshot succeeds. An unavailable accounting
+        // observation fences before Settled and cannot certify this shape.
         return Err(Rejection::PiOfficeTurnTerminalEvidenceMissing);
     }
     // SDK/assistant outcome and cost knowledge are independent peer facts.
@@ -3303,10 +3313,12 @@ fn record_pi_office_turn_terminal(
             return Err(Rejection::PiOfficeTurnTerminalEvidenceMissing);
         }
     }
+    let (evidence_kind, agent_settled_sequence) =
+        sql_pi_office_turn_terminal_evidence(terminal_evidence);
     transaction.execute(
-        "INSERT INTO pi_office_turn_terminal_receipts(office_turn_id, pi_office_turn_prompt_authorization_id, child_process_id, pi_session_id, correlation_identity, agent_settled_sequence, final_usage_sequence, settled_sequence, final_usage_receipt_id, final_usage_failure_id, disposition, assistant_outcome, transcript_disposition, recorded_by_command_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
-        params![office_turn_id.value(), authorization, child, session, correlation_identity.as_str(), agent_settled_sequence.value(), final_usage_sequence.value(), settled_sequence.value(), usage_id.map(PiOfficeTurnUsageReceiptId::value), failure_id.map(PiOfficeTurnUsageFailureId::value), disposition as i64, assistant_outcome as i64, transcript_disposition as i64, command_row_id],
+        "INSERT INTO pi_office_turn_terminal_receipts(office_turn_id, pi_office_turn_prompt_authorization_id, child_process_id, pi_session_id, correlation_identity, terminal_evidence_kind, agent_settled_sequence, final_accounting_sequence, settled_sequence, final_usage_receipt_id, final_usage_failure_id, disposition, assistant_outcome, transcript_disposition, recorded_by_command_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+        params![office_turn_id.value(), authorization, child, session, correlation_identity.as_str(), evidence_kind, agent_settled_sequence, final_accounting_sequence.value(), settled_sequence.value(), usage_id.map(PiOfficeTurnUsageReceiptId::value), failure_id.map(PiOfficeTurnUsageFailureId::value), disposition as i64, assistant_outcome as i64, transcript_disposition as i64, command_row_id],
     ).map_err(|_| Rejection::PiOfficeTurnTerminalEvidenceMissing)?;
     Ok(EventBody::PiOfficeTurnTerminalRecorded {
         pi_office_turn_terminal_receipt_id: id_from_last_insert(transaction)?,
@@ -9512,8 +9524,7 @@ fn request_fingerprint(request: &CommandRequest) -> Blake3Digest {
         CommandBody::RecordPiOfficeTurnTerminal {
             office_turn_id,
             correlation_identity,
-            agent_settled_sequence,
-            final_usage_sequence,
+            terminal_evidence,
             settled_sequence,
             disposition,
             assistant_outcome,
@@ -9521,8 +9532,7 @@ fn request_fingerprint(request: &CommandRequest) -> Blake3Digest {
         } => {
             put_i64(&mut bytes, office_turn_id.value());
             put_bytes(&mut bytes, correlation_identity.as_str().as_bytes());
-            put_i64(&mut bytes, agent_settled_sequence.value());
-            put_i64(&mut bytes, final_usage_sequence.value());
+            put_pi_office_turn_terminal_evidence(&mut bytes, *terminal_evidence);
             put_i64(&mut bytes, settled_sequence.value());
             put_i64(&mut bytes, *disposition as i64);
             put_i64(&mut bytes, *assistant_outcome as i64);
@@ -10211,6 +10221,40 @@ fn sql_pi_office_turn_usage_failure(
     }
 }
 
+fn sql_pi_office_turn_terminal_evidence(
+    evidence: PiOfficeTurnTerminalEvidence,
+) -> (i64, Option<i64>) {
+    match evidence {
+        PiOfficeTurnTerminalEvidence::ObservedAssistant {
+            agent_settled_sequence,
+            ..
+        } => (1, Some(agent_settled_sequence.value())),
+        PiOfficeTurnTerminalEvidence::UnavailableAssistant { .. } => (2, None),
+    }
+}
+
+fn put_pi_office_turn_terminal_evidence(
+    bytes: &mut Vec<u8>,
+    evidence: PiOfficeTurnTerminalEvidence,
+) {
+    match evidence {
+        PiOfficeTurnTerminalEvidence::ObservedAssistant {
+            agent_settled_sequence,
+            final_accounting_sequence,
+        } => {
+            put_i64(bytes, 1);
+            put_i64(bytes, agent_settled_sequence.value());
+            put_i64(bytes, final_accounting_sequence.value());
+        }
+        PiOfficeTurnTerminalEvidence::UnavailableAssistant {
+            final_known_usage_sequence,
+        } => {
+            put_i64(bytes, 2);
+            put_i64(bytes, final_known_usage_sequence.value());
+        }
+    }
+}
+
 fn put_direct_wait_status(bytes: &mut Vec<u8>, status: DirectChildWaitStatus) {
     match status {
         DirectChildWaitStatus::Exited { exit_code } => {
@@ -10487,16 +10531,17 @@ fn insert_command_body(
         CommandBody::RecordPiOfficeTurnTerminal {
             office_turn_id,
             correlation_identity,
-            agent_settled_sequence,
-            final_usage_sequence,
+            terminal_evidence,
             settled_sequence,
             disposition,
             assistant_outcome,
             transcript_disposition,
         } => {
+            let (evidence_kind, agent_settled_sequence) =
+                sql_pi_office_turn_terminal_evidence(*terminal_evidence);
             transaction.execute(
-                "INSERT INTO command_record_pi_office_turn_terminal VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-                params![command_row_id, office_turn_id.value(), correlation_identity.as_str(), agent_settled_sequence.value(), final_usage_sequence.value(), settled_sequence.value(), *disposition as i64, *assistant_outcome as i64, *transcript_disposition as i64],
+                "INSERT INTO command_record_pi_office_turn_terminal VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![command_row_id, office_turn_id.value(), correlation_identity.as_str(), evidence_kind, agent_settled_sequence, terminal_evidence.final_accounting_sequence().value(), settled_sequence.value(), *disposition as i64, *assistant_outcome as i64, *transcript_disposition as i64],
             )?;
         }
         CommandBody::RecordContentSealReceipt { digest } => {
@@ -14739,24 +14784,21 @@ fn decode_command_body(
             }
         }
         CommandKind::RecordPiOfficeTurnTerminal => {
-            let row: (i64, String, i64, i64, i64, i64, i64, i64) = connection.query_row(
-                "SELECT office_turn_id, correlation_identity, agent_settled_sequence, final_usage_sequence, settled_sequence, disposition, assistant_outcome, transcript_disposition FROM command_record_pi_office_turn_terminal WHERE command_row_id = ?1",
-                [command_row_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?)),
+            let row: (i64, String, i64, Option<i64>, i64, i64, i64, i64, i64) = connection.query_row(
+                "SELECT office_turn_id, correlation_identity, terminal_evidence_kind, agent_settled_sequence, final_accounting_sequence, settled_sequence, disposition, assistant_outcome, transcript_disposition FROM command_record_pi_office_turn_terminal WHERE command_row_id = ?1",
+                [command_row_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?)),
             ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Office terminal command body"))?;
             CommandBody::RecordPiOfficeTurnTerminal {
                 office_turn_id: OfficeTurnId::try_from(row.0)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
                 correlation_identity: PiCorrelationIdentity::parse(row.1)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
-                agent_settled_sequence: PiProtocolSequence::try_from(row.2)
+                terminal_evidence: pi_office_turn_terminal_evidence_from_sql(row.2, row.3, row.4)?,
+                settled_sequence: PiProtocolSequence::try_from(row.5)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
-                final_usage_sequence: PiProtocolSequence::try_from(row.3)
-                    .map_err(|_| StoreError::InvalidStoredValue)?,
-                settled_sequence: PiProtocolSequence::try_from(row.4)
-                    .map_err(|_| StoreError::InvalidStoredValue)?,
-                disposition: pi_office_turn_disposition_from_i64(row.5)?,
-                assistant_outcome: pi_office_turn_assistant_outcome_from_i64(row.6)?,
-                transcript_disposition: pi_office_turn_transcript_disposition_from_i64(row.7)?,
+                disposition: pi_office_turn_disposition_from_i64(row.6)?,
+                assistant_outcome: pi_office_turn_assistant_outcome_from_i64(row.7)?,
+                transcript_disposition: pi_office_turn_transcript_disposition_from_i64(row.8)?,
             }
         }
     };
@@ -15450,6 +15492,26 @@ fn pi_office_turn_assistant_outcome_from_i64(
         4 => Ok(PiOfficeTurnAssistantOutcome::ObservedAborted),
         5 => Ok(PiOfficeTurnAssistantOutcome::SdkPromiseRejected),
         6 => Ok(PiOfficeTurnAssistantOutcome::MissingFinalAssistantOutcome),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+
+fn pi_office_turn_terminal_evidence_from_sql(
+    kind: i64,
+    agent_settled_sequence: Option<i64>,
+    final_accounting_sequence: i64,
+) -> Result<PiOfficeTurnTerminalEvidence, StoreError> {
+    let final_accounting_sequence = PiProtocolSequence::try_from(final_accounting_sequence)
+        .map_err(|_| StoreError::InvalidStoredValue)?;
+    match (kind, agent_settled_sequence) {
+        (1, Some(agent_settled_sequence)) => Ok(PiOfficeTurnTerminalEvidence::ObservedAssistant {
+            agent_settled_sequence: PiProtocolSequence::try_from(agent_settled_sequence)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+            final_accounting_sequence,
+        }),
+        (2, None) => Ok(PiOfficeTurnTerminalEvidence::UnavailableAssistant {
+            final_known_usage_sequence: final_accounting_sequence,
+        }),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }

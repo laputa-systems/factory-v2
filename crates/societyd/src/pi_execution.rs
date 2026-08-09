@@ -1,9 +1,10 @@
-//! Daemon-private bridge from durable M5 child receipts to native Pi physics.
+//! Daemon-private bridge from durable Pi child/turn receipts to native physics.
 //!
 //! `PiSupervisor` owns only a live process group and transient pipe receipts.
 //! This module owns neither a local wire command nor a new authority: it
-//! translates one already-admitted Office child through the kernel's closed
-//! M5 receipt chain, one committed transition at a time.  In particular it
+//! translates one already-admitted Office child and Prompt through the
+//! kernel's closed receipt chains, one committed transition at a time. In
+//! particular it
 //! never keeps a SQLite transaction open while allocating a workspace,
 //! spawning, reading or writing a pipe, signalling, waiting, or sealing
 //! bytes.
@@ -16,12 +17,13 @@ use society_kernel::{
     NativeWorkspaceId as KernelWorkspaceId, OfficeTurnId,
     OwnedProcessGroupId as KernelProcessGroupId, PiBoundarySessionIdentity, PiChildOwner,
     PiChildSpawnAdmissionId, PiCorrelationIdentity, PiCumulativeUsage,
-    PiOfficeTurnAssistantOutcome, PiOfficeTurnDisposition, PiOfficeTurnTranscriptDisposition,
-    PiOfficeTurnUsageFailure, PiOfficeTurnUsageUnavailableReason, PiOfficeTurnUsageUnknownReason,
-    PiProtocolSequence, PiTokenCount, PrincipalId, ProcessExitCode,
-    ProcessGroupLiveness as KernelLiveness, ProcessSignalNumber, ProviderCostBinary64,
-    RootAuthorityOfficeSessionId, SpawnNonce as KernelSpawnNonce, SupervisedChildIdentity,
-    SupervisorEpochId, SupervisorEpochIdentity,
+    PiOfficeTurnAssistantOutcome, PiOfficeTurnDisposition, PiOfficeTurnTerminalEvidence,
+    PiOfficeTurnTranscriptDisposition, PiOfficeTurnUsageFailure,
+    PiOfficeTurnUsageUnavailableReason, PiOfficeTurnUsageUnknownReason, PiProtocolSequence,
+    PiTokenCount, PrincipalId, ProcessExitCode, ProcessGroupLiveness as KernelLiveness,
+    ProcessSignalNumber, ProviderCostBinary64, RootAuthorityOfficeSessionId,
+    SpawnNonce as KernelSpawnNonce, SupervisedChildIdentity, SupervisorEpochId,
+    SupervisorEpochIdentity,
 };
 use society_pi::{
     AssistantStopReason, BoundarySequence, CommandName, CommandResult, CorrelationIdentity,
@@ -335,6 +337,7 @@ pub(crate) struct OfficePiTurn {
     phase: OfficePiTurnPhase,
     accepted_sequence: Option<PiProtocolSequence>,
     agent_settled_sequence: Option<PiProtocolSequence>,
+    latest_known_accounting_sequence: Option<PiProtocolSequence>,
     final_accounting_sequence: Option<PiProtocolSequence>,
 }
 
@@ -1072,6 +1075,7 @@ impl PiExecutionDriver {
             phase: OfficePiTurnPhase::PromptDeliveryPending,
             accepted_sequence: None,
             agent_settled_sequence: None,
+            latest_known_accounting_sequence: None,
             final_accounting_sequence: None,
         };
         let progress = match self.supervisor.send_prompt(
@@ -1572,6 +1576,7 @@ impl PiExecutionDriver {
                     }) if office_turn_id == turn.office_turn_id
                         && protocol_sequence == sequence =>
                     {
+                        turn.latest_known_accounting_sequence = Some(sequence);
                         if turn
                             .agent_settled_sequence
                             .is_some_and(|settled| sequence > settled)
@@ -1618,16 +1623,23 @@ impl PiExecutionDriver {
                     final_assistant_outcome,
                 },
                 Some(society_pi::PeerObservation::TurnSettled(receipt)),
-            ) => self.record_office_turn_terminal(
-                store,
-                child,
-                turn,
-                sequence,
-                *classification,
-                final_assistant_outcome,
-                receipt,
-                now,
-            ),
+            ) => {
+                let peer_became_fatal = output.peer_became_fatal();
+                let result = self.record_office_turn_terminal(
+                    store,
+                    child,
+                    turn,
+                    sequence,
+                    *classification,
+                    final_assistant_outcome,
+                    receipt,
+                    now,
+                );
+                if peer_became_fatal {
+                    self.begin_registered_boundary_containment(child, now);
+                }
+                result
+            }
             (OutboundEvent::Fatal { .. }, _) => {
                 self.begin_registered_boundary_containment(child, now);
                 Err(PiExecutionError::PeerFatalWithoutAccountingFact)
@@ -1741,20 +1753,42 @@ impl PiExecutionDriver {
             self.begin_registered_boundary_containment(child, now);
             return Err(PiExecutionError::PromptEvidenceOrder);
         }
-        let agent_settled_sequence = turn
-            .agent_settled_sequence
-            .ok_or(PiExecutionError::PromptTerminalEvidenceMissing)?;
-        let final_usage_sequence = turn
-            .final_accounting_sequence
-            .ok_or(PiExecutionError::PromptTerminalEvidenceMissing)?;
-        if agent_settled_sequence >= final_usage_sequence
-            || final_usage_sequence.value().checked_add(1) != Some(settled_sequence.value())
+        let disposition = kernel_turn_disposition(receipt.disposition)?;
+        let assistant_outcome = kernel_assistant_outcome(&receipt.final_assistant_outcome)?;
+        let terminal_evidence = match assistant_outcome {
+            PiOfficeTurnAssistantOutcome::ObservedStop
+            | PiOfficeTurnAssistantOutcome::ObservedLength
+            | PiOfficeTurnAssistantOutcome::ObservedError
+            | PiOfficeTurnAssistantOutcome::ObservedAborted => {
+                let agent_settled_sequence = turn
+                    .agent_settled_sequence
+                    .ok_or(PiExecutionError::PromptTerminalEvidenceMissing)?;
+                let final_accounting_sequence = turn
+                    .final_accounting_sequence
+                    .ok_or(PiExecutionError::PromptTerminalEvidenceMissing)?;
+                PiOfficeTurnTerminalEvidence::ObservedAssistant {
+                    agent_settled_sequence,
+                    final_accounting_sequence,
+                }
+            }
+            PiOfficeTurnAssistantOutcome::SdkPromiseRejected
+            | PiOfficeTurnAssistantOutcome::MissingFinalAssistantOutcome => {
+                PiOfficeTurnTerminalEvidence::UnavailableAssistant {
+                    final_known_usage_sequence: turn
+                        .latest_known_accounting_sequence
+                        .ok_or(PiExecutionError::PromptTerminalEvidenceMissing)?,
+                }
+            }
+        };
+        if terminal_evidence
+            .final_accounting_sequence()
+            .value()
+            .checked_add(1)
+            != Some(settled_sequence.value())
         {
             self.begin_registered_boundary_containment(child, now);
             return Err(PiExecutionError::PromptEvidenceOrder);
         }
-        let disposition = kernel_turn_disposition(receipt.disposition)?;
-        let assistant_outcome = kernel_assistant_outcome(&receipt.final_assistant_outcome)?;
         let terminal = execute_office_turn_command(
             store,
             &turn.operation,
@@ -1764,8 +1798,7 @@ impl PiExecutionDriver {
             CommandBody::RecordPiOfficeTurnTerminal {
                 office_turn_id: turn.office_turn_id,
                 correlation_identity: turn.correlation_identity.clone(),
-                agent_settled_sequence,
-                final_usage_sequence,
+                terminal_evidence,
                 settled_sequence,
                 disposition,
                 assistant_outcome,
@@ -3057,6 +3090,160 @@ mod tests {
             Some(&OfficePiTurnOutput::TerminalRecordedNonReady)
         );
         assert_eq!(child.phase(), "office_turn_terminal_blocked");
+        drop(turn);
+        drop(child);
+        drop(driver);
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn provider_free_m6_sdk_promise_rejection_records_adjacent_known_terminal_without_agent_fact() {
+        let fixture = NativeFixture::new("m6-sdk-promise-rejected-final-known");
+        let mut store = KernelStore::open_in_memory().unwrap();
+        let office = found_office_start(&mut store, "m6-sdk-promise-rejected-final-known");
+        let mut driver = PiExecutionDriver::new();
+        let mut child = ready_office_child(
+            &mut driver,
+            &mut store,
+            &fixture,
+            &office,
+            "m6-sdk-rejection-child",
+        );
+        let prompt_text = "sealed Office prompt rejected by the SDK";
+        let registered = seal_prompt_content(
+            &mut store,
+            &fixture,
+            "m6-sdk-rejection-content",
+            prompt_text,
+        );
+        let (turn_id, frontier) =
+            open_office_turn(&mut store, office.session_id, "m6-sdk-rejection-open");
+        let (mut turn, _) = driver
+            .authorize_and_begin_office_turn_prompt(
+                &mut store,
+                &mut child,
+                office_turn_start(
+                    "m6-sdk-rejection-turn",
+                    turn_id,
+                    "m6-sdk-rejection-correlation",
+                    registered.content_object_id,
+                    registered.digest,
+                    prompt_text,
+                    frontier,
+                ),
+                MonotonicTick::from_milliseconds(100),
+                ControlWriteDeadline::at(MonotonicTick::from_milliseconds(1_000)),
+            )
+            .unwrap();
+        let outputs =
+            drive_turn_until_terminal(&mut driver, &mut store, &mut child, &mut turn, 101, 2_000);
+        assert!(outputs.contains(&OfficePiTurnOutput::PromptAccepted));
+        assert!(outputs.contains(&OfficePiTurnOutput::KnownUsageRecorded));
+        assert_eq!(
+            outputs.last(),
+            Some(&OfficePiTurnOutput::TerminalRecordedNonReady)
+        );
+        assert_eq!(child.phase(), "office_turn_terminal_blocked");
+        let events = store.replay_ledger().unwrap();
+        assert!(events.iter().any(|event| matches!(
+            event.body,
+            society_kernel::EventBody::PiOfficeTurnTerminalRecorded {
+                office_turn_id,
+                disposition: society_kernel::PiOfficeTurnDisposition::Failed,
+                assistant_outcome: society_kernel::PiOfficeTurnAssistantOutcome::SdkPromiseRejected,
+                ..
+            } if office_turn_id == turn_id
+        )));
+        assert!(!events.iter().any(|event| matches!(
+            event.body,
+            society_kernel::EventBody::PiOfficeTurnUsageFrozen {
+                office_turn_id,
+                ..
+            } if office_turn_id == turn_id
+        )));
+        assert!(!events.iter().any(|event| matches!(
+            event.body,
+            society_kernel::EventBody::OfficeTurnSettled {
+                turn_id: observed,
+                ..
+            } if observed == turn_id
+        )));
+        drop(turn);
+        drop(child);
+        drop(driver);
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn provider_free_m6_protocol_failure_records_terminal_then_contains_fatal_session() {
+        let fixture = NativeFixture::new("m6-protocol-failed-final-known-ignore-term");
+        let mut store = KernelStore::open_in_memory().unwrap();
+        let office = found_office_start(&mut store, "m6-protocol-failed-terminal");
+        let mut driver = PiExecutionDriver::new();
+        let mut child = ready_office_child(
+            &mut driver,
+            &mut store,
+            &fixture,
+            &office,
+            "m6-protocol-failed-child",
+        );
+        let prompt_text = "sealed Office prompt with invalid terminal assistant evidence";
+        let registered = seal_prompt_content(
+            &mut store,
+            &fixture,
+            "m6-protocol-failed-content",
+            prompt_text,
+        );
+        let (turn_id, frontier) =
+            open_office_turn(&mut store, office.session_id, "m6-protocol-failed-open");
+        let (mut turn, _) = driver
+            .authorize_and_begin_office_turn_prompt(
+                &mut store,
+                &mut child,
+                office_turn_start(
+                    "m6-protocol-failed-turn",
+                    turn_id,
+                    "m6-protocol-failed-correlation",
+                    registered.content_object_id,
+                    registered.digest,
+                    prompt_text,
+                    frontier,
+                ),
+                MonotonicTick::from_milliseconds(100),
+                ControlWriteDeadline::at(MonotonicTick::from_milliseconds(1_000)),
+            )
+            .unwrap();
+        let outputs =
+            drive_turn_until_terminal(&mut driver, &mut store, &mut child, &mut turn, 101, 2_000);
+        assert_eq!(
+            outputs.last(),
+            Some(&OfficePiTurnOutput::TerminalRecordedNonReady)
+        );
+        assert_eq!(child.phase(), "boundary_containment_required");
+        let events = store.replay_ledger().unwrap();
+        assert!(events.iter().any(|event| matches!(
+            event.body,
+            society_kernel::EventBody::PiOfficeTurnTerminalRecorded {
+                office_turn_id,
+                disposition: society_kernel::PiOfficeTurnDisposition::ProtocolFailed,
+                assistant_outcome: society_kernel::PiOfficeTurnAssistantOutcome::MissingFinalAssistantOutcome,
+                ..
+            } if office_turn_id == turn_id
+        )));
+        assert!(!events.iter().any(|event| matches!(
+            event.body,
+            society_kernel::EventBody::PiOfficeTurnUsageFrozen {
+                office_turn_id,
+                ..
+            } if office_turn_id == turn_id
+        )));
+        driver
+            .drive_boundary_containment(&child, MonotonicTick::from_milliseconds(1_200))
+            .unwrap();
+        driver
+            .drive_boundary_containment(&child, MonotonicTick::from_milliseconds(3_200))
+            .unwrap();
+        reconcile_child(&mut driver, &mut store, &fixture, &mut child, 3_201);
         drop(turn);
         drop(child);
         drop(driver);

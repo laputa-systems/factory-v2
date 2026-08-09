@@ -95,6 +95,16 @@ The generic OS-custody state of a registered native child. It is distinct from
 SDK-session progress and from application work success. A retained readiness
 fact cannot make a reaped or recovery-contained process operational.
 
+### Office Prompt terminal evidence
+
+The closed SDK-boundary result for one authorized Office Prompt. An observed
+assistant outcome requires the exact `AgentSettled -> final accounting ->
+Settled` sequence. An SDK-level unavailable assistant outcome can occur before
+any agent lifecycle and instead requires `final Known usage -> Settled` with no
+invented `AgentSettled`. Only completed/observed-stop may restore Office Ready;
+failed and protocol-failed terminals remain non-ready, and protocol failure
+also removes further session authority.
+
 ### Content object and content seal receipt
 
 A global immutable byte identity and the narrow kernel attestation that the

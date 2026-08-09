@@ -1331,6 +1331,64 @@ pub enum PiOfficeTurnAssistantOutcome {
     MissingFinalAssistantOutcome = 6,
 }
 
+/// The two peer-valid sequence topologies for a terminal Office Prompt.
+/// Observed assistant outcomes require the exact `agent_settled` boundary;
+/// an SDK-level failure may have no agent lifecycle at all and is instead
+/// closed by its final Prompt-correlated Known usage fact immediately before
+/// `Settled`. The variants prevent callers from inventing an optional agent
+/// sequence for the unavailable-assistant path.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PiOfficeTurnTerminalEvidence {
+    ObservedAssistant {
+        agent_settled_sequence: PiProtocolSequence,
+        final_accounting_sequence: PiProtocolSequence,
+    },
+    UnavailableAssistant {
+        final_known_usage_sequence: PiProtocolSequence,
+    },
+}
+
+impl PiOfficeTurnTerminalEvidence {
+    pub const fn final_accounting_sequence(self) -> PiProtocolSequence {
+        match self {
+            Self::ObservedAssistant {
+                final_accounting_sequence,
+                ..
+            }
+            | Self::UnavailableAssistant {
+                final_known_usage_sequence: final_accounting_sequence,
+            } => final_accounting_sequence,
+        }
+    }
+
+    pub const fn agent_settled_sequence(self) -> Option<PiProtocolSequence> {
+        match self {
+            Self::ObservedAssistant {
+                agent_settled_sequence,
+                ..
+            } => Some(agent_settled_sequence),
+            Self::UnavailableAssistant { .. } => None,
+        }
+    }
+
+    pub const fn accepts(self, outcome: PiOfficeTurnAssistantOutcome) -> bool {
+        matches!(
+            (self, outcome),
+            (
+                Self::ObservedAssistant { .. },
+                PiOfficeTurnAssistantOutcome::ObservedStop
+                    | PiOfficeTurnAssistantOutcome::ObservedLength
+                    | PiOfficeTurnAssistantOutcome::ObservedError
+                    | PiOfficeTurnAssistantOutcome::ObservedAborted
+            ) | (
+                Self::UnavailableAssistant { .. },
+                PiOfficeTurnAssistantOutcome::SdkPromiseRejected
+                    | PiOfficeTurnAssistantOutcome::MissingFinalAssistantOutcome
+            )
+        )
+    }
+}
+
 impl PiOfficeTurnDisposition {
     pub const fn accepts(self, outcome: PiOfficeTurnAssistantOutcome) -> bool {
         matches!(
@@ -2343,15 +2401,15 @@ pub enum CommandBody {
         protocol_sequence: PiProtocolSequence,
         failure: PiOfficeTurnUsageFailure,
     },
-    /// The closed normalized peer terminal chain. The three sequence values
-    /// preserve `agent_settled -> final accounting fact -> Settled`, where the
-    /// accounting fact is either a Known usage snapshot or a typed failure; no
-    /// generic SDK event or narrative output can substitute for it.
+    /// The closed normalized peer terminal chain. Observed assistant outcomes
+    /// preserve `agent_settled -> final accounting fact -> Settled`; an
+    /// unavailable assistant outcome preserves `final Known usage fact ->
+    /// Settled` because SDK command failure can precede any agent lifecycle.
+    /// No generic SDK event or narrative output can substitute for either.
     RecordPiOfficeTurnTerminal {
         office_turn_id: OfficeTurnId,
         correlation_identity: PiCorrelationIdentity,
-        agent_settled_sequence: PiProtocolSequence,
-        final_usage_sequence: PiProtocolSequence,
+        terminal_evidence: PiOfficeTurnTerminalEvidence,
         settled_sequence: PiProtocolSequence,
         disposition: PiOfficeTurnDisposition,
         assistant_outcome: PiOfficeTurnAssistantOutcome,

@@ -24,17 +24,17 @@ use society_kernel::{
     OfficeTurnPurpose, OperatingCycleId, OperatingCycleState, OperatingCycleTreatment,
     OwnedProcessGroupId, PiBoundarySessionIdentity, PiChildOwner, PiChildSpawnAdmissionId,
     PiCorrelationIdentity, PiCumulativeUsage, PiOfficeTurnAssistantOutcome,
-    PiOfficeTurnDisposition, PiOfficeTurnTerminalReceiptId, PiOfficeTurnTranscriptDisposition,
-    PiOfficeTurnUsageFailure, PiOfficeTurnUsageUnavailableReason, PiProtocolSequence, PiTokenCount,
-    PostmortemActionKind, PostmortemActionProposalText, PostmortemCausalClaimKind,
-    PostmortemCausalClaimText, PostmortemId, PrincipalDisplayName, PrincipalId, ProjectId,
-    ProjectMilestoneName, ProjectName, ProjectNorthStarAlignment,
-    ProjectNorthStarBoundaryCommitmentAnswer, ProjectNorthStarChangeAnswer,
-    ProjectNorthStarImprovementEvidenceAnswer, ProjectNorthStarRevisitAnswer, ProjectObjectiveText,
-    ProjectState, ProjectStopConditionText, ProviderCostBinary64, Rejection,
-    ReviewChallengeSeverity, ReviewFailureHypothesis, RootAuthorityOfficeSessionId, SocietyName,
-    SpawnNonce, StoreError, SupervisedChildIdentity, SupervisorEpochId, SupervisorEpochIdentity,
-    UsdMicros,
+    PiOfficeTurnDisposition, PiOfficeTurnTerminalEvidence, PiOfficeTurnTerminalReceiptId,
+    PiOfficeTurnTranscriptDisposition, PiOfficeTurnUsageFailure,
+    PiOfficeTurnUsageUnavailableReason, PiProtocolSequence, PiTokenCount, PostmortemActionKind,
+    PostmortemActionProposalText, PostmortemCausalClaimKind, PostmortemCausalClaimText,
+    PostmortemId, PrincipalDisplayName, PrincipalId, ProjectId, ProjectMilestoneName, ProjectName,
+    ProjectNorthStarAlignment, ProjectNorthStarBoundaryCommitmentAnswer,
+    ProjectNorthStarChangeAnswer, ProjectNorthStarImprovementEvidenceAnswer,
+    ProjectNorthStarRevisitAnswer, ProjectObjectiveText, ProjectState, ProjectStopConditionText,
+    ProviderCostBinary64, Rejection, ReviewChallengeSeverity, ReviewFailureHypothesis,
+    RootAuthorityOfficeSessionId, SocietyName, SpawnNonce, StoreError, SupervisedChildIdentity,
+    SupervisorEpochId, SupervisorEpochIdentity, UsdMicros,
 };
 
 fn example_application_mission() -> ApplicationMissionInput {
@@ -1084,7 +1084,7 @@ fn current_schema_reopens_after_atomic_fresh_bootstrap() {
         connection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        10
+        11
     );
     drop(connection);
     drop(KernelStore::open(&path).unwrap());
@@ -1093,7 +1093,7 @@ fn current_schema_reopens_after_atomic_fresh_bootstrap() {
         reopened
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        10
+        11
     );
     assert_eq!(
         reopened
@@ -1116,9 +1116,9 @@ fn current_schema_reopens_after_atomic_fresh_bootstrap() {
 }
 
 #[test]
-fn historical_schema_nine_is_rejected_without_current_schema_mutation() {
+fn historical_schema_ten_is_rejected_without_current_schema_mutation() {
     let path = std::env::temp_dir().join(format!(
-        "society-historical-schema-nine-{}-{}.sqlite",
+        "society-historical-schema-ten-{}-{}.sqlite",
         std::process::id(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -1126,33 +1126,32 @@ fn historical_schema_nine_is_rejected_without_current_schema_mutation() {
             .as_nanos()
     ));
     let historical = Connection::open(&path).unwrap();
-    // Schema nine was the immediately preceding fresh-only identity and still
-    // used the retired application-governance vocabulary. Schema ten must not
-    // mistake that database for the renamed canonical schema.
+    // Schema ten was the immediately preceding fresh-only identity. Schema
+    // eleven must not mistake its stricter terminal shape for current data.
     historical
         .execute_batch(
-            "CREATE TABLE previous_v9_ledger_marker (entry_id INTEGER PRIMARY KEY);
-             INSERT INTO previous_v9_ledger_marker VALUES (1);
-             PRAGMA user_version = 9;",
+            "CREATE TABLE previous_v10_ledger_marker (entry_id INTEGER PRIMARY KEY);
+             INSERT INTO previous_v10_ledger_marker VALUES (1);
+             PRAGMA user_version = 10;",
         )
         .unwrap();
     drop(historical);
 
     assert!(matches!(
         KernelStore::open(&path),
-        Err(StoreError::UnsupportedSchemaVersion(9))
+        Err(StoreError::UnsupportedSchemaVersion(10))
     ));
     let inspection = Connection::open(&path).unwrap();
     assert_eq!(
         inspection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        9
+        10
     );
     assert_eq!(
         inspection
             .query_row(
-                "SELECT COUNT(*) FROM previous_v9_ledger_marker",
+                "SELECT COUNT(*) FROM previous_v10_ledger_marker",
                 [],
                 |row| { row.get::<_, i64>(0) }
             )
@@ -2559,8 +2558,51 @@ fn pi_office_turn_requires_authorized_delivered_peer_terminal_chain_and_debits_o
         CommandBody::RecordPiOfficeTurnTerminal {
             office_turn_id: turn_one,
             correlation_identity: correlation_one.clone(),
-            agent_settled_sequence: PiProtocolSequence::try_from(10).unwrap(),
-            final_usage_sequence: PiProtocolSequence::try_from(14).unwrap(),
+            terminal_evidence: PiOfficeTurnTerminalEvidence::ObservedAssistant {
+                agent_settled_sequence: PiProtocolSequence::try_from(10).unwrap(),
+                final_accounting_sequence: PiProtocolSequence::try_from(14).unwrap(),
+            },
+            settled_sequence: PiProtocolSequence::try_from(15).unwrap(),
+            disposition: PiOfficeTurnDisposition::Completed,
+            assistant_outcome: PiOfficeTurnAssistantOutcome::ObservedStop,
+            transcript_disposition:
+                PiOfficeTurnTranscriptDisposition::DeferredUntilOfficeSessionDispose,
+        },
+        Rejection::PiOfficeTurnTerminalEvidenceMissing,
+    );
+    rejected(
+        &mut store,
+        "m6-reject-unavailable-terminal-shape-for-observed-assistant",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeTurnTerminal,
+        zero,
+        CommandBody::RecordPiOfficeTurnTerminal {
+            office_turn_id: turn_one,
+            correlation_identity: correlation_one.clone(),
+            terminal_evidence: PiOfficeTurnTerminalEvidence::UnavailableAssistant {
+                final_known_usage_sequence: PiProtocolSequence::try_from(14).unwrap(),
+            },
+            settled_sequence: PiProtocolSequence::try_from(15).unwrap(),
+            disposition: PiOfficeTurnDisposition::Completed,
+            assistant_outcome: PiOfficeTurnAssistantOutcome::ObservedStop,
+            transcript_disposition:
+                PiOfficeTurnTranscriptDisposition::DeferredUntilOfficeSessionDispose,
+        },
+        Rejection::PiOfficeTurnTerminalEvidenceMissing,
+    );
+    rejected(
+        &mut store,
+        "m6-reject-nonordered-observed-terminal-shape",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeTurnTerminal,
+        zero,
+        CommandBody::RecordPiOfficeTurnTerminal {
+            office_turn_id: turn_one,
+            correlation_identity: correlation_one.clone(),
+            terminal_evidence: PiOfficeTurnTerminalEvidence::ObservedAssistant {
+                agent_settled_sequence: PiProtocolSequence::try_from(14).unwrap(),
+                final_accounting_sequence: PiProtocolSequence::try_from(14).unwrap(),
+            },
             settled_sequence: PiProtocolSequence::try_from(15).unwrap(),
             disposition: PiOfficeTurnDisposition::Completed,
             assistant_outcome: PiOfficeTurnAssistantOutcome::ObservedStop,
@@ -2578,8 +2620,10 @@ fn pi_office_turn_requires_authorized_delivered_peer_terminal_chain_and_debits_o
         CommandBody::RecordPiOfficeTurnTerminal {
             office_turn_id: turn_one,
             correlation_identity: correlation_one.clone(),
-            agent_settled_sequence: PiProtocolSequence::try_from(11).unwrap(),
-            final_usage_sequence: PiProtocolSequence::try_from(14).unwrap(),
+            terminal_evidence: PiOfficeTurnTerminalEvidence::ObservedAssistant {
+                agent_settled_sequence: PiProtocolSequence::try_from(11).unwrap(),
+                final_accounting_sequence: PiProtocolSequence::try_from(14).unwrap(),
+            },
             settled_sequence: PiProtocolSequence::try_from(15).unwrap(),
             disposition: PiOfficeTurnDisposition::Completed,
             assistant_outcome: PiOfficeTurnAssistantOutcome::ObservedStop,
@@ -2731,8 +2775,10 @@ fn pi_office_turn_requires_authorized_delivered_peer_terminal_chain_and_debits_o
         CommandBody::RecordPiOfficeTurnTerminal {
             office_turn_id: turn_two,
             correlation_identity: correlation_two,
-            agent_settled_sequence: PiProtocolSequence::try_from(21).unwrap(),
-            final_usage_sequence: PiProtocolSequence::try_from(22).unwrap(),
+            terminal_evidence: PiOfficeTurnTerminalEvidence::ObservedAssistant {
+                agent_settled_sequence: PiProtocolSequence::try_from(21).unwrap(),
+                final_accounting_sequence: PiProtocolSequence::try_from(22).unwrap(),
+            },
             settled_sequence: PiProtocolSequence::try_from(23).unwrap(),
             disposition: PiOfficeTurnDisposition::Completed,
             assistant_outcome: PiOfficeTurnAssistantOutcome::ObservedStop,
@@ -2878,8 +2924,10 @@ fn pi_office_turn_requires_authorized_delivered_peer_terminal_chain_and_debits_o
         CommandBody::RecordPiOfficeTurnTerminal {
             office_turn_id: turn_three,
             correlation_identity: correlation_three,
-            agent_settled_sequence: PiProtocolSequence::try_from(31).unwrap(),
-            final_usage_sequence: PiProtocolSequence::try_from(32).unwrap(),
+            terminal_evidence: PiOfficeTurnTerminalEvidence::ObservedAssistant {
+                agent_settled_sequence: PiProtocolSequence::try_from(31).unwrap(),
+                final_accounting_sequence: PiProtocolSequence::try_from(32).unwrap(),
+            },
             settled_sequence: PiProtocolSequence::try_from(33).unwrap(),
             disposition: PiOfficeTurnDisposition::Error,
             assistant_outcome: PiOfficeTurnAssistantOutcome::ObservedError,
@@ -3144,8 +3192,10 @@ fn pi_office_turn_late_receipts_after_cancellation_never_restore_office_authorit
         CommandBody::RecordPiOfficeTurnTerminal {
             office_turn_id: turn_id,
             correlation_identity: correlation,
-            agent_settled_sequence: PiProtocolSequence::try_from(2).unwrap(),
-            final_usage_sequence: PiProtocolSequence::try_from(3).unwrap(),
+            terminal_evidence: PiOfficeTurnTerminalEvidence::ObservedAssistant {
+                agent_settled_sequence: PiProtocolSequence::try_from(2).unwrap(),
+                final_accounting_sequence: PiProtocolSequence::try_from(3).unwrap(),
+            },
             settled_sequence: PiProtocolSequence::try_from(4).unwrap(),
             disposition: PiOfficeTurnDisposition::Error,
             assistant_outcome: PiOfficeTurnAssistantOutcome::ObservedError,

@@ -105,6 +105,14 @@ owned children, seals partial evidence, reconciles cost, and proves closure.
 An OS signal, a process exit, a direct-child reap, and protocol completion are
 distinct facts.
 
+Office Prompt completion also has two deliberately distinct closed sequence
+shapes. Observed assistant results require `AgentSettled`, a later exact final
+accounting fact, and the immediately following `Settled`. SDK-level failures
+may occur before any agent lifecycle; they require only a final
+Prompt-correlated Known usage fact immediately followed by `Settled`. The
+kernel never fabricates an agent event to make those shapes look alike, and a
+non-ready or protocol-failed terminal cannot reopen Office authority.
+
 An execution profile is a qualified runtime identity and readiness state, not
 a caller-selected executable path. A product application may select only an
 already admitted profile through typed application policy; it cannot alter the
