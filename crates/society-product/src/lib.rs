@@ -47,6 +47,14 @@ pub struct BuilderAttemptId(String);
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct DeliveryAuthorizationId(String);
 
+/// A closed identity for the application revision authorized for delivery.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct ApplicationRevisionId(String);
+
+/// A closed identity for the decision that authorizes one product change.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct AuthorizingDecisionId(String);
+
 /// A closed identity for one requested validation profile.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ValidationProfileId(String);
@@ -78,6 +86,8 @@ macro_rules! closed_identity {
 closed_identity!(ProductChangeId, "product change identity");
 closed_identity!(BuilderAttemptId, "builder attempt identity");
 closed_identity!(DeliveryAuthorizationId, "delivery authorization identity");
+closed_identity!(ApplicationRevisionId, "application revision identity");
+closed_identity!(AuthorizingDecisionId, "authorizing decision identity");
 closed_identity!(ValidationProfileId, "validation profile identity");
 
 /// The object format asserted by an opened repository.
@@ -892,6 +902,8 @@ impl ExternallySupervisedValidationReceipt {
 /// A successful closed validation run over one exact tree.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ValidationReceipt {
+    application_revision: ApplicationRevisionId,
+    authorizing_decision: AuthorizingDecisionId,
     profile: ValidationProfileId,
     tree: TreeId,
     steps: Vec<ValidationStepReceipt>,
@@ -899,6 +911,14 @@ pub struct ValidationReceipt {
 }
 
 impl ValidationReceipt {
+    pub fn application_revision(&self) -> &ApplicationRevisionId {
+        &self.application_revision
+    }
+
+    pub fn authorizing_decision(&self) -> &AuthorizingDecisionId {
+        &self.authorizing_decision
+    }
+
     pub fn profile(&self) -> &ValidationProfileId {
         &self.profile
     }
@@ -919,6 +939,8 @@ impl ValidationReceipt {
 /// A failed validation remains distinct from patch/application failure.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ValidationFailureReceipt {
+    application_revision: ApplicationRevisionId,
+    authorizing_decision: AuthorizingDecisionId,
     profile: ValidationProfileId,
     tree: TreeId,
     completed_steps: Vec<ValidationStepReceipt>,
@@ -928,6 +950,14 @@ pub struct ValidationFailureReceipt {
 }
 
 impl ValidationFailureReceipt {
+    pub fn application_revision(&self) -> &ApplicationRevisionId {
+        &self.application_revision
+    }
+
+    pub fn authorizing_decision(&self) -> &AuthorizingDecisionId {
+        &self.authorizing_decision
+    }
+
     pub fn profile(&self) -> &ValidationProfileId {
         &self.profile
     }
@@ -1056,6 +1086,8 @@ pub struct ControlledCommitSpec {
 /// The product commit produced only after an exact-tree and validation pass.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ControlledCommitReceipt {
+    application_revision: ApplicationRevisionId,
+    authorizing_decision: AuthorizingDecisionId,
     commit: CommitId,
     parent: CommitId,
     tree: TreeId,
@@ -1064,6 +1096,14 @@ pub struct ControlledCommitReceipt {
 }
 
 impl ControlledCommitReceipt {
+    pub fn application_revision(&self) -> &ApplicationRevisionId {
+        &self.application_revision
+    }
+
+    pub fn authorizing_decision(&self) -> &AuthorizingDecisionId {
+        &self.authorizing_decision
+    }
+
     pub fn commit(&self) -> &CommitId {
         &self.commit
     }
@@ -1085,10 +1125,17 @@ impl ControlledCommitReceipt {
     }
 }
 
-/// Delivery inputs that this crate verifies but never authorizes.
+/// One caller-supplied product change authorized for a precise application
+/// revision by one precise decision.
+///
+/// This value is a typed input boundary, not proof that a kernel or another
+/// authority issued it. The materializer verifies that its repository/tree
+/// edges match the captured candidate, but trusts its caller to supply it.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ProductDeliveryAuthorization {
-    id: DeliveryAuthorizationId,
+pub struct AuthorizedProductChange {
+    authorization_id: DeliveryAuthorizationId,
+    application_revision: ApplicationRevisionId,
+    authorizing_decision: AuthorizingDecisionId,
     change: ProductChangeId,
     /// The exact opened repository identity. A receipt from another local
     /// checkout cannot be delivered merely because it names a matching object.
@@ -1100,10 +1147,12 @@ pub struct ProductDeliveryAuthorization {
     validation_profile: ValidationProfileId,
 }
 
-impl ProductDeliveryAuthorization {
+impl AuthorizedProductChange {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        id: DeliveryAuthorizationId,
+        authorization_id: DeliveryAuthorizationId,
+        application_revision: ApplicationRevisionId,
+        authorizing_decision: AuthorizingDecisionId,
         change: ProductChangeId,
         repository: SourceRepository,
         target_ref: LocalBranchRef,
@@ -1113,7 +1162,9 @@ impl ProductDeliveryAuthorization {
         validation_profile: ValidationProfileId,
     ) -> Self {
         Self {
-            id,
+            authorization_id,
+            application_revision,
+            authorizing_decision,
             change,
             repository,
             target_ref,
@@ -1124,8 +1175,16 @@ impl ProductDeliveryAuthorization {
         }
     }
 
-    pub fn id(&self) -> &DeliveryAuthorizationId {
-        &self.id
+    pub fn authorization_id(&self) -> &DeliveryAuthorizationId {
+        &self.authorization_id
+    }
+
+    pub fn application_revision(&self) -> &ApplicationRevisionId {
+        &self.application_revision
+    }
+
+    pub fn authorizing_decision(&self) -> &AuthorizingDecisionId {
+        &self.authorizing_decision
     }
 
     pub fn change(&self) -> &ProductChangeId {
@@ -1162,7 +1221,7 @@ impl ProductDeliveryAuthorization {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MaterializationReceipt {
     state: ProductState,
-    authorization: ProductDeliveryAuthorization,
+    authorized_product_change: AuthorizedProductChange,
     materialized: MaterializedTreeReceipt,
     commit_validated: CommitValidatedReceipt,
     cleanup: CleanupEvidence,
@@ -1173,8 +1232,8 @@ impl MaterializationReceipt {
         self.state
     }
 
-    pub fn authorization(&self) -> &ProductDeliveryAuthorization {
-        &self.authorization
+    pub fn authorized_product_change(&self) -> &AuthorizedProductChange {
+        &self.authorized_product_change
     }
 
     pub fn materialized(&self) -> &MaterializedTreeReceipt {
@@ -1202,7 +1261,7 @@ impl MaterializationReceipt {
 #[must_use = "prepared worktrees require explicit finalize or abandon cleanup"]
 #[derive(Debug, Eq, PartialEq)]
 pub struct PreparedMaterialization {
-    authorization: ProductDeliveryAuthorization,
+    authorized_product_change: AuthorizedProductChange,
     repository: SourceRepository,
     location: ManagedWorktreePath,
     materialized: MaterializedTreeReceipt,
@@ -1218,7 +1277,11 @@ impl PreparedMaterialization {
     }
 
     pub fn validation_profile(&self) -> &ValidationProfileId {
-        &self.authorization.validation_profile
+        &self.authorized_product_change.validation_profile
+    }
+
+    pub fn authorized_product_change(&self) -> &AuthorizedProductChange {
+        &self.authorized_product_change
     }
 }
 
@@ -1227,6 +1290,8 @@ impl PreparedMaterialization {
 /// construction in the receipt graph.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MaterializedTreeReceipt {
+    application_revision: ApplicationRevisionId,
+    authorizing_decision: AuthorizingDecisionId,
     state: ProductState,
     base: CommitId,
     base_tree: TreeId,
@@ -1235,6 +1300,14 @@ pub struct MaterializedTreeReceipt {
 }
 
 impl MaterializedTreeReceipt {
+    pub fn application_revision(&self) -> &ApplicationRevisionId {
+        &self.application_revision
+    }
+
+    pub fn authorizing_decision(&self) -> &AuthorizingDecisionId {
+        &self.authorizing_decision
+    }
+
     pub fn state(&self) -> ProductState {
         self.state
     }
@@ -1261,12 +1334,22 @@ impl MaterializedTreeReceipt {
 /// exact materialized tree.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CommitValidatedReceipt {
+    application_revision: ApplicationRevisionId,
+    authorizing_decision: AuthorizingDecisionId,
     state: ProductState,
     validation: ValidationReceipt,
     commit: ControlledCommitReceipt,
 }
 
 impl CommitValidatedReceipt {
+    pub fn application_revision(&self) -> &ApplicationRevisionId {
+        &self.application_revision
+    }
+
+    pub fn authorizing_decision(&self) -> &AuthorizingDecisionId {
+        &self.authorizing_decision
+    }
+
     pub fn state(&self) -> ProductState {
         self.state
     }
@@ -1293,7 +1376,9 @@ pub enum CleanupEvidence {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DeliveryReceipt {
     state: ProductState,
-    authorization: DeliveryAuthorizationId,
+    authorization_id: DeliveryAuthorizationId,
+    application_revision: ApplicationRevisionId,
+    authorizing_decision: AuthorizingDecisionId,
     target_ref: LocalBranchRef,
     expected_old_head: CommitId,
     delivered_commit: CommitId,
@@ -1306,8 +1391,16 @@ impl DeliveryReceipt {
         self.state
     }
 
-    pub fn authorization(&self) -> &DeliveryAuthorizationId {
-        &self.authorization
+    pub fn authorization_id(&self) -> &DeliveryAuthorizationId {
+        &self.authorization_id
+    }
+
+    pub fn application_revision(&self) -> &ApplicationRevisionId {
+        &self.application_revision
+    }
+
+    pub fn authorizing_decision(&self) -> &AuthorizingDecisionId {
+        &self.authorizing_decision
     }
 
     pub fn target_ref(&self) -> &LocalBranchRef {
@@ -1649,7 +1742,7 @@ impl ProductMaterializer {
     /// with cancellation/process-group control can supervise those programs.
     pub fn materialize(
         &self,
-        authorization: ProductDeliveryAuthorization,
+        authorized_product_change: AuthorizedProductChange,
         capture: &CandidateCaptureReceipt,
         validation_profile: &ValidationProfile,
         commit_spec: &ControlledCommitSpec,
@@ -1666,7 +1759,7 @@ impl ProductMaterializer {
             return Err(ProductError::ExternallySupervisedValidationRequired);
         }
         let prepared = self.prepare_materialization(
-            authorization,
+            authorized_product_change,
             capture,
             validation_profile,
             worktree_root,
@@ -1684,16 +1777,23 @@ impl ProductMaterializer {
     /// with a matching supervised receipt or explicitly abandoned.
     pub fn prepare_materialization(
         &self,
-        authorization: ProductDeliveryAuthorization,
+        authorized_product_change: AuthorizedProductChange,
         capture: &CandidateCaptureReceipt,
         validation_profile: &ValidationProfile,
         worktree_root: &WorktreeRoot,
     ) -> Result<PreparedMaterialization, ProductError> {
         self.assert_repository_executable_config_safe(capture.repository.worktree_root())?;
-        self.assert_authorization_matches_capture(&authorization, capture, validation_profile)?;
+        self.assert_authorized_product_change_matches_capture(
+            &authorized_product_change,
+            capture,
+            validation_profile,
+        )?;
         self.assert_worktree_root_is_isolated(&capture.repository, worktree_root)?;
         let patch_bytes = self.read_bounded_patch_artifact(&capture.patch)?;
-        let name = WorktreeName::parse(format!("materialize-{}", authorization.id.as_str()))?;
+        let name = WorktreeName::parse(format!(
+            "materialize-{}",
+            authorized_product_change.authorization_id.as_str()
+        ))?;
         let location = worktree_root.allocate(&name);
         location.assert_absent()?;
         self.git_ok(
@@ -1704,28 +1804,30 @@ impl ProductMaterializer {
                 OsString::from("add"),
                 OsString::from("--detach"),
                 location.path().as_os_str().to_os_string(),
-                OsString::from(authorization.admitted_base.to_hex()),
+                OsString::from(authorized_product_change.admitted_base.to_hex()),
             ],
             None,
             &[],
         )?;
         let result = self.apply_patch_to_fresh_worktree(
-            &authorization,
+            &authorized_product_change,
             &capture.repository,
             &location,
             &patch_bytes,
         );
         match result {
             Ok(tree) => Ok(PreparedMaterialization {
-                authorization: authorization.clone(),
+                authorized_product_change: authorized_product_change.clone(),
                 repository: capture.repository.clone(),
                 location,
                 materialized: MaterializedTreeReceipt {
+                    application_revision: authorized_product_change.application_revision.clone(),
+                    authorizing_decision: authorized_product_change.authorizing_decision.clone(),
                     state: ProductState::Materialized,
-                    base: authorization.admitted_base.clone(),
+                    base: authorized_product_change.admitted_base.clone(),
                     base_tree: capture.base_tree.clone(),
                     tree,
-                    patch: authorization.accepted_patch.clone(),
+                    patch: authorized_product_change.accepted_patch.clone(),
                 },
             }),
             Err(error) => {
@@ -1761,12 +1863,13 @@ impl ProductMaterializer {
                 prepared.tree(),
                 validation_profile,
                 supervised,
+                &prepared.authorized_product_change,
             )?;
             self.assert_prepared_worktree_intact(&prepared)?;
             let commit = self.construct_controlled_commit(
                 prepared.path(),
                 prepared.repository.object_format,
-                &prepared.authorization.admitted_base,
+                &prepared.authorized_product_change,
                 prepared.tree(),
                 commit_spec,
             )?;
@@ -1777,9 +1880,11 @@ impl ProductMaterializer {
                 let cleanup = self.remove_worktree(&prepared.repository, &prepared.location)?;
                 Ok(MaterializationReceipt {
                     state: ProductState::DeliveryReady,
-                    authorization: prepared.authorization,
+                    authorized_product_change: prepared.authorized_product_change,
                     materialized: prepared.materialized,
                     commit_validated: CommitValidatedReceipt {
+                        application_revision: validation.application_revision.clone(),
+                        authorizing_decision: validation.authorizing_decision.clone(),
                         state: ProductState::CommitValidated,
                         validation,
                         commit,
@@ -1819,11 +1924,12 @@ impl ProductMaterializer {
     ) -> Result<DeliveryReceipt, ProductError> {
         self.assert_repository_executable_config_safe(qualification.repository.worktree_root())?;
         self.assert_materialization_cross_links(materialization)?;
-        if qualification.repository != materialization.authorization.repository {
+        if qualification.repository != materialization.authorized_product_change.repository {
             return Err(ProductError::DeliveryRepositoryMismatch);
         }
-        if qualification.target_ref != materialization.authorization.target_ref
-            || qualification.admitted_base != materialization.authorization.admitted_base
+        if qualification.target_ref != materialization.authorized_product_change.target_ref
+            || qualification.admitted_base
+                != materialization.authorized_product_change.admitted_base
         {
             return Err(ProductError::DeliveryAdmissionMismatch);
         }
@@ -1842,7 +1948,18 @@ impl ProductMaterializer {
                 })?;
             return Ok(DeliveryReceipt {
                 state: ProductState::Delivered,
-                authorization: materialization.authorization.id.clone(),
+                authorization_id: materialization
+                    .authorized_product_change
+                    .authorization_id
+                    .clone(),
+                application_revision: materialization
+                    .authorized_product_change
+                    .application_revision
+                    .clone(),
+                authorizing_decision: materialization
+                    .authorized_product_change
+                    .authorizing_decision
+                    .clone(),
                 target_ref: qualification.target_ref.clone(),
                 expected_old_head: qualification.admitted_base.clone(),
                 delivered_commit: materialization.commit_validated.commit.commit.clone(),
@@ -1881,7 +1998,18 @@ impl ProductMaterializer {
             })?;
         Ok(DeliveryReceipt {
             state: ProductState::Delivered,
-            authorization: materialization.authorization.id.clone(),
+            authorization_id: materialization
+                .authorized_product_change
+                .authorization_id
+                .clone(),
+            application_revision: materialization
+                .authorized_product_change
+                .application_revision
+                .clone(),
+            authorizing_decision: materialization
+                .authorized_product_change
+                .authorizing_decision
+                .clone(),
             target_ref: qualification.target_ref.clone(),
             expected_old_head: qualification.admitted_base.clone(),
             delivered_commit: materialization.commit_validated.commit.commit.clone(),
@@ -1892,15 +2020,15 @@ impl ProductMaterializer {
 
     fn apply_patch_to_fresh_worktree(
         &self,
-        authorization: &ProductDeliveryAuthorization,
+        authorized_product_change: &AuthorizedProductChange,
         repository: &SourceRepository,
         location: &ManagedWorktreePath,
         patch_bytes: &[u8],
     ) -> Result<TreeId, ProductError> {
         let head = self.resolve_commit_at_path(location.path(), repository.object_format)?;
-        if head != authorization.admitted_base {
+        if head != authorized_product_change.admitted_base {
             return Err(ProductError::FreshWorktreeBaseMismatch {
-                expected: authorization.admitted_base.clone(),
+                expected: authorized_product_change.admitted_base.clone(),
                 actual: head,
             });
         }
@@ -1917,31 +2045,31 @@ impl ProductMaterializer {
             &[],
         )?;
         let materialized_tree = self.write_tree(location.path(), repository.object_format)?;
-        if materialized_tree != authorization.accepted_tree {
+        if materialized_tree != authorized_product_change.accepted_tree {
             return Err(ProductError::MaterializedTreeMismatch {
-                expected: authorization.accepted_tree.clone(),
+                expected: authorized_product_change.accepted_tree.clone(),
                 actual: materialized_tree,
             });
         }
         Ok(materialized_tree)
     }
 
-    fn assert_authorization_matches_capture(
+    fn assert_authorized_product_change_matches_capture(
         &self,
-        authorization: &ProductDeliveryAuthorization,
+        authorized_product_change: &AuthorizedProductChange,
         capture: &CandidateCaptureReceipt,
         validation: &ValidationProfile,
     ) -> Result<(), ProductError> {
-        if authorization.change != capture.change
-            || authorization.repository != capture.repository
-            || authorization.admitted_base != capture.base
-            || authorization.accepted_tree != capture.candidate_tree
-            || authorization.accepted_patch != capture.patch.digest
+        if authorized_product_change.change != capture.change
+            || authorized_product_change.repository != capture.repository
+            || authorized_product_change.admitted_base != capture.base
+            || authorized_product_change.accepted_tree != capture.candidate_tree
+            || authorized_product_change.accepted_patch != capture.patch.digest
         {
-            return Err(ProductError::AuthorizationDoesNotMatchCapture);
+            return Err(ProductError::AuthorizedProductChangeDoesNotMatchCapture);
         }
-        if authorization.validation_profile != validation.id {
-            return Err(ProductError::AuthorizationDoesNotMatchValidationProfile);
+        if authorized_product_change.validation_profile != validation.id {
+            return Err(ProductError::AuthorizedProductChangeDoesNotMatchValidationProfile);
         }
         Ok(())
     }
@@ -1954,7 +2082,7 @@ impl ProductMaterializer {
         &self,
         materialization: &MaterializationReceipt,
     ) -> Result<(), ProductError> {
-        let authorization = &materialization.authorization;
+        let authorized_product_change = &materialization.authorized_product_change;
         let materialized = &materialization.materialized;
         let commit_validated = &materialization.commit_validated;
         let validation = &commit_validated.validation;
@@ -1962,15 +2090,25 @@ impl ProductMaterializer {
         if materialization.state != ProductState::DeliveryReady
             || materialized.state != ProductState::Materialized
             || commit_validated.state != ProductState::CommitValidated
-            || materialized.base != authorization.admitted_base
-            || materialized.tree != authorization.accepted_tree
-            || materialized.patch != authorization.accepted_patch
-            || validation.profile != authorization.validation_profile
-            || validation.tree != authorization.accepted_tree
+            || materialized.application_revision != authorized_product_change.application_revision
+            || materialized.authorizing_decision != authorized_product_change.authorizing_decision
+            || materialized.base != authorized_product_change.admitted_base
+            || materialized.tree != authorized_product_change.accepted_tree
+            || materialized.patch != authorized_product_change.accepted_patch
+            || commit_validated.application_revision
+                != authorized_product_change.application_revision
+            || commit_validated.authorizing_decision
+                != authorized_product_change.authorizing_decision
+            || validation.application_revision != authorized_product_change.application_revision
+            || validation.authorizing_decision != authorized_product_change.authorizing_decision
+            || validation.profile != authorized_product_change.validation_profile
+            || validation.tree != authorized_product_change.accepted_tree
             || validation.digest
                 != validation_digest(&validation.profile, &validation.tree, &validation.steps)
-            || commit.parent != authorization.admitted_base
-            || commit.tree != authorization.accepted_tree
+            || commit.application_revision != authorized_product_change.application_revision
+            || commit.authorizing_decision != authorized_product_change.authorizing_decision
+            || commit.parent != authorized_product_change.admitted_base
+            || commit.tree != authorized_product_change.accepted_tree
             || commit.tree != materialized.tree
         {
             return Err(ProductError::MaterializationReceiptCrossLinkMismatch);
@@ -2012,7 +2150,10 @@ impl ProductMaterializer {
     ) -> Result<(), ProductError> {
         let delivered_head = self.resolve_commit(
             repository,
-            materialization.authorization.target_ref.as_str(),
+            materialization
+                .authorized_product_change
+                .target_ref
+                .as_str(),
         )?;
         if delivered_head != materialization.commit_validated.commit.commit {
             return Err(ProductError::DeliveredHeadMismatch {
@@ -2124,6 +2265,7 @@ impl ProductMaterializer {
         tree: &TreeId,
         profile: &ValidationProfile,
         supervised: &ExternallySupervisedValidationReceipt,
+        authorized_product_change: &AuthorizedProductChange,
     ) -> Result<ValidationReceipt, ProductError> {
         self.assert_supervised_validation_matches(profile, tree, supervised)?;
         let mut completed = Vec::with_capacity(profile.commands.len());
@@ -2160,6 +2302,12 @@ impl ProductMaterializer {
             if !output.status.success() {
                 return Err(ProductError::ValidationFailed(Box::new(
                     ValidationFailureReceipt {
+                        application_revision: authorized_product_change
+                            .application_revision
+                            .clone(),
+                        authorizing_decision: authorized_product_change
+                            .authorizing_decision
+                            .clone(),
                         profile: profile.id.clone(),
                         tree: tree.clone(),
                         completed_steps: completed,
@@ -2177,6 +2325,8 @@ impl ProductMaterializer {
         }
         let digest = validation_digest(&profile.id, tree, &completed);
         Ok(ValidationReceipt {
+            application_revision: authorized_product_change.application_revision.clone(),
+            authorizing_decision: authorized_product_change.authorizing_decision.clone(),
             profile: profile.id.clone(),
             tree: tree.clone(),
             steps: completed,
@@ -2188,7 +2338,7 @@ impl ProductMaterializer {
         &self,
         worktree: &Path,
         format: GitObjectFormat,
-        parent: &CommitId,
+        authorized_product_change: &AuthorizedProductChange,
         tree: &TreeId,
         specification: &ControlledCommitSpec,
     ) -> Result<ControlledCommitReceipt, ProductError> {
@@ -2215,7 +2365,7 @@ impl ProductMaterializer {
                 OsString::from("commit-tree"),
                 OsString::from(tree.to_hex()),
                 OsString::from("-p"),
-                OsString::from(parent.to_hex()),
+                OsString::from(authorized_product_change.admitted_base.to_hex()),
             ],
             Some(specification.message.as_bytes()),
             &extra_env,
@@ -2232,15 +2382,17 @@ impl ProductMaterializer {
             });
         }
         let parents = self.commit_parents(worktree, &commit, format)?;
-        if parents.as_slice() != [parent.clone()] {
+        if parents.as_slice() != [authorized_product_change.admitted_base.clone()] {
             return Err(ProductError::ConstructedCommitParentMismatch {
-                expected: parent.clone(),
+                expected: authorized_product_change.admitted_base.clone(),
                 actual: parents,
             });
         }
         Ok(ControlledCommitReceipt {
+            application_revision: authorized_product_change.application_revision.clone(),
+            authorizing_decision: authorized_product_change.authorizing_decision.clone(),
             commit,
-            parent: parent.clone(),
+            parent: authorized_product_change.admitted_base.clone(),
             tree: tree.clone(),
             message: CommitMessageDigest::of_bytes(specification.message.as_bytes()),
             hook_policy: HookPolicy::GitCommitTreeWithHooksDisabled,
@@ -2265,9 +2417,9 @@ impl ProductMaterializer {
             &receipt.commit_validated.commit.commit,
             repository.object_format,
         )?;
-        if parents.as_slice() != [receipt.authorization.admitted_base.clone()] {
+        if parents.as_slice() != [receipt.authorized_product_change.admitted_base.clone()] {
             return Err(ProductError::DeliveryParentMismatch {
-                expected: receipt.authorization.admitted_base.clone(),
+                expected: receipt.authorized_product_change.admitted_base.clone(),
                 actual: parents,
             });
         }
@@ -3076,10 +3228,10 @@ pub enum ProductError {
         expected: PatchDigest,
         actual: PatchDigest,
     },
-    #[error("delivery authorization does not match the captured candidate")]
-    AuthorizationDoesNotMatchCapture,
-    #[error("delivery authorization does not name the supplied validation profile")]
-    AuthorizationDoesNotMatchValidationProfile,
+    #[error("authorized product change does not match the captured candidate")]
+    AuthorizedProductChangeDoesNotMatchCapture,
+    #[error("authorized product change does not name the supplied validation profile")]
+    AuthorizedProductChangeDoesNotMatchValidationProfile,
     #[error("this profile requires externally supervised validation")]
     ExternallySupervisedValidationRequired,
     #[error("externally supervised validation receipt does not exactly match profile and tree")]
@@ -3117,9 +3269,9 @@ pub enum ProductError {
     },
     #[error("malformed controlled commit parent output")]
     MalformedCommitParentOutput,
-    #[error("delivery qualification does not match materialization authorization")]
+    #[error("delivery qualification does not match the materialized authorized product change")]
     DeliveryAdmissionMismatch,
-    #[error("delivery target repository does not match materialization authorization")]
+    #[error("delivery target repository does not match the materialized authorized product change")]
     DeliveryRepositoryMismatch,
     #[error(
         "materialization receipt does not reconstruct one authorized tree, patch, validation, and commit"
@@ -3361,37 +3513,45 @@ mod receipt_regressions {
     }
 
     fn receipt(
-        authorization: ProductDeliveryAuthorization,
+        authorized_product_change: AuthorizedProductChange,
         tree: TreeId,
         patch: PatchDigest,
     ) -> MaterializationReceipt {
         let validation = ValidationReceipt {
-            profile: authorization.validation_profile.clone(),
+            application_revision: authorized_product_change.application_revision.clone(),
+            authorizing_decision: authorized_product_change.authorizing_decision.clone(),
+            profile: authorized_product_change.validation_profile.clone(),
             tree: tree.clone(),
             steps: Vec::new(),
-            digest: validation_digest(&authorization.validation_profile, &tree, &[]),
+            digest: validation_digest(&authorized_product_change.validation_profile, &tree, &[]),
         };
         MaterializationReceipt {
             state: ProductState::DeliveryReady,
             materialized: MaterializedTreeReceipt {
+                application_revision: authorized_product_change.application_revision.clone(),
+                authorizing_decision: authorized_product_change.authorizing_decision.clone(),
                 state: ProductState::Materialized,
-                base: authorization.admitted_base.clone(),
+                base: authorized_product_change.admitted_base.clone(),
                 base_tree: sha1_tree(0x10),
                 tree: tree.clone(),
                 patch,
             },
             commit_validated: CommitValidatedReceipt {
+                application_revision: authorized_product_change.application_revision.clone(),
+                authorizing_decision: authorized_product_change.authorizing_decision.clone(),
                 state: ProductState::CommitValidated,
                 validation,
                 commit: ControlledCommitReceipt {
+                    application_revision: authorized_product_change.application_revision.clone(),
+                    authorizing_decision: authorized_product_change.authorizing_decision.clone(),
                     commit: sha1_commit(if tree == sha1_tree(0x20) { 0x30 } else { 0x31 }),
-                    parent: authorization.admitted_base.clone(),
+                    parent: authorized_product_change.admitted_base.clone(),
                     tree,
                     message: CommitMessageDigest::of_bytes(b"message\n"),
                     hook_policy: HookPolicy::GitCommitTreeWithHooksDisabled,
                 },
             },
-            authorization,
+            authorized_product_change,
             cleanup: CleanupEvidence::Removed {
                 worktree_name: "test-materialization".to_owned(),
             },
@@ -3399,7 +3559,7 @@ mod receipt_regressions {
     }
 
     #[test]
-    fn delivery_rejects_recombined_authorization_and_materialization_receipts() {
+    fn delivery_rejects_forged_application_revision_or_authorizing_decision_cross_links() {
         let repository = SourceRepository {
             worktree_root: PathBuf::from("/receipt-regression/source"),
             git_common_dir: PathBuf::from("/receipt-regression/source/.git"),
@@ -3407,45 +3567,73 @@ mod receipt_regressions {
         };
         let base = sha1_commit(0x01);
         let profile = ValidationProfileId::parse("receipt-cross-link-v1").unwrap();
-        let authorization_a = ProductDeliveryAuthorization::new(
+        let authorized_change_a = AuthorizedProductChange::new(
             DeliveryAuthorizationId::parse("authorization-a").unwrap(),
-            ProductChangeId::parse("change-a").unwrap(),
+            ApplicationRevisionId::parse("aurora-revision-a").unwrap(),
+            AuthorizingDecisionId::parse("aurora-decision-a").unwrap(),
+            ProductChangeId::parse("aurora-change").unwrap(),
             repository.clone(),
             LocalBranchRef::parse("refs/heads/main").unwrap(),
             base.clone(),
-            PatchDigest::of_bytes(b"patch-a"),
+            PatchDigest::of_bytes(b"aurora-patch"),
             sha1_tree(0x20),
             profile.clone(),
         );
-        let authorization_b = ProductDeliveryAuthorization::new(
+        let authorized_change_b = AuthorizedProductChange::new(
             DeliveryAuthorizationId::parse("authorization-b").unwrap(),
-            ProductChangeId::parse("change-b").unwrap(),
+            ApplicationRevisionId::parse("aurora-revision-b").unwrap(),
+            AuthorizingDecisionId::parse("aurora-decision-b").unwrap(),
+            ProductChangeId::parse("aurora-change").unwrap(),
             repository,
             LocalBranchRef::parse("refs/heads/main").unwrap(),
             base,
-            PatchDigest::of_bytes(b"patch-b"),
-            sha1_tree(0x21),
+            PatchDigest::of_bytes(b"aurora-patch"),
+            sha1_tree(0x20),
             profile,
         );
         let receipt_a = receipt(
-            authorization_a,
+            authorized_change_a,
             sha1_tree(0x20),
-            PatchDigest::of_bytes(b"patch-a"),
+            PatchDigest::of_bytes(b"aurora-patch"),
         );
-        let mut receipt_b = receipt(
-            authorization_b,
-            sha1_tree(0x21),
-            PatchDigest::of_bytes(b"patch-b"),
+        let receipt_b = receipt(
+            authorized_change_b,
+            sha1_tree(0x20),
+            PatchDigest::of_bytes(b"aurora-patch"),
         );
-
-        // This is the former public-field attack: same base, then replace B's
-        // authorization with A while keeping B's tree/patch/commit body.
-        receipt_b.authorization = receipt_a.authorization.clone();
         let materializer = ProductMaterializer {
             git: PathBuf::from("/receipt-regression/git"),
         };
+        assert!(
+            materializer
+                .assert_materialization_cross_links(&receipt_b)
+                .is_ok()
+        );
+
+        // A persistence boundary could forge an otherwise identical receipt by
+        // replacing just one caller-supplied authority edge. Every nested
+        // receipt retains both identities, so either substitution is refused.
+        let mut forged_revision = receipt_b.clone();
+        forged_revision
+            .authorized_product_change
+            .application_revision = receipt_a
+            .authorized_product_change
+            .application_revision
+            .clone();
         assert!(matches!(
-            materializer.assert_materialization_cross_links(&receipt_b),
+            materializer.assert_materialization_cross_links(&forged_revision),
+            Err(ProductError::MaterializationReceiptCrossLinkMismatch)
+        ));
+
+        let mut forged_decision = receipt_b;
+        forged_decision
+            .authorized_product_change
+            .authorizing_decision = receipt_a
+            .authorized_product_change
+            .authorizing_decision
+            .clone();
+        assert!(matches!(
+            materializer.assert_materialization_cross_links(&forged_decision),
             Err(ProductError::MaterializationReceiptCrossLinkMismatch)
         ));
     }

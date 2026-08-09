@@ -15,13 +15,13 @@ use std::{
 };
 
 use society_product::{
-    AssignedValidationProgram, BuilderAttemptId, CleanupEvidence, CommitIdentity, CommitMessage,
+    ApplicationRevisionId, AssignedValidationProgram, AuthorizedProductChange,
+    AuthorizingDecisionId, BuilderAttemptId, CleanupEvidence, CommitIdentity, CommitMessage,
     CommitTimestamp, ControlledCommitSpec, DeliveryAuthorizationId, DeliveryDisposition,
     ExternallySupervisedValidationReceipt, ExternallySupervisedValidationStepReceipt,
-    LocalBranchRef, OutputDigest, PatchArtifactRoot, ProductChangeId, ProductDeliveryAuthorization,
-    ProductError, ProductMaterializer, ProductState, ProductWorktreeBranch, ValidationCommand,
-    ValidationProfile, ValidationProfileId, ValidationProgramArgument, ValidationProgramInvocation,
-    WorktreeRoot,
+    LocalBranchRef, OutputDigest, PatchArtifactRoot, ProductChangeId, ProductError,
+    ProductMaterializer, ProductState, ProductWorktreeBranch, ValidationCommand, ValidationProfile,
+    ValidationProfileId, ValidationProgramArgument, ValidationProgramInvocation, WorktreeRoot,
 };
 
 const GIT: &str = "/usr/bin/git";
@@ -239,12 +239,13 @@ fn validation_failure_is_distinct_and_fresh_worktree_cleanup_is_recorded() {
     )
     .unwrap();
     let capture = fixture.capture(&worktree);
-    let authorization = fixture.authorization(&qualification, &capture, "delivery-validation");
+    let authorized_change =
+        fixture.authorized_product_change(&qualification, &capture, "delivery-validation");
     let profile = fixture.validation_profile();
     let error = fixture
         .materializer
         .materialize(
-            authorization,
+            authorized_change,
             &capture,
             &profile,
             &fixture.commit_spec(),
@@ -285,7 +286,7 @@ fn tampered_patch_artifact_is_refused_before_any_fresh_worktree_is_created() {
     let error = fixture
         .materializer
         .materialize(
-            fixture.authorization(&qualification, &capture, "delivery-tampered"),
+            fixture.authorized_product_change(&qualification, &capture, "delivery-tampered"),
             &capture,
             &fixture.validation_profile(),
             &fixture.commit_spec(),
@@ -762,22 +763,34 @@ fn synthetic_aurora_catalog_product_is_validated_by_a_generic_supervised_program
         ],
     )
     .unwrap();
-    let authorization = fixture.authorization_for_profile(
+    let application_revision = ApplicationRevisionId::parse("aurora-catalog-r17").unwrap();
+    let authorizing_decision = AuthorizingDecisionId::parse("catalog-release-approved-42").unwrap();
+    let authorized_change = fixture.authorized_product_change_for_profile(
         &qualification,
         &capture,
         "delivery-supervised",
+        application_revision.clone(),
+        authorizing_decision.clone(),
         profile.id().clone(),
     );
 
     let prepared = fixture
         .materializer
         .prepare_materialization(
-            authorization.clone(),
+            authorized_change.clone(),
             &capture,
             &profile,
             &fixture.worktrees,
         )
         .unwrap();
+    assert_eq!(
+        prepared.authorized_product_change().application_revision(),
+        &application_revision
+    );
+    assert_eq!(
+        prepared.authorized_product_change().authorizing_decision(),
+        &authorizing_decision
+    );
     let receipt = ExternallySupervisedValidationReceipt::new(
         profile.id().clone(),
         prepared.tree().clone(),
@@ -802,10 +815,66 @@ fn synthetic_aurora_catalog_product_is_validated_by_a_generic_supervised_program
         materialized.commit_validated().validation().steps()[1].command(),
         ValidationCommand::ExternallySupervisedProgram(observed) if observed == &invocation
     ));
+    assert_eq!(
+        materialized
+            .authorized_product_change()
+            .application_revision(),
+        &application_revision
+    );
+    assert_eq!(
+        materialized
+            .authorized_product_change()
+            .authorizing_decision(),
+        &authorizing_decision
+    );
+    assert_eq!(
+        materialized.materialized().application_revision(),
+        &application_revision
+    );
+    assert_eq!(
+        materialized.materialized().authorizing_decision(),
+        &authorizing_decision
+    );
+    assert_eq!(
+        materialized.commit_validated().application_revision(),
+        &application_revision
+    );
+    assert_eq!(
+        materialized.commit_validated().authorizing_decision(),
+        &authorizing_decision
+    );
+    assert_eq!(
+        materialized
+            .commit_validated()
+            .validation()
+            .application_revision(),
+        &application_revision
+    );
+    assert_eq!(
+        materialized
+            .commit_validated()
+            .validation()
+            .authorizing_decision(),
+        &authorizing_decision
+    );
+    assert_eq!(
+        materialized
+            .commit_validated()
+            .commit()
+            .application_revision(),
+        &application_revision
+    );
+    assert_eq!(
+        materialized
+            .commit_validated()
+            .commit()
+            .authorizing_decision(),
+        &authorizing_decision
+    );
 
     let prepared = fixture
         .materializer
-        .prepare_materialization(authorization, &capture, &profile, &fixture.worktrees)
+        .prepare_materialization(authorized_change, &capture, &profile, &fixture.worktrees)
         .unwrap();
     let wrong_tree = ExternallySupervisedValidationReceipt::new(
         profile.id().clone(),
@@ -829,6 +898,8 @@ fn synthetic_aurora_catalog_product_is_validated_by_a_generic_supervised_program
         .unwrap();
     assert_eq!(delivery.disposition(), DeliveryDisposition::FastForwarded);
     assert_eq!(delivery.delivered_tree(), capture.candidate_tree());
+    assert_eq!(delivery.application_revision(), &application_revision);
+    assert_eq!(delivery.authorizing_decision(), &authorizing_decision);
     assert_eq!(
         fs::read_to_string(fixture.repo.join("catalog/aurora.toml")).unwrap(),
         "sku = \"aurora-7\"\nprice_cents = 1499\n"
@@ -923,29 +994,35 @@ impl Fixture {
         .unwrap()
     }
 
-    fn authorization(
+    fn authorized_product_change(
         &self,
         qualification: &society_product::CleanSourceQualification,
         capture: &society_product::CandidateCaptureReceipt,
         delivery_id: &str,
-    ) -> ProductDeliveryAuthorization {
-        self.authorization_for_profile(
+    ) -> AuthorizedProductChange {
+        self.authorized_product_change_for_profile(
             qualification,
             capture,
             delivery_id,
+            ApplicationRevisionId::parse(format!("{delivery_id}-revision")).unwrap(),
+            AuthorizingDecisionId::parse(format!("{delivery_id}-decision")).unwrap(),
             ValidationProfileId::parse("git-diff-check-v1").unwrap(),
         )
     }
 
-    fn authorization_for_profile(
+    fn authorized_product_change_for_profile(
         &self,
         qualification: &society_product::CleanSourceQualification,
         capture: &society_product::CandidateCaptureReceipt,
         delivery_id: &str,
+        application_revision: ApplicationRevisionId,
+        authorizing_decision: AuthorizingDecisionId,
         validation_profile: ValidationProfileId,
-    ) -> ProductDeliveryAuthorization {
-        ProductDeliveryAuthorization::new(
+    ) -> AuthorizedProductChange {
+        AuthorizedProductChange::new(
             DeliveryAuthorizationId::parse(delivery_id).unwrap(),
+            application_revision,
+            authorizing_decision,
             capture.change().clone(),
             capture.repository().clone(),
             qualification.target_ref().clone(),
@@ -977,7 +1054,7 @@ impl Fixture {
     ) -> society_product::MaterializationReceipt {
         self.materializer
             .materialize(
-                self.authorization(qualification, capture, delivery_id),
+                self.authorized_product_change(qualification, capture, delivery_id),
                 capture,
                 &self.validation_profile(),
                 &self.commit_spec(),
