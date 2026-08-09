@@ -14,18 +14,25 @@ the resolved transitive graph is committed in `Cargo.lock`.
 | --- | ---: | --- |
 | `rusqlite` | 0.40.2 | Sole SQLite binding in `society-kernel`; migrations are embedded SQL executed by the kernel rather than an ORM or migration framework. |
 | `thiserror` | 2.0.20 | Closed, inspectable error enums at trusted boundaries. |
-| `sha2` | 0.11.0 | SHA-256 identities for immutable content, command bodies, revisions, trees, and execution artifacts. |
+| `sha2` | 0.11.0 | SHA-256 identities for immutable content, command bodies, revisions, trees, execution artifacts, and the isolated physical content store. |
 | `tracing` | 0.1.44 | Typed spans and lifecycle events in `societyd`. |
 | `tracing-subscriber` | 0.3.23 | Mandatory monitor and bounded diagnostic rendering; only `fmt`, `registry`, and `std` features are enabled. |
 | `serde` | 1.0.229 | Serialization derives only in `society-pi`, at the closed Pi SDK-host protocol boundary. |
 | `serde_json` | 1.0.151 | JSONL and closed submission parsing only in `society-pi`; SQLite and the local daemon protocol remain non-JSON. |
-| `libc` | 0.2.177 | Narrow Unix process-group, signal, peer-credential, and ownership calls in `societyd`. The stable 0.2 line is used instead of the 1.0 prerelease. |
+| `libc` | 0.2.177 | Narrow Unix process-group, signal, peer-credential, ownership, and content-store file-lock calls. The stable 0.2 line is used instead of the 1.0 prerelease. |
 
 `rusqlite` disables its default feature set and enables `bundled`. This pins the
 SQLite implementation through `libsqlite3-sys`, avoids dependence on the host's
 SQLite feature/version drift, and does not enable Rusqlite's JSON support. Rust
 crate sources are registry-resolved and lockfile-pinned, not copied into this
 repository.
+
+`society-content` and `society-circuit` are currently staged as isolated exact-
+lock workspaces so their physical sealing and observation-decoding boundaries
+can be judged without implying resident authority. Admitting either to the root
+workspace requires removing its nested lock/workspace marker and wiring its
+receipts into typed kernel transactions. The isolated lockfiles are not an
+alternative dependency or execution authority.
 
 The workspace deliberately has no async runtime, ORM, workflow framework,
 process-control framework, tracing appender, UUID crate, time/date crate, or

@@ -64,6 +64,10 @@ circuits/vs-001-spawn-stderr/
 crates/society-pi/         implemented provider-free-audited typed Rust peer;
                            durable sealing, charging, and process ownership remain
                            in the planned resident authority
+crates/society-content/    implemented isolated physical byte-seal store; it
+                           confers no evidence or provenance meaning
+crates/society-circuit/    implemented isolated closed B01-B11 observation
+                           parser; durable evaluator/evidence admission remains
 crates/societyd/           implemented bounded resident SQLite authority and
                            monitor; Pi/content/recovery supervision remains
 crates/societyctl/         implemented public query and supervisor-stream client
@@ -83,6 +87,8 @@ Run the narrowest relevant judge first, then broaden:
 cargo test -p society-kernel --test <contract>
 cargo test -p society-pi --lib
 npm test --prefix packages/society-pi-host
+cargo test --manifest-path crates/society-content/Cargo.toml
+cargo test --manifest-path crates/society-circuit/Cargo.toml
 
 pi_host_entry="$PWD/packages/society-pi-host/dist/src/main.js"
 pi_host_digest="$(shasum -a 256 "$pi_host_entry" | awk '{print $1}')"

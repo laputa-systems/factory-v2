@@ -112,6 +112,15 @@ A versioned composition of institutions, actor configurations, transitions,
 context edges, and judges for a problem class. A circuit is a reusable workflow
 contract, not the sole ontology of the work it processes.
 
+### Behavior observation set
+
+The exact eleven-row B01-B11 deterministic spawn/stderr measurement decoded by
+`society-circuit` into closed Rust types. It preserves parent-stream versus
+redirected-artifact evidence and evaluator-observed lifecycle without claiming
+that `owned_waited` proves daemon process-group reaping. Parsing the set is not
+evidence admission; its TSV, evaluator, inputs, and every referenced digest
+must first bind to separately sealed content under kernel authority.
+
 ### Constitutional inheritance
 
 The exact `UniverseSeed` revision, constitutional rules, and Grand Architect
