@@ -8,6 +8,7 @@ license.workspace = true
 libc.workspace = true
 society-kernel = { path = "../society-kernel" }
 society-pi = { path = "../society-pi" }
+society-content = { path = "../society-content" }
 sha2.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

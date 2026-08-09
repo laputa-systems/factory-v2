@@ -1,16 +1,12 @@
 [package]
 name = "society-circuit"
-version = "0.1.0"
-edition = "2024"
-license = "MIT"
-
-# The parser remains isolated until its observations can be admitted through
-# named evidence commands in the kernel.
-[workspace]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 
 [dependencies]
 society-content = { path = "../society-content" }
-thiserror = "=2.0.20"
+thiserror.workspace = true
 
 [lints.rust]
 unsafe_code = "deny"

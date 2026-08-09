@@ -1,17 +1,13 @@
 [package]
 name = "society-content"
-version = "0.1.0"
-edition = "2024"
-license = "MIT"
-
-# This crate remains isolated until its physical seal receipt has a matching
-# durable kernel command. Root workspace admission is a later integration step.
-[workspace]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 
 [dependencies]
-libc = "=0.2.177"
-sha2 = "=0.11.0"
-thiserror = "=2.0.20"
+libc.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
 
 [lints.rust]
 unsafe_code = "allow"

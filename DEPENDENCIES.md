@@ -27,12 +27,11 @@ SQLite feature/version drift, and does not enable Rusqlite's JSON support. Rust
 crate sources are registry-resolved and lockfile-pinned, not copied into this
 repository.
 
-`society-content` and `society-circuit` are currently staged as isolated exact-
-lock workspaces so their physical sealing and observation-decoding boundaries
-can be judged without implying resident authority. Admitting either to the root
-workspace requires removing its nested lock/workspace marker and wiring its
-receipts into typed kernel transactions. The isolated lockfiles are not an
-alternative dependency or execution authority.
+`society-content` and `society-circuit` are root-workspace members. Their
+physical sealing and observation-decoding contracts share this one exact lock;
+neither crate gains daemon or kernel authority merely through workspace
+membership. `society-product` remains the only isolated exact-lock workspace
+while its product-materialization receipt has no resident authority binding.
 
 The workspace deliberately has no async runtime, ORM, workflow framework,
 process-control framework, tracing appender, UUID crate, time/date crate, or

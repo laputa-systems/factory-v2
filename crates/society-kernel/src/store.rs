@@ -185,6 +185,24 @@ pub struct KernelStore {
     connection: Connection,
 }
 
+/// The only durable recovery states for one physical SHA-256 identity.
+///
+/// A content object cannot exist without the receipt that attests its physical
+/// seal, so this closed result makes that impossible state unrepresentable to
+/// the daemon. It carries byte identity only; occurrence, schema, retention,
+/// provenance, and evidence meaning remain outside this query.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ContentIdentityState {
+    Absent,
+    SealReceiptOnly {
+        content_seal_receipt_id: ContentSealReceiptId,
+    },
+    Registered {
+        content_seal_receipt_id: ContentSealReceiptId,
+        content_object_id: ContentObjectId,
+    },
+}
+
 #[derive(Debug, Error)]
 pub enum StoreError {
     #[error(transparent)]
@@ -538,6 +556,42 @@ impl KernelStore {
         Ok(self
             .connection
             .query_row("SELECT COUNT(*) FROM commands", [], |row| row.get(0))?)
+    }
+
+    /// Reads the one closed recovery state for an already physically sealed
+    /// digest. This is intentionally not a generic row query: it models only
+    /// the daemon's receipt-to-global-object transition.
+    pub fn content_identity_state(
+        &self,
+        digest: Sha256Digest,
+    ) -> Result<ContentIdentityState, StoreError> {
+        let row = self
+            .connection
+            .query_row(
+                "SELECT receipt.content_seal_receipt_id, object.content_object_id
+                   FROM content_seal_receipts AS receipt
+              LEFT JOIN content_objects AS object
+                     ON object.content_seal_receipt_id = receipt.content_seal_receipt_id
+                  WHERE receipt.digest = ?1",
+                [digest.as_bytes().as_slice()],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?)),
+            )
+            .optional()?;
+        let Some((receipt, object)) = row else {
+            return Ok(ContentIdentityState::Absent);
+        };
+        let content_seal_receipt_id =
+            ContentSealReceiptId::try_from(receipt).map_err(|_| StoreError::InvalidStoredValue)?;
+        match object {
+            Some(object) => Ok(ContentIdentityState::Registered {
+                content_seal_receipt_id,
+                content_object_id: ContentObjectId::try_from(object)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }),
+            None => Ok(ContentIdentityState::SealReceiptOnly {
+                content_seal_receipt_id,
+            }),
+        }
     }
 
     /// Replays a previously accepted or rejected command receipt by its stable

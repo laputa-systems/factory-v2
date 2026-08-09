@@ -6,6 +6,11 @@
 //! receipts for the later kernel transaction. It does not itself persist
 //! content, charge budgets, admit work, or recover a successor.
 
+// The resident content writer has no public/supervisor command yet. Keep its
+// complete typed recovery seam crate-private until the control loop can carry
+// an authorized operation into it; tests exercise the physical/kernel chain.
+#[allow(dead_code)]
+mod content;
 mod daemon;
 mod observability;
 pub mod protocol;

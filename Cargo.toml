@@ -4,6 +4,8 @@ members = [
     "crates/society-pi",
     "crates/societyctl",
     "crates/societyd",
+    "crates/society-content",
+    "crates/society-circuit",
 ]
 resolver = "3"
 

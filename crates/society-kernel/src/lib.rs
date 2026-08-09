@@ -8,4 +8,4 @@ mod domain;
 mod store;
 
 pub use domain::*;
-pub use store::{KernelStore, StoreError};
+pub use store::{ContentIdentityState, KernelStore, StoreError};

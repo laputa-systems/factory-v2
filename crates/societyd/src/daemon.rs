@@ -17,12 +17,18 @@ use std::{
     time::Duration,
 };
 
+use society_content::{
+    ContentSealLimit, ContentStoreError, ContentStoreRoot, ContentStoreRootError,
+};
 use society_kernel::{
     Capability, CommandBody, CommandDisposition, CommandId, CommandRequest, ExpectedGeneration,
     KernelStore, PrincipalId, StoreError,
 };
 use thiserror::Error;
 
+use crate::content::{
+    ContentObjectRegistration, ContentSealOperationId, ContentSealingAuthority, ContentSealingError,
+};
 use crate::protocol::{
     ClientCommandBody, ClientCommandRequest, CorrelationId, DaemonStatus, ProtocolErrorCode,
     PublicRequest, Response, SupervisorRequest, WireError,
@@ -31,6 +37,8 @@ use crate::protocol::{
 const DATABASE_FILE_NAME: &str = "society.sqlite3";
 const SOCKET_FILE_NAME: &str = "societyd.sock";
 const LOCK_FILE_NAME: &str = "societyd.lock";
+const CONTENT_STORE_DIRECTORY_NAME: &str = "content";
+const DAEMON_CONTENT_SEAL_LIMIT_BYTES: u64 = 64 * 1024 * 1024;
 const SOCKET_READ_TIMEOUT: Duration = Duration::from_secs(2);
 const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(5);
 
@@ -109,6 +117,12 @@ pub enum DaemonError {
     UnsafeRuntimeRoot,
     #[error("runtime-owned file is not a private regular file owned by this daemon user")]
     UnsafeRuntimeFile,
+    #[error("content-store root is not a canonical private daemon path")]
+    ContentStoreRoot(#[from] ContentStoreRootError),
+    #[error("daemon content-store failed: {0}")]
+    ContentStore(#[from] ContentStoreError),
+    #[error("compiled daemon content seal limit must be nonzero")]
+    InvalidContentSealLimit,
     #[error("supervisor authority must be a connected same-user Unix stream")]
     InvalidSupervisorStream,
     #[error("the test-only fault seam stopped before command commit")]
@@ -122,6 +136,10 @@ pub enum DaemonError {
 pub struct Daemon {
     config: DaemonConfig,
     store: KernelStore,
+    /// The resident daemon exclusively owns this physical content-store writer.
+    /// Its only mutation method is crate-private and has no local-wire form.
+    #[allow(dead_code)]
+    content_sealing: ContentSealingAuthority,
     listener: UnixListener,
     _lock: File,
     owner_uid: libc::uid_t,
@@ -375,6 +393,12 @@ impl Daemon {
         } else {
             StartupMode::RecoveryFenced
         };
+        let content_root =
+            ContentStoreRoot::parse(config.runtime_root.join(CONTENT_STORE_DIRECTORY_NAME))?;
+        let Some(content_limit) = ContentSealLimit::new(DAEMON_CONTENT_SEAL_LIMIT_BYTES) else {
+            return Err(DaemonError::InvalidContentSealLimit);
+        };
+        let content_sealing = ContentSealingAuthority::open(content_root, content_limit)?;
 
         let listener = UnixListener::bind(&socket_path)?;
         set_mode(&socket_path, 0o600)?;
@@ -390,6 +414,7 @@ impl Daemon {
         Ok(Self {
             config,
             store,
+            content_sealing,
             listener,
             _lock: lock,
             owner_uid,
@@ -405,6 +430,22 @@ impl Daemon {
 
     pub fn startup_mode(&self) -> StartupMode {
         self.mode
+    }
+
+    /// Daemon-internal content writer. It is intentionally unavailable from
+    /// both local protocols: physical sealing must occur under resident
+    /// custody before the two kernel-service commands are issued.
+    #[allow(dead_code)]
+    pub(crate) fn seal_content_object(
+        &mut self,
+        operation: &ContentSealOperationId,
+        bytes: &[u8],
+    ) -> Result<ContentObjectRegistration, ContentSealingError> {
+        if self.mode == StartupMode::RecoveryFenced {
+            return Err(ContentSealingError::RecoveryFenced);
+        }
+        self.content_sealing
+            .seal_and_register(&mut self.store, operation, bytes)
     }
 
     /// Reports whether the adopted supervisor endpoint is marked close-on-exec.
