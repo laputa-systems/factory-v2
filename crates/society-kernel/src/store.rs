@@ -34,24 +34,28 @@ use crate::{
     OutcomeObligationId, OutcomeObligationState, OwnedProcessGroupId, PiAbortControlReceiptId,
     PiAbortControlWriteOutcome, PiBoundarySessionIdentity, PiChildNotSpawnedReason, PiChildOwner,
     PiChildSessionState, PiChildSpawnAdmissionId, PiChildSpawnAdmissionState,
-    PiCorrelationIdentity, PiSessionId, PostmortemActionKind, PostmortemActionProposalId,
-    PostmortemCausalClaimId, PostmortemCausalClaimKind, PostmortemId, PostmortemState, PrincipalId,
-    PrincipalKind, ProcessExitCode, ProcessGroupLiveness, ProcessSignalAction, ProcessSignalCause,
-    ProcessSignalDelivery, ProcessSignalNumber, ProcessSignalReceiptId, ProjectId,
-    ProjectMilestoneId, ProjectMilestoneState, ProjectState, Rejection, RetentionAccessClass,
-    ReviewChallengeId, ReviewChallengeResponseState, ReviewChallengeSeverity,
-    ReviewDispositionKind, ReviewResolutionKind, Sha256Digest, SocietyId, SocietyName, SpawnNonce,
+    PiCorrelationIdentity, PiCumulativeUsage, PiOfficeTurnAssistantOutcome,
+    PiOfficeTurnDisposition, PiOfficeTurnPromptAuthorizationId, PiOfficeTurnTerminalReceiptId,
+    PiOfficeTurnTranscriptDisposition, PiOfficeTurnUsageFailure, PiOfficeTurnUsageFailureId,
+    PiOfficeTurnUsageReceiptId, PiOfficeTurnUsageUnavailableReason, PiOfficeTurnUsageUnknownReason,
+    PiProtocolSequence, PiSessionId, PiTokenCount, PostmortemActionKind,
+    PostmortemActionProposalId, PostmortemCausalClaimId, PostmortemCausalClaimKind, PostmortemId,
+    PostmortemState, PrincipalId, PrincipalKind, ProcessExitCode, ProcessGroupLiveness,
+    ProcessSignalAction, ProcessSignalCause, ProcessSignalDelivery, ProcessSignalNumber,
+    ProcessSignalReceiptId, ProjectId, ProjectMilestoneId, ProjectMilestoneState, ProjectState,
+    ProviderCostBinary64, Rejection, RetentionAccessClass, ReviewChallengeId,
+    ReviewChallengeResponseState, ReviewChallengeSeverity, ReviewDispositionKind,
+    ReviewResolutionKind, Sha256Digest, SocietyId, SocietyName, SpawnNonce,
     SupervisedChildIdentity, SupervisorEpochId, SupervisorEpochIdentity, TicketId, TicketState,
     UniverseSeedId, UsdMicros, WorkItemId, WorkItemKind, WorkItemState, WorkLeaseId,
     WorkLeaseState,
 };
 
-const MIGRATION_1: &str = include_str!("../../../migrations/0001_kernel.sql");
-const MIGRATION_2: &str = include_str!("../../../migrations/0002_coordination_graph.sql");
-const MIGRATION_3: &str = include_str!("../../../migrations/0003_execution_foundation.sql");
-const MIGRATION_4: &str = include_str!("../../../migrations/0004_content_evidence_foundation.sql");
-const MIGRATION_5: &str =
-    include_str!("../../../migrations/0005_native_child_process_foundation.sql");
+const CURRENT_SCHEMA: &str = include_str!("../../../migrations/0001_kernel.sql");
+// Historical prototype schemas used versions one through five. The collapsed
+// fresh schema deliberately occupies a noncolliding identity, so an old
+// ledger cannot be mistaken for current trusted physics.
+const CURRENT_SCHEMA_VERSION: i64 = 6;
 
 struct PiChildSpawnAdmissionInput<'a> {
     operating_cycle_id: OperatingCycleId,
@@ -90,6 +94,26 @@ struct PiAbortControlDeliveryInput<'a> {
     outcome: PiAbortControlWriteOutcome,
 }
 
+struct PiOfficeTurnPromptAuthorizationInput<'a> {
+    expected_generation: ExpectedGeneration,
+    office_turn_id: OfficeTurnId,
+    correlation_identity: &'a PiCorrelationIdentity,
+    prompt_content_object_id: ContentObjectId,
+    prompt_digest: Sha256Digest,
+    frontier_event_id: EventId,
+}
+
+struct PiOfficeTurnTerminalInput<'a> {
+    office_turn_id: OfficeTurnId,
+    correlation_identity: &'a PiCorrelationIdentity,
+    agent_settled_sequence: PiProtocolSequence,
+    final_usage_sequence: PiProtocolSequence,
+    settled_sequence: PiProtocolSequence,
+    disposition: PiOfficeTurnDisposition,
+    assistant_outcome: PiOfficeTurnAssistantOutcome,
+    transcript_disposition: PiOfficeTurnTranscriptDisposition,
+}
+
 type StoredPiChildAdmissionCommand = (
     i64,
     Option<i64>,
@@ -104,7 +128,10 @@ type StoredPiChildAdmissionCommand = (
     String,
 );
 
-const COMMAND_BODY_TABLES: [&str; 85] = [
+type PiOfficeTurnUsageSqlRow = (i64, i64, i64, i64, i64, Vec<u8>, i64, i64);
+type PiOfficeTurnSettlementSqlRow = (i64, i64, i64, i64, i64, i64, i64, i64, i64, i64);
+
+const COMMAND_BODY_TABLES: [&str; 91] = [
     "command_create_society_identity",
     "command_install_grand_architect_office",
     "command_install_founding_universe_seed",
@@ -190,9 +217,15 @@ const COMMAND_BODY_TABLES: [&str; 85] = [
     "command_open_supervisor_epoch",
     "command_record_pi_abort_control_delivery",
     "command_record_pi_child_not_spawned",
+    "command_authorize_pi_office_turn_prompt",
+    "command_record_pi_office_turn_prompt_delivery",
+    "command_record_pi_office_turn_prompt_accepted",
+    "command_record_pi_office_turn_usage",
+    "command_record_pi_office_turn_usage_failure",
+    "command_record_pi_office_turn_terminal",
 ];
 
-const EVENT_BODY_TABLES: [&str; 79] = [
+const EVENT_BODY_TABLES: [&str; 85] = [
     "event_society_identity_created",
     "event_grand_architect_office_installed",
     "event_founding_universe_seed_installed",
@@ -272,13 +305,19 @@ const EVENT_BODY_TABLES: [&str; 79] = [
     "event_cancellation_propagation_containment_failed",
     "event_pi_abort_control_delivery_recorded",
     "event_pi_child_spawn_invalidated",
+    "event_pi_office_turn_prompt_authorized",
+    "event_pi_office_turn_prompt_delivered",
+    "event_pi_office_turn_prompt_accepted",
+    "event_pi_office_turn_usage_recorded",
+    "event_pi_office_turn_usage_frozen",
+    "event_pi_office_turn_terminal_recorded",
 ];
 
 const GRAPH_REVISION_BODY_TABLES: [&str; 2] = ["observation_revisions", "hypothesis_revisions"];
 
 /// The SQLite implementation of trusted physics. `societyd` will be its only
 /// production owner; this crate deliberately accepts an already-opened local
-/// connection only through its own constructors so migration and foreign-key
+/// connection only through its own constructors so schema bootstrap and foreign-key
 /// enforcement cannot be skipped accidentally.
 pub struct KernelStore {
     connection: Connection,
@@ -308,34 +347,6 @@ pub enum StoreError {
     Database(#[from] rusqlite::Error),
     #[error("database has unsupported schema version {0}")]
     UnsupportedSchemaVersion(i64),
-    #[error(
-        "refusing schema-v1 upgrade with a nonempty ledger ({command_count} commands, {event_count} events)"
-    )]
-    NonemptySchemaV1LedgerUpgradeRefused {
-        command_count: i64,
-        event_count: i64,
-    },
-    #[error(
-        "refusing schema-v2 upgrade with a nonempty ledger ({command_count} commands, {event_count} events)"
-    )]
-    NonemptySchemaV2LedgerUpgradeRefused {
-        command_count: i64,
-        event_count: i64,
-    },
-    #[error(
-        "refusing schema-v3 upgrade with a nonempty ledger ({command_count} commands, {event_count} events)"
-    )]
-    NonemptySchemaV3LedgerUpgradeRefused {
-        command_count: i64,
-        event_count: i64,
-    },
-    #[error(
-        "refusing schema-v4 upgrade with a nonempty ledger ({command_count} commands, {event_count} events)"
-    )]
-    NonemptySchemaV4LedgerUpgradeRefused {
-        command_count: i64,
-        event_count: i64,
-    },
     #[error("command id was already used with a different typed request")]
     IdempotencyConflict,
     #[error("operating cycle {0:?} was not found")]
@@ -395,66 +406,13 @@ impl KernelStore {
             connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
         match schema_version {
             0 => {
-                // A fresh database crosses ordered versioned commit boundaries,
-                // not one fictional atomic 0 -> 5 boundary. Each migration either
-                // commits its own version or rolls back so reopening can retry
-                // that exact version step.
-                apply_migration_1(&connection)?;
-                apply_migration_2(&connection)?;
-                apply_migration_3(&connection)?;
-                apply_migration_4(&connection)?;
-                apply_migration_5(&connection)?;
+                // This prototype has one current, atomic schema bootstrap. It
+                // does not claim historical-ledger compatibility; fresh creation
+                // either commits the whole trusted schema or does not become a
+                // current-version database.
+                bootstrap_current_schema(&connection)?;
             }
-            1 => {
-                let (command_count, event_count) = schema_v1_ledger_counts(&connection)?;
-                if command_count != 0 || event_count != 0 {
-                    // M2 changes the command/event representation. There is
-                    // no trustworthy fingerprint rewrite for an M1 ledger, so
-                    // preserve it exactly rather than implying replay parity.
-                    return Err(StoreError::NonemptySchemaV1LedgerUpgradeRefused {
-                        command_count,
-                        event_count,
-                    });
-                }
-                apply_migration_2(&connection)?;
-                apply_migration_3(&connection)?;
-                apply_migration_4(&connection)?;
-                apply_migration_5(&connection)?;
-            }
-            2 => {
-                let (command_count, event_count) = schema_v1_ledger_counts(&connection)?;
-                if command_count != 0 || event_count != 0 {
-                    return Err(StoreError::NonemptySchemaV2LedgerUpgradeRefused {
-                        command_count,
-                        event_count,
-                    });
-                }
-                apply_migration_3(&connection)?;
-                apply_migration_4(&connection)?;
-                apply_migration_5(&connection)?;
-            }
-            3 => {
-                let (command_count, event_count) = schema_v1_ledger_counts(&connection)?;
-                if command_count != 0 || event_count != 0 {
-                    return Err(StoreError::NonemptySchemaV3LedgerUpgradeRefused {
-                        command_count,
-                        event_count,
-                    });
-                }
-                apply_migration_4(&connection)?;
-                apply_migration_5(&connection)?;
-            }
-            4 => {
-                let (command_count, event_count) = schema_v1_ledger_counts(&connection)?;
-                if command_count != 0 || event_count != 0 {
-                    return Err(StoreError::NonemptySchemaV4LedgerUpgradeRefused {
-                        command_count,
-                        event_count,
-                    });
-                }
-                apply_migration_5(&connection)?;
-            }
-            5 => {}
+            CURRENT_SCHEMA_VERSION => {}
             other => return Err(StoreError::UnsupportedSchemaVersion(other)),
         }
         let foreign_key_violations: i64 =
@@ -463,7 +421,7 @@ impl KernelStore {
             })?;
         if foreign_key_violations != 0 {
             return Err(StoreError::LedgerCorruption(
-                "migration left foreign-key violations",
+                "current schema has foreign-key violations",
             ));
         }
         Ok(Self { connection })
@@ -851,13 +809,6 @@ impl KernelStore {
     }
 }
 
-fn schema_v1_ledger_counts(connection: &Connection) -> Result<(i64, i64), StoreError> {
-    Ok((
-        connection.query_row("SELECT COUNT(*) FROM commands", [], |row| row.get(0))?,
-        connection.query_row("SELECT COUNT(*) FROM events", [], |row| row.get(0))?,
-    ))
-}
-
 /// `PiSdkQualificationV1` is a bootstrap-only native lab treatment. It has
 /// no Grand Architect office work, discovery, or Actor execution surface: the
 /// future qualification command may be added only as a kernel-owned typed
@@ -1071,7 +1022,7 @@ fn command_operating_cycle_for_treatment(
                 |row| row.get(0),
             )
             .optional()?,
-        CommandBody::SettleOfficeTurn { turn_id } => transaction
+        CommandBody::SettleOfficeTurn { turn_id, .. } => transaction
             .query_row(
                 "SELECT s.operating_cycle_id FROM office_turns t
                  JOIN grand_architect_office_sessions s
@@ -1136,62 +1087,12 @@ fn command_operating_cycle_for_treatment(
         .map_err(|_| StoreError::InvalidStoredValue)
 }
 
-fn apply_migration_1(connection: &Connection) -> Result<(), StoreError> {
-    connection.execute_batch("BEGIN IMMEDIATE")?;
-    if let Err(error) = connection.execute_batch(MIGRATION_1) {
+fn bootstrap_current_schema(connection: &Connection) -> Result<(), StoreError> {
+    if let Err(error) = connection.execute_batch(CURRENT_SCHEMA) {
         let _ = connection.execute_batch("ROLLBACK");
         return Err(error.into());
     }
-    connection.execute_batch("COMMIT")?;
-    Ok(())
-}
-
-/// Migration 2 owns its explicit SQLite transaction because it temporarily
-/// disables foreign-key rewriting while rebuilding common ledger tables. On a
-/// failure, reset both the transaction and connection-local FK mode; a reopen
-/// can then retry version 2 from a complete version-1 database.
-fn apply_migration_2(connection: &Connection) -> Result<(), StoreError> {
-    if let Err(error) = connection.execute_batch(MIGRATION_2) {
-        let _ = connection.execute_batch("ROLLBACK");
-        let _ = connection.pragma_update(None, "foreign_keys", "ON");
-        return Err(error.into());
-    }
-    Ok(())
-}
-
-/// M3 is an atomic version step but intentionally has no historical ledger
-/// transform: `from_connection` fences nonempty M2 ledgers before this script
-/// can rebuild its command/event ranges and reviewer body shape.
-fn apply_migration_3(connection: &Connection) -> Result<(), StoreError> {
-    if let Err(error) = connection.execute_batch(MIGRATION_3) {
-        let _ = connection.execute_batch("ROLLBACK");
-        let _ = connection.pragma_update(None, "foreign_keys", "ON");
-        return Err(error.into());
-    }
-    Ok(())
-}
-
-/// M4 widens the closed ledger ranges and installs new named body tables. It
-/// is atomic per version step and is deliberately fenced from a nonempty M3
-/// ledger rather than inventing a historical fingerprint transformation.
-fn apply_migration_4(connection: &Connection) -> Result<(), StoreError> {
-    if let Err(error) = connection.execute_batch(MIGRATION_4) {
-        let _ = connection.execute_batch("ROLLBACK");
-        let _ = connection.pragma_update(None, "foreign_keys", "ON");
-        return Err(error.into());
-    }
-    Ok(())
-}
-
-/// M5 is an atomic empty-v4 version step. Native process receipt kinds change
-/// the command/event commitment range, so a historical nonempty v4 ledger is
-/// refused before this function; retry begins from the untouched v4 database.
-fn apply_migration_5(connection: &Connection) -> Result<(), StoreError> {
-    if let Err(error) = connection.execute_batch(MIGRATION_5) {
-        let _ = connection.execute_batch("ROLLBACK");
-        let _ = connection.pragma_update(None, "foreign_keys", "ON");
-        return Err(error.into());
-    }
+    connection.pragma_update(None, "foreign_keys", "ON")?;
     Ok(())
 }
 
@@ -1272,6 +1173,12 @@ fn apply_command(
             | CommandBody::BeginCancellationPropagation { .. }
             | CommandBody::ReconcileCancellationPropagation { .. }
             | CommandBody::RecordPiChildNotSpawned { .. }
+            | CommandBody::AuthorizePiOfficeTurnPrompt { .. }
+            | CommandBody::RecordPiOfficeTurnPromptDelivery { .. }
+            | CommandBody::RecordPiOfficeTurnPromptAccepted { .. }
+            | CommandBody::RecordPiOfficeTurnUsage { .. }
+            | CommandBody::RecordPiOfficeTurnUsageFailure { .. }
+            | CommandBody::RecordPiOfficeTurnTerminal { .. }
     ) != matches!(request.expected_generation, ExpectedGeneration::Exact(_))
     {
         return Ok(Err(Rejection::InvalidExpectedGeneration));
@@ -1381,9 +1288,10 @@ fn apply_command(
             *session_id,
             *purpose,
         ),
-        CommandBody::SettleOfficeTurn { turn_id } => {
-            settle_office_turn(transaction, command_row_id, *turn_id)
-        }
+        CommandBody::SettleOfficeTurn {
+            turn_id,
+            terminal_receipt_id,
+        } => settle_office_turn(transaction, command_row_id, *turn_id, *terminal_receipt_id),
         CommandBody::QuiesceOperatingCycle { cycle_id } => quiesce_cycle(
             transaction,
             command_row_id,
@@ -2208,6 +2116,95 @@ fn apply_command(
             *pi_child_spawn_admission_id,
             *reason,
         ),
+        CommandBody::AuthorizePiOfficeTurnPrompt {
+            office_turn_id,
+            correlation_identity,
+            prompt_content_object_id,
+            prompt_digest,
+            frontier_event_id,
+        } => authorize_pi_office_turn_prompt(
+            transaction,
+            command_row_id,
+            PiOfficeTurnPromptAuthorizationInput {
+                expected_generation: request.expected_generation,
+                office_turn_id: *office_turn_id,
+                correlation_identity,
+                prompt_content_object_id: *prompt_content_object_id,
+                prompt_digest: *prompt_digest,
+                frontier_event_id: *frontier_event_id,
+            },
+        ),
+        CommandBody::RecordPiOfficeTurnPromptDelivery {
+            office_turn_id,
+            correlation_identity,
+            prompt_digest,
+        } => record_pi_office_turn_prompt_delivery(
+            transaction,
+            command_row_id,
+            *office_turn_id,
+            correlation_identity,
+            *prompt_digest,
+        ),
+        CommandBody::RecordPiOfficeTurnPromptAccepted {
+            office_turn_id,
+            correlation_identity,
+            command_result_sequence,
+        } => record_pi_office_turn_prompt_accepted(
+            transaction,
+            command_row_id,
+            *office_turn_id,
+            correlation_identity,
+            *command_result_sequence,
+        ),
+        CommandBody::RecordPiOfficeTurnUsage {
+            office_turn_id,
+            correlation_identity,
+            protocol_sequence,
+            usage,
+        } => record_pi_office_turn_usage(
+            transaction,
+            command_row_id,
+            *office_turn_id,
+            correlation_identity,
+            *protocol_sequence,
+            *usage,
+        ),
+        CommandBody::RecordPiOfficeTurnUsageFailure {
+            office_turn_id,
+            correlation_identity,
+            protocol_sequence,
+            failure,
+        } => record_pi_office_turn_usage_failure(
+            transaction,
+            command_row_id,
+            *office_turn_id,
+            correlation_identity,
+            *protocol_sequence,
+            *failure,
+        ),
+        CommandBody::RecordPiOfficeTurnTerminal {
+            office_turn_id,
+            correlation_identity,
+            agent_settled_sequence,
+            final_usage_sequence,
+            settled_sequence,
+            disposition,
+            assistant_outcome,
+            transcript_disposition,
+        } => record_pi_office_turn_terminal(
+            transaction,
+            command_row_id,
+            PiOfficeTurnTerminalInput {
+                office_turn_id: *office_turn_id,
+                correlation_identity,
+                agent_settled_sequence: *agent_settled_sequence,
+                final_usage_sequence: *final_usage_sequence,
+                settled_sequence: *settled_sequence,
+                disposition: *disposition,
+                assistant_outcome: *assistant_outcome,
+                transcript_disposition: *transcript_disposition,
+            },
+        ),
     };
 
     if result.is_ok()
@@ -2680,21 +2677,685 @@ fn open_office_turn(
     })
 }
 
+/// M6 Prompt authority is deliberately narrower than an Office turn: it is a
+/// kernel-only, one-shot authorization for exact already-sealed bytes at the
+/// current ledger frontier. The checkpoint names the existing Office-session
+/// reservation and records no second reservation or routine per-turn quota.
+fn authorize_pi_office_turn_prompt(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    input: PiOfficeTurnPromptAuthorizationInput<'_>,
+) -> Result<EventBody, Rejection> {
+    let PiOfficeTurnPromptAuthorizationInput {
+        expected_generation,
+        office_turn_id,
+        correlation_identity,
+        prompt_content_object_id,
+        prompt_digest,
+        frontier_event_id,
+    } = input;
+    let row: (i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64) = transaction
+        .query_row(
+            "SELECT t.lifecycle_state, t.purpose, t.grand_architect_office_session_id,
+                    s.lifecycle_state, s.operating_cycle_id, c.treatment,
+                    a.budget_reservation_id, a.pi_session_id, a.execution_profile_id,
+                    p.child_process_id, p.lifecycle_state, proto.lifecycle_state
+             FROM office_turns t
+             JOIN grand_architect_office_sessions s
+               ON s.grand_architect_office_session_id = t.grand_architect_office_session_id
+             JOIN operating_cycles c ON c.operating_cycle_id = s.operating_cycle_id
+             JOIN pi_child_spawn_admissions a
+               ON a.grand_architect_office_session_id = s.grand_architect_office_session_id
+             JOIN pi_child_processes p ON p.pi_child_spawn_admission_id = a.pi_child_spawn_admission_id
+             JOIN pi_child_session_protocols proto ON proto.child_process_id = p.child_process_id
+             WHERE t.office_turn_id = ?1",
+            [office_turn_id.value()],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?, r.get(9)?, r.get(10)?, r.get(11)?)),
+        )
+        .optional()
+        .map_err(|_| Rejection::PiOfficeTurnAuthorityMissing)?
+        .ok_or(Rejection::PiOfficeTurnAuthorityMissing)?;
+    let cycle_id =
+        OperatingCycleId::try_from(row.4).map_err(|_| Rejection::PiOfficeTurnAuthorityMissing)?;
+    let cycle = cycle_for_generation(transaction, cycle_id, expected_generation)?;
+    if row.0 != OfficeTurnState::Active as i64
+        || row.1 != OfficeTurnPurpose::OrdinaryWork as i64
+        || row.3 != OfficeSessionState::TurnActive as i64
+        || cycle.state != OperatingCycleState::Running
+        || row.5 != OperatingCycleTreatment::Vs001DeterministicV1 as i64
+        || row.10 != ChildProcessState::Running as i64
+        || row.11 != PiChildSessionState::SessionReady as i64
+        || active_cancellation_for_cycle(transaction, cycle_id)?.is_some()
+    {
+        return Err(Rejection::PiOfficeTurnTreatmentIneligible);
+    }
+    let profile: (i64, i64) = transaction
+        .query_row(
+            "SELECT profile_kind, readiness FROM execution_profiles WHERE execution_profile_id = ?1",
+            [row.8],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()
+        .map_err(|_| Rejection::ExecutionProfileIneligible)?
+        .ok_or(Rejection::ExecutionProfileIneligible)?;
+    if profile.0 != ExecutionProfileKind::DeterministicPiHostProcessDoubleV1 as i64
+        || profile.1 != ExecutionProfileReadiness::DeterministicFixtureOnly as i64
+    {
+        return Err(Rejection::ExecutionProfileIneligible);
+    }
+    let reservation_id = BudgetReservationId::try_from(row.6)
+        .map_err(|_| Rejection::PiOfficeTurnAuthorityMissing)?;
+    let session_id = GrandArchitectOfficeSessionId::try_from(row.2)
+        .map_err(|_| Rejection::PiOfficeTurnAuthorityMissing)?;
+    let (mapped_reservation, reservation_state, charged, amount): (i64, i64, i64, i64) = transaction
+        .query_row(
+            "SELECT o.budget_reservation_id, r.reservation_state, r.charged_micros, r.amount_micros
+             FROM office_session_budget_reservations o
+             JOIN budget_reservations r ON r.budget_reservation_id = o.budget_reservation_id
+             WHERE o.grand_architect_office_session_id = ?1",
+            [session_id.value()],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .optional()
+        .map_err(|_| Rejection::PiOfficeTurnAuthorityMissing)?
+        .ok_or(Rejection::PiOfficeTurnAuthorityMissing)?;
+    if mapped_reservation != reservation_id.value()
+        || reservation_state != BudgetReservationState::Reserved as i64
+        || charged < 0
+        || amount < charged
+    {
+        return Err(Rejection::ReservationNotActive);
+    }
+    let latest_usage: i64 = transaction
+        .query_row(
+            "SELECT COALESCE(MAX(cumulative_ceiling_micros), 0)
+             FROM pi_office_turn_usage_receipts WHERE pi_session_id = ?1",
+            [row.7],
+            |r| r.get(0),
+        )
+        .map_err(|_| Rejection::PiOfficeTurnUsageNotMonotonic)?;
+    if latest_usage != charged {
+        return Err(Rejection::PiOfficeTurnUsageNotMonotonic);
+    }
+    let current_frontier: Option<i64> = transaction
+        .query_row(
+            "SELECT event_id FROM events ORDER BY event_sequence DESC LIMIT 1",
+            [],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|_| Rejection::PiOfficeTurnAuthorityMissing)?;
+    if current_frontier != Some(frontier_event_id.value()) {
+        return Err(Rejection::StaleAdmissionGeneration);
+    }
+    let content_digest: Option<Vec<u8>> = transaction
+        .query_row(
+            "SELECT seal.digest FROM content_objects object
+             JOIN content_seal_receipts seal ON seal.content_seal_receipt_id = object.content_seal_receipt_id
+             WHERE object.content_object_id = ?1",
+            [prompt_content_object_id.value()],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|_| Rejection::PiOfficeTurnPromptBindingMismatch)?;
+    if content_digest.as_deref() != Some(prompt_digest.as_bytes().as_slice()) {
+        return Err(Rejection::PiOfficeTurnPromptBindingMismatch);
+    }
+    transaction.execute(
+        "INSERT INTO office_turn_budget_checkpoints(office_turn_id, grand_architect_office_session_id, budget_reservation_id, baseline_cumulative_micros, authorized_by_command_id, settled_cumulative_micros, settled_by_command_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, NULL, NULL)",
+        params![office_turn_id.value(), session_id.value(), reservation_id.value(), charged, command_row_id],
+    ).map_err(|_| Rejection::PiOfficeTurnAuthorityMissing)?;
+    transaction.execute(
+        "INSERT INTO pi_office_turn_prompt_authorizations(office_turn_id, child_process_id, pi_session_id, budget_reservation_id, correlation_identity, prompt_content_object_id, prompt_digest, frontier_event_id, admission_generation, office_turn_purpose, authorized_by_command_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        params![office_turn_id.value(), row.9, row.7, reservation_id.value(), correlation_identity.as_str(), prompt_content_object_id.value(), prompt_digest.as_bytes().as_slice(), frontier_event_id.value(), cycle.generation.value(), row.1, command_row_id],
+    ).map_err(|_| Rejection::PiOfficeTurnAuthorityMissing)?;
+    Ok(EventBody::PiOfficeTurnPromptAuthorized {
+        pi_office_turn_prompt_authorization_id: id_from_last_insert(transaction)?,
+        office_turn_id,
+        child_process_id: ChildProcessId::try_from(row.9)
+            .map_err(|_| Rejection::PiOfficeTurnAuthorityMissing)?,
+        correlation_identity: correlation_identity.clone(),
+        budget_reservation_id: reservation_id,
+    })
+}
+
+fn record_pi_office_turn_prompt_delivery(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    office_turn_id: OfficeTurnId,
+    correlation_identity: &PiCorrelationIdentity,
+    prompt_digest: Sha256Digest,
+) -> Result<EventBody, Rejection> {
+    let authorization: Option<i64> = transaction.query_row(
+        "SELECT pi_office_turn_prompt_authorization_id FROM pi_office_turn_prompt_authorizations
+         WHERE office_turn_id = ?1 AND correlation_identity = ?2 AND prompt_digest = ?3",
+        params![office_turn_id.value(), correlation_identity.as_str(), prompt_digest.as_bytes().as_slice()],
+        |r| r.get(0),
+    ).optional().map_err(|_| Rejection::PiOfficeTurnPromptBindingMismatch)?;
+    let authorization = PiOfficeTurnPromptAuthorizationId::try_from(
+        authorization.ok_or(Rejection::PiOfficeTurnPromptBindingMismatch)?,
+    )
+    .map_err(|_| Rejection::PiOfficeTurnPromptBindingMismatch)?;
+    transaction.execute(
+        "INSERT INTO pi_office_turn_prompt_deliveries(office_turn_id, pi_office_turn_prompt_authorization_id, correlation_identity, prompt_digest, delivered_by_command_id)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![office_turn_id.value(), authorization.value(), correlation_identity.as_str(), prompt_digest.as_bytes().as_slice(), command_row_id],
+    ).map_err(|_| Rejection::PiOfficeTurnPromptBindingMismatch)?;
+    Ok(EventBody::PiOfficeTurnPromptDelivered {
+        office_turn_id,
+        correlation_identity: correlation_identity.clone(),
+    })
+}
+
+fn record_pi_office_turn_prompt_accepted(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    office_turn_id: OfficeTurnId,
+    correlation_identity: &PiCorrelationIdentity,
+    command_result_sequence: PiProtocolSequence,
+) -> Result<EventBody, Rejection> {
+    let authorization: Option<(i64, i64)> = transaction
+        .query_row(
+            "SELECT d.pi_office_turn_prompt_authorization_id, a.pi_session_id
+         FROM pi_office_turn_prompt_deliveries d
+         JOIN pi_office_turn_prompt_authorizations a
+           ON a.pi_office_turn_prompt_authorization_id = d.pi_office_turn_prompt_authorization_id
+         WHERE d.office_turn_id = ?1 AND a.correlation_identity = ?2",
+            params![office_turn_id.value(), correlation_identity.as_str()],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()
+        .map_err(|_| Rejection::PiOfficeTurnPromptBindingMismatch)?;
+    let (authorization, pi_session_id) =
+        authorization.ok_or(Rejection::PiOfficeTurnPromptBindingMismatch)?;
+    let authorization = PiOfficeTurnPromptAuthorizationId::try_from(authorization)
+        .map_err(|_| Rejection::PiOfficeTurnPromptBindingMismatch)?;
+    if pi_office_session_max_sequence(transaction, pi_session_id)?
+        .is_some_and(|previous| command_result_sequence.value() <= previous)
+    {
+        return Err(Rejection::PiOfficeTurnUsageNotMonotonic);
+    }
+    transaction.execute(
+        "INSERT INTO pi_office_turn_prompt_acceptances(office_turn_id, pi_office_turn_prompt_authorization_id, command_result_sequence, accepted_by_command_id)
+         VALUES (?1, ?2, ?3, ?4)",
+        params![office_turn_id.value(), authorization.value(), command_result_sequence.value(), command_row_id],
+    ).map_err(|_| Rejection::PiOfficeTurnPromptBindingMismatch)?;
+    Ok(EventBody::PiOfficeTurnPromptAccepted {
+        office_turn_id,
+        correlation_identity: correlation_identity.clone(),
+        command_result_sequence,
+    })
+}
+
+fn record_pi_office_turn_usage(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    office_turn_id: OfficeTurnId,
+    correlation_identity: &PiCorrelationIdentity,
+    protocol_sequence: PiProtocolSequence,
+    usage: PiCumulativeUsage,
+) -> Result<EventBody, Rejection> {
+    if pi_office_turn_has_terminal_receipt(transaction, office_turn_id)? {
+        return Err(Rejection::PiOfficeTurnTerminalAlreadyRecorded);
+    }
+    if !usage.is_internally_consistent() {
+        return Err(Rejection::PiOfficeTurnUsageNotMonotonic);
+    }
+    let authorization: Option<(i64, i64, i64)> = transaction.query_row(
+        "SELECT a.pi_office_turn_prompt_authorization_id, a.pi_session_id,
+                accepted.command_result_sequence
+         FROM pi_office_turn_prompt_authorizations a
+         JOIN pi_office_turn_prompt_acceptances accepted
+           ON accepted.pi_office_turn_prompt_authorization_id = a.pi_office_turn_prompt_authorization_id
+         WHERE a.office_turn_id = ?1 AND a.correlation_identity = ?2",
+        params![office_turn_id.value(), correlation_identity.as_str()],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    ).optional().map_err(|_| Rejection::PiOfficeTurnPromptBindingMismatch)?;
+    let (authorization, session_id, accepted_sequence) =
+        authorization.ok_or(Rejection::PiOfficeTurnPromptBindingMismatch)?;
+    if protocol_sequence.value() <= accepted_sequence {
+        return Err(Rejection::PiOfficeTurnUsageNotMonotonic);
+    }
+    if pi_office_session_max_sequence(transaction, session_id)?
+        .is_some_and(|previous| protocol_sequence.value() <= previous)
+    {
+        return Err(Rejection::PiOfficeTurnUsageNotMonotonic);
+    }
+    let session_already_frozen: i64 = transaction
+        .query_row(
+            "SELECT EXISTS(
+                 SELECT 1 FROM pi_office_turn_usage_failures WHERE pi_session_id = ?1
+             )",
+            [session_id],
+            |row| row.get(0),
+        )
+        .map_err(|_| Rejection::PiOfficeTurnUsageNotMonotonic)?;
+    if session_already_frozen != 0 {
+        return Err(Rejection::PiOfficeTurnUsageAlreadyFrozen);
+    }
+    let previous: Option<PiOfficeTurnUsageSqlRow> = transaction.query_row(
+        "SELECT input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
+                provider_cost_binary64, cumulative_ceiling_micros, protocol_sequence
+         FROM pi_office_turn_usage_receipts WHERE pi_session_id = ?1
+         ORDER BY protocol_sequence DESC LIMIT 1",
+        [session_id],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?)),
+    ).optional().map_err(|_| Rejection::PiOfficeTurnUsageNotMonotonic)?;
+    if let Some(previous) = previous {
+        let previous_usage = pi_cumulative_usage_from_sql(
+            previous.0,
+            previous.1,
+            previous.2,
+            previous.3,
+            previous.4,
+            &previous.5,
+            previous.6,
+        )
+        .map_err(|_| Rejection::PiOfficeTurnUsageNotMonotonic)?;
+        if protocol_sequence.value() <= previous.7
+            || usage.input_tokens < previous_usage.input_tokens
+            || usage.output_tokens < previous_usage.output_tokens
+            || usage.cache_read_tokens < previous_usage.cache_read_tokens
+            || usage.cache_write_tokens < previous_usage.cache_write_tokens
+            || usage.total_tokens < previous_usage.total_tokens
+            || usage.provider_cost < previous_usage.provider_cost
+            || usage.ceiling_micro_usd < previous_usage.ceiling_micro_usd
+        {
+            return Err(Rejection::PiOfficeTurnUsageNotMonotonic);
+        }
+    }
+    transaction.execute(
+        "INSERT INTO pi_office_turn_usage_receipts(office_turn_id, pi_office_turn_prompt_authorization_id, pi_session_id, correlation_identity, protocol_sequence, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, total_tokens, provider_cost_binary64, cumulative_ceiling_micros, recorded_by_command_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+        params![office_turn_id.value(), authorization, session_id, correlation_identity.as_str(), protocol_sequence.value(), usage.input_tokens.value(), usage.output_tokens.value(), usage.cache_read_tokens.value(), usage.cache_write_tokens.value(), usage.total_tokens.value(), usage.provider_cost.as_big_endian_bytes().as_slice(), usage.ceiling_micro_usd.value(), command_row_id],
+    ).map_err(|_| Rejection::PiOfficeTurnUsageNotMonotonic)?;
+    Ok(EventBody::PiOfficeTurnUsageRecorded {
+        pi_office_turn_usage_receipt_id: id_from_last_insert(transaction)?,
+        office_turn_id,
+        protocol_sequence,
+        cumulative_micro_usd: usage.ceiling_micro_usd,
+    })
+}
+
+fn record_pi_office_turn_usage_failure(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    office_turn_id: OfficeTurnId,
+    correlation_identity: &PiCorrelationIdentity,
+    protocol_sequence: PiProtocolSequence,
+    failure: PiOfficeTurnUsageFailure,
+) -> Result<EventBody, Rejection> {
+    if pi_office_turn_has_terminal_receipt(transaction, office_turn_id)? {
+        return Err(Rejection::PiOfficeTurnTerminalAlreadyRecorded);
+    }
+    let row: Option<(i64, i64, i64, i64, i64)> = transaction.query_row(
+        "SELECT a.pi_office_turn_prompt_authorization_id, a.budget_reservation_id, s.operating_cycle_id,
+                a.pi_session_id, accepted.command_result_sequence
+         FROM pi_office_turn_prompt_authorizations a
+         JOIN office_turns t ON t.office_turn_id = a.office_turn_id
+         JOIN grand_architect_office_sessions s ON s.grand_architect_office_session_id = t.grand_architect_office_session_id
+         JOIN pi_office_turn_prompt_acceptances accepted ON accepted.pi_office_turn_prompt_authorization_id = a.pi_office_turn_prompt_authorization_id
+         WHERE a.office_turn_id = ?1 AND a.correlation_identity = ?2",
+        params![office_turn_id.value(), correlation_identity.as_str()], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+    ).optional().map_err(|_| Rejection::PiOfficeTurnPromptBindingMismatch)?;
+    let (authorization, reservation, cycle, session, accepted_sequence) =
+        row.ok_or(Rejection::PiOfficeTurnPromptBindingMismatch)?;
+    let previous_sequence = pi_office_session_max_sequence(transaction, session)?;
+    if protocol_sequence.value() <= accepted_sequence
+        || previous_sequence.is_some_and(|previous| protocol_sequence.value() <= previous)
+    {
+        return Err(Rejection::PiOfficeTurnUsageNotMonotonic);
+    }
+    let reservation_id =
+        BudgetReservationId::try_from(reservation).map_err(|_| Rejection::ReservationNotActive)?;
+    let cycle_id = OperatingCycleId::try_from(cycle).map_err(|_| Rejection::SubjectNotFound)?;
+    let (amount, charged, state): (i64, i64, i64) = transaction.query_row(
+        "SELECT amount_micros, charged_micros, reservation_state FROM budget_reservations WHERE budget_reservation_id = ?1",
+        [reservation], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    ).map_err(|_| Rejection::ReservationNotActive)?;
+    if state != BudgetReservationState::Reserved as i64 || amount < charged {
+        return Err(Rejection::ReservationNotActive);
+    }
+    let freeze_reason = match failure {
+        PiOfficeTurnUsageFailure::Unknown(
+            PiOfficeTurnUsageUnknownReason::MissingFinalUsageSnapshot,
+        ) => BudgetFreezeReason::Unknown(CostUnknownReason::ProviderDidNotReport),
+        PiOfficeTurnUsageFailure::Unknown(
+            PiOfficeTurnUsageUnknownReason::BoundaryStreamInterrupted,
+        ) => BudgetFreezeReason::Unknown(CostUnknownReason::AdapterStreamInterrupted),
+        PiOfficeTurnUsageFailure::Unknown(
+            PiOfficeTurnUsageUnknownReason::TerminalEvidenceMissing,
+        ) => BudgetFreezeReason::Unknown(CostUnknownReason::ReconciliationMismatch),
+        PiOfficeTurnUsageFailure::Unavailable(_) => {
+            BudgetFreezeReason::Unavailable(CostUnavailableReason::AdapterAccountingUnavailable)
+        }
+    };
+    let frozen = freeze_budget_admission(
+        transaction,
+        command_row_id,
+        reservation_id,
+        cycle_id,
+        UsdMicros::try_from(amount - charged).map_err(|_| Rejection::ReservationNotActive)?,
+        freeze_reason,
+    )?;
+    let (cancellation_request_id, postmortem_id) = match frozen {
+        EventBody::BudgetAdmissionFrozen {
+            cancellation_request_id,
+            postmortem_id,
+            ..
+        } => (cancellation_request_id, postmortem_id),
+        _ => return Err(Rejection::PiOfficeTurnAuthorityMissing),
+    };
+    let (kind, unknown, unavailable) = sql_pi_office_turn_usage_failure(failure);
+    transaction.execute(
+        "INSERT INTO pi_office_turn_usage_failures(office_turn_id, pi_office_turn_prompt_authorization_id, pi_session_id, correlation_identity, protocol_sequence, failure_kind, unknown_reason, unavailable_reason, budget_reservation_id, cancellation_request_id, cost_postmortem_id, recorded_by_command_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        params![office_turn_id.value(), authorization, session, correlation_identity.as_str(), protocol_sequence.value(), kind, unknown, unavailable, reservation, cancellation_request_id.value(), postmortem_id.value(), command_row_id],
+    ).map_err(|_| Rejection::PiOfficeTurnAuthorityMissing)?;
+    Ok(EventBody::PiOfficeTurnUsageFrozen {
+        office_turn_id,
+        budget_reservation_id: reservation_id,
+        cancellation_request_id,
+        postmortem_id,
+        failure,
+    })
+}
+
+/// The peer's `Settled` boundary is final for this exact Prompt correlation.
+/// Buffered evidence that arrived before it remains recordable before the
+/// terminal receipt, but no later usage observation may silently outrun the
+/// cumulative checkpoint that allowed Office authority to return to Ready.
+fn pi_office_turn_has_terminal_receipt(
+    transaction: &Transaction<'_>,
+    office_turn_id: OfficeTurnId,
+) -> Result<bool, Rejection> {
+    transaction
+        .query_row(
+            "SELECT EXISTS(
+                 SELECT 1 FROM pi_office_turn_terminal_receipts
+                 WHERE office_turn_id = ?1
+             )",
+            [office_turn_id.value()],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|value| value != 0)
+        .map_err(|_| Rejection::PiOfficeTurnTerminalEvidenceMissing)
+}
+
+/// Returns the greatest durable Pi protocol sequence for one boundary
+/// session. This is a closed union over named Pi facts, not a generic event
+/// stream: Prompt CommandResults, usage/failure observations, and terminal
+/// peer boundaries share exactly one session-scoped sequence namespace.
+fn pi_office_session_max_sequence(
+    transaction: &Transaction<'_>,
+    pi_session_id: i64,
+) -> Result<Option<i64>, Rejection> {
+    transaction
+        .query_row(
+            "SELECT MAX(protocol_sequence) FROM (
+                 SELECT accepted.command_result_sequence AS protocol_sequence
+                 FROM pi_office_turn_prompt_acceptances accepted
+                 JOIN pi_office_turn_prompt_authorizations authorization
+                   ON authorization.pi_office_turn_prompt_authorization_id = accepted.pi_office_turn_prompt_authorization_id
+                 WHERE authorization.pi_session_id = ?1
+                 UNION ALL
+                 SELECT protocol_sequence FROM pi_office_turn_usage_receipts
+                 WHERE pi_session_id = ?1
+                 UNION ALL
+                 SELECT protocol_sequence FROM pi_office_turn_usage_failures
+                 WHERE pi_session_id = ?1
+                 UNION ALL
+                 SELECT agent_settled_sequence FROM pi_office_turn_terminal_receipts
+                 WHERE pi_session_id = ?1
+                 UNION ALL
+                 SELECT final_usage_sequence FROM pi_office_turn_terminal_receipts
+                 WHERE pi_session_id = ?1
+                 UNION ALL
+                 SELECT settled_sequence FROM pi_office_turn_terminal_receipts
+                 WHERE pi_session_id = ?1
+             )",
+            [pi_session_id],
+            |row| row.get(0),
+        )
+        .map_err(|_| Rejection::PiOfficeTurnUsageNotMonotonic)
+}
+
+fn record_pi_office_turn_terminal(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    input: PiOfficeTurnTerminalInput<'_>,
+) -> Result<EventBody, Rejection> {
+    let PiOfficeTurnTerminalInput {
+        office_turn_id,
+        correlation_identity,
+        agent_settled_sequence,
+        final_usage_sequence,
+        settled_sequence,
+        disposition,
+        assistant_outcome,
+        transcript_disposition,
+    } = input;
+    if !disposition.accepts(assistant_outcome)
+        || agent_settled_sequence.value() >= final_usage_sequence.value()
+        || final_usage_sequence.value().checked_add(1) != Some(settled_sequence.value())
+    {
+        return Err(Rejection::PiOfficeTurnTerminalEvidenceMissing);
+    }
+    let row: Option<(i64, i64, i64, i64, i64)> = transaction.query_row(
+        "SELECT a.pi_office_turn_prompt_authorization_id, a.child_process_id, a.pi_session_id,
+                s.operating_cycle_id, accepted.command_result_sequence
+         FROM pi_office_turn_prompt_authorizations a
+         JOIN office_turns t ON t.office_turn_id = a.office_turn_id
+         JOIN grand_architect_office_sessions s ON s.grand_architect_office_session_id = t.grand_architect_office_session_id
+         JOIN pi_office_turn_prompt_acceptances accepted ON accepted.pi_office_turn_prompt_authorization_id = a.pi_office_turn_prompt_authorization_id
+         WHERE a.office_turn_id = ?1 AND a.correlation_identity = ?2",
+        params![office_turn_id.value(), correlation_identity.as_str()], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+    ).optional().map_err(|_| Rejection::PiOfficeTurnTerminalEvidenceMissing)?;
+    let (authorization, child, session, cycle, accepted_sequence) =
+        row.ok_or(Rejection::PiOfficeTurnTerminalEvidenceMissing)?;
+    let prior_session_settled: Option<i64> = transaction
+        .query_row(
+            "SELECT MAX(settled_sequence) FROM pi_office_turn_terminal_receipts
+             WHERE pi_session_id = ?1 AND office_turn_id != ?2",
+            params![session, office_turn_id.value()],
+            |row| row.get(0),
+        )
+        .map_err(|_| Rejection::PiOfficeTurnTerminalEvidenceMissing)?;
+    if accepted_sequence >= agent_settled_sequence.value()
+        || prior_session_settled.is_some_and(|previous| agent_settled_sequence.value() <= previous)
+    {
+        return Err(Rejection::PiOfficeTurnTerminalEvidenceMissing);
+    }
+    let usage_id: Option<i64> = transaction
+        .query_row(
+            "SELECT pi_office_turn_usage_receipt_id FROM pi_office_turn_usage_receipts
+         WHERE office_turn_id = ?1 AND pi_office_turn_prompt_authorization_id = ?2
+           AND correlation_identity = ?3 AND protocol_sequence = ?4",
+            params![
+                office_turn_id.value(),
+                authorization,
+                correlation_identity.as_str(),
+                final_usage_sequence.value()
+            ],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|_| Rejection::PiOfficeTurnTerminalEvidenceMissing)?;
+    let usage_id = usage_id
+        .map(PiOfficeTurnUsageReceiptId::try_from)
+        .transpose()
+        .map_err(|_| Rejection::PiOfficeTurnTerminalEvidenceMissing)?;
+    let failure_id: Option<i64> = transaction
+        .query_row(
+            "SELECT pi_office_turn_usage_failure_id FROM pi_office_turn_usage_failures
+         WHERE office_turn_id = ?1 AND pi_office_turn_prompt_authorization_id = ?2
+           AND correlation_identity = ?3 AND protocol_sequence = ?4",
+            params![
+                office_turn_id.value(),
+                authorization,
+                correlation_identity.as_str(),
+                final_usage_sequence.value()
+            ],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|_| Rejection::PiOfficeTurnTerminalEvidenceMissing)?;
+    let failure_id = failure_id
+        .map(PiOfficeTurnUsageFailureId::try_from)
+        .transpose()
+        .map_err(|_| Rejection::PiOfficeTurnTerminalEvidenceMissing)?;
+    if usage_id.is_some() == failure_id.is_some() {
+        return Err(Rejection::PiOfficeTurnTerminalEvidenceMissing);
+    }
+    // SDK/assistant outcome and cost knowledge are independent peer facts.
+    // A peer-valid Error may still carry its final Known cumulative usage;
+    // inventing an Unknown/Unavailable receipt would erase that truth. Any
+    // non-ready terminal remains an active Office-turn/closure blocker until a
+    // later typed cancellation or recovery settlement owns it.
+    if disposition == PiOfficeTurnDisposition::Aborted {
+        let cycle_id = OperatingCycleId::try_from(cycle)
+            .map_err(|_| Rejection::PiOfficeTurnTerminalEvidenceMissing)?;
+        if cycle_row(transaction, cycle_id)?.state == OperatingCycleState::Running {
+            return Err(Rejection::PiOfficeTurnTerminalEvidenceMissing);
+        }
+    }
+    transaction.execute(
+        "INSERT INTO pi_office_turn_terminal_receipts(office_turn_id, pi_office_turn_prompt_authorization_id, child_process_id, pi_session_id, correlation_identity, agent_settled_sequence, final_usage_sequence, settled_sequence, final_usage_receipt_id, final_usage_failure_id, disposition, assistant_outcome, transcript_disposition, recorded_by_command_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+        params![office_turn_id.value(), authorization, child, session, correlation_identity.as_str(), agent_settled_sequence.value(), final_usage_sequence.value(), settled_sequence.value(), usage_id.map(PiOfficeTurnUsageReceiptId::value), failure_id.map(PiOfficeTurnUsageFailureId::value), disposition as i64, assistant_outcome as i64, transcript_disposition as i64, command_row_id],
+    ).map_err(|_| Rejection::PiOfficeTurnTerminalEvidenceMissing)?;
+    Ok(EventBody::PiOfficeTurnTerminalRecorded {
+        pi_office_turn_terminal_receipt_id: id_from_last_insert(transaction)?,
+        office_turn_id,
+        disposition,
+        assistant_outcome,
+    })
+}
+
 fn settle_office_turn(
     transaction: &Transaction<'_>,
     command_row_id: i64,
     turn_id: OfficeTurnId,
+    terminal_receipt_id: PiOfficeTurnTerminalReceiptId,
 ) -> Result<EventBody, Rejection> {
-    let (turn_state, session_id) = transaction.query_row(
-        "SELECT lifecycle_state, grand_architect_office_session_id FROM office_turns WHERE office_turn_id = ?1",
-        [turn_id.value()],
-        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
-    ).optional().map_err(|_| Rejection::SubjectNotFound)?.ok_or(Rejection::SubjectNotFound)?;
-    if turn_state != OfficeTurnState::Active as i64 {
-        return Err(Rejection::InvalidLifecycleTransition);
+    let row: Option<PiOfficeTurnSettlementSqlRow> = transaction.query_row(
+        "SELECT t.lifecycle_state, t.grand_architect_office_session_id,
+                terminal.disposition, terminal.assistant_outcome, terminal.child_process_id,
+                terminal.pi_session_id, terminal.final_usage_receipt_id,
+                checkpoint.budget_reservation_id, usage.cumulative_ceiling_micros,
+                checkpoint.baseline_cumulative_micros
+         FROM office_turns t
+         JOIN pi_office_turn_terminal_receipts terminal ON terminal.office_turn_id = t.office_turn_id
+         JOIN office_turn_budget_checkpoints checkpoint ON checkpoint.office_turn_id = t.office_turn_id
+         JOIN pi_office_turn_usage_receipts usage ON usage.pi_office_turn_usage_receipt_id = terminal.final_usage_receipt_id
+         WHERE t.office_turn_id = ?1 AND terminal.pi_office_turn_terminal_receipt_id = ?2",
+        params![turn_id.value(), terminal_receipt_id.value()],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?, r.get(9)?)),
+    ).optional().map_err(|_| Rejection::PiOfficeTurnTerminalEvidenceMissing)?;
+    let row = row.ok_or(Rejection::PiOfficeTurnTerminalEvidenceMissing)?;
+    if row.0 != OfficeTurnState::Active as i64
+        || row.2 != PiOfficeTurnDisposition::Completed as i64
+        || row.3 != PiOfficeTurnAssistantOutcome::ObservedStop as i64
+    {
+        return Err(Rejection::PiOfficeTurnNotReconciled);
     }
-    let session_id = GrandArchitectOfficeSessionId::try_from(session_id)
-        .map_err(|_| Rejection::SubjectNotFound)?;
+    let session_id = GrandArchitectOfficeSessionId::try_from(row.1)
+        .map_err(|_| Rejection::PiOfficeTurnTerminalEvidenceMissing)?;
+    let guard: Option<(i64, i64, i64, i64, i64)> = transaction.query_row(
+        "SELECT s.lifecycle_state, s.operating_cycle_id, c.lifecycle_state, c.admission_generation,
+                a.admission_generation
+         FROM grand_architect_office_sessions s
+         JOIN operating_cycles c ON c.operating_cycle_id = s.operating_cycle_id
+         JOIN pi_office_turn_prompt_authorizations a ON a.office_turn_id = ?1
+         WHERE s.grand_architect_office_session_id = ?2",
+        params![turn_id.value(), session_id.value()],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+    ).optional().map_err(|_| Rejection::PiOfficeTurnNotReconciled)?;
+    let (session_state, cycle, cycle_state, current_generation, authorized_generation) =
+        guard.ok_or(Rejection::PiOfficeTurnNotReconciled)?;
+    let cycle_id =
+        OperatingCycleId::try_from(cycle).map_err(|_| Rejection::PiOfficeTurnNotReconciled)?;
+    if session_state != OfficeSessionState::TurnActive as i64
+        || cycle_state != OperatingCycleState::Running as i64
+        || current_generation != authorized_generation
+        || active_cancellation_count(transaction, cycle_id)? != 0
+    {
+        return Err(Rejection::PiOfficeTurnNotReconciled);
+    }
+    let child_is_still_live: i64 = transaction.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pi_child_processes child
+          JOIN pi_child_session_protocols protocol ON protocol.child_process_id = child.child_process_id
+          WHERE child.child_process_id = ?1 AND child.lifecycle_state = ?2 AND protocol.lifecycle_state = ?3)",
+        params![row.4, ChildProcessState::Running as i64, PiChildSessionState::SessionReady as i64],
+        |r| r.get(0),
+    ).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    if child_is_still_live == 0 {
+        return Err(Rejection::ChildLifecycleReceiptMissing);
+    }
+    let reservation_id =
+        BudgetReservationId::try_from(row.7).map_err(|_| Rejection::ReservationNotActive)?;
+    let (amount, charged, state): (i64, i64, i64) = transaction.query_row(
+        "SELECT amount_micros, charged_micros, reservation_state FROM budget_reservations WHERE budget_reservation_id = ?1",
+        [reservation_id.value()], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    ).map_err(|_| Rejection::ReservationNotActive)?;
+    if state != BudgetReservationState::Reserved as i64
+        || amount < charged
+        || row.8 < charged
+        || row.9 != charged
+    {
+        return Err(Rejection::PiOfficeTurnUsageNotMonotonic);
+    }
+    if row.8 > amount {
+        return freeze_budget_admission(
+            transaction,
+            command_row_id,
+            reservation_id,
+            transaction.query_row("SELECT operating_cycle_id FROM budget_reservations WHERE budget_reservation_id = ?1", [reservation_id.value()], |r| r.get::<_, i64>(0))
+                .map_err(|_| Rejection::ReservationNotActive)
+                .and_then(|id| OperatingCycleId::try_from(id).map_err(|_| Rejection::ReservationNotActive))?,
+            UsdMicros::try_from(amount - charged).map_err(|_| Rejection::ReservationNotActive)?,
+            BudgetFreezeReason::KnownOverrun {
+                observed: UsdMicros::try_from(row.8).map_err(|_| Rejection::ReservationNotActive)?,
+                reserved: UsdMicros::try_from(amount - charged).map_err(|_| Rejection::ReservationNotActive)?,
+            },
+        );
+    }
+    let delta = row.8 - charged;
+    let mut charge_statement = transaction
+        .prepare(
+            "SELECT budget_envelope_id, amount_micros FROM budget_reservation_charges
+         WHERE budget_reservation_id = ?1 ORDER BY budget_envelope_id",
+        )
+        .map_err(|_| Rejection::ReservationNotActive)?;
+    let charges = charge_statement
+        .query_map([reservation_id.value()], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))
+        })
+        .map_err(|_| Rejection::ReservationNotActive)?;
+    for charge in charges {
+        let (envelope_id, remaining) = charge.map_err(|_| Rejection::ReservationNotActive)?;
+        if remaining < delta {
+            return Err(Rejection::PiOfficeTurnUsageNotMonotonic);
+        }
+        transaction.execute(
+            "UPDATE budget_envelopes SET reserved_micros = reserved_micros - ?1, spent_micros = spent_micros + ?1 WHERE budget_envelope_id = ?2",
+            params![delta, envelope_id],
+        ).map_err(|_| Rejection::BudgetCeilingExceeded)?;
+        transaction.execute(
+            "UPDATE budget_reservation_charges SET amount_micros = amount_micros - ?1 WHERE budget_reservation_id = ?2 AND budget_envelope_id = ?3",
+            params![delta, reservation_id.value(), envelope_id],
+        ).map_err(|_| Rejection::ReservationNotActive)?;
+    }
+    transaction.execute(
+        "UPDATE budget_reservations SET charged_micros = charged_micros + ?1 WHERE budget_reservation_id = ?2",
+        params![delta, reservation_id.value()],
+    ).map_err(|_| Rejection::ReservationNotActive)?;
+    transaction.execute(
+        "UPDATE office_turn_budget_checkpoints SET settled_cumulative_micros = ?1, settled_by_command_id = ?2 WHERE office_turn_id = ?3 AND settled_cumulative_micros IS NULL",
+        params![row.8, command_row_id, turn_id.value()],
+    ).map_err(|_| Rejection::PiOfficeTurnNotReconciled)?;
     transaction.execute(
         "UPDATE office_turns SET lifecycle_state = ?1, settled_by_command_id = ?2 WHERE office_turn_id = ?3",
         params![OfficeTurnState::Settled as i64, command_row_id, turn_id.value()],
@@ -2707,6 +3368,8 @@ fn settle_office_turn(
     Ok(EventBody::OfficeTurnSettled {
         turn_id,
         session_id,
+        charged_delta: UsdMicros::try_from(delta)
+            .map_err(|_| Rejection::PiOfficeTurnUsageNotMonotonic)?,
     })
 }
 
@@ -2949,29 +3612,53 @@ fn reconcile_budget(
     reservation_id: BudgetReservationId,
     observation: CostObservation,
 ) -> Result<EventBody, Rejection> {
-    let (cycle_id, reserved_amount, state) = transaction.query_row(
-        "SELECT operating_cycle_id, amount_micros, reservation_state FROM budget_reservations WHERE budget_reservation_id = ?1",
+    let (cycle_id, reserved_amount, charged_amount, state) = transaction.query_row(
+        "SELECT operating_cycle_id, amount_micros, charged_micros, reservation_state FROM budget_reservations WHERE budget_reservation_id = ?1",
         [reservation_id.value()],
-        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?)),
+        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?)),
     ).optional().map_err(|_| Rejection::SubjectNotFound)?.ok_or(Rejection::SubjectNotFound)?;
     if state != BudgetReservationState::Reserved as i64 {
         return Err(Rejection::ReservationNotActive);
     }
+    // An Office-session reservation is incrementally debited by typed Pi
+    // turn settlements. Its final remainder belongs to the later typed
+    // Dispose reconciliation, not this generic final-only command.
+    let office_parent: i64 = transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM office_session_budget_reservations WHERE budget_reservation_id = ?1)",
+            [reservation_id.value()],
+            |row| row.get(0),
+        )
+        .map_err(|_| Rejection::ReservationNotActive)?;
+    if office_parent != 0 {
+        return Err(Rejection::OfficeSessionBudgetRequiresDispose);
+    }
     let cycle_id = OperatingCycleId::try_from(cycle_id).map_err(|_| Rejection::SubjectNotFound)?;
     let reserved_amount =
         UsdMicros::try_from(reserved_amount).map_err(|_| Rejection::SubjectNotFound)?;
+    let charged_amount =
+        UsdMicros::try_from(charged_amount).map_err(|_| Rejection::SubjectNotFound)?;
+    if charged_amount > reserved_amount {
+        return Err(Rejection::ReservationNotActive);
+    }
+    let remaining_amount = reserved_amount
+        .checked_sub(charged_amount)
+        .ok_or(Rejection::ReservationNotActive)?;
     match observation {
         CostObservation::Known(observed) => {
+            if observed < charged_amount {
+                return Err(Rejection::PiOfficeTurnUsageNotMonotonic);
+            }
             if observed > reserved_amount {
                 return freeze_budget_admission(
                     transaction,
                     command_row_id,
                     reservation_id,
                     cycle_id,
-                    reserved_amount,
+                    remaining_amount,
                     BudgetFreezeReason::KnownOverrun {
                         observed,
-                        reserved: reserved_amount,
+                        reserved: remaining_amount,
                     },
                 );
             }
@@ -2986,6 +3673,9 @@ fn reconcile_budget(
                     Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
                 })
                 .map_err(|_| Rejection::SubjectNotFound)?;
+            let charge_delta = observed
+                .checked_sub(charged_amount)
+                .ok_or(Rejection::PiOfficeTurnUsageNotMonotonic)?;
             for charge in charges {
                 let (budget_id, charge_amount) = charge.map_err(|_| Rejection::SubjectNotFound)?;
                 transaction
@@ -2993,14 +3683,14 @@ fn reconcile_budget(
                         "UPDATE budget_envelopes
                      SET reserved_micros = reserved_micros - ?1, spent_micros = spent_micros + ?2
                      WHERE budget_envelope_id = ?3",
-                        params![charge_amount, observed.value(), budget_id],
+                        params![charge_amount, charge_delta.value(), budget_id],
                     )
                     .map_err(|_| Rejection::BudgetCeilingExceeded)?;
             }
             transaction.execute(
-                "UPDATE budget_reservations SET reservation_state = ?1, reconciled_by_command_id = ?2
-                 WHERE budget_reservation_id = ?3",
-                params![BudgetReservationState::Reconciled as i64, command_row_id, reservation_id.value()],
+                "UPDATE budget_reservations SET reservation_state = ?1, charged_micros = ?2, reconciled_by_command_id = ?3
+                 WHERE budget_reservation_id = ?4",
+                params![BudgetReservationState::Reconciled as i64, observed.value(), command_row_id, reservation_id.value()],
             ).map_err(|_| Rejection::SubjectNotFound)?;
             Ok(EventBody::BudgetReconciled {
                 reservation_id,
@@ -3012,7 +3702,7 @@ fn reconcile_budget(
             command_row_id,
             reservation_id,
             cycle_id,
-            reserved_amount,
+            remaining_amount,
             BudgetFreezeReason::Unknown(reason),
         ),
         CostObservation::Unavailable(reason) => freeze_budget_admission(
@@ -3020,7 +3710,7 @@ fn reconcile_budget(
             command_row_id,
             reservation_id,
             cycle_id,
-            reserved_amount,
+            remaining_amount,
             BudgetFreezeReason::Unavailable(reason),
         ),
     }
@@ -3299,29 +3989,48 @@ fn close_cost_postmortem(
     }
     let cause = cost_postmortem_cause_from_i64(cause).map_err(|_| Rejection::SubjectNotFound)?;
     let reserved = UsdMicros::try_from(reserved).map_err(|_| Rejection::SubjectNotFound)?;
-    let charged = match (cause, resolution, observed) {
-        (
-            CostPostmortemCause::KnownOverrun,
-            CostPostmortemResolution::ChargeObservedOverrun,
-            Some(observed),
-        ) => UsdMicros::try_from(observed).map_err(|_| Rejection::SubjectNotFound)?,
-        (
-            CostPostmortemCause::UnknownCost | CostPostmortemCause::UnavailableCost,
-            CostPostmortemResolution::ConservativeFullReservation,
-            None,
-        ) => reserved,
-        _ => return Err(Rejection::InvalidCostPostmortemResolution),
-    };
-    let reservation_state: i64 = transaction
+    let (reservation_state, reservation_amount, reservation_charged): (i64, i64, i64) = transaction
         .query_row(
-            "SELECT reservation_state FROM budget_reservations WHERE budget_reservation_id = ?1",
+            "SELECT reservation_state, amount_micros, charged_micros
+             FROM budget_reservations WHERE budget_reservation_id = ?1",
             [reservation_id.value()],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .optional()
         .map_err(|_| Rejection::SubjectNotFound)?
         .ok_or(Rejection::SubjectNotFound)?;
     if reservation_state != BudgetReservationState::Frozen as i64 {
+        return Err(Rejection::ReservationNotActive);
+    }
+    let reservation_charged =
+        UsdMicros::try_from(reservation_charged).map_err(|_| Rejection::ReservationNotActive)?;
+    let reservation_amount =
+        UsdMicros::try_from(reservation_amount).map_err(|_| Rejection::ReservationNotActive)?;
+    let remaining = reserved;
+    if reservation_amount
+        .checked_sub(reservation_charged)
+        .ok_or(Rejection::ReservationNotActive)?
+        != remaining
+    {
+        return Err(Rejection::ReservationNotActive);
+    }
+    let charged = match (cause, resolution, observed) {
+        (
+            CostPostmortemCause::KnownOverrun,
+            CostPostmortemResolution::ChargeObservedOverrun,
+            Some(observed),
+        ) => UsdMicros::try_from(observed)
+            .map_err(|_| Rejection::SubjectNotFound)?
+            .checked_sub(reservation_charged)
+            .ok_or(Rejection::InvalidCostPostmortemResolution)?,
+        (
+            CostPostmortemCause::UnknownCost | CostPostmortemCause::UnavailableCost,
+            CostPostmortemResolution::ConservativeFullReservation,
+            None,
+        ) => remaining,
+        _ => return Err(Rejection::InvalidCostPostmortemResolution),
+    };
+    if charged < remaining && cause == CostPostmortemCause::KnownOverrun {
         return Err(Rejection::ReservationNotActive);
     }
     let mut charges = transaction
@@ -3348,10 +4057,15 @@ fn close_cost_postmortem(
     }
     transaction
         .execute(
-            "UPDATE budget_reservations SET reservation_state = ?1, reconciled_by_command_id = ?2
-             WHERE budget_reservation_id = ?3",
+            "UPDATE budget_reservations
+             SET reservation_state = ?1, charged_micros = ?2, reconciled_by_command_id = ?3
+             WHERE budget_reservation_id = ?4",
             params![
                 BudgetReservationState::Reconciled as i64,
+                reservation_charged
+                    .checked_add(charged)
+                    .ok_or(Rejection::BudgetCeilingExceeded)?
+                    .value(),
                 command_row_id,
                 reservation_id.value(),
             ],
@@ -7902,7 +8616,13 @@ fn request_fingerprint(request: &CommandRequest) -> Sha256Digest {
             put_i64(&mut bytes, session_id.value());
             put_i64(&mut bytes, *purpose as i64);
         }
-        CommandBody::SettleOfficeTurn { turn_id } => put_i64(&mut bytes, turn_id.value()),
+        CommandBody::SettleOfficeTurn {
+            turn_id,
+            terminal_receipt_id,
+        } => {
+            put_i64(&mut bytes, turn_id.value());
+            put_i64(&mut bytes, terminal_receipt_id.value());
+        }
         CommandBody::ReserveBudget { cycle_id, amount } => {
             put_i64(&mut bytes, cycle_id.value());
             put_i64(&mut bytes, amount.value());
@@ -8538,6 +9258,78 @@ fn request_fingerprint(request: &CommandRequest) -> Sha256Digest {
             put_i64(&mut bytes, pi_child_spawn_admission_id.value());
             put_i64(&mut bytes, *reason as i64);
         }
+        CommandBody::AuthorizePiOfficeTurnPrompt {
+            office_turn_id,
+            correlation_identity,
+            prompt_content_object_id,
+            prompt_digest,
+            frontier_event_id,
+        } => {
+            put_i64(&mut bytes, office_turn_id.value());
+            put_bytes(&mut bytes, correlation_identity.as_str().as_bytes());
+            put_i64(&mut bytes, prompt_content_object_id.value());
+            put_bytes(&mut bytes, &prompt_digest.as_bytes());
+            put_i64(&mut bytes, frontier_event_id.value());
+        }
+        CommandBody::RecordPiOfficeTurnPromptDelivery {
+            office_turn_id,
+            correlation_identity,
+            prompt_digest,
+        } => {
+            put_i64(&mut bytes, office_turn_id.value());
+            put_bytes(&mut bytes, correlation_identity.as_str().as_bytes());
+            put_bytes(&mut bytes, &prompt_digest.as_bytes());
+        }
+        CommandBody::RecordPiOfficeTurnPromptAccepted {
+            office_turn_id,
+            correlation_identity,
+            command_result_sequence,
+        } => {
+            put_i64(&mut bytes, office_turn_id.value());
+            put_bytes(&mut bytes, correlation_identity.as_str().as_bytes());
+            put_i64(&mut bytes, command_result_sequence.value());
+        }
+        CommandBody::RecordPiOfficeTurnUsage {
+            office_turn_id,
+            correlation_identity,
+            protocol_sequence,
+            usage,
+        } => {
+            put_i64(&mut bytes, office_turn_id.value());
+            put_bytes(&mut bytes, correlation_identity.as_str().as_bytes());
+            put_i64(&mut bytes, protocol_sequence.value());
+            put_pi_cumulative_usage(&mut bytes, *usage);
+        }
+        CommandBody::RecordPiOfficeTurnUsageFailure {
+            office_turn_id,
+            correlation_identity,
+            protocol_sequence,
+            failure,
+        } => {
+            put_i64(&mut bytes, office_turn_id.value());
+            put_bytes(&mut bytes, correlation_identity.as_str().as_bytes());
+            put_i64(&mut bytes, protocol_sequence.value());
+            put_pi_office_turn_usage_failure(&mut bytes, *failure);
+        }
+        CommandBody::RecordPiOfficeTurnTerminal {
+            office_turn_id,
+            correlation_identity,
+            agent_settled_sequence,
+            final_usage_sequence,
+            settled_sequence,
+            disposition,
+            assistant_outcome,
+            transcript_disposition,
+        } => {
+            put_i64(&mut bytes, office_turn_id.value());
+            put_bytes(&mut bytes, correlation_identity.as_str().as_bytes());
+            put_i64(&mut bytes, agent_settled_sequence.value());
+            put_i64(&mut bytes, final_usage_sequence.value());
+            put_i64(&mut bytes, settled_sequence.value());
+            put_i64(&mut bytes, *disposition as i64);
+            put_i64(&mut bytes, *assistant_outcome as i64);
+            put_i64(&mut bytes, *transcript_disposition as i64);
+        }
     }
     Sha256Digest::of_bytes(&bytes)
 }
@@ -8617,9 +9409,11 @@ fn event_fingerprint(event_id: EventId, command_id: &CommandId, body: &EventBody
         EventBody::OfficeTurnSettled {
             turn_id,
             session_id,
+            charged_delta,
         } => {
             put_i64(&mut bytes, turn_id.value());
             put_i64(&mut bytes, session_id.value());
+            put_i64(&mut bytes, charged_delta.value());
         }
         EventBody::BudgetReserved {
             reservation_id,
@@ -9089,6 +9883,70 @@ fn event_fingerprint(event_id: EventId, command_id: &CommandId, body: &EventBody
             put_i64(&mut bytes, pi_child_spawn_admission_id.value());
             put_i64(&mut bytes, *reason as i64);
         }
+        EventBody::PiOfficeTurnPromptAuthorized {
+            pi_office_turn_prompt_authorization_id,
+            office_turn_id,
+            child_process_id,
+            correlation_identity,
+            budget_reservation_id,
+        } => {
+            put_i64(&mut bytes, pi_office_turn_prompt_authorization_id.value());
+            put_i64(&mut bytes, office_turn_id.value());
+            put_i64(&mut bytes, child_process_id.value());
+            put_bytes(&mut bytes, correlation_identity.as_str().as_bytes());
+            put_i64(&mut bytes, budget_reservation_id.value());
+        }
+        EventBody::PiOfficeTurnPromptDelivered {
+            office_turn_id,
+            correlation_identity,
+        } => {
+            put_i64(&mut bytes, office_turn_id.value());
+            put_bytes(&mut bytes, correlation_identity.as_str().as_bytes());
+        }
+        EventBody::PiOfficeTurnPromptAccepted {
+            office_turn_id,
+            correlation_identity,
+            command_result_sequence,
+        } => {
+            put_i64(&mut bytes, office_turn_id.value());
+            put_bytes(&mut bytes, correlation_identity.as_str().as_bytes());
+            put_i64(&mut bytes, command_result_sequence.value());
+        }
+        EventBody::PiOfficeTurnUsageRecorded {
+            pi_office_turn_usage_receipt_id,
+            office_turn_id,
+            protocol_sequence,
+            cumulative_micro_usd,
+        } => {
+            put_i64(&mut bytes, pi_office_turn_usage_receipt_id.value());
+            put_i64(&mut bytes, office_turn_id.value());
+            put_i64(&mut bytes, protocol_sequence.value());
+            put_i64(&mut bytes, cumulative_micro_usd.value());
+        }
+        EventBody::PiOfficeTurnUsageFrozen {
+            office_turn_id,
+            budget_reservation_id,
+            cancellation_request_id,
+            postmortem_id,
+            failure,
+        } => {
+            put_i64(&mut bytes, office_turn_id.value());
+            put_i64(&mut bytes, budget_reservation_id.value());
+            put_i64(&mut bytes, cancellation_request_id.value());
+            put_i64(&mut bytes, postmortem_id.value());
+            put_pi_office_turn_usage_failure(&mut bytes, *failure);
+        }
+        EventBody::PiOfficeTurnTerminalRecorded {
+            pi_office_turn_terminal_receipt_id,
+            office_turn_id,
+            disposition,
+            assistant_outcome,
+        } => {
+            put_i64(&mut bytes, pi_office_turn_terminal_receipt_id.value());
+            put_i64(&mut bytes, office_turn_id.value());
+            put_i64(&mut bytes, *disposition as i64);
+            put_i64(&mut bytes, *assistant_outcome as i64);
+        }
     }
     Sha256Digest::of_bytes(&bytes)
 }
@@ -9109,6 +9967,38 @@ fn put_optional_i64(bytes: &mut Vec<u8>, value: Option<i64>) {
             put_i64(bytes, value);
         }
         None => put_i64(bytes, 0),
+    }
+}
+
+fn put_pi_cumulative_usage(bytes: &mut Vec<u8>, usage: PiCumulativeUsage) {
+    put_i64(bytes, usage.input_tokens.value());
+    put_i64(bytes, usage.output_tokens.value());
+    put_i64(bytes, usage.cache_read_tokens.value());
+    put_i64(bytes, usage.cache_write_tokens.value());
+    put_i64(bytes, usage.total_tokens.value());
+    put_bytes(bytes, &usage.provider_cost.as_big_endian_bytes());
+    put_i64(bytes, usage.ceiling_micro_usd.value());
+}
+
+fn put_pi_office_turn_usage_failure(bytes: &mut Vec<u8>, failure: PiOfficeTurnUsageFailure) {
+    match failure {
+        PiOfficeTurnUsageFailure::Unknown(reason) => {
+            put_i64(bytes, 1);
+            put_i64(bytes, reason as i64);
+        }
+        PiOfficeTurnUsageFailure::Unavailable(reason) => {
+            put_i64(bytes, 2);
+            put_i64(bytes, reason as i64);
+        }
+    }
+}
+
+fn sql_pi_office_turn_usage_failure(
+    failure: PiOfficeTurnUsageFailure,
+) -> (i64, Option<i64>, Option<i64>) {
+    match failure {
+        PiOfficeTurnUsageFailure::Unknown(reason) => (1, Some(reason as i64), None),
+        PiOfficeTurnUsageFailure::Unavailable(reason) => (2, None, Some(reason as i64)),
     }
 }
 
@@ -9208,8 +10098,11 @@ fn insert_command_body(
         } => {
             transaction.execute("INSERT INTO command_open_office_turn(command_row_id, grand_architect_office_session_id, purpose) VALUES (?1, ?2, ?3)", params![command_row_id, session_id.value(), *purpose as i64])?;
         }
-        CommandBody::SettleOfficeTurn { turn_id } => {
-            transaction.execute("INSERT INTO command_settle_office_turn(command_row_id, office_turn_id) VALUES (?1, ?2)", params![command_row_id, turn_id.value()])?;
+        CommandBody::SettleOfficeTurn {
+            turn_id,
+            terminal_receipt_id,
+        } => {
+            transaction.execute("INSERT INTO command_settle_office_turn(command_row_id, office_turn_id, pi_office_turn_terminal_receipt_id) VALUES (?1, ?2, ?3)", params![command_row_id, turn_id.value(), terminal_receipt_id.value()])?;
         }
         CommandBody::QuiesceOperatingCycle { cycle_id } => {
             transaction.execute("INSERT INTO command_quiesce_operating_cycle(command_row_id, operating_cycle_id) VALUES (?1, ?2)", params![command_row_id, cycle_id.value()])?;
@@ -9266,6 +10159,86 @@ fn insert_command_body(
                     operating_cycle_id.value(),
                     project_name.as_str()
                 ],
+            )?;
+        }
+        CommandBody::AuthorizePiOfficeTurnPrompt {
+            office_turn_id,
+            correlation_identity,
+            prompt_content_object_id,
+            prompt_digest,
+            frontier_event_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_authorize_pi_office_turn_prompt VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![command_row_id, office_turn_id.value(), correlation_identity.as_str(), prompt_content_object_id.value(), prompt_digest.as_bytes().as_slice(), frontier_event_id.value()],
+            )?;
+        }
+        CommandBody::RecordPiOfficeTurnPromptDelivery {
+            office_turn_id,
+            correlation_identity,
+            prompt_digest,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_record_pi_office_turn_prompt_delivery VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    command_row_id,
+                    office_turn_id.value(),
+                    correlation_identity.as_str(),
+                    prompt_digest.as_bytes().as_slice()
+                ],
+            )?;
+        }
+        CommandBody::RecordPiOfficeTurnPromptAccepted {
+            office_turn_id,
+            correlation_identity,
+            command_result_sequence,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_record_pi_office_turn_prompt_accepted VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    command_row_id,
+                    office_turn_id.value(),
+                    correlation_identity.as_str(),
+                    command_result_sequence.value()
+                ],
+            )?;
+        }
+        CommandBody::RecordPiOfficeTurnUsage {
+            office_turn_id,
+            correlation_identity,
+            protocol_sequence,
+            usage,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_record_pi_office_turn_usage VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![command_row_id, office_turn_id.value(), correlation_identity.as_str(), protocol_sequence.value(), usage.input_tokens.value(), usage.output_tokens.value(), usage.cache_read_tokens.value(), usage.cache_write_tokens.value(), usage.total_tokens.value(), usage.provider_cost.as_big_endian_bytes().as_slice(), usage.ceiling_micro_usd.value()],
+            )?;
+        }
+        CommandBody::RecordPiOfficeTurnUsageFailure {
+            office_turn_id,
+            correlation_identity,
+            protocol_sequence,
+            failure,
+        } => {
+            let (kind, unknown, unavailable) = sql_pi_office_turn_usage_failure(*failure);
+            transaction.execute(
+                "INSERT INTO command_record_pi_office_turn_usage_failure VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![command_row_id, office_turn_id.value(), correlation_identity.as_str(), protocol_sequence.value(), kind, unknown, unavailable],
+            )?;
+        }
+        CommandBody::RecordPiOfficeTurnTerminal {
+            office_turn_id,
+            correlation_identity,
+            agent_settled_sequence,
+            final_usage_sequence,
+            settled_sequence,
+            disposition,
+            assistant_outcome,
+            transcript_disposition,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_record_pi_office_turn_terminal VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![command_row_id, office_turn_id.value(), correlation_identity.as_str(), agent_settled_sequence.value(), final_usage_sequence.value(), settled_sequence.value(), *disposition as i64, *assistant_outcome as i64, *transcript_disposition as i64],
             )?;
         }
         CommandBody::RecordContentSealReceipt { digest } => {
@@ -10245,8 +11218,9 @@ fn insert_event_body(
         EventBody::OfficeTurnSettled {
             turn_id,
             session_id,
+            charged_delta,
         } => {
-            transaction.execute("INSERT INTO event_office_turn_settled(event_id, office_turn_id, grand_architect_office_session_id) VALUES (?1, ?2, ?3)", params![event_id.value(), turn_id.value(), session_id.value()])?;
+            transaction.execute("INSERT INTO event_office_turn_settled(event_id, office_turn_id, grand_architect_office_session_id, charged_delta_micros) VALUES (?1, ?2, ?3, ?4)", params![event_id.value(), turn_id.value(), session_id.value(), charged_delta.value()])?;
         }
         EventBody::BudgetReserved {
             reservation_id,
@@ -10995,6 +11969,87 @@ fn insert_event_body(
                     event_id.value(),
                     pi_child_spawn_admission_id.value(),
                     *reason as i64
+                ],
+            )?;
+        }
+        EventBody::PiOfficeTurnPromptAuthorized {
+            pi_office_turn_prompt_authorization_id,
+            office_turn_id,
+            child_process_id,
+            correlation_identity,
+            budget_reservation_id,
+        } => {
+            transaction.execute("INSERT INTO event_pi_office_turn_prompt_authorized VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![event_id.value(), pi_office_turn_prompt_authorization_id.value(), office_turn_id.value(), child_process_id.value(), correlation_identity.as_str(), budget_reservation_id.value()])?;
+        }
+        EventBody::PiOfficeTurnPromptDelivered {
+            office_turn_id,
+            correlation_identity,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_pi_office_turn_prompt_delivered VALUES (?1, ?2, ?3)",
+                params![
+                    event_id.value(),
+                    office_turn_id.value(),
+                    correlation_identity.as_str()
+                ],
+            )?;
+        }
+        EventBody::PiOfficeTurnPromptAccepted {
+            office_turn_id,
+            correlation_identity,
+            command_result_sequence,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_pi_office_turn_prompt_accepted VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    event_id.value(),
+                    office_turn_id.value(),
+                    correlation_identity.as_str(),
+                    command_result_sequence.value()
+                ],
+            )?;
+        }
+        EventBody::PiOfficeTurnUsageRecorded {
+            pi_office_turn_usage_receipt_id,
+            office_turn_id,
+            protocol_sequence,
+            cumulative_micro_usd,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_pi_office_turn_usage_recorded VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    event_id.value(),
+                    pi_office_turn_usage_receipt_id.value(),
+                    office_turn_id.value(),
+                    protocol_sequence.value(),
+                    cumulative_micro_usd.value()
+                ],
+            )?;
+        }
+        EventBody::PiOfficeTurnUsageFrozen {
+            office_turn_id,
+            budget_reservation_id,
+            cancellation_request_id,
+            postmortem_id,
+            failure,
+        } => {
+            let (kind, unknown, unavailable) = sql_pi_office_turn_usage_failure(*failure);
+            transaction.execute("INSERT INTO event_pi_office_turn_usage_frozen VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)", params![event_id.value(), office_turn_id.value(), budget_reservation_id.value(), cancellation_request_id.value(), postmortem_id.value(), kind, unknown, unavailable])?;
+        }
+        EventBody::PiOfficeTurnTerminalRecorded {
+            pi_office_turn_terminal_receipt_id,
+            office_turn_id,
+            disposition,
+            assistant_outcome,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_pi_office_turn_terminal_recorded VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    event_id.value(),
+                    pi_office_turn_terminal_receipt_id.value(),
+                    office_turn_id.value(),
+                    *disposition as i64,
+                    *assistant_outcome as i64
                 ],
             )?;
         }
@@ -11800,6 +12855,99 @@ fn decode_event_body(
                 reason: pi_child_not_spawned_reason_from_i64(reason)?,
             }
         }
+        EventKind::PiOfficeTurnPromptAuthorized => {
+            let row: (i64, i64, i64, String, i64) = connection.query_row(
+                "SELECT pi_office_turn_prompt_authorization_id, office_turn_id, child_process_id, correlation_identity, budget_reservation_id FROM event_pi_office_turn_prompt_authorized WHERE event_id = ?1",
+                [event_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Office Prompt authorization event body"))?;
+            EventBody::PiOfficeTurnPromptAuthorized {
+                pi_office_turn_prompt_authorization_id:
+                    PiOfficeTurnPromptAuthorizationId::try_from(row.0)
+                        .map_err(|_| StoreError::InvalidStoredValue)?,
+                office_turn_id: OfficeTurnId::try_from(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                child_process_id: ChildProcessId::try_from(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                correlation_identity: PiCorrelationIdentity::parse(row.3)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                budget_reservation_id: BudgetReservationId::try_from(row.4)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        EventKind::PiOfficeTurnPromptDelivered => {
+            let row: (i64, String) = connection.query_row(
+                "SELECT office_turn_id, correlation_identity FROM event_pi_office_turn_prompt_delivered WHERE event_id = ?1",
+                [event_id], |r| Ok((r.get(0)?, r.get(1)?)),
+            ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Office Prompt delivery event body"))?;
+            EventBody::PiOfficeTurnPromptDelivered {
+                office_turn_id: OfficeTurnId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                correlation_identity: PiCorrelationIdentity::parse(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        EventKind::PiOfficeTurnPromptAccepted => {
+            let row: (i64, String, i64) = connection.query_row(
+                "SELECT office_turn_id, correlation_identity, command_result_sequence FROM event_pi_office_turn_prompt_accepted WHERE event_id = ?1",
+                [event_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Office Prompt acceptance event body"))?;
+            EventBody::PiOfficeTurnPromptAccepted {
+                office_turn_id: OfficeTurnId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                correlation_identity: PiCorrelationIdentity::parse(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                command_result_sequence: PiProtocolSequence::try_from(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        EventKind::PiOfficeTurnUsageRecorded => {
+            let row: (i64, i64, i64, i64) = connection.query_row(
+                "SELECT pi_office_turn_usage_receipt_id, office_turn_id, protocol_sequence, cumulative_ceiling_micros FROM event_pi_office_turn_usage_recorded WHERE event_id = ?1",
+                [event_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Office usage event body"))?;
+            EventBody::PiOfficeTurnUsageRecorded {
+                pi_office_turn_usage_receipt_id: PiOfficeTurnUsageReceiptId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                office_turn_id: OfficeTurnId::try_from(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                protocol_sequence: PiProtocolSequence::try_from(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                cumulative_micro_usd: UsdMicros::try_from(row.3)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        EventKind::PiOfficeTurnUsageFrozen => {
+            let row: (i64, i64, i64, i64, i64, Option<i64>, Option<i64>) = connection.query_row(
+                "SELECT office_turn_id, budget_reservation_id, cancellation_request_id, cost_postmortem_id, failure_kind, unknown_reason, unavailable_reason FROM event_pi_office_turn_usage_frozen WHERE event_id = ?1",
+                [event_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)),
+            ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Office usage freeze event body"))?;
+            EventBody::PiOfficeTurnUsageFrozen {
+                office_turn_id: OfficeTurnId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                budget_reservation_id: BudgetReservationId::try_from(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                cancellation_request_id: CancellationRequestId::try_from(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                postmortem_id: CostPostmortemId::try_from(row.3)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                failure: pi_office_turn_usage_failure_from_sql(row.4, row.5, row.6)?,
+            }
+        }
+        EventKind::PiOfficeTurnTerminalRecorded => {
+            let row: (i64, i64, i64, i64) = connection.query_row(
+                "SELECT pi_office_turn_terminal_receipt_id, office_turn_id, disposition, assistant_outcome FROM event_pi_office_turn_terminal_recorded WHERE event_id = ?1",
+                [event_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Office terminal event body"))?;
+            EventBody::PiOfficeTurnTerminalRecorded {
+                pi_office_turn_terminal_receipt_id: PiOfficeTurnTerminalReceiptId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                office_turn_id: OfficeTurnId::try_from(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                disposition: pi_office_turn_disposition_from_i64(row.2)?,
+                assistant_outcome: pi_office_turn_assistant_outcome_from_i64(row.3)?,
+            }
+        }
     };
     let stored_fingerprint: Vec<u8> = connection.query_row(
         "SELECT event_fingerprint FROM events WHERE event_id = ?1",
@@ -12002,7 +13150,7 @@ fn replay_command_requests(
     Ok(commands)
 }
 
-const MATERIALIZED_TABLES: [&str; 77] = [
+const MATERIALIZED_TABLES: [&str; 84] = [
     "principals",
     "societies",
     "office_contracts",
@@ -12080,6 +13228,13 @@ const MATERIALIZED_TABLES: [&str; 77] = [
     "cancellation_propagations",
     "cancellation_propagation_children",
     "cancellation_propagation_targets",
+    "office_turn_budget_checkpoints",
+    "pi_office_turn_prompt_authorizations",
+    "pi_office_turn_prompt_deliveries",
+    "pi_office_turn_prompt_acceptances",
+    "pi_office_turn_usage_receipts",
+    "pi_office_turn_usage_failures",
+    "pi_office_turn_terminal_receipts",
 ];
 
 fn materialized_state_digest(connection: &Connection) -> Result<Sha256Digest, StoreError> {
@@ -12222,14 +13377,25 @@ fn decode_command_body(
                 purpose: office_turn_purpose_from_i64(purpose)?,
             }
         }
-        CommandKind::SettleOfficeTurn => CommandBody::SettleOfficeTurn {
-            turn_id: query_command_id(
-                connection,
-                "command_settle_office_turn",
-                "office_turn_id",
-                command_row_id,
-            )?,
-        },
+        CommandKind::SettleOfficeTurn => {
+            let (turn, terminal): (i64, i64) = connection
+                .query_row(
+                    "SELECT office_turn_id, pi_office_turn_terminal_receipt_id
+                     FROM command_settle_office_turn WHERE command_row_id = ?1",
+                    [command_row_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?
+                .ok_or(StoreError::LedgerCorruption(
+                    "missing office turn settlement command body",
+                ))?;
+            CommandBody::SettleOfficeTurn {
+                turn_id: OfficeTurnId::try_from(turn)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                terminal_receipt_id: PiOfficeTurnTerminalReceiptId::try_from(terminal)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
         CommandKind::QuiesceOperatingCycle => CommandBody::QuiesceOperatingCycle {
             cycle_id: query_command_id(
                 connection,
@@ -13153,6 +14319,103 @@ fn decode_command_body(
                 reason: pi_child_not_spawned_reason_from_i64(reason)?,
             }
         }
+        CommandKind::AuthorizePiOfficeTurnPrompt => {
+            let row: (i64, String, i64, Vec<u8>, i64) = connection.query_row(
+                "SELECT office_turn_id, correlation_identity, prompt_content_object_id, prompt_digest, frontier_event_id FROM command_authorize_pi_office_turn_prompt WHERE command_row_id = ?1",
+                [command_row_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Office Prompt authorization command body"))?;
+            CommandBody::AuthorizePiOfficeTurnPrompt {
+                office_turn_id: OfficeTurnId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                correlation_identity: PiCorrelationIdentity::parse(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                prompt_content_object_id: ContentObjectId::try_from(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                prompt_digest: digest_from_stored_bytes(&row.3)?,
+                frontier_event_id: EventId::try_from(row.4)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::RecordPiOfficeTurnPromptDelivery => {
+            let row: (i64, String, Vec<u8>) = connection.query_row(
+                "SELECT office_turn_id, correlation_identity, prompt_digest FROM command_record_pi_office_turn_prompt_delivery WHERE command_row_id = ?1",
+                [command_row_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Office Prompt delivery command body"))?;
+            CommandBody::RecordPiOfficeTurnPromptDelivery {
+                office_turn_id: OfficeTurnId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                correlation_identity: PiCorrelationIdentity::parse(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                prompt_digest: digest_from_stored_bytes(&row.2)?,
+            }
+        }
+        CommandKind::RecordPiOfficeTurnPromptAccepted => {
+            let row: (i64, String, i64) = connection.query_row(
+                "SELECT office_turn_id, correlation_identity, command_result_sequence FROM command_record_pi_office_turn_prompt_accepted WHERE command_row_id = ?1",
+                [command_row_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Office Prompt acceptance command body"))?;
+            CommandBody::RecordPiOfficeTurnPromptAccepted {
+                office_turn_id: OfficeTurnId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                correlation_identity: PiCorrelationIdentity::parse(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                command_result_sequence: PiProtocolSequence::try_from(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::RecordPiOfficeTurnUsage => {
+            let row: (i64, String, i64, i64, i64, i64, i64, i64, Vec<u8>, i64) = connection.query_row(
+                "SELECT office_turn_id, correlation_identity, protocol_sequence, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, total_tokens, provider_cost_binary64, cumulative_ceiling_micros FROM command_record_pi_office_turn_usage WHERE command_row_id = ?1",
+                [command_row_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?, r.get(9)?)),
+            ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Office usage command body"))?;
+            CommandBody::RecordPiOfficeTurnUsage {
+                office_turn_id: OfficeTurnId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                correlation_identity: PiCorrelationIdentity::parse(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                protocol_sequence: PiProtocolSequence::try_from(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                usage: pi_cumulative_usage_from_sql(
+                    row.3, row.4, row.5, row.6, row.7, &row.8, row.9,
+                )?,
+            }
+        }
+        CommandKind::RecordPiOfficeTurnUsageFailure => {
+            let row: (i64, String, i64, i64, Option<i64>, Option<i64>) = connection.query_row(
+                "SELECT office_turn_id, correlation_identity, protocol_sequence, failure_kind, unknown_reason, unavailable_reason FROM command_record_pi_office_turn_usage_failure WHERE command_row_id = ?1",
+                [command_row_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+            ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Office usage failure command body"))?;
+            CommandBody::RecordPiOfficeTurnUsageFailure {
+                office_turn_id: OfficeTurnId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                correlation_identity: PiCorrelationIdentity::parse(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                protocol_sequence: PiProtocolSequence::try_from(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                failure: pi_office_turn_usage_failure_from_sql(row.3, row.4, row.5)?,
+            }
+        }
+        CommandKind::RecordPiOfficeTurnTerminal => {
+            let row: (i64, String, i64, i64, i64, i64, i64, i64) = connection.query_row(
+                "SELECT office_turn_id, correlation_identity, agent_settled_sequence, final_usage_sequence, settled_sequence, disposition, assistant_outcome, transcript_disposition FROM command_record_pi_office_turn_terminal WHERE command_row_id = ?1",
+                [command_row_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?)),
+            ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Office terminal command body"))?;
+            CommandBody::RecordPiOfficeTurnTerminal {
+                office_turn_id: OfficeTurnId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                correlation_identity: PiCorrelationIdentity::parse(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                agent_settled_sequence: PiProtocolSequence::try_from(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                final_usage_sequence: PiProtocolSequence::try_from(row.3)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                settled_sequence: PiProtocolSequence::try_from(row.4)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                disposition: pi_office_turn_disposition_from_i64(row.5)?,
+                assistant_outcome: pi_office_turn_assistant_outcome_from_i64(row.6)?,
+                transcript_disposition: pi_office_turn_transcript_disposition_from_i64(row.7)?,
+            }
+        }
     };
     Ok(body)
 }
@@ -13543,6 +14806,12 @@ fn command_kind_from_i64(value: i64) -> Result<CommandKind, StoreError> {
         83 => Ok(CommandKind::OpenSupervisorEpoch),
         84 => Ok(CommandKind::RecordPiAbortControlDelivery),
         85 => Ok(CommandKind::RecordPiChildNotSpawned),
+        86 => Ok(CommandKind::AuthorizePiOfficeTurnPrompt),
+        87 => Ok(CommandKind::RecordPiOfficeTurnPromptDelivery),
+        88 => Ok(CommandKind::RecordPiOfficeTurnPromptAccepted),
+        89 => Ok(CommandKind::RecordPiOfficeTurnUsage),
+        90 => Ok(CommandKind::RecordPiOfficeTurnUsageFailure),
+        91 => Ok(CommandKind::RecordPiOfficeTurnTerminal),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }
@@ -13634,6 +14903,12 @@ fn capability_from_i64(value: i64) -> Result<Capability, StoreError> {
         83 => Ok(Capability::OpenSupervisorEpoch),
         84 => Ok(Capability::RecordPiAbortControlDelivery),
         85 => Ok(Capability::RecordPiChildNotSpawned),
+        86 => Ok(Capability::AuthorizePiOfficeTurnPrompt),
+        87 => Ok(Capability::RecordPiOfficeTurnPromptDelivery),
+        88 => Ok(Capability::RecordPiOfficeTurnPromptAccepted),
+        89 => Ok(Capability::RecordPiOfficeTurnUsage),
+        90 => Ok(Capability::RecordPiOfficeTurnUsageFailure),
+        91 => Ok(Capability::RecordPiOfficeTurnTerminal),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }
@@ -13690,12 +14965,18 @@ fn decode_office_turn_settled_event(
     connection: &Connection,
     event_id: EventId,
 ) -> Result<EventBody, StoreError> {
-    let (turn, session) = connection
+    let (turn, session, charged_delta) = connection
         .query_row(
-            "SELECT office_turn_id, grand_architect_office_session_id
+            "SELECT office_turn_id, grand_architect_office_session_id, charged_delta_micros
              FROM event_office_turn_settled WHERE event_id = ?1",
             [event_id.value()],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            },
         )
         .optional()?
         .ok_or(StoreError::LedgerCorruption(
@@ -13705,11 +14986,108 @@ fn decode_office_turn_settled_event(
         turn_id: OfficeTurnId::try_from(turn).map_err(|_| StoreError::InvalidStoredValue)?,
         session_id: GrandArchitectOfficeSessionId::try_from(session)
             .map_err(|_| StoreError::InvalidStoredValue)?,
+        charged_delta: UsdMicros::try_from(charged_delta)
+            .map_err(|_| StoreError::InvalidStoredValue)?,
     })
 }
 
 fn rejection_from_i64(value: i64) -> Result<Rejection, StoreError> {
     Rejection::try_from(value).map_err(|_| StoreError::InvalidStoredValue)
+}
+
+fn pi_office_turn_disposition_from_i64(value: i64) -> Result<PiOfficeTurnDisposition, StoreError> {
+    match value {
+        1 => Ok(PiOfficeTurnDisposition::Completed),
+        2 => Ok(PiOfficeTurnDisposition::Length),
+        3 => Ok(PiOfficeTurnDisposition::Error),
+        4 => Ok(PiOfficeTurnDisposition::Aborted),
+        5 => Ok(PiOfficeTurnDisposition::Failed),
+        6 => Ok(PiOfficeTurnDisposition::ProtocolFailed),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+
+fn pi_office_turn_assistant_outcome_from_i64(
+    value: i64,
+) -> Result<PiOfficeTurnAssistantOutcome, StoreError> {
+    match value {
+        1 => Ok(PiOfficeTurnAssistantOutcome::ObservedStop),
+        2 => Ok(PiOfficeTurnAssistantOutcome::ObservedLength),
+        3 => Ok(PiOfficeTurnAssistantOutcome::ObservedError),
+        4 => Ok(PiOfficeTurnAssistantOutcome::ObservedAborted),
+        5 => Ok(PiOfficeTurnAssistantOutcome::SdkPromiseRejected),
+        6 => Ok(PiOfficeTurnAssistantOutcome::MissingFinalAssistantOutcome),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+
+fn pi_office_turn_transcript_disposition_from_i64(
+    value: i64,
+) -> Result<PiOfficeTurnTranscriptDisposition, StoreError> {
+    match value {
+        1 => Ok(PiOfficeTurnTranscriptDisposition::DeferredUntilOfficeSessionDispose),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+
+fn pi_office_turn_usage_failure_from_sql(
+    kind: i64,
+    unknown: Option<i64>,
+    unavailable: Option<i64>,
+) -> Result<PiOfficeTurnUsageFailure, StoreError> {
+    match (kind, unknown, unavailable) {
+        (1, Some(1), None) => Ok(PiOfficeTurnUsageFailure::Unknown(
+            PiOfficeTurnUsageUnknownReason::MissingFinalUsageSnapshot,
+        )),
+        (1, Some(2), None) => Ok(PiOfficeTurnUsageFailure::Unknown(
+            PiOfficeTurnUsageUnknownReason::BoundaryStreamInterrupted,
+        )),
+        (1, Some(3), None) => Ok(PiOfficeTurnUsageFailure::Unknown(
+            PiOfficeTurnUsageUnknownReason::TerminalEvidenceMissing,
+        )),
+        (2, None, Some(1)) => Ok(PiOfficeTurnUsageFailure::Unavailable(
+            PiOfficeTurnUsageUnavailableReason::InvalidSdkUsage,
+        )),
+        (2, None, Some(2)) => Ok(PiOfficeTurnUsageFailure::Unavailable(
+            PiOfficeTurnUsageUnavailableReason::UsageRegressed,
+        )),
+        (2, None, Some(3)) => Ok(PiOfficeTurnUsageFailure::Unavailable(
+            PiOfficeTurnUsageUnavailableReason::UsageInconsistent,
+        )),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+
+fn pi_cumulative_usage_from_sql(
+    input: i64,
+    output: i64,
+    cache_read: i64,
+    cache_write: i64,
+    total: i64,
+    provider_cost: &[u8],
+    ceiling: i64,
+) -> Result<PiCumulativeUsage, StoreError> {
+    let bytes: [u8; 8] = provider_cost
+        .try_into()
+        .map_err(|_| StoreError::InvalidStoredValue)?;
+    let usage = PiCumulativeUsage {
+        input_tokens: PiTokenCount::try_from(input).map_err(|_| StoreError::InvalidStoredValue)?,
+        output_tokens: PiTokenCount::try_from(output)
+            .map_err(|_| StoreError::InvalidStoredValue)?,
+        cache_read_tokens: PiTokenCount::try_from(cache_read)
+            .map_err(|_| StoreError::InvalidStoredValue)?,
+        cache_write_tokens: PiTokenCount::try_from(cache_write)
+            .map_err(|_| StoreError::InvalidStoredValue)?,
+        total_tokens: PiTokenCount::try_from(total).map_err(|_| StoreError::InvalidStoredValue)?,
+        provider_cost: ProviderCostBinary64::from_big_endian(bytes)
+            .map_err(|_| StoreError::InvalidStoredValue)?,
+        ceiling_micro_usd: UsdMicros::try_from(ceiling)
+            .map_err(|_| StoreError::InvalidStoredValue)?,
+    };
+    if !usage.is_internally_consistent() {
+        return Err(StoreError::InvalidStoredValue);
+    }
+    Ok(usage)
 }
 
 fn event_kind_from_i64(value: i64) -> Result<EventKind, StoreError> {
@@ -13793,6 +15171,12 @@ fn event_kind_from_i64(value: i64) -> Result<EventKind, StoreError> {
         77 => Ok(EventKind::CancellationPropagationContainmentFailed),
         78 => Ok(EventKind::PiAbortControlDeliveryRecorded),
         79 => Ok(EventKind::PiChildSpawnInvalidated),
+        80 => Ok(EventKind::PiOfficeTurnPromptAuthorized),
+        81 => Ok(EventKind::PiOfficeTurnPromptDelivered),
+        82 => Ok(EventKind::PiOfficeTurnPromptAccepted),
+        83 => Ok(EventKind::PiOfficeTurnUsageRecorded),
+        84 => Ok(EventKind::PiOfficeTurnUsageFrozen),
+        85 => Ok(EventKind::PiOfficeTurnTerminalRecorded),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }
@@ -14151,6 +15535,7 @@ fn cost_unavailable_reason_from_i64(value: i64) -> Result<CostUnavailableReason,
         1 => Ok(CostUnavailableReason::ProviderUnavailable),
         2 => Ok(CostUnavailableReason::CredentialUnavailable),
         3 => Ok(CostUnavailableReason::QualificationRejected),
+        4 => Ok(CostUnavailableReason::AdapterAccountingUnavailable),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }

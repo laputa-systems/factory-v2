@@ -19,12 +19,14 @@ use society_kernel::{
     ObservationRevisionText, OfficeSessionTerminalState, OfficeTurnId, OfficeTurnPurpose,
     OperatingCycleId, OperatingCycleState, OperatingCycleTreatment, OwnedProcessGroupId,
     PiBoundarySessionIdentity, PiChildOwner, PiChildSpawnAdmissionId, PiCorrelationIdentity,
-    PostmortemActionKind, PostmortemActionProposalText, PostmortemCausalClaimKind,
-    PostmortemCausalClaimText, PostmortemId, PrincipalDisplayName, PrincipalId, ProjectId,
-    ProjectMilestoneName, ProjectName, ProjectObjectiveText, ProjectState,
-    ProjectStopConditionText, Rejection, ReviewChallengeSeverity, ReviewFailureHypothesis,
-    Sha256Digest, SocietyName, SpawnNonce, StoreError, SupervisedChildIdentity, SupervisorEpochId,
-    SupervisorEpochIdentity, UsdMicros,
+    PiCumulativeUsage, PiOfficeTurnAssistantOutcome, PiOfficeTurnDisposition,
+    PiOfficeTurnTerminalReceiptId, PiOfficeTurnTranscriptDisposition, PiOfficeTurnUsageFailure,
+    PiOfficeTurnUsageUnavailableReason, PiProtocolSequence, PiTokenCount, PostmortemActionKind,
+    PostmortemActionProposalText, PostmortemCausalClaimKind, PostmortemCausalClaimText,
+    PostmortemId, PrincipalDisplayName, PrincipalId, ProjectId, ProjectMilestoneName, ProjectName,
+    ProjectObjectiveText, ProjectState, ProjectStopConditionText, ProviderCostBinary64, Rejection,
+    ReviewChallengeSeverity, ReviewFailureHypothesis, Sha256Digest, SocietyName, SpawnNonce,
+    StoreError, SupervisedChildIdentity, SupervisorEpochId, SupervisorEpochIdentity, UsdMicros,
 };
 
 fn submit(
@@ -238,15 +240,17 @@ fn current_operating_cycle_generation_is_typed_and_distinguishes_absence_from_co
 
 /// The M5 Office Ready fact is no longer a synthetic service assertion. This
 /// fixture builds the provider-free deterministic child receipt chain needed
-/// before an Office can open ordinary turns. The tiny reservation is settled
-/// after Create/Ready so these earlier lifecycle tests retain their own cost
-/// accounting focus; it is not evidence of a paid Pi run.
+/// before an Office can open ordinary turns. Its Office-session reservation
+/// deliberately remains active: only typed Pi turn checkpoints may debit it,
+/// and a later typed Dispose receipt will reconcile its unused remainder. It
+/// is not evidence of a paid Pi run.
 fn ready_supervised_office_session(
     store: &mut KernelStore,
     architect: PrincipalId,
     cycle_id: OperatingCycleId,
     session_id: GrandArchitectOfficeSessionId,
     label: &str,
+    reservation_amount: UsdMicros,
 ) {
     let generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
     accepted(
@@ -257,7 +261,7 @@ fn ready_supervised_office_session(
         generation,
         CommandBody::ReserveBudget {
             cycle_id,
-            amount: UsdMicros::new(1).unwrap(),
+            amount: reservation_amount,
         },
     );
     let epoch = SupervisorEpochId::new(1).unwrap();
@@ -366,17 +370,6 @@ fn ready_supervised_office_session(
         Capability::RecordOfficeSessionReady,
         generation,
         CommandBody::RecordOfficeSessionReady { session_id },
-    );
-    accepted(
-        store,
-        &format!("{label}-settle-bootstrap-reservation"),
-        PrincipalId::KERNEL,
-        Capability::ReconcileBudget,
-        ExpectedGeneration::NotApplicable,
-        CommandBody::ReconcileBudget {
-            reservation_id: BudgetReservationId::new(1).unwrap(),
-            observation: CostObservation::Known(UsdMicros::ZERO),
-        },
     );
 }
 
@@ -856,9 +849,9 @@ fn project_charter_activation_and_close_blocker_are_typed_and_replayable() {
 }
 
 #[test]
-fn empty_schema_one_upgrades_as_atomic_version_steps() {
+fn current_schema_reopens_after_atomic_fresh_bootstrap() {
     let path = std::env::temp_dir().join(format!(
-        "xsh-society-m2-upgrade-{}-{}.sqlite",
+        "xsh-society-fresh-schema-{}-{}.sqlite",
         std::process::id(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -873,26 +866,26 @@ fn empty_schema_one_upgrades_as_atomic_version_steps() {
         connection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        1
+        6
     );
     drop(connection);
     drop(KernelStore::open(&path).unwrap());
-    let upgraded = Connection::open(&path).unwrap();
+    let reopened = Connection::open(&path).unwrap();
     assert_eq!(
-        upgraded
+        reopened
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        5
+        6
     );
     assert_eq!(
-        upgraded
+        reopened
             .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
                 row.get::<_, i64>(0)
             })
             .unwrap(),
         0
     );
-    let objects_table: String = upgraded
+    let objects_table: String = reopened
         .query_row(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'objects'",
             [],
@@ -900,449 +893,55 @@ fn empty_schema_one_upgrades_as_atomic_version_steps() {
         )
         .unwrap();
     assert_eq!(objects_table, "objects");
-    drop(upgraded);
-    fs::remove_file(path).unwrap();
-}
-
-#[test]
-fn nonempty_schema_one_ledger_is_refused_without_mutation() {
-    let path = std::env::temp_dir().join(format!(
-        "xsh-society-m1-ledger-refusal-{}-{}.sqlite",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    let connection = Connection::open(&path).unwrap();
-    connection
-        .execute_batch(include_str!("../../../migrations/0001_kernel.sql"))
-        .unwrap();
-    // This is a genuine M1 appointment and a subsequent accepted Grand
-    // Architect cycle-proposal receipt. M2 does not rewrite its fingerprints
-    // or claim replay parity for the old ledger representation.
-    connection
-        .execute_batch(
-            "
-            INSERT INTO societies(society_id, name, lifecycle_state) VALUES (1, 'legacy society', 1);
-            INSERT INTO universe_seeds(universe_seed_id, society_id, revision, rendering_digest, active, installed_by_command_id) VALUES (1, 1, 1, zeroblob(32), 1, 1);
-            INSERT INTO office_contracts(office_id, office_kind, installed_by_command_id) VALUES (1, 1, 1);
-            INSERT INTO principals(principal_id, principal_kind, display_name, active) VALUES (3, 3, 'legacy grand architect', 1);
-            INSERT INTO office_occupancies(office_occupancy_id, office_id, principal_id, active, appointed_by_command_id) VALUES (1, 1, 3, 1, 1);
-            INSERT INTO society_bootstraps(society_id, universe_seed_id, office_id, office_occupancy_id, hard_ceiling_micros, bootstrapped_by_command_id) VALUES (1, 1, 1, 1, 1030000, 1);
-            INSERT INTO capability_grants(capability_grant_id, principal_id, capability_kind, office_occupancy_id, grant_state, granted_by_command_id, consumed_by_command_id) VALUES (100, 3, 7, 1, 1, 1, NULL);
-            INSERT INTO operating_cycles(operating_cycle_id, society_id, universe_seed_id, office_occupancy_id, treatment, lifecycle_state, admission_generation, proposed_by_command_id, last_transition_command_id) VALUES (1, 1, 1, 1, 1, 1, 0, 2, 2);
-            INSERT INTO commands(command_row_id, command_id, principal_id, capability_grant_id, capability_kind, expected_generation, command_kind, request_fingerprint, command_status, rejection_code, accepted_event_id) VALUES
-                (1, 'm1-appoint-grand-architect', 1, 4, 4, NULL, 4, zeroblob(32), 1, NULL, 1),
-                (2, 'm1-grand-architect-propose-cycle', 3, 100, 7, NULL, 7, zeroblob(32), 1, NULL, 2);
-            INSERT INTO events(event_id, command_row_id, event_kind, event_sequence, event_fingerprint) VALUES
-                (1, 1, 4, 1, zeroblob(32)),
-                (2, 2, 7, 2, zeroblob(32));
-            INSERT INTO command_appoint_initial_grand_architect(command_row_id, actor_display_name) VALUES (1, 'legacy grand architect');
-            INSERT INTO command_propose_operating_cycle(command_row_id, treatment) VALUES (2, 1);
-            INSERT INTO event_grand_architect_appointed(event_id, office_occupancy_id, principal_id) VALUES (1, 1, 3);
-            INSERT INTO event_operating_cycle_proposed(event_id, operating_cycle_id, admission_generation, treatment) VALUES (2, 1, 0, 1);
-            ",
-        )
-        .unwrap();
-    drop(connection);
-    let before = fs::read(&path).unwrap();
-
-    assert!(matches!(
-        KernelStore::open(&path),
-        Err(StoreError::NonemptySchemaV1LedgerUpgradeRefused {
-            command_count: 2,
-            event_count: 2,
-        })
-    ));
-    assert_eq!(fs::read(&path).unwrap(), before);
-
-    let reopened = Connection::open(&path).unwrap();
-    assert_eq!(
-        reopened
-            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
-            .unwrap(),
-        1
-    );
-    assert_eq!(
-        reopened
-            .query_row("SELECT COUNT(*) FROM commands", [], |row| row
-                .get::<_, i64>(0))
-            .unwrap(),
-        2
-    );
-    assert_eq!(
-        reopened
-            .query_row("SELECT COUNT(*) FROM events", [], |row| row
-                .get::<_, i64>(0))
-            .unwrap(),
-        2
-    );
-    assert_eq!(
-        reopened
-            .query_row(
-                "SELECT COUNT(*) FROM command_appoint_initial_grand_architect a JOIN event_grand_architect_appointed e ON e.event_id = 1 JOIN command_propose_operating_cycle p ON p.command_row_id = 2 WHERE a.command_row_id = 1 AND e.principal_id = 3 AND p.treatment = 1",
-                [],
-                |row| row.get::<_, i64>(0),
-            )
-            .unwrap(),
-        1
-    );
     drop(reopened);
     fs::remove_file(path).unwrap();
 }
 
 #[test]
-fn nonempty_schema_two_ledger_is_refused_before_migration_three_mutates_it() {
+fn historical_schema_one_is_rejected_without_current_schema_mutation() {
     let path = std::env::temp_dir().join(format!(
-        "xsh-society-m2-ledger-refusal-{}-{}.sqlite",
+        "xsh-society-historical-schema-one-{}-{}.sqlite",
         std::process::id(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos()
     ));
-    let connection = Connection::open(&path).unwrap();
-    connection
-        .execute_batch(include_str!("../../../migrations/0001_kernel.sql"))
-        .unwrap();
-    connection
-        .execute_batch(include_str!(
-            "../../../migrations/0002_coordination_graph.sql"
-        ))
-        .unwrap();
-    // KernelStore deliberately exposes no schema-v2 constructor. This is the
-    // smallest structurally accepted M2 receipt, used only to prove that M3
-    // refuses rather than rewriting an unprovable historical fingerprint.
-    connection
+    let historical = Connection::open(&path).unwrap();
+    // A schema-1 identity is sufficient to prove the fail-closed boundary:
+    // current kernels must never reinterpret an old ledger as canonical just
+    // because both happen to be SQLite databases.
+    historical
         .execute_batch(
-            "
-            INSERT INTO societies(society_id, name, lifecycle_state)
-                VALUES (1, 'm2 historical society', 1);
-            INSERT INTO commands(command_row_id, command_id, principal_id,
-                capability_grant_id, capability_kind, expected_generation,
-                command_kind, request_fingerprint, command_status,
-                rejection_code, accepted_event_id)
-                VALUES (1, 'm2-create-society', 1, 1, 1, NULL, 1,
-                        zeroblob(32), 1, NULL, 1);
-            INSERT INTO events(event_id, command_row_id, event_kind,
-                event_sequence, event_fingerprint)
-                VALUES (1, 1, 1, 1, zeroblob(32));
-            INSERT INTO command_create_society_identity(command_row_id, name)
-                VALUES (1, 'm2 historical society');
-            INSERT INTO event_society_identity_created(event_id, society_id)
-                VALUES (1, 1);
-            ",
+            "CREATE TABLE historical_v1_ledger_marker (entry_id INTEGER PRIMARY KEY);
+             INSERT INTO historical_v1_ledger_marker VALUES (1);
+             PRAGMA user_version = 1;",
         )
         .unwrap();
-    drop(connection);
-    let before = fs::read(&path).unwrap();
+    drop(historical);
 
     assert!(matches!(
         KernelStore::open(&path),
-        Err(StoreError::NonemptySchemaV2LedgerUpgradeRefused {
-            command_count: 1,
-            event_count: 1,
-        })
+        Err(StoreError::UnsupportedSchemaVersion(1))
     ));
-    assert_eq!(fs::read(&path).unwrap(), before);
-    let reopened = Connection::open(&path).unwrap();
+    let inspection = Connection::open(&path).unwrap();
     assert_eq!(
-        reopened
+        inspection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        2
+        1
     );
     assert_eq!(
-        reopened
+        inspection
             .query_row(
-                "SELECT COUNT(*) FROM command_create_society_identity",
+                "SELECT COUNT(*) FROM historical_v1_ledger_marker",
                 [],
                 |row| { row.get::<_, i64>(0) }
             )
             .unwrap(),
         1
     );
-    drop(reopened);
-    fs::remove_file(path).unwrap();
-}
-
-#[test]
-fn failed_migration_three_rolls_back_its_version_step_and_a_reopen_retries() {
-    let path = std::env::temp_dir().join(format!(
-        "xsh-society-m3-atomic-step-{}-{}.sqlite",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    let connection = Connection::open(&path).unwrap();
-    connection
-        .execute_batch(include_str!("../../../migrations/0001_kernel.sql"))
-        .unwrap();
-    connection
-        .execute_batch(include_str!(
-            "../../../migrations/0002_coordination_graph.sql"
-        ))
-        .unwrap();
-    let injected_failure = include_str!("../../../migrations/0003_execution_foundation.sql")
-        .replacen(
-            "CREATE TABLE execution_profiles (",
-            "SELECT missing_migration_three_fault();\nCREATE TABLE execution_profiles (",
-            1,
-        );
-    assert!(connection.execute_batch(&injected_failure).is_err());
-    connection
-        .execute_batch("ROLLBACK; PRAGMA foreign_keys = ON;")
-        .unwrap();
-    assert_eq!(
-        connection
-            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
-            .unwrap(),
-        2
-    );
-    let profile_table_count: i64 = connection
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_master
-             WHERE type = 'table' AND name = 'execution_profiles'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert_eq!(profile_table_count, 0);
-    assert_eq!(
-        connection
-            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
-                row.get::<_, i64>(0)
-            })
-            .unwrap(),
-        0
-    );
-    drop(connection);
-
-    drop(KernelStore::open(&path).unwrap());
-    let retried = Connection::open(&path).unwrap();
-    assert_eq!(
-        retried
-            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
-            .unwrap(),
-        5
-    );
-    drop(retried);
-    fs::remove_file(path).unwrap();
-}
-
-#[test]
-fn nonempty_schema_three_ledger_is_refused_before_migration_four_mutates_it() {
-    let path = std::env::temp_dir().join(format!(
-        "xsh-society-m3-ledger-refusal-{}-{}.sqlite",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    let connection = Connection::open(&path).unwrap();
-    connection
-        .execute_batch(include_str!("../../../migrations/0001_kernel.sql"))
-        .unwrap();
-    connection
-        .execute_batch(include_str!(
-            "../../../migrations/0002_coordination_graph.sql"
-        ))
-        .unwrap();
-    connection
-        .execute_batch(include_str!(
-            "../../../migrations/0003_execution_foundation.sql"
-        ))
-        .unwrap();
-    connection
-        .execute(
-            "INSERT INTO commands(command_id, principal_id, capability_grant_id, capability_kind,
-                                  expected_generation, command_kind, request_fingerprint, command_status,
-                                  rejection_code, accepted_event_id)
-             VALUES ('m3-historical-rejected', 1, 1, 1, NULL, 1, zeroblob(32), 2, 16, NULL)",
-            [],
-        )
-        .unwrap();
-    connection
-        .execute(
-            "INSERT INTO command_create_society_identity(command_row_id, name) VALUES (1, 'historic')",
-            [],
-        )
-        .unwrap();
-    assert_eq!(
-        connection
-            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
-            .unwrap(),
-        3
-    );
-    drop(connection);
-
-    assert!(matches!(
-        KernelStore::open(&path),
-        Err(
-            society_kernel::StoreError::NonemptySchemaV3LedgerUpgradeRefused {
-                command_count: 1,
-                event_count: 0,
-            }
-        )
-    ));
-    let inspect = Connection::open(&path).unwrap();
-    assert_eq!(
-        inspect
-            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
-            .unwrap(),
-        3
-    );
-    assert_eq!(
-        inspect
-            .query_row("SELECT COUNT(*) FROM commands", [], |row| row
-                .get::<_, i64>(0))
-            .unwrap(),
-        1
-    );
-    drop(inspect);
-    fs::remove_file(path).unwrap();
-}
-
-#[test]
-fn failed_migration_four_rolls_back_its_version_step_and_an_empty_reopen_retries() {
-    let path = std::env::temp_dir().join(format!(
-        "xsh-society-m4-atomicity-{}-{}.sqlite",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    let connection = Connection::open(&path).unwrap();
-    connection
-        .execute_batch(include_str!("../../../migrations/0001_kernel.sql"))
-        .unwrap();
-    connection
-        .execute_batch(include_str!(
-            "../../../migrations/0002_coordination_graph.sql"
-        ))
-        .unwrap();
-    connection
-        .execute_batch(include_str!(
-            "../../../migrations/0003_execution_foundation.sql"
-        ))
-        .unwrap();
-    let injected_failure = include_str!("../../../migrations/0004_content_evidence_foundation.sql")
-        .replacen(
-            "CREATE TABLE content_seal_receipts (",
-            "SELECT missing_migration_four_fault();\nCREATE TABLE content_seal_receipts (",
-            1,
-        );
-    assert!(connection.execute_batch(&injected_failure).is_err());
-    connection
-        .execute_batch("ROLLBACK; PRAGMA foreign_keys = ON;")
-        .unwrap();
-    assert_eq!(
-        connection
-            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
-            .unwrap(),
-        3
-    );
-    assert_eq!(
-        connection
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master
-                 WHERE type = 'table' AND name = 'content_seal_receipts'",
-                [],
-                |row| row.get::<_, i64>(0),
-            )
-            .unwrap(),
-        0
-    );
-    drop(connection);
-
-    drop(KernelStore::open(&path).unwrap());
-    let retried = Connection::open(&path).unwrap();
-    assert_eq!(
-        retried
-            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
-            .unwrap(),
-        5
-    );
-    drop(retried);
-    fs::remove_file(path).unwrap();
-}
-
-#[test]
-fn migration_five_is_atomic_and_refuses_a_nonempty_schema_four_ledger() {
-    let path = std::env::temp_dir().join(format!(
-        "xsh-society-m5-atomicity-{}-{}.sqlite",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    let connection = Connection::open(&path).unwrap();
-    for migration in [
-        include_str!("../../../migrations/0001_kernel.sql"),
-        include_str!("../../../migrations/0002_coordination_graph.sql"),
-        include_str!("../../../migrations/0003_execution_foundation.sql"),
-        include_str!("../../../migrations/0004_content_evidence_foundation.sql"),
-    ] {
-        connection.execute_batch(migration).unwrap();
-    }
-    let injected_failure =
-        include_str!("../../../migrations/0005_native_child_process_foundation.sql").replacen(
-            "CREATE TABLE supervisor_epochs (",
-            "SELECT missing_migration_five_fault();\nCREATE TABLE supervisor_epochs (",
-            1,
-        );
-    assert!(connection.execute_batch(&injected_failure).is_err());
-    connection
-        .execute_batch("ROLLBACK; PRAGMA foreign_keys = ON;")
-        .unwrap();
-    assert_eq!(
-        connection
-            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
-            .unwrap(),
-        4
-    );
-    assert_eq!(connection.query_row("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'supervisor_epochs'", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
-    connection.execute(
-        "INSERT INTO commands(command_id, principal_id, capability_grant_id, capability_kind,
-                              expected_generation, command_kind, request_fingerprint, command_status,
-                              rejection_code, accepted_event_id)
-         VALUES ('m4-historical-rejected', 1, 1, 1, NULL, 1, zeroblob(32), 2, 16, NULL)",
-        [],
-    ).unwrap();
-    connection.execute(
-        "INSERT INTO command_create_society_identity(command_row_id, name) VALUES (1, 'historic')",
-        [],
-    ).unwrap();
-    drop(connection);
-    assert!(matches!(
-        KernelStore::open(&path),
-        Err(StoreError::NonemptySchemaV4LedgerUpgradeRefused {
-            command_count: 1,
-            event_count: 0
-        })
-    ));
-    let inspect = Connection::open(&path).unwrap();
-    assert_eq!(
-        inspect
-            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
-            .unwrap(),
-        4
-    );
-    assert_eq!(
-        inspect
-            .query_row("SELECT COUNT(*) FROM commands", [], |row| row
-                .get::<_, i64>(0))
-            .unwrap(),
-        1
-    );
-    assert_eq!(inspect.query_row("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'supervisor_epochs'", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
-    drop(inspect);
+    drop(inspection);
     fs::remove_file(path).unwrap();
 }
 
@@ -1631,6 +1230,7 @@ fn office_turn_and_cross_cut_budget_freeze_unknown_cost() {
         cycle_id,
         session_id,
         "office-turn",
+        UsdMicros::new(1).unwrap(),
     );
     accepted(
         &mut store,
@@ -1655,7 +1255,7 @@ fn office_turn_and_cross_cut_budget_freeze_unknown_cost() {
         },
         Rejection::InvalidLifecycleTransition,
     );
-    accepted(
+    rejected(
         &mut store,
         "kernel-settle-office-turn",
         PrincipalId::KERNEL,
@@ -1663,7 +1263,9 @@ fn office_turn_and_cross_cut_budget_freeze_unknown_cost() {
         ExpectedGeneration::NotApplicable,
         CommandBody::SettleOfficeTurn {
             turn_id: OfficeTurnId::new(1).unwrap(),
+            terminal_receipt_id: society_kernel::PiOfficeTurnTerminalReceiptId::new(1).unwrap(),
         },
+        Rejection::PiOfficeTurnTerminalEvidenceMissing,
     );
 
     rejected(
@@ -1720,7 +1322,7 @@ fn office_turn_and_cross_cut_budget_freeze_unknown_cost() {
         zero,
         CommandBody::ReserveBudget {
             cycle_id,
-            amount: UsdMicros::new(700_000).unwrap(),
+            amount: UsdMicros::new(699_999).unwrap(),
         },
     );
     accepted(
@@ -1908,6 +1510,7 @@ fn office_turn_purpose_and_session_fences_follow_cycle_state() {
         cycle_id,
         session_id,
         "office-purpose",
+        UsdMicros::new(1).unwrap(),
     );
     accepted(
         &mut store,
@@ -1949,7 +1552,7 @@ fn office_turn_purpose_and_session_fences_follow_cycle_state() {
             purpose: OfficeTurnPurpose::Recovery,
         },
     );
-    accepted(
+    rejected(
         &mut store,
         "kernel-settle-recovery-turn",
         PrincipalId::KERNEL,
@@ -1957,7 +1560,9 @@ fn office_turn_purpose_and_session_fences_follow_cycle_state() {
         ExpectedGeneration::NotApplicable,
         CommandBody::SettleOfficeTurn {
             turn_id: OfficeTurnId::new(1).unwrap(),
+            terminal_receipt_id: society_kernel::PiOfficeTurnTerminalReceiptId::new(1).unwrap(),
         },
+        Rejection::PiOfficeTurnTerminalEvidenceMissing,
     );
     // A real supervised Office may run recovery turns while the cycle is
     // quiescing, but cannot claim the cycle is drained while its native child
@@ -2003,6 +1608,7 @@ fn terminal_session_fact_cannot_close_an_active_turn() {
         cycle_id,
         session_id,
         "office-terminal",
+        UsdMicros::new(1).unwrap(),
     );
     accepted(
         &mut store,
@@ -2439,6 +2045,803 @@ fn changed_typed_body_reusing_a_command_id_is_an_idempotency_conflict() {
         Err(society_kernel::StoreError::IdempotencyConflict)
     ));
     assert_eq!(store.command_count().unwrap(), count_after_first);
+}
+
+#[test]
+fn pi_office_turn_requires_authorized_delivered_peer_terminal_chain_and_debits_only_delta() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("xsh-m6-office-turn-{unique}.sqlite3"));
+    let mut store = KernelStore::open(&path).unwrap();
+    let (grand_architect, cycle_id) = found_cycle(&mut store);
+    let zero = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
+    let session_id = GrandArchitectOfficeSessionId::new(1).unwrap();
+    accepted(
+        &mut store,
+        "m6-start-office-session",
+        grand_architect,
+        Capability::StartGrandArchitectOfficeSession,
+        zero,
+        CommandBody::StartGrandArchitectOfficeSession { cycle_id },
+    );
+    ready_supervised_office_session(
+        &mut store,
+        grand_architect,
+        cycle_id,
+        session_id,
+        "m6-office",
+        UsdMicros::new(100).unwrap(),
+    );
+    rejected(
+        &mut store,
+        "m6-generic-office-parent-reconciliation-is-fenced",
+        PrincipalId::KERNEL,
+        Capability::ReconcileBudget,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::ReconcileBudget {
+            reservation_id: BudgetReservationId::new(1).unwrap(),
+            observation: CostObservation::Known(UsdMicros::ZERO),
+        },
+        Rejection::OfficeSessionBudgetRequiresDispose,
+    );
+    let prompt_digest = Sha256Digest::of_bytes(b"sealed deterministic prompt");
+    accepted(
+        &mut store,
+        "m6-seal-prompt",
+        PrincipalId::KERNEL,
+        Capability::RecordContentSealReceipt,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::RecordContentSealReceipt {
+            digest: prompt_digest,
+        },
+    );
+    accepted(
+        &mut store,
+        "m6-register-prompt",
+        PrincipalId::KERNEL,
+        Capability::RegisterContentObject,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::RegisterContentObject {
+            content_seal_receipt_id: society_kernel::ContentSealReceiptId::new(1).unwrap(),
+        },
+    );
+
+    let open = accepted(
+        &mut store,
+        "m6-open-turn-one",
+        grand_architect,
+        Capability::OpenOfficeTurn,
+        zero,
+        CommandBody::OpenOfficeTurn {
+            session_id,
+            purpose: OfficeTurnPurpose::OrdinaryWork,
+        },
+    );
+    let frontier = match open.disposition {
+        CommandDisposition::Accepted(event_id) => event_id,
+        other => panic!("unexpected open receipt: {other:?}"),
+    };
+    let turn_one = OfficeTurnId::new(1).unwrap();
+    let correlation_one = PiCorrelationIdentity::parse("m6-prompt-one").unwrap();
+    rejected(
+        &mut store,
+        "m6-reject-unsealed-prompt",
+        PrincipalId::KERNEL,
+        Capability::AuthorizePiOfficeTurnPrompt,
+        zero,
+        CommandBody::AuthorizePiOfficeTurnPrompt {
+            office_turn_id: turn_one,
+            correlation_identity: correlation_one.clone(),
+            prompt_content_object_id: society_kernel::ContentObjectId::new(1).unwrap(),
+            prompt_digest: Sha256Digest::of_bytes(b"recombined"),
+            frontier_event_id: frontier,
+        },
+        Rejection::PiOfficeTurnPromptBindingMismatch,
+    );
+    accepted(
+        &mut store,
+        "m6-authorize-prompt-one",
+        PrincipalId::KERNEL,
+        Capability::AuthorizePiOfficeTurnPrompt,
+        zero,
+        CommandBody::AuthorizePiOfficeTurnPrompt {
+            office_turn_id: turn_one,
+            correlation_identity: correlation_one.clone(),
+            prompt_content_object_id: society_kernel::ContentObjectId::new(1).unwrap(),
+            prompt_digest,
+            frontier_event_id: frontier,
+        },
+    );
+    accepted(
+        &mut store,
+        "m6-deliver-prompt-one",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeTurnPromptDelivery,
+        zero,
+        CommandBody::RecordPiOfficeTurnPromptDelivery {
+            office_turn_id: turn_one,
+            correlation_identity: correlation_one.clone(),
+            prompt_digest,
+        },
+    );
+    accepted(
+        &mut store,
+        "m6-accept-prompt-one",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeTurnPromptAccepted,
+        zero,
+        CommandBody::RecordPiOfficeTurnPromptAccepted {
+            office_turn_id: turn_one,
+            correlation_identity: correlation_one.clone(),
+            command_result_sequence: PiProtocolSequence::try_from(10).unwrap(),
+        },
+    );
+    let usage_one = PiCumulativeUsage {
+        input_tokens: PiTokenCount::try_from(1).unwrap(),
+        output_tokens: PiTokenCount::try_from(1).unwrap(),
+        cache_read_tokens: PiTokenCount::try_from(1).unwrap(),
+        cache_write_tokens: PiTokenCount::try_from(1).unwrap(),
+        total_tokens: PiTokenCount::try_from(4).unwrap(),
+        provider_cost: ProviderCostBinary64::from_big_endian(0.000004_f64.to_bits().to_be_bytes())
+            .unwrap(),
+        ceiling_micro_usd: UsdMicros::new(4).unwrap(),
+    };
+    rejected(
+        &mut store,
+        "m6-reject-usage-before-prompt-acceptance-sequence",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeTurnUsage,
+        zero,
+        CommandBody::RecordPiOfficeTurnUsage {
+            office_turn_id: turn_one,
+            correlation_identity: correlation_one.clone(),
+            protocol_sequence: PiProtocolSequence::try_from(10).unwrap(),
+            usage: usage_one,
+        },
+        Rejection::PiOfficeTurnUsageNotMonotonic,
+    );
+    accepted(
+        &mut store,
+        "m6-usage-one",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeTurnUsage,
+        zero,
+        CommandBody::RecordPiOfficeTurnUsage {
+            office_turn_id: turn_one,
+            correlation_identity: correlation_one.clone(),
+            // Control replies may legally interleave after AgentSettled. Only
+            // the final prompt usage immediately precedes Settled.
+            protocol_sequence: PiProtocolSequence::try_from(14).unwrap(),
+            usage: usage_one,
+        },
+    );
+    rejected(
+        &mut store,
+        "m6-reject-terminal-before-accepted-prompt-result",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeTurnTerminal,
+        zero,
+        CommandBody::RecordPiOfficeTurnTerminal {
+            office_turn_id: turn_one,
+            correlation_identity: correlation_one.clone(),
+            agent_settled_sequence: PiProtocolSequence::try_from(10).unwrap(),
+            final_usage_sequence: PiProtocolSequence::try_from(14).unwrap(),
+            settled_sequence: PiProtocolSequence::try_from(15).unwrap(),
+            disposition: PiOfficeTurnDisposition::Completed,
+            assistant_outcome: PiOfficeTurnAssistantOutcome::ObservedStop,
+            transcript_disposition:
+                PiOfficeTurnTranscriptDisposition::DeferredUntilOfficeSessionDispose,
+        },
+        Rejection::PiOfficeTurnTerminalEvidenceMissing,
+    );
+    accepted(
+        &mut store,
+        "m6-terminal-one-with-interleaved-control-sequences",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeTurnTerminal,
+        zero,
+        CommandBody::RecordPiOfficeTurnTerminal {
+            office_turn_id: turn_one,
+            correlation_identity: correlation_one.clone(),
+            agent_settled_sequence: PiProtocolSequence::try_from(11).unwrap(),
+            final_usage_sequence: PiProtocolSequence::try_from(14).unwrap(),
+            settled_sequence: PiProtocolSequence::try_from(15).unwrap(),
+            disposition: PiOfficeTurnDisposition::Completed,
+            assistant_outcome: PiOfficeTurnAssistantOutcome::ObservedStop,
+            transcript_disposition:
+                PiOfficeTurnTranscriptDisposition::DeferredUntilOfficeSessionDispose,
+        },
+    );
+    accepted(
+        &mut store,
+        "m6-settle-one",
+        PrincipalId::KERNEL,
+        Capability::SettleOfficeTurn,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::SettleOfficeTurn {
+            turn_id: turn_one,
+            terminal_receipt_id: PiOfficeTurnTerminalReceiptId::new(1).unwrap(),
+        },
+    );
+    let late_usage = PiCumulativeUsage {
+        provider_cost: ProviderCostBinary64::from_big_endian(0.0000041_f64.to_bits().to_be_bytes())
+            .unwrap(),
+        ceiling_micro_usd: UsdMicros::new(5).unwrap(),
+        ..usage_one
+    };
+    rejected(
+        &mut store,
+        "m6-reject-usage-after-terminal",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeTurnUsage,
+        zero,
+        CommandBody::RecordPiOfficeTurnUsage {
+            office_turn_id: turn_one,
+            correlation_identity: correlation_one.clone(),
+            protocol_sequence: PiProtocolSequence::try_from(16).unwrap(),
+            usage: late_usage,
+        },
+        Rejection::PiOfficeTurnTerminalAlreadyRecorded,
+    );
+    rejected(
+        &mut store,
+        "m6-reject-usage-failure-after-terminal",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeTurnUsageFailure,
+        zero,
+        CommandBody::RecordPiOfficeTurnUsageFailure {
+            office_turn_id: turn_one,
+            correlation_identity: correlation_one.clone(),
+            protocol_sequence: PiProtocolSequence::try_from(16).unwrap(),
+            failure: PiOfficeTurnUsageFailure::Unknown(
+                society_kernel::PiOfficeTurnUsageUnknownReason::TerminalEvidenceMissing,
+            ),
+        },
+        Rejection::PiOfficeTurnTerminalAlreadyRecorded,
+    );
+
+    let open_two = accepted(
+        &mut store,
+        "m6-open-turn-two",
+        grand_architect,
+        Capability::OpenOfficeTurn,
+        zero,
+        CommandBody::OpenOfficeTurn {
+            session_id,
+            purpose: OfficeTurnPurpose::OrdinaryWork,
+        },
+    );
+    let frontier_two = match open_two.disposition {
+        CommandDisposition::Accepted(event_id) => event_id,
+        other => panic!("unexpected second open receipt: {other:?}"),
+    };
+    let turn_two = OfficeTurnId::new(2).unwrap();
+    let correlation_two = PiCorrelationIdentity::parse("m6-prompt-two").unwrap();
+    accepted(
+        &mut store,
+        "m6-authorize-prompt-two",
+        PrincipalId::KERNEL,
+        Capability::AuthorizePiOfficeTurnPrompt,
+        zero,
+        CommandBody::AuthorizePiOfficeTurnPrompt {
+            office_turn_id: turn_two,
+            correlation_identity: correlation_two.clone(),
+            prompt_content_object_id: society_kernel::ContentObjectId::new(1).unwrap(),
+            prompt_digest,
+            frontier_event_id: frontier_two,
+        },
+    );
+    accepted(
+        &mut store,
+        "m6-deliver-prompt-two",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeTurnPromptDelivery,
+        zero,
+        CommandBody::RecordPiOfficeTurnPromptDelivery {
+            office_turn_id: turn_two,
+            correlation_identity: correlation_two.clone(),
+            prompt_digest,
+        },
+    );
+    rejected(
+        &mut store,
+        "m6-reject-turn-two-acceptance-reusing-prior-settlement-sequence",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeTurnPromptAccepted,
+        zero,
+        CommandBody::RecordPiOfficeTurnPromptAccepted {
+            office_turn_id: turn_two,
+            correlation_identity: correlation_two.clone(),
+            command_result_sequence: PiProtocolSequence::try_from(15).unwrap(),
+        },
+        Rejection::PiOfficeTurnUsageNotMonotonic,
+    );
+    accepted(
+        &mut store,
+        "m6-accept-prompt-two",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeTurnPromptAccepted,
+        zero,
+        CommandBody::RecordPiOfficeTurnPromptAccepted {
+            office_turn_id: turn_two,
+            correlation_identity: correlation_two.clone(),
+            command_result_sequence: PiProtocolSequence::try_from(20).unwrap(),
+        },
+    );
+    let usage_two = PiCumulativeUsage {
+        provider_cost: ProviderCostBinary64::from_big_endian(0.0000085_f64.to_bits().to_be_bytes())
+            .unwrap(),
+        ceiling_micro_usd: UsdMicros::new(9).unwrap(),
+        ..usage_one
+    };
+    accepted(
+        &mut store,
+        "m6-usage-two",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeTurnUsage,
+        zero,
+        CommandBody::RecordPiOfficeTurnUsage {
+            office_turn_id: turn_two,
+            correlation_identity: correlation_two.clone(),
+            protocol_sequence: PiProtocolSequence::try_from(22).unwrap(),
+            usage: usage_two,
+        },
+    );
+    accepted(
+        &mut store,
+        "m6-terminal-two",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeTurnTerminal,
+        zero,
+        CommandBody::RecordPiOfficeTurnTerminal {
+            office_turn_id: turn_two,
+            correlation_identity: correlation_two,
+            agent_settled_sequence: PiProtocolSequence::try_from(21).unwrap(),
+            final_usage_sequence: PiProtocolSequence::try_from(22).unwrap(),
+            settled_sequence: PiProtocolSequence::try_from(23).unwrap(),
+            disposition: PiOfficeTurnDisposition::Completed,
+            assistant_outcome: PiOfficeTurnAssistantOutcome::ObservedStop,
+            transcript_disposition:
+                PiOfficeTurnTranscriptDisposition::DeferredUntilOfficeSessionDispose,
+        },
+    );
+    accepted(
+        &mut store,
+        "m6-settle-two",
+        PrincipalId::KERNEL,
+        Capability::SettleOfficeTurn,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::SettleOfficeTurn {
+            turn_id: turn_two,
+            terminal_receipt_id: PiOfficeTurnTerminalReceiptId::new(2).unwrap(),
+        },
+    );
+    let settled_deltas: Vec<_> = store
+        .replay_ledger()
+        .unwrap()
+        .into_iter()
+        .filter_map(|event| match event.body {
+            EventBody::OfficeTurnSettled { charged_delta, .. } => Some(charged_delta),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        settled_deltas,
+        [UsdMicros::new(4).unwrap(), UsdMicros::new(5).unwrap()]
+    );
+
+    let open_three = accepted(
+        &mut store,
+        "m6-open-turn-three",
+        grand_architect,
+        Capability::OpenOfficeTurn,
+        zero,
+        CommandBody::OpenOfficeTurn {
+            session_id,
+            purpose: OfficeTurnPurpose::OrdinaryWork,
+        },
+    );
+    let frontier_three = match open_three.disposition {
+        CommandDisposition::Accepted(event_id) => event_id,
+        other => panic!("unexpected third open receipt: {other:?}"),
+    };
+    let turn_three = OfficeTurnId::new(3).unwrap();
+    let correlation_three = PiCorrelationIdentity::parse("m6-prompt-three").unwrap();
+    accepted(
+        &mut store,
+        "m6-authorize-prompt-three",
+        PrincipalId::KERNEL,
+        Capability::AuthorizePiOfficeTurnPrompt,
+        zero,
+        CommandBody::AuthorizePiOfficeTurnPrompt {
+            office_turn_id: turn_three,
+            correlation_identity: correlation_three.clone(),
+            prompt_content_object_id: society_kernel::ContentObjectId::new(1).unwrap(),
+            prompt_digest,
+            frontier_event_id: frontier_three,
+        },
+    );
+    accepted(
+        &mut store,
+        "m6-deliver-prompt-three",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeTurnPromptDelivery,
+        zero,
+        CommandBody::RecordPiOfficeTurnPromptDelivery {
+            office_turn_id: turn_three,
+            correlation_identity: correlation_three.clone(),
+            prompt_digest,
+        },
+    );
+    accepted(
+        &mut store,
+        "m6-accept-prompt-three",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeTurnPromptAccepted,
+        zero,
+        CommandBody::RecordPiOfficeTurnPromptAccepted {
+            office_turn_id: turn_three,
+            correlation_identity: correlation_three.clone(),
+            command_result_sequence: PiProtocolSequence::try_from(30).unwrap(),
+        },
+    );
+    accepted(
+        &mut store,
+        "m6-unavailable-usage-freezes-parent",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeTurnUsageFailure,
+        zero,
+        CommandBody::RecordPiOfficeTurnUsageFailure {
+            office_turn_id: turn_three,
+            correlation_identity: correlation_three.clone(),
+            protocol_sequence: PiProtocolSequence::try_from(32).unwrap(),
+            failure: PiOfficeTurnUsageFailure::Unavailable(
+                PiOfficeTurnUsageUnavailableReason::InvalidSdkUsage,
+            ),
+        },
+    );
+    let contradictory_frozen_usage = PiCumulativeUsage {
+        provider_cost: ProviderCostBinary64::from_big_endian(0.0000095_f64.to_bits().to_be_bytes())
+            .unwrap(),
+        ceiling_micro_usd: UsdMicros::new(10).unwrap(),
+        ..usage_two
+    };
+    rejected(
+        &mut store,
+        "m6-reject-known-usage-sharing-failure-sequence",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeTurnUsage,
+        zero,
+        CommandBody::RecordPiOfficeTurnUsage {
+            office_turn_id: turn_three,
+            correlation_identity: correlation_three.clone(),
+            protocol_sequence: PiProtocolSequence::try_from(32).unwrap(),
+            usage: contradictory_frozen_usage,
+        },
+        Rejection::PiOfficeTurnUsageNotMonotonic,
+    );
+    rejected(
+        &mut store,
+        "m6-reject-known-usage-after-frozen-accounting",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeTurnUsage,
+        zero,
+        CommandBody::RecordPiOfficeTurnUsage {
+            office_turn_id: turn_three,
+            correlation_identity: correlation_three.clone(),
+            protocol_sequence: PiProtocolSequence::try_from(34).unwrap(),
+            usage: contradictory_frozen_usage,
+        },
+        Rejection::PiOfficeTurnUsageAlreadyFrozen,
+    );
+    accepted(
+        &mut store,
+        "m6-terminal-error-follows-frozen-accounting",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeTurnTerminal,
+        zero,
+        CommandBody::RecordPiOfficeTurnTerminal {
+            office_turn_id: turn_three,
+            correlation_identity: correlation_three,
+            agent_settled_sequence: PiProtocolSequence::try_from(31).unwrap(),
+            final_usage_sequence: PiProtocolSequence::try_from(32).unwrap(),
+            settled_sequence: PiProtocolSequence::try_from(33).unwrap(),
+            disposition: PiOfficeTurnDisposition::Error,
+            assistant_outcome: PiOfficeTurnAssistantOutcome::ObservedError,
+            transcript_disposition:
+                PiOfficeTurnTranscriptDisposition::DeferredUntilOfficeSessionDispose,
+        },
+    );
+    let events = store.replay_ledger().unwrap();
+    assert!(events.iter().any(|event| matches!(
+        event.body,
+        EventBody::PiOfficeTurnUsageFrozen {
+            office_turn_id,
+            failure: PiOfficeTurnUsageFailure::Unavailable(
+                PiOfficeTurnUsageUnavailableReason::InvalidSdkUsage,
+            ),
+            ..
+        } if office_turn_id == turn_three
+    )));
+    let inspection = Connection::open(&path).unwrap();
+    let (coarse_unavailable_reason, frozen_remainder, charged, envelope_reserved, envelope_spent):
+        (i64, i64, i64, i64, i64) = inspection
+        .query_row(
+            "SELECT postmortem.unavailable_reason, postmortem.reserved_micros,
+                    reservation.charged_micros, envelope.reserved_micros, envelope.spent_micros
+             FROM cost_postmortems postmortem
+             JOIN budget_reservations reservation
+               ON reservation.budget_reservation_id = postmortem.budget_reservation_id
+             JOIN budget_reservation_charges charge
+               ON charge.budget_reservation_id = reservation.budget_reservation_id
+             JOIN budget_envelopes envelope ON envelope.budget_envelope_id = charge.budget_envelope_id
+             WHERE postmortem.postmortem_id = 1
+             ORDER BY envelope.budget_envelope_id LIMIT 1",
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        coarse_unavailable_reason,
+        CostUnavailableReason::AdapterAccountingUnavailable as i64
+    );
+    // The failed third turn freezes only the parent reservation's uncharged
+    // remainder. Typed session Dispose/Postmortem closure is intentionally
+    // deferred until non-ready Office cancellation settlement exists; this is
+    // the exact durable handoff it must consume rather than double-charge.
+    assert_eq!(
+        (frozen_remainder, charged, envelope_reserved, envelope_spent),
+        (91, 9, 91, 9)
+    );
+    drop(inspection);
+    let collision = Connection::open(&path).unwrap();
+    assert!(
+        collision
+            .execute(
+                "INSERT INTO pi_office_turn_usage_receipts(
+                 office_turn_id, pi_office_turn_prompt_authorization_id, pi_session_id,
+                 correlation_identity, protocol_sequence, input_tokens, output_tokens,
+                 cache_read_tokens, cache_write_tokens, total_tokens,
+                 provider_cost_binary64, cumulative_ceiling_micros, recorded_by_command_id
+             ) VALUES (3, 3, 1, 'm6-prompt-three', 32, 1, 1, 1, 1, 4,
+                       X'3ED26E2A23FAD2B5', 10, 1)",
+                [],
+            )
+            .is_err()
+    );
+    drop(collision);
+    assert!(store.validate_replayed_materialized_state().is_ok());
+    let body_tamper = Connection::open(&path).unwrap();
+    body_tamper
+        .execute(
+            "UPDATE command_record_pi_office_turn_usage
+             SET provider_cost_binary64 = X'3ED132576B20E04A',
+                 cumulative_ceiling_micros = 5
+             WHERE command_row_id = (
+                 SELECT command_row_id FROM commands WHERE command_id = 'm6-usage-one'
+             )",
+            [],
+        )
+        .unwrap();
+    drop(body_tamper);
+    let tampered_replay = store.replay_ledger();
+    assert!(
+        matches!(tampered_replay, Err(StoreError::LedgerCorruption(_))),
+        "M6 usage command-body edit escaped its request commitment: {tampered_replay:?}"
+    );
+    let body_restore = Connection::open(&path).unwrap();
+    body_restore
+        .execute(
+            "UPDATE command_record_pi_office_turn_usage
+             SET provider_cost_binary64 = X'3ED0C6F7A0B5ED8D',
+                 cumulative_ceiling_micros = 4
+             WHERE command_row_id = (
+                 SELECT command_row_id FROM commands WHERE command_id = 'm6-usage-one'
+             )",
+            [],
+        )
+        .unwrap();
+    drop(body_restore);
+    assert!(store.replay_ledger().is_ok());
+    let tamper = Connection::open(&path).unwrap();
+    tamper
+        .execute(
+            "UPDATE office_turn_budget_checkpoints
+             SET baseline_cumulative_micros = 1 WHERE office_turn_id = 1",
+            [],
+        )
+        .unwrap();
+    assert!(matches!(
+        store.validate_replayed_materialized_state(),
+        Err(StoreError::LedgerCorruption(_))
+    ));
+    drop(tamper);
+    drop(store);
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn pi_office_turn_late_receipts_after_cancellation_never_restore_office_authority() {
+    let mut store = KernelStore::open_in_memory().unwrap();
+    let (grand_architect, cycle_id) = found_cycle(&mut store);
+    let zero = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
+    let session_id = GrandArchitectOfficeSessionId::new(1).unwrap();
+    accepted(
+        &mut store,
+        "m6-race-start-office-session",
+        grand_architect,
+        Capability::StartGrandArchitectOfficeSession,
+        zero,
+        CommandBody::StartGrandArchitectOfficeSession { cycle_id },
+    );
+    ready_supervised_office_session(
+        &mut store,
+        grand_architect,
+        cycle_id,
+        session_id,
+        "m6-race-office",
+        UsdMicros::new(100).unwrap(),
+    );
+    let digest = Sha256Digest::of_bytes(b"cancellation-race-prompt");
+    accepted(
+        &mut store,
+        "m6-race-seal-prompt",
+        PrincipalId::KERNEL,
+        Capability::RecordContentSealReceipt,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::RecordContentSealReceipt { digest },
+    );
+    accepted(
+        &mut store,
+        "m6-race-register-prompt",
+        PrincipalId::KERNEL,
+        Capability::RegisterContentObject,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::RegisterContentObject {
+            content_seal_receipt_id: society_kernel::ContentSealReceiptId::new(1).unwrap(),
+        },
+    );
+    let opened = accepted(
+        &mut store,
+        "m6-race-open-turn",
+        grand_architect,
+        Capability::OpenOfficeTurn,
+        zero,
+        CommandBody::OpenOfficeTurn {
+            session_id,
+            purpose: OfficeTurnPurpose::OrdinaryWork,
+        },
+    );
+    let frontier = match opened.disposition {
+        CommandDisposition::Accepted(event_id) => event_id,
+        other => panic!("unexpected race turn opening: {other:?}"),
+    };
+    let turn_id = OfficeTurnId::new(1).unwrap();
+    let correlation = PiCorrelationIdentity::parse("m6-race-prompt").unwrap();
+    accepted(
+        &mut store,
+        "m6-race-authorize-prompt",
+        PrincipalId::KERNEL,
+        Capability::AuthorizePiOfficeTurnPrompt,
+        zero,
+        CommandBody::AuthorizePiOfficeTurnPrompt {
+            office_turn_id: turn_id,
+            correlation_identity: correlation.clone(),
+            prompt_content_object_id: society_kernel::ContentObjectId::new(1).unwrap(),
+            prompt_digest: digest,
+            frontier_event_id: frontier,
+        },
+    );
+    accepted(
+        &mut store,
+        "m6-race-cancel-between-authorize-and-delivery",
+        grand_architect,
+        Capability::RequestCancellation,
+        zero,
+        CommandBody::RequestCancellation {
+            cycle_id,
+            mode: society_kernel::CancellationMode::GracefulCancel,
+        },
+    );
+    // These buffered physical/peer facts are still durable evidence, but the
+    // cancellation fence means they cannot reopen Office authority.
+    accepted(
+        &mut store,
+        "m6-race-late-delivery",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeTurnPromptDelivery,
+        zero,
+        CommandBody::RecordPiOfficeTurnPromptDelivery {
+            office_turn_id: turn_id,
+            correlation_identity: correlation.clone(),
+            prompt_digest: digest,
+        },
+    );
+    accepted(
+        &mut store,
+        "m6-race-late-acceptance",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeTurnPromptAccepted,
+        zero,
+        CommandBody::RecordPiOfficeTurnPromptAccepted {
+            office_turn_id: turn_id,
+            correlation_identity: correlation.clone(),
+            command_result_sequence: PiProtocolSequence::try_from(1).unwrap(),
+        },
+    );
+    let usage = PiCumulativeUsage {
+        input_tokens: PiTokenCount::try_from(1).unwrap(),
+        output_tokens: PiTokenCount::try_from(1).unwrap(),
+        cache_read_tokens: PiTokenCount::try_from(1).unwrap(),
+        cache_write_tokens: PiTokenCount::try_from(1).unwrap(),
+        total_tokens: PiTokenCount::try_from(4).unwrap(),
+        provider_cost: ProviderCostBinary64::from_big_endian(0.000004_f64.to_bits().to_be_bytes())
+            .unwrap(),
+        ceiling_micro_usd: UsdMicros::new(4).unwrap(),
+    };
+    accepted(
+        &mut store,
+        "m6-race-late-usage",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeTurnUsage,
+        zero,
+        CommandBody::RecordPiOfficeTurnUsage {
+            office_turn_id: turn_id,
+            correlation_identity: correlation.clone(),
+            protocol_sequence: PiProtocolSequence::try_from(3).unwrap(),
+            usage,
+        },
+    );
+    accepted(
+        &mut store,
+        "m6-race-late-known-cost-error-terminal",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeTurnTerminal,
+        zero,
+        CommandBody::RecordPiOfficeTurnTerminal {
+            office_turn_id: turn_id,
+            correlation_identity: correlation,
+            agent_settled_sequence: PiProtocolSequence::try_from(2).unwrap(),
+            final_usage_sequence: PiProtocolSequence::try_from(3).unwrap(),
+            settled_sequence: PiProtocolSequence::try_from(4).unwrap(),
+            disposition: PiOfficeTurnDisposition::Error,
+            assistant_outcome: PiOfficeTurnAssistantOutcome::ObservedError,
+            transcript_disposition:
+                PiOfficeTurnTranscriptDisposition::DeferredUntilOfficeSessionDispose,
+        },
+    );
+    rejected(
+        &mut store,
+        "m6-race-settlement-cannot-reopen-after-cancellation",
+        PrincipalId::KERNEL,
+        Capability::SettleOfficeTurn,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::SettleOfficeTurn {
+            turn_id,
+            terminal_receipt_id: PiOfficeTurnTerminalReceiptId::new(1).unwrap(),
+        },
+        Rejection::PiOfficeTurnNotReconciled,
+    );
+    assert!(store.replay_ledger().unwrap().iter().any(|event| matches!(
+        event.body,
+        EventBody::PiOfficeTurnTerminalRecorded {
+            office_turn_id,
+            disposition: PiOfficeTurnDisposition::Error,
+            assistant_outcome: PiOfficeTurnAssistantOutcome::ObservedError,
+            ..
+        } if office_turn_id == turn_id
+    )));
+    assert!(store.validate_replayed_materialized_state().is_ok());
 }
 
 #[test]

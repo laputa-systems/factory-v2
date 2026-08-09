@@ -83,6 +83,11 @@ identifier!(ChildProcessLivenessObservationId);
 identifier!(ProcessSignalReceiptId);
 identifier!(PiAbortControlReceiptId);
 identifier!(ChildProcessReapReceiptId);
+identifier!(PiOfficeTurnPromptAuthorizationId);
+identifier!(PiOfficeTurnUsageReceiptId);
+identifier!(PiOfficeTurnUsageFailureId);
+identifier!(PiOfficeTurnTerminalReceiptId);
+identifier!(PiProtocolSequence);
 identifier!(ChildProcessRecoveryReceiptId);
 identifier!(ChildStreamSealId);
 identifier!(CancellationPropagationId);
@@ -227,8 +232,9 @@ impl ExecutionProfileId {
 }
 
 impl PrincipalId {
-    /// The compiled, local founding authority. It is installed by migration,
-    /// not selected through an environment variable or user-supplied string.
+    /// The compiled, local founding authority. The current-schema bootstrap
+    /// installs it; it is never selected through an environment variable or
+    /// user-supplied string.
     pub const BOOTSTRAP: Self = Self(1);
     /// A narrow kernel service principal. It cannot be represented at the
     /// actor/Pi boundary and is used only for lifecycle facts the kernel owns.
@@ -391,6 +397,121 @@ impl TryFrom<i64> for UsdMicros {
     }
 }
 
+/// One nonnegative token total normalized from the Pi SDK's cumulative usage
+/// snapshot. The trusted kernel keeps these five dimensions separate so a
+/// session-wide provider total cannot be recombined across Office turns.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct PiTokenCount(i64);
+
+impl PiTokenCount {
+    pub const ZERO: Self = Self(0);
+
+    pub const fn new(value: i64) -> Option<Self> {
+        if value >= 0 { Some(Self(value)) } else { None }
+    }
+
+    pub const fn value(self) -> i64 {
+        self.0
+    }
+}
+
+impl TryFrom<i64> for PiTokenCount {
+    type Error = DomainValueError;
+
+    fn try_from(value: i64) -> Result<Self, Self::Error> {
+        Self::new(value).ok_or(DomainValueError::NegativePiTokenCount(value))
+    }
+}
+
+/// Exact raw IEEE-754 binary64 provider-cost evidence from the Pi boundary.
+///
+/// SQLite stores these eight big-endian bytes alongside the independently
+/// verified integer micro-USD ceiling. No Rust `f64` round trip may rewrite
+/// the observed provider value before replay or accounting compares it.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct ProviderCostBinary64([u8; 8]);
+
+impl ProviderCostBinary64 {
+    pub fn from_big_endian(bytes: [u8; 8]) -> Result<Self, DomainValueError> {
+        let bits = u64::from_be_bytes(bytes);
+        if bits >> 63 != 0 || (bits >> 52) & 0x7ff == 0x7ff {
+            return Err(DomainValueError::InvalidProviderCostBinary64);
+        }
+        Ok(Self(bytes))
+    }
+
+    pub const fn as_big_endian_bytes(self) -> [u8; 8] {
+        self.0
+    }
+
+    /// `ceil(binary64 * 1_000_000)` using integer arithmetic, matching the
+    /// Pi boundary's normalization rule exactly.
+    pub fn ceil_micro_usd(self) -> Result<UsdMicros, DomainValueError> {
+        let bits = u64::from_be_bytes(self.0);
+        let exponent = ((bits >> 52) & 0x7ff) as i32;
+        let fraction = bits & ((1_u64 << 52) - 1);
+        if exponent == 0 && fraction == 0 {
+            return Ok(UsdMicros::ZERO);
+        }
+        let (significand, binary_exponent) = if exponent == 0 {
+            (u128::from(fraction), -1074_i32)
+        } else {
+            (u128::from((1_u64 << 52) | fraction), exponent - 1023 - 52)
+        };
+        let numerator = significand
+            .checked_mul(1_000_000)
+            .ok_or(DomainValueError::ProviderCostMicroUsdOverflow)?;
+        let micro_usd = if binary_exponent >= 0 {
+            numerator
+                .checked_shl(
+                    u32::try_from(binary_exponent)
+                        .map_err(|_| DomainValueError::ProviderCostMicroUsdOverflow)?,
+                )
+                .ok_or(DomainValueError::ProviderCostMicroUsdOverflow)?
+        } else {
+            let denominator_shift = u32::try_from(-binary_exponent)
+                .map_err(|_| DomainValueError::ProviderCostMicroUsdOverflow)?;
+            if denominator_shift >= 128 {
+                1
+            } else {
+                let denominator = 1_u128 << denominator_shift;
+                let quotient = numerator / denominator;
+                quotient + u128::from(numerator % denominator != 0)
+            }
+        };
+        i64::try_from(micro_usd)
+            .ok()
+            .and_then(UsdMicros::new)
+            .ok_or(DomainValueError::ProviderCostMicroUsdOverflow)
+    }
+}
+
+/// One complete session-cumulative Pi usage observation. The token sum and
+/// raw-cost ceiling are independently rechecked before it crosses into the
+/// durable Office-turn ledger.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PiCumulativeUsage {
+    pub input_tokens: PiTokenCount,
+    pub output_tokens: PiTokenCount,
+    pub cache_read_tokens: PiTokenCount,
+    pub cache_write_tokens: PiTokenCount,
+    pub total_tokens: PiTokenCount,
+    pub provider_cost: ProviderCostBinary64,
+    pub ceiling_micro_usd: UsdMicros,
+}
+
+impl PiCumulativeUsage {
+    pub fn is_internally_consistent(self) -> bool {
+        self.input_tokens
+            .value()
+            .checked_add(self.output_tokens.value())
+            .and_then(|value| value.checked_add(self.cache_read_tokens.value()))
+            .and_then(|value| value.checked_add(self.cache_write_tokens.value()))
+            == Some(self.total_tokens.value())
+            && self.provider_cost.ceil_micro_usd().ok() == Some(self.ceiling_micro_usd)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct AdmissionGeneration(i64);
 
@@ -527,6 +648,12 @@ pub enum Capability {
     /// Resolves an admitted-but-never-spawned child after cancellation froze
     /// its owner target. A later inert spawn is then impossible.
     RecordPiChildNotSpawned = 85,
+    AuthorizePiOfficeTurnPrompt = 86,
+    RecordPiOfficeTurnPromptDelivery = 87,
+    RecordPiOfficeTurnPromptAccepted = 88,
+    RecordPiOfficeTurnUsage = 89,
+    RecordPiOfficeTurnUsageFailure = 90,
+    RecordPiOfficeTurnTerminal = 91,
 }
 
 impl Capability {
@@ -588,7 +715,7 @@ impl Capability {
         Self::CloseDeterministicExperiment,
     ];
 
-    pub const KERNEL_SERVICE: [Self; 34] = [
+    pub const KERNEL_SERVICE: [Self; 40] = [
         Self::RecordCycleDrained,
         Self::RecordOfficeSessionReady,
         Self::SettleOfficeTurn,
@@ -623,6 +750,12 @@ impl Capability {
         Self::OpenSupervisorEpoch,
         Self::RecordPiAbortControlDelivery,
         Self::RecordPiChildNotSpawned,
+        Self::AuthorizePiOfficeTurnPrompt,
+        Self::RecordPiOfficeTurnPromptDelivery,
+        Self::RecordPiOfficeTurnPromptAccepted,
+        Self::RecordPiOfficeTurnUsage,
+        Self::RecordPiOfficeTurnUsageFailure,
+        Self::RecordPiOfficeTurnTerminal,
     ];
 
     pub const fn requires_consumption(self) -> bool {
@@ -985,6 +1118,92 @@ pub enum PiChildSessionState {
     CreateAuthorized = 3,
     CreateDelivered = 4,
     SessionReady = 5,
+}
+
+/// Closed normalization of `society-pi::TurnReceipt::disposition`. It is a
+/// protocol result, not an assertion that an Office command succeeded.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum PiOfficeTurnDisposition {
+    Completed = 1,
+    Length = 2,
+    Error = 3,
+    Aborted = 4,
+    Failed = 5,
+    ProtocolFailed = 6,
+}
+
+/// Closed normalization of the final assistant arm paired with a Pi turn
+/// disposition. Keeping the pair explicit prevents a zero process exit or a
+/// generic "success" label from settling an Office turn.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum PiOfficeTurnAssistantOutcome {
+    ObservedStop = 1,
+    ObservedLength = 2,
+    ObservedError = 3,
+    ObservedAborted = 4,
+    SdkPromiseRejected = 5,
+    MissingFinalAssistantOutcome = 6,
+}
+
+impl PiOfficeTurnDisposition {
+    pub const fn accepts(self, outcome: PiOfficeTurnAssistantOutcome) -> bool {
+        matches!(
+            (self, outcome),
+            (Self::Completed, PiOfficeTurnAssistantOutcome::ObservedStop)
+                | (Self::Length, PiOfficeTurnAssistantOutcome::ObservedLength)
+                | (Self::Error, PiOfficeTurnAssistantOutcome::ObservedError)
+                | (Self::Aborted, PiOfficeTurnAssistantOutcome::ObservedAborted)
+                | (
+                    Self::Failed,
+                    PiOfficeTurnAssistantOutcome::SdkPromiseRejected
+                )
+                | (
+                    Self::ProtocolFailed,
+                    PiOfficeTurnAssistantOutcome::MissingFinalAssistantOutcome
+                )
+        )
+    }
+
+    pub const fn may_return_office_to_ready(self) -> bool {
+        matches!(self, Self::Completed)
+    }
+}
+
+/// The per-turn durable disposition of the session transcript. Pi emits the
+/// actual SessionManager flush receipt only on `Dispose`, so M6 records this
+/// precise deferral rather than falsely attaching one session transcript to
+/// every Prompt.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum PiOfficeTurnTranscriptDisposition {
+    DeferredUntilOfficeSessionDispose = 1,
+}
+
+/// Why the trusted boundary could not produce a usable cumulative provider
+/// accounting observation. These exact Pi reasons remain durable even though
+/// the cross-cutting CostPostmortem uses its coarser conservative cause.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum PiOfficeTurnUsageUnknownReason {
+    MissingFinalUsageSnapshot = 1,
+    BoundaryStreamInterrupted = 2,
+    TerminalEvidenceMissing = 3,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum PiOfficeTurnUsageUnavailableReason {
+    InvalidSdkUsage = 1,
+    UsageRegressed = 2,
+    UsageInconsistent = 3,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PiOfficeTurnUsageFailure {
+    Unknown(PiOfficeTurnUsageUnknownReason),
+    Unavailable(PiOfficeTurnUsageUnavailableReason),
 }
 
 impl ChildProcessState {
@@ -1447,6 +1666,10 @@ pub enum CostUnavailableReason {
     ProviderUnavailable = 1,
     CredentialUnavailable = 2,
     QualificationRejected = 3,
+    /// The SDK boundary supplied an explicit unusable accounting observation.
+    /// This is deliberately distinct from a provider or credential outage: the
+    /// exact Pi reason remains on its named Office-turn receipt.
+    AdapterAccountingUnavailable = 4,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1519,6 +1742,7 @@ pub enum CommandBody {
     },
     SettleOfficeTurn {
         turn_id: OfficeTurnId,
+        terminal_receipt_id: PiOfficeTurnTerminalReceiptId,
     },
     QuiesceOperatingCycle {
         cycle_id: OperatingCycleId,
@@ -1901,6 +2125,61 @@ pub enum CommandBody {
         pi_child_spawn_admission_id: PiChildSpawnAdmissionId,
         reason: PiChildNotSpawnedReason,
     },
+    /// Final, provider-free kernel authority for one exact Office Prompt.
+    /// The sealed bytes and current ledger frontier are named before anything
+    /// may reach the physical stdin pipe.
+    AuthorizePiOfficeTurnPrompt {
+        office_turn_id: OfficeTurnId,
+        correlation_identity: PiCorrelationIdentity,
+        prompt_content_object_id: ContentObjectId,
+        prompt_digest: Sha256Digest,
+        frontier_event_id: EventId,
+    },
+    /// Attests only a complete physical Prompt write for an already authorized
+    /// correlation. It is deliberately distinct from host acceptance.
+    RecordPiOfficeTurnPromptDelivery {
+        office_turn_id: OfficeTurnId,
+        correlation_identity: PiCorrelationIdentity,
+        prompt_digest: Sha256Digest,
+    },
+    /// Attests the Pi-host's accepted Prompt command result at one exact
+    /// outbound protocol sequence after the complete physical delivery.
+    RecordPiOfficeTurnPromptAccepted {
+        office_turn_id: OfficeTurnId,
+        correlation_identity: PiCorrelationIdentity,
+        command_result_sequence: PiProtocolSequence,
+    },
+    /// One exact known cumulative SDK usage snapshot. Its values are
+    /// session-scoped and must monotonically extend the prior checkpoint.
+    RecordPiOfficeTurnUsage {
+        office_turn_id: OfficeTurnId,
+        correlation_identity: PiCorrelationIdentity,
+        protocol_sequence: PiProtocolSequence,
+        usage: PiCumulativeUsage,
+    },
+    /// Preserves a typed inability to account for a Prompt and atomically
+    /// freezes the parent Office-session reservation rather than treating it
+    /// as zero spend.
+    RecordPiOfficeTurnUsageFailure {
+        office_turn_id: OfficeTurnId,
+        correlation_identity: PiCorrelationIdentity,
+        protocol_sequence: PiProtocolSequence,
+        failure: PiOfficeTurnUsageFailure,
+    },
+    /// The closed normalized peer terminal chain. The three sequence values
+    /// preserve `agent_settled -> final accounting fact -> Settled`, where the
+    /// accounting fact is either a Known usage snapshot or a typed failure; no
+    /// generic SDK event or narrative output can substitute for it.
+    RecordPiOfficeTurnTerminal {
+        office_turn_id: OfficeTurnId,
+        correlation_identity: PiCorrelationIdentity,
+        agent_settled_sequence: PiProtocolSequence,
+        final_usage_sequence: PiProtocolSequence,
+        settled_sequence: PiProtocolSequence,
+        disposition: PiOfficeTurnDisposition,
+        assistant_outcome: PiOfficeTurnAssistantOutcome,
+        transcript_disposition: PiOfficeTurnTranscriptDisposition,
+    },
 }
 
 impl CommandBody {
@@ -2001,6 +2280,18 @@ impl CommandBody {
                 CommandKind::ReconcileCancellationPropagation
             }
             Self::RecordPiChildNotSpawned { .. } => CommandKind::RecordPiChildNotSpawned,
+            Self::AuthorizePiOfficeTurnPrompt { .. } => CommandKind::AuthorizePiOfficeTurnPrompt,
+            Self::RecordPiOfficeTurnPromptDelivery { .. } => {
+                CommandKind::RecordPiOfficeTurnPromptDelivery
+            }
+            Self::RecordPiOfficeTurnPromptAccepted { .. } => {
+                CommandKind::RecordPiOfficeTurnPromptAccepted
+            }
+            Self::RecordPiOfficeTurnUsage { .. } => CommandKind::RecordPiOfficeTurnUsage,
+            Self::RecordPiOfficeTurnUsageFailure { .. } => {
+                CommandKind::RecordPiOfficeTurnUsageFailure
+            }
+            Self::RecordPiOfficeTurnTerminal { .. } => CommandKind::RecordPiOfficeTurnTerminal,
         }
     }
 
@@ -2099,6 +2390,18 @@ impl CommandBody {
                 Capability::ReconcileCancellationPropagation
             }
             Self::RecordPiChildNotSpawned { .. } => Capability::RecordPiChildNotSpawned,
+            Self::AuthorizePiOfficeTurnPrompt { .. } => Capability::AuthorizePiOfficeTurnPrompt,
+            Self::RecordPiOfficeTurnPromptDelivery { .. } => {
+                Capability::RecordPiOfficeTurnPromptDelivery
+            }
+            Self::RecordPiOfficeTurnPromptAccepted { .. } => {
+                Capability::RecordPiOfficeTurnPromptAccepted
+            }
+            Self::RecordPiOfficeTurnUsage { .. } => Capability::RecordPiOfficeTurnUsage,
+            Self::RecordPiOfficeTurnUsageFailure { .. } => {
+                Capability::RecordPiOfficeTurnUsageFailure
+            }
+            Self::RecordPiOfficeTurnTerminal { .. } => Capability::RecordPiOfficeTurnTerminal,
         }
     }
 }
@@ -2191,6 +2494,12 @@ pub enum CommandKind {
     OpenSupervisorEpoch = 83,
     RecordPiAbortControlDelivery = 84,
     RecordPiChildNotSpawned = 85,
+    AuthorizePiOfficeTurnPrompt = 86,
+    RecordPiOfficeTurnPromptDelivery = 87,
+    RecordPiOfficeTurnPromptAccepted = 88,
+    RecordPiOfficeTurnUsage = 89,
+    RecordPiOfficeTurnUsageFailure = 90,
+    RecordPiOfficeTurnTerminal = 91,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2303,6 +2612,15 @@ closed_rejection_codes! {
     ProcessContainmentFailed = 46,
     CancellationPropagationIncomplete = 47,
     SupervisedTerminalReceiptRequired = 48,
+    PiOfficeTurnAuthorityMissing = 49,
+    PiOfficeTurnPromptBindingMismatch = 50,
+    PiOfficeTurnUsageNotMonotonic = 51,
+    PiOfficeTurnTerminalEvidenceMissing = 52,
+    PiOfficeTurnNotReconciled = 53,
+    PiOfficeTurnTreatmentIneligible = 54,
+    OfficeSessionBudgetRequiresDispose = 55,
+    PiOfficeTurnTerminalAlreadyRecorded = 56,
+    PiOfficeTurnUsageAlreadyFrozen = 57,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2353,6 +2671,7 @@ pub enum EventBody {
     OfficeTurnSettled {
         turn_id: OfficeTurnId,
         session_id: GrandArchitectOfficeSessionId,
+        charged_delta: UsdMicros,
     },
     BudgetReserved {
         reservation_id: BudgetReservationId,
@@ -2639,6 +2958,41 @@ pub enum EventBody {
     SupervisorEpochOpened {
         supervisor_epoch_id: SupervisorEpochId,
     },
+    PiOfficeTurnPromptAuthorized {
+        pi_office_turn_prompt_authorization_id: PiOfficeTurnPromptAuthorizationId,
+        office_turn_id: OfficeTurnId,
+        child_process_id: ChildProcessId,
+        correlation_identity: PiCorrelationIdentity,
+        budget_reservation_id: BudgetReservationId,
+    },
+    PiOfficeTurnPromptDelivered {
+        office_turn_id: OfficeTurnId,
+        correlation_identity: PiCorrelationIdentity,
+    },
+    PiOfficeTurnPromptAccepted {
+        office_turn_id: OfficeTurnId,
+        correlation_identity: PiCorrelationIdentity,
+        command_result_sequence: PiProtocolSequence,
+    },
+    PiOfficeTurnUsageRecorded {
+        pi_office_turn_usage_receipt_id: PiOfficeTurnUsageReceiptId,
+        office_turn_id: OfficeTurnId,
+        protocol_sequence: PiProtocolSequence,
+        cumulative_micro_usd: UsdMicros,
+    },
+    PiOfficeTurnUsageFrozen {
+        office_turn_id: OfficeTurnId,
+        budget_reservation_id: BudgetReservationId,
+        cancellation_request_id: CancellationRequestId,
+        postmortem_id: CostPostmortemId,
+        failure: PiOfficeTurnUsageFailure,
+    },
+    PiOfficeTurnTerminalRecorded {
+        pi_office_turn_terminal_receipt_id: PiOfficeTurnTerminalReceiptId,
+        office_turn_id: OfficeTurnId,
+        disposition: PiOfficeTurnDisposition,
+        assistant_outcome: PiOfficeTurnAssistantOutcome,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2723,6 +3077,12 @@ pub enum EventKind {
     CancellationPropagationContainmentFailed = 77,
     PiAbortControlDeliveryRecorded = 78,
     PiChildSpawnInvalidated = 79,
+    PiOfficeTurnPromptAuthorized = 80,
+    PiOfficeTurnPromptDelivered = 81,
+    PiOfficeTurnPromptAccepted = 82,
+    PiOfficeTurnUsageRecorded = 83,
+    PiOfficeTurnUsageFrozen = 84,
+    PiOfficeTurnTerminalRecorded = 85,
 }
 
 impl EventBody {
@@ -2825,6 +3185,12 @@ impl EventBody {
                 EventKind::CancellationPropagationContainmentFailed
             }
             Self::PiChildSpawnInvalidated { .. } => EventKind::PiChildSpawnInvalidated,
+            Self::PiOfficeTurnPromptAuthorized { .. } => EventKind::PiOfficeTurnPromptAuthorized,
+            Self::PiOfficeTurnPromptDelivered { .. } => EventKind::PiOfficeTurnPromptDelivered,
+            Self::PiOfficeTurnPromptAccepted { .. } => EventKind::PiOfficeTurnPromptAccepted,
+            Self::PiOfficeTurnUsageRecorded { .. } => EventKind::PiOfficeTurnUsageRecorded,
+            Self::PiOfficeTurnUsageFrozen { .. } => EventKind::PiOfficeTurnUsageFrozen,
+            Self::PiOfficeTurnTerminalRecorded { .. } => EventKind::PiOfficeTurnTerminalRecorded,
         }
     }
 }
@@ -2852,6 +3218,12 @@ pub enum DomainValueError {
     InvalidOperationalIdentity { type_name: &'static str },
     #[error("micro-US-dollars cannot be negative: {0}")]
     NegativeUsdMicros(i64),
+    #[error("Pi token count cannot be negative: {0}")]
+    NegativePiTokenCount(i64),
+    #[error("provider cost must be finite and nonnegative IEEE-754 binary64")]
+    InvalidProviderCostBinary64,
+    #[error("provider cost cannot be represented as integer micro-US-dollars")]
+    ProviderCostMicroUsdOverflow,
     #[error("admission generation cannot be negative: {0}")]
     NegativeAdmissionGeneration(i64),
     #[error("admission generation overflow")]
