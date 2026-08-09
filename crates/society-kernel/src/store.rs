@@ -11,27 +11,38 @@ use crate::{
     ActorConfigurationId, ActorConfigurationRevisionId, ActorInstanceId, ActorInstanceState,
     ActorModelPolicy, AdmissionGeneration, AdversarialReviewId, AdversarialReviewState,
     BudgetEnvelopeId, BudgetFreezeReason, BudgetReservationId, BudgetReservationState,
-    CancellationMode, CancellationRequestId, CancellationState, Capability, CausalEpisodeId,
-    CommandBody, CommandDisposition, CommandId, CommandKind, CommandReceipt, CommandRequest,
-    ContentMediaSchemaContract, ContentObjectId, ContentSealReceiptId, ContextPackId,
-    ContextPackPurpose, CostObservation, CostPostmortemCause, CostPostmortemId,
-    CostPostmortemResolution, CostPostmortemState, CostUnavailableReason, CostUnknownReason,
-    DeterministicEvaluationReceiptId, DeterministicExperimentId, DeterministicExperimentState,
-    DevelopmentalAttractor, EpisodeState, EvaluatorRevisionId, EventBody, EventId, EventKind,
-    EvidenceAdmissionId, EvidenceLimitationText, EvidenceSemanticRole, ExecutionProfileId,
-    ExecutionProfileKind, ExecutionProfileReadiness, ExpectedGeneration,
-    ForensicManifestCapturePolicy, ForensicManifestId, GrandArchitectOfficeSessionId, GraphEdgeId,
-    GraphEdgeKind, GraphObjectId, GraphObjectKind, GraphRevisionBody, GraphRevisionId,
-    GraphRevisionState, HypothesisRevisionText, InputManifestId, LedgerEvent,
+    CancellationMode, CancellationPropagationId, CancellationPropagationState,
+    CancellationPropagationTargetDisposition, CancellationRequestId, CancellationState,
+    CanonicalWorkspacePath, Capability, CausalEpisodeId, ChildProcessId,
+    ChildProcessLivenessObservationId, ChildProcessReapReceiptId, ChildProcessRecoveryReceiptId,
+    ChildProcessState, ChildRecoveryObservation, ChildStreamKind, ChildStreamSealCompleteness,
+    ChildStreamSealId, ChildTerminalDisposition, CommandBody, CommandDisposition, CommandId,
+    CommandKind, CommandReceipt, CommandRequest, ContentMediaSchemaContract, ContentObjectId,
+    ContentSealReceiptId, ContextPackId, ContextPackPurpose, CostObservation, CostPostmortemCause,
+    CostPostmortemId, CostPostmortemResolution, CostPostmortemState, CostUnavailableReason,
+    CostUnknownReason, DeterministicEvaluationReceiptId, DeterministicExperimentId,
+    DeterministicExperimentState, DevelopmentalAttractor, DirectChildWaitStatus, EpisodeState,
+    EvaluatorRevisionId, EventBody, EventId, EventKind, EvidenceAdmissionId,
+    EvidenceLimitationText, EvidenceSemanticRole, ExecutionProfileId, ExecutionProfileKind,
+    ExecutionProfileReadiness, ExpectedGeneration, ForensicManifestCapturePolicy,
+    ForensicManifestId, GrandArchitectOfficeSessionId, GraphEdgeId, GraphEdgeKind, GraphObjectId,
+    GraphObjectKind, GraphRevisionBody, GraphRevisionId, GraphRevisionState,
+    HypothesisRevisionText, InputManifestId, LedgerEvent, NativeChildPid, NativeWorkspaceId,
     ObservationRevisionText, OfficeId, OfficeKind, OfficeOccupancyId, OfficeSessionState,
     OfficeSessionTerminalState, OfficeTurnId, OfficeTurnPurpose, OfficeTurnState, OperatingCycleId,
     OperatingCycleState, OperatingCycleTreatment, OutcomeObligationDisposition,
-    OutcomeObligationId, OutcomeObligationState, PostmortemActionKind, PostmortemActionProposalId,
+    OutcomeObligationId, OutcomeObligationState, OwnedProcessGroupId, PiAbortControlReceiptId,
+    PiAbortControlWriteOutcome, PiBoundarySessionIdentity, PiChildNotSpawnedReason, PiChildOwner,
+    PiChildSessionState, PiChildSpawnAdmissionId, PiChildSpawnAdmissionState,
+    PiCorrelationIdentity, PiSessionId, PostmortemActionKind, PostmortemActionProposalId,
     PostmortemCausalClaimId, PostmortemCausalClaimKind, PostmortemId, PostmortemState, PrincipalId,
-    PrincipalKind, ProjectId, ProjectMilestoneId, ProjectMilestoneState, ProjectState, Rejection,
-    RetentionAccessClass, ReviewChallengeId, ReviewChallengeResponseState, ReviewChallengeSeverity,
-    ReviewDispositionKind, ReviewResolutionKind, Sha256Digest, SocietyId, SocietyName, TicketId,
-    TicketState, UniverseSeedId, UsdMicros, WorkItemId, WorkItemKind, WorkItemState, WorkLeaseId,
+    PrincipalKind, ProcessExitCode, ProcessGroupLiveness, ProcessSignalAction, ProcessSignalCause,
+    ProcessSignalDelivery, ProcessSignalNumber, ProcessSignalReceiptId, ProjectId,
+    ProjectMilestoneId, ProjectMilestoneState, ProjectState, Rejection, RetentionAccessClass,
+    ReviewChallengeId, ReviewChallengeResponseState, ReviewChallengeSeverity,
+    ReviewDispositionKind, ReviewResolutionKind, Sha256Digest, SocietyId, SocietyName, SpawnNonce,
+    SupervisedChildIdentity, SupervisorEpochId, SupervisorEpochIdentity, TicketId, TicketState,
+    UniverseSeedId, UsdMicros, WorkItemId, WorkItemKind, WorkItemState, WorkLeaseId,
     WorkLeaseState,
 };
 
@@ -39,8 +50,61 @@ const MIGRATION_1: &str = include_str!("../../../migrations/0001_kernel.sql");
 const MIGRATION_2: &str = include_str!("../../../migrations/0002_coordination_graph.sql");
 const MIGRATION_3: &str = include_str!("../../../migrations/0003_execution_foundation.sql");
 const MIGRATION_4: &str = include_str!("../../../migrations/0004_content_evidence_foundation.sql");
+const MIGRATION_5: &str =
+    include_str!("../../../migrations/0005_native_child_process_foundation.sql");
 
-const COMMAND_BODY_TABLES: [&str; 68] = [
+struct PiChildSpawnAdmissionInput<'a> {
+    operating_cycle_id: OperatingCycleId,
+    owner: PiChildOwner,
+    budget_reservation_id: BudgetReservationId,
+    execution_profile_id: ExecutionProfileId,
+    native_workspace_id: &'a NativeWorkspaceId,
+    canonical_workspace_path: &'a CanonicalWorkspacePath,
+    supervisor_epoch_id: SupervisorEpochId,
+    supervisor_epoch_identity: &'a SupervisorEpochIdentity,
+    pi_session_identity: &'a PiBoundarySessionIdentity,
+    spawn_nonce: &'a SpawnNonce,
+}
+
+struct ChildStreamSealInput {
+    child_id: ChildProcessId,
+    stream: ChildStreamKind,
+    full_digest: Sha256Digest,
+    retained: ContentObjectId,
+    completeness: ChildStreamSealCompleteness,
+}
+
+struct ProcessSignalReceiptInput {
+    child_id: ChildProcessId,
+    action: ProcessSignalAction,
+    delivery: ProcessSignalDelivery,
+    liveness: ProcessGroupLiveness,
+    cause: ProcessSignalCause,
+}
+
+struct PiAbortControlDeliveryInput<'a> {
+    child_id: ChildProcessId,
+    propagation_id: CancellationPropagationId,
+    correlation: &'a PiCorrelationIdentity,
+    abort_digest: Sha256Digest,
+    outcome: PiAbortControlWriteOutcome,
+}
+
+type StoredPiChildAdmissionCommand = (
+    i64,
+    Option<i64>,
+    Option<i64>,
+    i64,
+    i64,
+    String,
+    String,
+    i64,
+    String,
+    String,
+    String,
+);
+
+const COMMAND_BODY_TABLES: [&str; 85] = [
     "command_create_society_identity",
     "command_install_grand_architect_office",
     "command_install_founding_universe_seed",
@@ -109,9 +173,26 @@ const COMMAND_BODY_TABLES: [&str; 68] = [
     "command_record_deterministic_evaluation_receipt",
     "command_admit_deterministic_evidence",
     "command_close_deterministic_experiment",
+    "command_admit_pi_child_spawn",
+    "command_record_inert_pi_child_spawn",
+    "command_record_pi_adapter_ready",
+    "command_authorize_pi_create_session",
+    "command_record_pi_create_session_delivery",
+    "command_record_pi_session_ready",
+    "command_record_child_stream_seal",
+    "command_record_child_process_liveness",
+    "command_record_process_signal_receipt",
+    "command_record_direct_child_reap",
+    "command_record_child_recovery",
+    "command_finalize_child_process",
+    "command_begin_cancellation_propagation",
+    "command_reconcile_cancellation_propagation",
+    "command_open_supervisor_epoch",
+    "command_record_pi_abort_control_delivery",
+    "command_record_pi_child_not_spawned",
 ];
 
-const EVENT_BODY_TABLES: [&str; 61] = [
+const EVENT_BODY_TABLES: [&str; 79] = [
     "event_society_identity_created",
     "event_grand_architect_office_installed",
     "event_founding_universe_seed_installed",
@@ -173,6 +254,24 @@ const EVENT_BODY_TABLES: [&str; 61] = [
     "event_deterministic_evaluation_receipt_recorded",
     "event_deterministic_evidence_admitted",
     "event_deterministic_experiment_closed",
+    "event_pi_child_spawn_admitted",
+    "event_inert_pi_child_spawn_recorded",
+    "event_pi_adapter_ready_recorded",
+    "event_pi_create_session_authorized",
+    "event_pi_create_session_delivery_recorded",
+    "event_pi_session_ready_recorded",
+    "event_child_stream_sealed",
+    "event_child_process_liveness_observed",
+    "event_process_signal_receipt_recorded",
+    "event_direct_child_reaped",
+    "event_child_recovery_observed",
+    "event_child_process_finalized",
+    "event_cancellation_propagation_begun",
+    "event_cancellation_propagation_reconciled",
+    "event_supervisor_epoch_opened",
+    "event_cancellation_propagation_containment_failed",
+    "event_pi_abort_control_delivery_recorded",
+    "event_pi_child_spawn_invalidated",
 ];
 
 const GRAPH_REVISION_BODY_TABLES: [&str; 2] = ["observation_revisions", "hypothesis_revisions"];
@@ -227,6 +326,13 @@ pub enum StoreError {
         "refusing schema-v3 upgrade with a nonempty ledger ({command_count} commands, {event_count} events)"
     )]
     NonemptySchemaV3LedgerUpgradeRefused {
+        command_count: i64,
+        event_count: i64,
+    },
+    #[error(
+        "refusing schema-v4 upgrade with a nonempty ledger ({command_count} commands, {event_count} events)"
+    )]
+    NonemptySchemaV4LedgerUpgradeRefused {
         command_count: i64,
         event_count: i64,
     },
@@ -286,13 +392,14 @@ impl KernelStore {
         match schema_version {
             0 => {
                 // A fresh database crosses ordered versioned commit boundaries,
-                // not one fictional atomic 0 -> 4 boundary. Each migration either
+                // not one fictional atomic 0 -> 5 boundary. Each migration either
                 // commits its own version or rolls back so reopening can retry
                 // that exact version step.
                 apply_migration_1(&connection)?;
                 apply_migration_2(&connection)?;
                 apply_migration_3(&connection)?;
                 apply_migration_4(&connection)?;
+                apply_migration_5(&connection)?;
             }
             1 => {
                 let (command_count, event_count) = schema_v1_ledger_counts(&connection)?;
@@ -308,6 +415,7 @@ impl KernelStore {
                 apply_migration_2(&connection)?;
                 apply_migration_3(&connection)?;
                 apply_migration_4(&connection)?;
+                apply_migration_5(&connection)?;
             }
             2 => {
                 let (command_count, event_count) = schema_v1_ledger_counts(&connection)?;
@@ -319,6 +427,7 @@ impl KernelStore {
                 }
                 apply_migration_3(&connection)?;
                 apply_migration_4(&connection)?;
+                apply_migration_5(&connection)?;
             }
             3 => {
                 let (command_count, event_count) = schema_v1_ledger_counts(&connection)?;
@@ -329,8 +438,19 @@ impl KernelStore {
                     });
                 }
                 apply_migration_4(&connection)?;
+                apply_migration_5(&connection)?;
             }
-            4 => {}
+            4 => {
+                let (command_count, event_count) = schema_v1_ledger_counts(&connection)?;
+                if command_count != 0 || event_count != 0 {
+                    return Err(StoreError::NonemptySchemaV4LedgerUpgradeRefused {
+                        command_count,
+                        event_count,
+                    });
+                }
+                apply_migration_5(&connection)?;
+            }
+            5 => {}
             other => return Err(StoreError::UnsupportedSchemaVersion(other)),
         }
         let foreign_key_violations: i64 =
@@ -970,6 +1090,18 @@ fn apply_migration_4(connection: &Connection) -> Result<(), StoreError> {
     Ok(())
 }
 
+/// M5 is an atomic empty-v4 version step. Native process receipt kinds change
+/// the command/event commitment range, so a historical nonempty v4 ledger is
+/// refused before this function; retry begins from the untouched v4 database.
+fn apply_migration_5(connection: &Connection) -> Result<(), StoreError> {
+    if let Err(error) = connection.execute_batch(MIGRATION_5) {
+        let _ = connection.execute_batch("ROLLBACK");
+        let _ = connection.pragma_update(None, "foreign_keys", "ON");
+        return Err(error.into());
+    }
+    Ok(())
+}
+
 fn apply_command(
     transaction: &Transaction<'_>,
     command_row_id: i64,
@@ -1031,6 +1163,22 @@ fn apply_command(
             | CommandBody::RecordDeterministicEvaluationReceipt { .. }
             | CommandBody::AdmitDeterministicEvidence { .. }
             | CommandBody::CloseDeterministicExperiment { .. }
+            | CommandBody::AdmitPiChildSpawn { .. }
+            | CommandBody::RecordInertChildSpawn { .. }
+            | CommandBody::RecordPiAdapterReady { .. }
+            | CommandBody::AuthorizePiCreateSession { .. }
+            | CommandBody::RecordPiCreateSessionDelivery { .. }
+            | CommandBody::RecordPiSessionReady { .. }
+            | CommandBody::RecordPiAbortControlDelivery { .. }
+            | CommandBody::RecordChildStreamSeal { .. }
+            | CommandBody::RecordChildProcessLiveness { .. }
+            | CommandBody::RecordProcessSignalReceipt { .. }
+            | CommandBody::RecordDirectChildReap { .. }
+            | CommandBody::RecordChildRecovery { .. }
+            | CommandBody::FinalizeChildProcess { .. }
+            | CommandBody::BeginCancellationPropagation { .. }
+            | CommandBody::ReconcileCancellationPropagation { .. }
+            | CommandBody::RecordPiChildNotSpawned { .. }
     ) != matches!(request.expected_generation, ExpectedGeneration::Exact(_))
     {
         return Ok(Err(Rejection::InvalidExpectedGeneration));
@@ -1748,6 +1896,225 @@ fn apply_command(
             *operating_cycle_id,
             *deterministic_experiment_id,
         ),
+        CommandBody::OpenSupervisorEpoch {
+            supervisor_epoch_id,
+            supervisor_epoch_identity,
+        } => open_supervisor_epoch(
+            transaction,
+            command_row_id,
+            *supervisor_epoch_id,
+            supervisor_epoch_identity,
+        ),
+        CommandBody::AdmitPiChildSpawn {
+            operating_cycle_id,
+            owner,
+            budget_reservation_id,
+            execution_profile_id,
+            native_workspace_id,
+            canonical_workspace_path,
+            supervisor_epoch_id,
+            supervisor_epoch_identity,
+            pi_session_identity,
+            spawn_nonce,
+        } => admit_pi_child_spawn(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            PiChildSpawnAdmissionInput {
+                operating_cycle_id: *operating_cycle_id,
+                owner: *owner,
+                budget_reservation_id: *budget_reservation_id,
+                execution_profile_id: *execution_profile_id,
+                native_workspace_id,
+                canonical_workspace_path,
+                supervisor_epoch_id: *supervisor_epoch_id,
+                supervisor_epoch_identity,
+                pi_session_identity,
+                spawn_nonce,
+            },
+        ),
+        CommandBody::RecordInertChildSpawn {
+            pi_child_spawn_admission_id,
+            child_identity,
+            direct_child_pid,
+            process_group_id,
+        } => record_inert_child_spawn(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *pi_child_spawn_admission_id,
+            child_identity,
+            *direct_child_pid,
+            *process_group_id,
+        ),
+        CommandBody::RecordPiAdapterReady {
+            child_process_id,
+            pi_session_identity,
+            spawn_nonce,
+        } => record_pi_adapter_ready(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *child_process_id,
+            pi_session_identity,
+            spawn_nonce,
+        ),
+        CommandBody::AuthorizePiCreateSession {
+            child_process_id,
+            correlation_identity,
+            create_request_digest,
+        } => authorize_pi_create_session(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *child_process_id,
+            correlation_identity,
+            *create_request_digest,
+        ),
+        CommandBody::RecordPiCreateSessionDelivery {
+            child_process_id,
+            correlation_identity,
+            create_request_digest,
+        } => record_pi_create_session_delivery(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *child_process_id,
+            correlation_identity,
+            *create_request_digest,
+        ),
+        CommandBody::RecordPiSessionReady {
+            child_process_id,
+            pi_session_identity,
+        } => record_pi_session_ready(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *child_process_id,
+            pi_session_identity,
+        ),
+        CommandBody::RecordPiAbortControlDelivery {
+            child_process_id,
+            cancellation_propagation_id,
+            correlation_identity,
+            abort_command_digest,
+            outcome,
+        } => record_pi_abort_control_delivery(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            PiAbortControlDeliveryInput {
+                child_id: *child_process_id,
+                propagation_id: *cancellation_propagation_id,
+                correlation: correlation_identity,
+                abort_digest: *abort_command_digest,
+                outcome: *outcome,
+            },
+        ),
+        CommandBody::RecordChildStreamSeal {
+            child_process_id,
+            stream_kind,
+            full_observed_digest,
+            retained_content_object_id,
+            completeness,
+        } => record_child_stream_seal(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            ChildStreamSealInput {
+                child_id: *child_process_id,
+                stream: *stream_kind,
+                full_digest: *full_observed_digest,
+                retained: *retained_content_object_id,
+                completeness: *completeness,
+            },
+        ),
+        CommandBody::RecordChildProcessLiveness {
+            child_process_id,
+            liveness,
+        } => record_child_process_liveness(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *child_process_id,
+            *liveness,
+        ),
+        CommandBody::RecordProcessSignalReceipt {
+            child_process_id,
+            action,
+            delivery,
+            observed_liveness,
+            cause,
+        } => record_process_signal_receipt(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            ProcessSignalReceiptInput {
+                child_id: *child_process_id,
+                action: *action,
+                delivery: *delivery,
+                liveness: *observed_liveness,
+                cause: *cause,
+            },
+        ),
+        CommandBody::RecordDirectChildReap {
+            child_process_id,
+            wait_status,
+            group_liveness_before_cleanup,
+            group_liveness_after_cleanup,
+        } => record_direct_child_reap(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *child_process_id,
+            *wait_status,
+            *group_liveness_before_cleanup,
+            *group_liveness_after_cleanup,
+        ),
+        CommandBody::RecordChildRecovery {
+            child_process_id,
+            observation,
+            group_liveness_after_restart,
+        } => record_child_recovery(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *child_process_id,
+            *observation,
+            *group_liveness_after_restart,
+        ),
+        CommandBody::FinalizeChildProcess { child_process_id } => finalize_child_process(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *child_process_id,
+        ),
+        CommandBody::BeginCancellationPropagation {
+            cancellation_request_id,
+        } => begin_cancellation_propagation(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *cancellation_request_id,
+        ),
+        CommandBody::ReconcileCancellationPropagation {
+            cancellation_propagation_id,
+        } => reconcile_cancellation_propagation(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *cancellation_propagation_id,
+        ),
+        CommandBody::RecordPiChildNotSpawned {
+            pi_child_spawn_admission_id,
+            reason,
+        } => record_pi_child_not_spawned(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *pi_child_spawn_admission_id,
+            *reason,
+        ),
     };
 
     if result.is_ok()
@@ -2027,6 +2394,42 @@ fn record_office_session_ready(
     if state != OfficeSessionState::Reserved || cycle.state != OperatingCycleState::Running {
         return Err(Rejection::InvalidLifecycleTransition);
     }
+    // An Office session is an operational authority, not a free-standing
+    // kernel-service assertion. M5 therefore requires the exact supervised
+    // Pi admission and the correlated SessionReady protocol fact before a
+    // session can authorize ordinary Office turns.
+    let supervised_admission: Option<i64> = transaction
+        .query_row(
+            "SELECT pi_child_spawn_admission_id FROM pi_child_spawn_admissions
+          WHERE grand_architect_office_session_id = ?1",
+            [session_id.value()],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|_| Rejection::SubjectNotFound)?;
+    let Some(admission_id) = supervised_admission else {
+        return Err(Rejection::ChildLifecycleReceiptMissing);
+    };
+    let session_ready: bool = transaction
+        .query_row(
+            "SELECT EXISTS(
+               SELECT 1 FROM pi_child_processes c
+               JOIN pi_child_session_protocols p ON p.child_process_id = c.child_process_id
+              WHERE c.pi_child_spawn_admission_id = ?1
+                AND c.lifecycle_state = ?2
+                AND p.lifecycle_state = ?3)",
+            params![
+                admission_id,
+                ChildProcessState::Running as i64,
+                PiChildSessionState::SessionReady as i64,
+            ],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|_| Rejection::ChildLifecycleReceiptMissing)?
+        != 0;
+    if !session_ready {
+        return Err(Rejection::ChildLifecycleReceiptMissing);
+    }
     transaction.execute(
         "UPDATE grand_architect_office_sessions SET lifecycle_state = ?1, last_transition_command_id = ?2
          WHERE grand_architect_office_session_id = ?3",
@@ -2053,6 +2456,16 @@ fn record_office_session_terminal(
     let cycle = cycle_for_generation(transaction, cycle_id, expected_generation)?;
     if session_has_active_turn(transaction, session_id)? {
         return Err(Rejection::InvalidLifecycleTransition);
+    }
+    // M5 has only physical child receipts. It must not let the older atomic
+    // Office terminal fact manufacture a semantic Pi/Office settlement for a
+    // supervised session; a later normalized receipt owns that transition.
+    let has_pi_child: bool = transaction.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pi_child_spawn_admissions WHERE grand_architect_office_session_id = ?1)",
+        [session_id.value()], |row| row.get::<_, i64>(0),
+    ).map_err(|_| Rejection::ChildLifecycleReceiptMissing)? != 0;
+    if has_pi_child {
+        return Err(Rejection::SupervisedTerminalReceiptRequired);
     }
     let next_state = match terminal_state {
         OfficeSessionTerminalState::Closed
@@ -2107,6 +2520,42 @@ fn open_office_turn(
 ) -> Result<EventBody, Rejection> {
     let (state, cycle_id) = session_row(transaction, session_id)?;
     let cycle = cycle_for_generation(transaction, cycle_id, expected_generation)?;
+    // Ready is a point-in-time protocol fact, not a perpetual Office
+    // authority. Every turn rechecks the exact supervised child: after a
+    // reap, recovery parentage loss, or containment failure, M5 has no
+    // normalized semantic Office settlement and therefore admits no new work.
+    let supervised_admission: Option<i64> = transaction
+        .query_row(
+            "SELECT pi_child_spawn_admission_id FROM pi_child_spawn_admissions
+              WHERE grand_architect_office_session_id = ?1",
+            [session_id.value()],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    let Some(admission_id) = supervised_admission else {
+        return Err(Rejection::ChildLifecycleReceiptMissing);
+    };
+    let child_is_operational: bool = transaction
+        .query_row(
+            "SELECT EXISTS(
+               SELECT 1 FROM pi_child_processes c
+               JOIN pi_child_session_protocols p ON p.child_process_id = c.child_process_id
+              WHERE c.pi_child_spawn_admission_id = ?1
+                AND c.lifecycle_state = ?2
+                AND p.lifecycle_state = ?3)",
+            params![
+                admission_id,
+                ChildProcessState::Running as i64,
+                PiChildSessionState::SessionReady as i64,
+            ],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|_| Rejection::ChildLifecycleReceiptMissing)?
+        != 0;
+    if !child_is_operational {
+        return Err(Rejection::InvalidLifecycleTransition);
+    }
     let purpose_is_admitted = match purpose {
         OfficeTurnPurpose::OrdinaryWork => cycle.state.admits_task_work(),
         OfficeTurnPurpose::Recovery
@@ -2209,6 +2658,7 @@ fn record_cycle_drained(
         || active_office_turn_count(transaction, cycle_id)? != 0
         || live_actor_attempt_count(transaction, cycle_id)? != 0
         || active_work_lease_count(transaction, cycle_id)? != 0
+        || live_pi_child_count(transaction, cycle_id)? != 0
     {
         return Err(Rejection::InvalidLifecycleTransition);
     }
@@ -2253,6 +2703,11 @@ fn resume_cycle(
         || active_cancellation_count(transaction, cycle_id)? != 0
         || live_actor_attempt_count(transaction, cycle_id)? != 0
         || active_work_lease_count(transaction, cycle_id)? != 0
+        || live_pi_child_count(transaction, cycle_id)? != 0
+        // M5 has no durable workspace-disposal receipt. A physically exited
+        // child therefore does not make a cycle close-eligible yet; a later
+        // disposal tranche must release this intentionally conservative fence.
+        || undisposed_pi_workspace_count(transaction, cycle_id)? != 0
     {
         return Err(Rejection::IncompleteCycleReconciliation);
     }
@@ -2313,6 +2768,7 @@ fn close_cycle(
         || active_cancellation_count(transaction, cycle_id)? != 0
         || live_actor_attempt_count(transaction, cycle_id)? != 0
         || active_work_lease_count(transaction, cycle_id)? != 0
+        || live_pi_child_count(transaction, cycle_id)? != 0
     {
         return Err(Rejection::IncompleteCycleReconciliation);
     }
@@ -2665,6 +3121,20 @@ fn reconcile_cancellation(
     {
         return Err(Rejection::IncompleteCycleReconciliation);
     }
+    let has_pi_child: bool = transaction.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pi_child_processes p JOIN pi_child_spawn_admissions a ON a.pi_child_spawn_admission_id = p.pi_child_spawn_admission_id WHERE a.operating_cycle_id = ?1)",
+        [cycle_id.value()], |row| row.get::<_, i64>(0),
+    ).map_err(|_| Rejection::ChildLifecycleReceiptMissing)? != 0;
+    if has_pi_child {
+        let propagation_reconciled: bool = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM cancellation_propagations WHERE cancellation_request_id = ?1 AND lifecycle_state = ?2)",
+            params![cancellation_request_id.value(), CancellationPropagationState::Reconciled as i64],
+            |row| row.get::<_, i64>(0),
+        ).map_err(|_| Rejection::ChildLifecycleReceiptMissing)? != 0;
+        if !propagation_reconciled {
+            return Err(Rejection::CancellationPropagationIncomplete);
+        }
+    }
     transaction
         .execute(
             "UPDATE cancellation_requests SET lifecycle_state = ?1, reconciled_by_command_id = ?2
@@ -2996,6 +3466,25 @@ fn project_close_blocked(
         "SELECT COUNT(*) FROM deterministic_experiments WHERE project_id = ?1 AND lifecycle_state != 3",
         [project_id.value()], |row| row.get(0),
     ).map_err(|_| Rejection::SubjectNotFound)?;
+    let live_pi_children: i64 = transaction.query_row(
+        "SELECT COUNT(*) FROM pi_child_processes p
+         JOIN pi_child_spawn_admissions s ON s.pi_child_spawn_admission_id = p.pi_child_spawn_admission_id
+         JOIN attempt_budget_reservations r ON r.actor_attempt_id = s.actor_attempt_id
+         WHERE r.project_id = ?1 AND p.lifecycle_state != ?2",
+        params![project_id.value(), ChildProcessState::Finalized as i64], |row| row.get(0),
+    ).map_err(|_| Rejection::SubjectNotFound)?;
+    // M5 records workspace registration but deliberately does not claim a
+    // secure removal/disposal action. Keep the Project open even after a child
+    // reaps so a later receipt cannot be silently skipped.
+    let undisposed_pi_workspaces: i64 = transaction
+        .query_row(
+            "SELECT COUNT(*) FROM pi_child_spawn_admissions s
+         JOIN attempt_budget_reservations r ON r.actor_attempt_id = s.actor_attempt_id
+         WHERE r.project_id = ?1",
+            [project_id.value()],
+            |row| row.get(0),
+        )
+        .map_err(|_| Rejection::SubjectNotFound)?;
     Ok(incomplete_milestones != 0
         || incomplete_tickets != 0
         || open_reviews != 0
@@ -3004,7 +3493,9 @@ fn project_close_blocked(
         || active_leases != 0
         || unreconciled_attempt_reservations != 0
         || open_outcomes != 0
-        || open_deterministic_experiments != 0)
+        || open_deterministic_experiments != 0
+        || live_pi_children != 0
+        || undisposed_pi_workspaces != 0)
 }
 
 fn project_transition_allowed(from: ProjectState, to: ProjectState) -> bool {
@@ -4208,6 +4699,35 @@ fn admit_actor_instance(
     })
 }
 
+/// The Pi child bridge repeats the M3 admission matrix at its final Create
+/// gate. `PiSdkQualificationV1` has no M5 Office/Actor owner constructor yet:
+/// bootstrap-native qualification remains a later explicit authority path, not
+/// a disguised Grand Architect session. The deterministic double is confined
+/// to its provider-free fixture treatment and cannot cross into paid/native
+/// qualification or live work.
+fn pi_child_profile_allowed(
+    treatment: OperatingCycleTreatment,
+    kind: ExecutionProfileKind,
+    readiness: ExecutionProfileReadiness,
+) -> bool {
+    matches!(
+        (treatment, kind, readiness),
+        (
+            OperatingCycleTreatment::Vs001DeterministicV1,
+            ExecutionProfileKind::DeterministicPiHostProcessDoubleV1,
+            ExecutionProfileReadiness::DeterministicFixtureOnly,
+        ) | (
+            OperatingCycleTreatment::PiSdkQualificationV1,
+            ExecutionProfileKind::NativePinnedPiSdkV1,
+            ExecutionProfileReadiness::Unqualified | ExecutionProfileReadiness::QualifiedForLiveUse,
+        ) | (
+            OperatingCycleTreatment::Vs001LiveV1,
+            ExecutionProfileKind::NativePinnedPiSdkV1,
+            ExecutionProfileReadiness::QualifiedForLiveUse,
+        )
+    )
+}
+
 fn admit_ticket(
     transaction: &Transaction<'_>,
     command_row_id: i64,
@@ -4535,6 +5055,22 @@ fn attest_actor_attempt_terminal(
     actor_attempt_id: ActorAttemptId,
     terminal_kind: ActorAttemptTerminalKind,
 ) -> Result<EventBody, Rejection> {
+    // M3's receipt-free fixture attestation is deliberately confined to the
+    // provider-free no-child seam. Once a native child has been admitted,
+    // semantic Attempt settlement remains unavailable until later normalized
+    // Pi/submission/validation receipts; physical M5 finalization never
+    // invents a model outcome.
+    let has_supervised_child: bool = transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM pi_child_spawn_admissions WHERE actor_attempt_id = ?1)",
+            [actor_attempt_id.value()],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|_| Rejection::SubjectNotFound)?
+        != 0;
+    if has_supervised_child {
+        return Err(Rejection::SupervisedTerminalReceiptRequired);
+    }
     let (operating_cycle_id, ticket_id, work_item_id, work_lease_id, _, state) =
         actor_attempt_row(transaction, actor_attempt_id)?;
     if !terminal_kind.allowed_from(state) {
@@ -5245,6 +5781,1329 @@ fn close_deterministic_experiment(
     })
 }
 
+// M5 deliberately persists the native-child bridge in small transitions.  A
+// database admission is not a spawn receipt; adapter readiness is not Create
+// authorization; and an absence after a supervisor restart is not wait(2).
+fn open_supervisor_epoch(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    supervisor_epoch_id: SupervisorEpochId,
+    supervisor_epoch_identity: &SupervisorEpochIdentity,
+) -> Result<EventBody, Rejection> {
+    let epoch_already_open: bool = transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM supervisor_epochs)",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?
+        != 0;
+    if epoch_already_open {
+        return Err(Rejection::ChildSpawnAdmissionInvalid);
+    }
+    transaction.execute(
+        "INSERT INTO supervisor_epochs(supervisor_epoch_id, supervisor_epoch_identity, opened_by_command_id)
+         VALUES (?1, ?2, ?3)",
+        params![
+            supervisor_epoch_id.value(),
+            supervisor_epoch_identity.as_str(),
+            command_row_id,
+        ],
+    ).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
+    Ok(EventBody::SupervisorEpochOpened {
+        supervisor_epoch_id,
+    })
+}
+
+fn admit_pi_child_spawn(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    input: PiChildSpawnAdmissionInput<'_>,
+) -> Result<EventBody, Rejection> {
+    let PiChildSpawnAdmissionInput {
+        operating_cycle_id,
+        owner,
+        budget_reservation_id,
+        execution_profile_id,
+        native_workspace_id,
+        canonical_workspace_path,
+        supervisor_epoch_id,
+        supervisor_epoch_identity,
+        pi_session_identity,
+        spawn_nonce,
+    } = input;
+    let cycle = cycle_for_generation(transaction, operating_cycle_id, expected_generation)?;
+    if cycle.state != OperatingCycleState::Running {
+        return Err(Rejection::InvalidLifecycleTransition);
+    }
+    let reservation: Option<(i64, i64)> = transaction.query_row(
+        "SELECT operating_cycle_id, reservation_state FROM budget_reservations WHERE budget_reservation_id = ?1",
+        [budget_reservation_id.value()], |r| Ok((r.get(0)?, r.get(1)?)),
+    ).optional().map_err(|_| Rejection::SubjectNotFound)?;
+    let Some((reservation_cycle, reservation_state)) = reservation else {
+        return Err(Rejection::ReservationNotActive);
+    };
+    if reservation_cycle != operating_cycle_id.value()
+        || reservation_state != BudgetReservationState::Reserved as i64
+    {
+        return Err(Rejection::ReservationNotActive);
+    }
+    let (attempt, office_session) = match owner {
+        PiChildOwner::ActorAttempt(actor_attempt_id) => {
+            let row: Option<(i64, i64, i64)> = transaction.query_row(
+                "SELECT a.operating_cycle_id, a.execution_profile_id, r.budget_reservation_id
+                   FROM attempts a JOIN attempt_budget_reservations r ON r.actor_attempt_id = a.actor_attempt_id
+                  WHERE a.actor_attempt_id = ?1 AND a.lifecycle_state = ?2",
+                params![actor_attempt_id.value(), ActorAttemptState::Running as i64],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            ).optional().map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
+            let Some((attempt_cycle, profile, reserved)) = row else {
+                return Err(Rejection::ChildSpawnAdmissionInvalid);
+            };
+            if attempt_cycle != operating_cycle_id.value()
+                || profile != execution_profile_id.value()
+                || reserved != budget_reservation_id.value()
+            {
+                return Err(Rejection::ChildSpawnAdmissionInvalid);
+            }
+            (Some(actor_attempt_id), None)
+        }
+        PiChildOwner::GrandArchitectOfficeSession(session_id) => {
+            let row: Option<i64> = transaction
+                .query_row(
+                    "SELECT operating_cycle_id FROM grand_architect_office_sessions
+                  WHERE grand_architect_office_session_id = ?1 AND lifecycle_state IN (1, 2, 3, 4)",
+                    [session_id.value()],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
+            if row != Some(operating_cycle_id.value()) {
+                return Err(Rejection::ChildSpawnAdmissionInvalid);
+            }
+            let existing: Option<i64> = transaction.query_row(
+                "SELECT budget_reservation_id FROM office_session_budget_reservations WHERE grand_architect_office_session_id = ?1",
+                [session_id.value()], |r| r.get(0),
+            ).optional().map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
+            match existing {
+                Some(bound) if bound == budget_reservation_id.value() => {}
+                Some(_) => return Err(Rejection::ChildSpawnAdmissionInvalid),
+                None => {
+                    transaction.execute(
+                        "INSERT INTO office_session_budget_reservations(grand_architect_office_session_id, budget_reservation_id, bound_by_command_id) VALUES (?1, ?2, ?3)",
+                        params![session_id.value(), budget_reservation_id.value(), command_row_id],
+                    ).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
+                }
+            }
+            (None, Some(session_id))
+        }
+    };
+    let profile: Option<(i64, i64)> = transaction.query_row(
+        "SELECT profile_kind, readiness FROM execution_profiles WHERE execution_profile_id = ?1",
+        [execution_profile_id.value()], |r| Ok((r.get(0)?, r.get(1)?)),
+    ).optional().map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
+    let profile_is_allowed = profile.is_some_and(|(kind, readiness)| {
+        matches!(
+            (execution_profile_kind_from_i64(kind), execution_profile_readiness_from_i64(readiness)),
+            (Ok(kind), Ok(readiness)) if pi_child_profile_allowed(cycle._treatment, kind, readiness)
+        )
+    });
+    // Admission and Create authorization use the same closed treatment matrix.
+    // The latter rechecks it so an out-of-band profile mutation cannot turn a
+    // formerly lawful pre-spawn receipt into a work authorization.
+    if !profile_is_allowed {
+        return Err(Rejection::ExecutionProfileIneligible);
+    }
+    let epoch_matches: bool = transaction.query_row(
+        "SELECT EXISTS(SELECT 1 FROM supervisor_epochs WHERE supervisor_epoch_id = ?1 AND supervisor_epoch_identity = ?2)",
+        params![supervisor_epoch_id.value(), supervisor_epoch_identity.as_str()],
+        |row| row.get::<_, i64>(0),
+    ).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)? != 0;
+    if !epoch_matches {
+        return Err(Rejection::ChildSpawnAdmissionInvalid);
+    }
+    transaction.execute("INSERT OR IGNORE INTO workspaces(native_workspace_id, canonical_workspace_path, registered_by_command_id) VALUES (?1, ?2, ?3)", params![native_workspace_id.as_str(), canonical_workspace_path.as_str(), command_row_id]).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
+    let workspace_id: i64 = transaction
+        .query_row(
+            "SELECT workspace_id FROM workspaces WHERE native_workspace_id = ?1 AND canonical_workspace_path = ?2",
+            params![native_workspace_id.as_str(), canonical_workspace_path.as_str()],
+            |r| r.get(0),
+        )
+        .map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
+    transaction.execute("INSERT INTO pi_child_sessions(pi_session_identity, spawn_nonce, created_by_command_id, ready_by_command_id) VALUES (?1, ?2, ?3, NULL)", params![pi_session_identity.as_str(), spawn_nonce.as_str(), command_row_id]).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
+    let pi_session_id = id_from_last_insert::<PiSessionId>(transaction)?;
+    transaction.execute(
+        "INSERT INTO pi_child_spawn_admissions(operating_cycle_id, actor_attempt_id, grand_architect_office_session_id, budget_reservation_id, execution_profile_id, workspace_id, supervisor_epoch_id, pi_session_id, admission_generation, lifecycle_state, admitted_by_command_id, spawned_by_command_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1, ?10, NULL)",
+        params![operating_cycle_id.value(), attempt.map(ActorAttemptId::value), office_session.map(GrandArchitectOfficeSessionId::value), budget_reservation_id.value(), execution_profile_id.value(), workspace_id, supervisor_epoch_id.value(), pi_session_id.value(), cycle.generation.value(), command_row_id],
+    ).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
+    Ok(EventBody::PiChildSpawnAdmitted {
+        pi_child_spawn_admission_id: id_from_last_insert::<PiChildSpawnAdmissionId>(transaction)?,
+        owner,
+        budget_reservation_id,
+    })
+}
+
+fn admission_cycle_for_generation(
+    transaction: &Transaction<'_>,
+    admission_id: PiChildSpawnAdmissionId,
+    _expected: ExpectedGeneration,
+) -> Result<(OperatingCycleId, PiChildSpawnAdmissionState), Rejection> {
+    let row: Option<(i64, i64)> = transaction.query_row("SELECT operating_cycle_id, lifecycle_state FROM pi_child_spawn_admissions WHERE pi_child_spawn_admission_id = ?1", [admission_id.value()], |r| Ok((r.get(0)?, r.get(1)?))).optional().map_err(|_| Rejection::SubjectNotFound)?;
+    let Some((cycle, state)) = row else {
+        return Err(Rejection::SubjectNotFound);
+    };
+    let cycle_id = OperatingCycleId::try_from(cycle).map_err(|_| Rejection::SubjectNotFound)?;
+    // Spawn/AdapterReady are recovery receipts. They stay recordable after a
+    // quiesce changes generation so an already-raced inert child is never
+    // orphaned. Create authorization performs the strict generation fence.
+    let _ = cycle_row(transaction, cycle_id)?;
+    let state = match state {
+        1 => PiChildSpawnAdmissionState::Admitted,
+        2 => PiChildSpawnAdmissionState::Spawned,
+        3 => PiChildSpawnAdmissionState::Invalidated,
+        _ => return Err(Rejection::SubjectNotFound),
+    };
+    Ok((cycle_id, state))
+}
+
+fn child_cycle_for_generation(
+    transaction: &Transaction<'_>,
+    child_process_id: ChildProcessId,
+    _expected: ExpectedGeneration,
+) -> Result<(OperatingCycleId, ChildProcessState, PiSessionId), Rejection> {
+    let row: Option<(i64, i64, i64)> = transaction.query_row(
+        "SELECT a.operating_cycle_id, c.lifecycle_state, a.pi_session_id FROM pi_child_processes c JOIN pi_child_spawn_admissions a ON a.pi_child_spawn_admission_id = c.pi_child_spawn_admission_id WHERE c.child_process_id = ?1",
+        [child_process_id.value()], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    ).optional().map_err(|_| Rejection::SubjectNotFound)?;
+    let Some((cycle, state, pi_session)) = row else {
+        return Err(Rejection::SubjectNotFound);
+    };
+    let cycle_id = OperatingCycleId::try_from(cycle).map_err(|_| Rejection::SubjectNotFound)?;
+    let _ = cycle_row(transaction, cycle_id)?;
+    let state = child_process_state_from_i64(state).map_err(|_| Rejection::SubjectNotFound)?;
+    Ok((
+        cycle_id,
+        state,
+        PiSessionId::try_from(pi_session).map_err(|_| Rejection::SubjectNotFound)?,
+    ))
+}
+
+fn record_inert_child_spawn(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected: ExpectedGeneration,
+    admission_id: PiChildSpawnAdmissionId,
+    child_identity: &SupervisedChildIdentity,
+    direct_child_pid: NativeChildPid,
+    process_group_id: OwnedProcessGroupId,
+) -> Result<EventBody, Rejection> {
+    let (_, state) = admission_cycle_for_generation(transaction, admission_id, expected)?;
+    if state != PiChildSpawnAdmissionState::Admitted {
+        return Err(Rejection::InvalidLifecycleTransition);
+    }
+    if direct_child_pid.value() != process_group_id.value() {
+        return Err(Rejection::ChildSpawnAdmissionInvalid);
+    }
+    let identity_in_use: bool = transaction
+        .query_row(
+            "SELECT EXISTS(
+           SELECT 1 FROM pi_child_processes
+            WHERE lifecycle_state != ?1
+              AND (direct_child_pid = ?2 OR process_group_id = ?3))",
+            params![
+                ChildProcessState::Finalized as i64,
+                direct_child_pid.value(),
+                process_group_id.value(),
+            ],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?
+        != 0;
+    if identity_in_use {
+        return Err(Rejection::ChildSpawnAdmissionInvalid);
+    }
+    transaction.execute("INSERT INTO pi_child_processes(pi_child_spawn_admission_id, child_identity, direct_child_pid, process_group_id, lifecycle_state, terminal_disposition, spawned_by_command_id, last_transition_command_id) VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?6)", params![admission_id.value(), child_identity.as_str(), direct_child_pid.value(), process_group_id.value(), ChildProcessState::Spawned as i64, command_row_id]).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
+    let child_process_id = id_from_last_insert::<ChildProcessId>(transaction)?;
+    transaction.execute("INSERT INTO pi_child_session_protocols(child_process_id, lifecycle_state, create_correlation_identity, create_request_digest) VALUES (?1, 1, NULL, NULL)", [child_process_id.value()]).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
+    transaction.execute("UPDATE pi_child_spawn_admissions SET lifecycle_state = 2, spawned_by_command_id = ?1 WHERE pi_child_spawn_admission_id = ?2", params![command_row_id, admission_id.value()]).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
+    // A cancellation snapshot may have observed this owner before the OS
+    // child raced into existence. Attach that raced child to the already
+    // frozen owner target rather than omitting it from propagation.
+    transaction.execute(
+        "UPDATE cancellation_propagation_targets
+            SET child_process_id = ?1, target_disposition = ?2
+          WHERE child_process_id IS NULL
+            AND cancellation_propagation_id IN (
+                SELECT p.cancellation_propagation_id
+                  FROM cancellation_propagations p
+                  JOIN pi_child_spawn_admissions a
+                    ON a.pi_child_spawn_admission_id = ?3
+                 WHERE p.operating_cycle_id = a.operating_cycle_id
+                   AND p.lifecycle_state = 1)
+            AND (actor_attempt_id = (SELECT actor_attempt_id FROM pi_child_spawn_admissions WHERE pi_child_spawn_admission_id = ?3)
+              OR grand_architect_office_session_id = (SELECT grand_architect_office_session_id FROM pi_child_spawn_admissions WHERE pi_child_spawn_admission_id = ?3))",
+        params![
+            child_process_id.value(),
+            CancellationPropagationTargetDisposition::AwaitingChildReceipt as i64,
+            admission_id.value(),
+        ],
+    ).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    transaction.execute(
+        "INSERT OR IGNORE INTO cancellation_propagation_children(cancellation_propagation_id, child_process_id)
+         SELECT cancellation_propagation_id, ?1
+           FROM cancellation_propagation_targets
+          WHERE child_process_id = ?1
+            AND target_disposition = ?2",
+        params![
+            child_process_id.value(),
+            CancellationPropagationTargetDisposition::AwaitingChildReceipt as i64,
+        ],
+    ).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    Ok(EventBody::InertPiChildSpawnRecorded {
+        child_process_id,
+        pi_child_spawn_admission_id: admission_id,
+    })
+}
+
+fn record_pi_child_not_spawned(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected: ExpectedGeneration,
+    admission_id: PiChildSpawnAdmissionId,
+    reason: PiChildNotSpawnedReason,
+) -> Result<EventBody, Rejection> {
+    let (cycle_id, state) = admission_cycle_for_generation(transaction, admission_id, expected)?;
+    let _ = cycle_for_generation(transaction, cycle_id, expected)?;
+    if state != PiChildSpawnAdmissionState::Admitted {
+        return Err(Rejection::InvalidLifecycleTransition);
+    }
+    // A pre-spawn failure is meaningful even before cancellation. If an
+    // active cancellation snapshot did name this owner, resolve exactly that
+    // one outstanding target; more than one is an invariant breach. A zero
+    // count is the ordinary native-workspace/artifact/spawn failure path.
+    let targets = transaction.execute(
+        "UPDATE cancellation_propagation_targets
+            SET target_disposition = ?1
+          WHERE cancellation_propagation_id IN (
+                SELECT cancellation_propagation_id FROM cancellation_propagations
+                 WHERE operating_cycle_id = ?2 AND lifecycle_state = 1)
+            AND child_process_id IS NULL
+            AND target_disposition = ?3
+            AND (actor_attempt_id = (SELECT actor_attempt_id FROM pi_child_spawn_admissions WHERE pi_child_spawn_admission_id = ?4)
+              OR grand_architect_office_session_id = (SELECT grand_architect_office_session_id FROM pi_child_spawn_admissions WHERE pi_child_spawn_admission_id = ?4))",
+        params![
+            CancellationPropagationTargetDisposition::NotRunning as i64,
+            cycle_id.value(),
+            CancellationPropagationTargetDisposition::AwaitingChildReceipt as i64,
+            admission_id.value(),
+        ],
+    ).map_err(|_| Rejection::CancellationPropagationIncomplete)?;
+    if targets > 1 {
+        return Err(Rejection::CancellationPropagationIncomplete);
+    }
+    transaction
+        .execute(
+            "UPDATE pi_child_spawn_admissions
+            SET lifecycle_state = ?1
+          WHERE pi_child_spawn_admission_id = ?2",
+            params![
+                PiChildSpawnAdmissionState::Invalidated as i64,
+                admission_id.value()
+            ],
+        )
+        .map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
+    transaction.execute(
+        "INSERT INTO pi_child_spawn_invalidations(pi_child_spawn_admission_id, reason, invalidated_by_command_id)
+         VALUES (?1, ?2, ?3)",
+        params![admission_id.value(), reason as i64, command_row_id],
+    ).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
+    Ok(EventBody::PiChildSpawnInvalidated {
+        pi_child_spawn_admission_id: admission_id,
+        reason,
+    })
+}
+
+fn record_pi_adapter_ready(
+    transaction: &Transaction<'_>,
+    _command_row_id: i64,
+    expected: ExpectedGeneration,
+    child_id: ChildProcessId,
+    identity: &PiBoundarySessionIdentity,
+    nonce: &SpawnNonce,
+) -> Result<EventBody, Rejection> {
+    let (_, state, pi_session_id) = child_cycle_for_generation(transaction, child_id, expected)?;
+    if !matches!(
+        state,
+        ChildProcessState::Spawned | ChildProcessState::CancellationRequested
+    ) || pi_protocol_state(transaction, child_id)? != PiChildSessionState::InertSpawned
+    {
+        return Err(Rejection::InvalidLifecycleTransition);
+    }
+    let matches: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM pi_child_sessions WHERE pi_session_id = ?1 AND pi_session_identity = ?2 AND spawn_nonce = ?3)", params![pi_session_id.value(), identity.as_str(), nonce.as_str()], |r| r.get::<_, i64>(0)).map_err(|_| Rejection::ChildLifecycleReceiptMissing)? != 0;
+    if !matches {
+        return Err(Rejection::ChildSpawnAdmissionInvalid);
+    }
+    set_pi_protocol_state(transaction, child_id, PiChildSessionState::AdapterReady)?;
+    Ok(EventBody::PiAdapterReadyRecorded {
+        child_process_id: child_id,
+        pi_session_id,
+    })
+}
+
+fn authorize_pi_create_session(
+    transaction: &Transaction<'_>,
+    _command_row_id: i64,
+    expected: ExpectedGeneration,
+    child_id: ChildProcessId,
+    correlation: &PiCorrelationIdentity,
+    create_request_digest: Sha256Digest,
+) -> Result<EventBody, Rejection> {
+    let (cycle_id, state, _) = child_cycle_for_generation(transaction, child_id, expected)?;
+    let cycle = cycle_for_generation(transaction, cycle_id, expected)?;
+    let admission: (i64, i64, i64, Option<i64>, Option<i64>, i64, i64) = transaction.query_row(
+        "SELECT a.admission_generation, a.budget_reservation_id, a.execution_profile_id, a.actor_attempt_id, a.grand_architect_office_session_id, p.profile_kind, p.readiness
+           FROM pi_child_processes c JOIN pi_child_spawn_admissions a ON a.pi_child_spawn_admission_id = c.pi_child_spawn_admission_id
+           JOIN execution_profiles p ON p.execution_profile_id = a.execution_profile_id
+          WHERE c.child_process_id = ?1",
+        [child_id.value()], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?)),
+    ).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
+    if state != ChildProcessState::Spawned
+        || pi_protocol_state(transaction, child_id)? != PiChildSessionState::AdapterReady
+        || cycle.state != OperatingCycleState::Running
+        || admission.0 != cycle.generation.value()
+    {
+        return Err(Rejection::StaleAdmissionGeneration);
+    }
+    let reservation_active: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM budget_reservations WHERE budget_reservation_id = ?1 AND operating_cycle_id = ?2 AND reservation_state = ?3)", params![admission.1, cycle_id.value(), BudgetReservationState::Reserved as i64], |r| r.get::<_,i64>(0)).map_err(|_| Rejection::ReservationNotActive)? != 0;
+    if !reservation_active || active_cancellation_count(transaction, cycle_id)? != 0 {
+        return Err(Rejection::ReservationNotActive);
+    }
+    let owner_active = match (admission.3, admission.4) {
+        (Some(attempt), None) => transaction.query_row("SELECT EXISTS(SELECT 1 FROM attempts WHERE actor_attempt_id = ?1 AND lifecycle_state = 1)", [attempt], |r| r.get::<_,i64>(0)).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)? != 0,
+        (None, Some(session)) => transaction.query_row("SELECT EXISTS(SELECT 1 FROM grand_architect_office_sessions s JOIN office_session_budget_reservations b ON b.grand_architect_office_session_id = s.grand_architect_office_session_id WHERE s.grand_architect_office_session_id = ?1 AND b.budget_reservation_id = ?2 AND s.lifecycle_state IN (1,2,3,4))", params![session, admission.1], |r| r.get::<_,i64>(0)).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)? != 0,
+        _ => false,
+    };
+    if !owner_active {
+        return Err(Rejection::ChildSpawnAdmissionInvalid);
+    }
+    let profile_allowed = match (
+        execution_profile_kind_from_i64(admission.5),
+        execution_profile_readiness_from_i64(admission.6),
+    ) {
+        (Ok(kind), Ok(readiness)) => pi_child_profile_allowed(cycle._treatment, kind, readiness),
+        _ => false,
+    };
+    if !profile_allowed {
+        return Err(Rejection::ExecutionProfileIneligible);
+    }
+    transaction.execute("UPDATE pi_child_session_protocols SET lifecycle_state = ?1, create_correlation_identity = ?2, create_request_digest = ?3 WHERE child_process_id = ?4", params![PiChildSessionState::CreateAuthorized as i64, correlation.as_str(), create_request_digest.as_bytes().as_slice(), child_id.value()]).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    Ok(EventBody::PiCreateSessionAuthorized {
+        child_process_id: child_id,
+    })
+}
+
+fn record_pi_create_session_delivery(
+    transaction: &Transaction<'_>,
+    _command_row_id: i64,
+    expected: ExpectedGeneration,
+    child_id: ChildProcessId,
+    correlation: &PiCorrelationIdentity,
+    create_request_digest: Sha256Digest,
+) -> Result<EventBody, Rejection> {
+    let (_, state, _) = child_cycle_for_generation(transaction, child_id, expected)?;
+    let matches: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM pi_child_session_protocols WHERE child_process_id = ?1 AND lifecycle_state = ?2 AND create_correlation_identity = ?3 AND create_request_digest = ?4)", params![child_id.value(), PiChildSessionState::CreateAuthorized as i64, correlation.as_str(), create_request_digest.as_bytes().as_slice()], |r| r.get::<_, i64>(0)).map_err(|_| Rejection::ChildLifecycleReceiptMissing)? != 0;
+    if !matches!(
+        state,
+        ChildProcessState::Spawned | ChildProcessState::CancellationRequested
+    ) || !matches
+    {
+        return Err(Rejection::InvalidLifecycleTransition);
+    }
+    set_pi_protocol_state(transaction, child_id, PiChildSessionState::CreateDelivered)?;
+    Ok(EventBody::PiCreateSessionDeliveryRecorded {
+        child_process_id: child_id,
+    })
+}
+
+fn record_pi_session_ready(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected: ExpectedGeneration,
+    child_id: ChildProcessId,
+    identity: &PiBoundarySessionIdentity,
+) -> Result<EventBody, Rejection> {
+    let (_, state, pi_session_id) = child_cycle_for_generation(transaction, child_id, expected)?;
+    if !matches!(
+        state,
+        ChildProcessState::Spawned | ChildProcessState::CancellationRequested
+    ) || pi_protocol_state(transaction, child_id)? != PiChildSessionState::CreateDelivered
+    {
+        return Err(Rejection::InvalidLifecycleTransition);
+    }
+    let matches: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM pi_child_sessions WHERE pi_session_id = ?1 AND pi_session_identity = ?2 AND ready_by_command_id IS NULL)", params![pi_session_id.value(), identity.as_str()], |r| r.get::<_, i64>(0)).map_err(|_| Rejection::ChildLifecycleReceiptMissing)? != 0;
+    if !matches {
+        return Err(Rejection::ChildSpawnAdmissionInvalid);
+    }
+    transaction
+        .execute(
+            "UPDATE pi_child_sessions SET ready_by_command_id = ?1 WHERE pi_session_id = ?2",
+            params![command_row_id, pi_session_id.value()],
+        )
+        .map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    set_pi_protocol_state(transaction, child_id, PiChildSessionState::SessionReady)?;
+    if state == ChildProcessState::Spawned {
+        set_child_state(
+            transaction,
+            child_id,
+            ChildProcessState::Running,
+            command_row_id,
+        )?;
+    }
+    Ok(EventBody::PiSessionReadyRecorded {
+        child_process_id: child_id,
+        pi_session_id,
+    })
+}
+
+fn record_pi_abort_control_delivery(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected: ExpectedGeneration,
+    input: PiAbortControlDeliveryInput<'_>,
+) -> Result<EventBody, Rejection> {
+    let PiAbortControlDeliveryInput {
+        child_id,
+        propagation_id,
+        correlation,
+        abort_digest,
+        outcome,
+    } = input;
+    let (cycle_id, state, _) = child_cycle_for_generation(transaction, child_id, expected)?;
+    let _ = cycle_for_generation(transaction, cycle_id, expected)?;
+    if !matches!(
+        state,
+        ChildProcessState::Running | ChildProcessState::CancellationRequested
+    ) || pi_protocol_state(transaction, child_id)? != PiChildSessionState::SessionReady
+    {
+        return Err(Rejection::InvalidLifecycleTransition);
+    }
+    let target_exists: bool = transaction.query_row(
+        "SELECT EXISTS(
+           SELECT 1 FROM cancellation_propagation_targets t
+           JOIN cancellation_propagations p ON p.cancellation_propagation_id = t.cancellation_propagation_id
+          WHERE t.cancellation_propagation_id = ?1
+            AND t.child_process_id = ?2
+            AND t.target_disposition = ?3
+            AND p.lifecycle_state = 1)",
+        params![propagation_id.value(), child_id.value(), CancellationPropagationTargetDisposition::AwaitingChildReceipt as i64],
+        |row| row.get::<_, i64>(0),
+    ).map_err(|_| Rejection::CancellationPropagationIncomplete)? != 0;
+    if !target_exists {
+        return Err(Rejection::CancellationPropagationIncomplete);
+    }
+    transaction.execute(
+        "INSERT INTO pi_abort_control_receipts(child_process_id, cancellation_propagation_id, correlation_identity, abort_command_digest, physical_write_outcome, recorded_by_command_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![child_id.value(), propagation_id.value(), correlation.as_str(), abort_digest.as_bytes().as_slice(), outcome as i64, command_row_id],
+    ).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    Ok(EventBody::PiAbortControlDeliveryRecorded {
+        pi_abort_control_receipt_id: id_from_last_insert::<PiAbortControlReceiptId>(transaction)?,
+        child_process_id: child_id,
+        cancellation_propagation_id: propagation_id,
+        correlation_identity: correlation.clone(),
+        abort_command_digest: abort_digest,
+        outcome,
+    })
+}
+
+fn record_child_stream_seal(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected: ExpectedGeneration,
+    input: ChildStreamSealInput,
+) -> Result<EventBody, Rejection> {
+    let ChildStreamSealInput {
+        child_id,
+        stream,
+        full_digest,
+        retained,
+        completeness,
+    } = input;
+    let (_, state, _) = child_cycle_for_generation(transaction, child_id, expected)?;
+    if matches!(
+        state,
+        ChildProcessState::Finalized
+            | ChildProcessState::RecoveryContainmentRequired
+            | ChildProcessState::LostParentage
+    ) {
+        return Err(Rejection::InvalidLifecycleTransition);
+    }
+    let retained_digest: Option<Vec<u8>> = transaction.query_row("SELECT r.digest FROM content_objects o JOIN content_seal_receipts r ON r.content_seal_receipt_id = o.content_seal_receipt_id WHERE o.content_object_id = ?1", [retained.value()], |r| r.get(0)).optional().map_err(|_| Rejection::ContentObjectNotSealed)?;
+    let Some(retained_digest) = retained_digest else {
+        return Err(Rejection::ContentObjectNotSealed);
+    };
+    if completeness == ChildStreamSealCompleteness::Complete
+        && retained_digest.as_slice() != full_digest.as_bytes()
+    {
+        return Err(Rejection::ChildStreamSealBindingMismatch);
+    }
+    transaction.execute("INSERT INTO child_stream_seals(child_process_id, stream_kind, full_observed_digest, retained_content_object_id, completeness, sealed_by_command_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![child_id.value(), stream as i64, full_digest.as_bytes().as_slice(), retained.value(), completeness as i64, command_row_id]).map_err(|_| Rejection::ChildStreamSealBindingMismatch)?;
+    let seal_id = id_from_last_insert::<ChildStreamSealId>(transaction)?;
+    if completeness == ChildStreamSealCompleteness::CountOverflow {
+        mark_child_containment_failed(transaction, child_id, command_row_id)?;
+    }
+    Ok(EventBody::ChildStreamSealed {
+        child_stream_seal_id: seal_id,
+        child_process_id: child_id,
+        stream_kind: stream,
+        completeness,
+    })
+}
+
+fn record_child_process_liveness(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected: ExpectedGeneration,
+    child_id: ChildProcessId,
+    liveness: ProcessGroupLiveness,
+) -> Result<EventBody, Rejection> {
+    let (_, state, _) = child_cycle_for_generation(transaction, child_id, expected)?;
+    if state.is_terminal() {
+        return Err(Rejection::InvalidLifecycleTransition);
+    }
+    if state == ChildProcessState::RecoveryContainmentRequired
+        && liveness == ProcessGroupLiveness::Present
+    {
+        return Err(Rejection::InvalidLifecycleTransition);
+    }
+    let liveness_regressed = liveness_is_reuse_conflict(transaction, child_id, liveness)?;
+    transaction.execute("INSERT INTO child_process_liveness_observations(child_process_id, liveness, observed_by_command_id) VALUES (?1, ?2, ?3)", params![child_id.value(), liveness as i64, command_row_id]).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    // Preserve the receipt identity before a containment transition performs
+    // any material-row update. The event must name the physical observation,
+    // never an incidental later SQLite row identity.
+    let observation_id = id_from_last_insert::<ChildProcessLivenessObservationId>(transaction)?;
+    if liveness == ProcessGroupLiveness::Inaccessible || liveness_regressed {
+        mark_child_containment_failed(transaction, child_id, command_row_id)?;
+    } else if state == ChildProcessState::RecoveryContainmentRequired
+        && liveness == ProcessGroupLiveness::Absent
+    {
+        transaction
+            .execute(
+                "UPDATE pi_child_processes
+                SET lifecycle_state = ?1, terminal_disposition = ?2,
+                    last_transition_command_id = ?3
+              WHERE child_process_id = ?4 AND lifecycle_state = ?5",
+                params![
+                    ChildProcessState::LostParentage as i64,
+                    ChildTerminalDisposition::SupervisionLost as i64,
+                    command_row_id,
+                    child_id.value(),
+                    ChildProcessState::RecoveryContainmentRequired as i64,
+                ],
+            )
+            .map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    }
+    Ok(EventBody::ChildProcessLivenessObserved {
+        child_process_liveness_observation_id: observation_id,
+        child_process_id: child_id,
+        liveness,
+    })
+}
+
+fn record_process_signal_receipt(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected: ExpectedGeneration,
+    input: ProcessSignalReceiptInput,
+) -> Result<EventBody, Rejection> {
+    let ProcessSignalReceiptInput {
+        child_id,
+        action,
+        delivery,
+        liveness,
+        cause,
+    } = input;
+    if !matches!(
+        (delivery, liveness),
+        (ProcessSignalDelivery::Delivered, _)
+            | (
+                ProcessSignalDelivery::AbsentBeforeSignal,
+                ProcessGroupLiveness::Absent
+            )
+            | (
+                ProcessSignalDelivery::AbsentDuringSignal,
+                ProcessGroupLiveness::Absent
+            )
+            | (
+                ProcessSignalDelivery::Inaccessible,
+                ProcessGroupLiveness::Inaccessible
+            )
+    ) {
+        return Err(Rejection::ChildLifecycleReceiptMissing);
+    }
+    let (_, state, _) = child_cycle_for_generation(transaction, child_id, expected)?;
+    if state.is_terminal() {
+        return Err(Rejection::InvalidLifecycleTransition);
+    }
+    let protocol_state = pi_protocol_state(transaction, child_id)?;
+    let (cause_kind, propagation_id) = match cause {
+        ProcessSignalCause::CancellationPropagation(propagation_id) => {
+            // A cancellation signal is legal only after the durable target
+            // snapshot exists and names this exact child as still owing a
+            // terminal receipt. This prevents a later supervisor action from
+            // being retroactively attributed to cancellation.
+            let target_exists: bool = transaction
+                .query_row(
+                    "SELECT EXISTS(
+                   SELECT 1 FROM cancellation_propagation_targets t
+                   JOIN cancellation_propagations p
+                     ON p.cancellation_propagation_id = t.cancellation_propagation_id
+                  WHERE t.cancellation_propagation_id = ?1
+                    AND t.child_process_id = ?2
+                    AND t.target_disposition = ?3
+                    AND p.lifecycle_state = 1)",
+                    params![
+                        propagation_id.value(),
+                        child_id.value(),
+                        CancellationPropagationTargetDisposition::AwaitingChildReceipt as i64,
+                    ],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map_err(|_| Rejection::CancellationPropagationIncomplete)?
+                != 0;
+            if !target_exists {
+                return Err(Rejection::CancellationPropagationIncomplete);
+            }
+            match action {
+                ProcessSignalAction::Terminate => {
+                    // Before SessionReady a cancellation may contain an inert
+                    // child directly. Once a live Pi session exists, a TERM
+                    // must follow the exact propagation's durable Pi Abort
+                    // attempt, never an OS-signal lookalike. The nonblocking
+                    // host may have discarded a partial/failed write; that
+                    // still authorizes containment escalation, not success.
+                    if protocol_state == PiChildSessionState::SessionReady
+                        && !prior_pi_abort_control_attempt(transaction, child_id, propagation_id)?
+                    {
+                        return Err(Rejection::CancellationPropagationIncomplete);
+                    }
+                }
+                ProcessSignalAction::Kill => {
+                    if !prior_signal_attempt(
+                        transaction,
+                        child_id,
+                        ProcessSignalAction::Terminate,
+                        1,
+                        Some(propagation_id),
+                    )? {
+                        return Err(Rejection::CancellationPropagationIncomplete);
+                    }
+                }
+                ProcessSignalAction::LingeringGroupKill => {
+                    if !lingering_group_cleanup_is_due(transaction, child_id)? {
+                        return Err(Rejection::CancellationPropagationIncomplete);
+                    }
+                }
+            }
+            (1, Some(propagation_id.value()))
+        }
+        ProcessSignalCause::AutomaticBoundaryContainment => {
+            // Automatic protocol containment is intentionally narrower than
+            // cancellation propagation. The transient supervisor's emergency
+            // boundary containment uses TERM then KILL (and may later use a
+            // lingering-group kill). Pi Abort is a separate control receipt.
+            if !matches!(
+                action,
+                ProcessSignalAction::Terminate
+                    | ProcessSignalAction::Kill
+                    | ProcessSignalAction::LingeringGroupKill
+            ) {
+                return Err(Rejection::CancellationPropagationIncomplete);
+            }
+            if action == ProcessSignalAction::Kill
+                && !prior_signal_attempt(
+                    transaction,
+                    child_id,
+                    ProcessSignalAction::Terminate,
+                    2,
+                    None,
+                )?
+            {
+                return Err(Rejection::CancellationPropagationIncomplete);
+            }
+            if action == ProcessSignalAction::LingeringGroupKill
+                && !lingering_group_cleanup_is_due(transaction, child_id)?
+            {
+                return Err(Rejection::CancellationPropagationIncomplete);
+            }
+            (2, None)
+        }
+    };
+    let liveness_regressed = liveness_is_reuse_conflict(transaction, child_id, liveness)?;
+    transaction.execute("INSERT INTO process_signal_receipts(child_process_id, signal_action, delivery, observed_liveness, cause_kind, cancellation_propagation_id, recorded_by_command_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)", params![child_id.value(), action as i64, delivery as i64, liveness as i64, cause_kind, propagation_id, command_row_id]).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    if delivery == ProcessSignalDelivery::Delivered
+        && matches!(
+            state,
+            ChildProcessState::Spawned | ChildProcessState::Running
+        )
+    {
+        set_child_state(
+            transaction,
+            child_id,
+            ChildProcessState::CancellationRequested,
+            command_row_id,
+        )?;
+    }
+    if delivery == ProcessSignalDelivery::Inaccessible
+        || liveness == ProcessGroupLiveness::Inaccessible
+        || liveness_regressed
+    {
+        mark_child_containment_failed(transaction, child_id, command_row_id)?;
+    } else if state == ChildProcessState::RecoveryContainmentRequired
+        && liveness == ProcessGroupLiveness::Absent
+    {
+        // A post-restart Absent signal observation is equivalent to the
+        // liveness probe: it is the first exact evidence that the unknown
+        // parentage no longer leaves a live process group to contain.
+        transaction
+            .execute(
+                "UPDATE pi_child_processes
+                    SET lifecycle_state = ?1, terminal_disposition = ?2,
+                        last_transition_command_id = ?3
+                  WHERE child_process_id = ?4 AND lifecycle_state = ?5",
+                params![
+                    ChildProcessState::LostParentage as i64,
+                    ChildTerminalDisposition::SupervisionLost as i64,
+                    command_row_id,
+                    child_id.value(),
+                    ChildProcessState::RecoveryContainmentRequired as i64,
+                ],
+            )
+            .map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    }
+    Ok(EventBody::ProcessSignalReceiptRecorded {
+        process_signal_receipt_id: id_from_last_insert::<ProcessSignalReceiptId>(transaction)?,
+        child_process_id: child_id,
+        action,
+        delivery,
+        observed_liveness: liveness,
+        cause,
+    })
+}
+
+fn prior_signal_attempt(
+    transaction: &Transaction<'_>,
+    child_id: ChildProcessId,
+    action: ProcessSignalAction,
+    cause_kind: i64,
+    propagation_id: Option<CancellationPropagationId>,
+) -> Result<bool, Rejection> {
+    transaction
+        .query_row(
+            "SELECT EXISTS(
+           SELECT 1 FROM process_signal_receipts
+            WHERE child_process_id = ?1
+              AND signal_action = ?2
+              AND cause_kind = ?3
+              AND cancellation_propagation_id IS ?4)",
+            params![
+                child_id.value(),
+                action as i64,
+                cause_kind,
+                propagation_id.map(CancellationPropagationId::value),
+            ],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|value| value != 0)
+        .map_err(|_| Rejection::ChildLifecycleReceiptMissing)
+}
+
+fn prior_pi_abort_control_attempt(
+    transaction: &Transaction<'_>,
+    child_id: ChildProcessId,
+    propagation_id: CancellationPropagationId,
+) -> Result<bool, Rejection> {
+    transaction
+        .query_row(
+            "SELECT EXISTS(
+               SELECT 1 FROM pi_abort_control_receipts
+                WHERE child_process_id = ?1
+                  AND cancellation_propagation_id = ?2
+                 )",
+            params![child_id.value(), propagation_id.value(),],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|value| value != 0)
+        .map_err(|_| Rejection::ChildLifecycleReceiptMissing)
+}
+
+/// The PID/PGID pair is one owned physical identity. Seeing it absent and
+/// later seeing it present/inaccessible is a durable reuse/containment fact,
+/// not an invalid caller request that may simply disappear from the ledger.
+fn liveness_is_reuse_conflict(
+    transaction: &Transaction<'_>,
+    child_id: ChildProcessId,
+    liveness: ProcessGroupLiveness,
+) -> Result<bool, Rejection> {
+    if liveness == ProcessGroupLiveness::Absent {
+        return Ok(false);
+    }
+    transaction.query_row(
+        "SELECT EXISTS(
+            SELECT 1 FROM child_process_liveness_observations WHERE child_process_id = ?1 AND liveness = 2
+            UNION ALL SELECT 1 FROM process_signal_receipts WHERE child_process_id = ?1 AND observed_liveness = 2
+            UNION ALL SELECT 1 FROM child_process_reap_receipts WHERE child_process_id = ?1 AND (group_liveness_before_cleanup = 2 OR group_liveness_after_cleanup = 2)
+        )",
+        [child_id.value()],
+        |row| row.get::<_, i64>(0),
+    ).map(|value| value != 0).map_err(|_| Rejection::ChildLifecycleReceiptMissing)
+}
+
+fn lingering_group_cleanup_is_due(
+    transaction: &Transaction<'_>,
+    child_id: ChildProcessId,
+) -> Result<bool, Rejection> {
+    transaction
+        .query_row(
+            "SELECT EXISTS(
+           SELECT 1 FROM pi_child_processes c
+           JOIN child_process_reap_receipts r ON r.child_process_id = c.child_process_id
+          WHERE c.child_process_id = ?1
+            AND c.lifecycle_state = ?2
+            AND r.group_liveness_after_cleanup = ?3)",
+            params![
+                child_id.value(),
+                ChildProcessState::DirectChildReaped as i64,
+                ProcessGroupLiveness::Present as i64,
+            ],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|value| value != 0)
+        .map_err(|_| Rejection::ChildLifecycleReceiptMissing)
+}
+
+fn record_direct_child_reap(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected: ExpectedGeneration,
+    child_id: ChildProcessId,
+    status: DirectChildWaitStatus,
+    before: ProcessGroupLiveness,
+    after: ProcessGroupLiveness,
+) -> Result<EventBody, Rejection> {
+    let (_, state, _) = child_cycle_for_generation(transaction, child_id, expected)?;
+    if matches!(
+        state,
+        ChildProcessState::Finalized
+            | ChildProcessState::RecoveryContainmentRequired
+            | ChildProcessState::LostParentage
+            | ChildProcessState::DirectChildReaped
+    ) {
+        return Err(Rejection::InvalidLifecycleTransition);
+    }
+    let liveness_regressed = liveness_is_reuse_conflict(transaction, child_id, before)?
+        || liveness_is_reuse_conflict(transaction, child_id, after)?;
+    let (kind, value) = match status {
+        DirectChildWaitStatus::Exited { exit_code } => (1, Some(i64::from(exit_code.value()))),
+        DirectChildWaitStatus::Signaled { signal_number } => {
+            (2, Some(i64::from(signal_number.value())))
+        }
+        DirectChildWaitStatus::Unknown => (3, None),
+    };
+    transaction.execute("INSERT INTO child_process_reap_receipts(child_process_id, wait_status_kind, status_value, group_liveness_before_cleanup, group_liveness_after_cleanup, reaped_by_command_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![child_id.value(), kind, value, before as i64, after as i64, command_row_id]).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    // A wait(2) only proves the direct child. Descendants which remain present
+    // or inaccessible after cleanup are a durable containment failure, not a
+    // close-eligible finalization. We preserve the wait receipt for audit.
+    if after == ProcessGroupLiveness::Inaccessible || liveness_regressed {
+        mark_child_containment_failed(transaction, child_id, command_row_id)?;
+    } else if state != ChildProcessState::ContainmentFailed {
+        set_child_state(
+            transaction,
+            child_id,
+            ChildProcessState::DirectChildReaped,
+            command_row_id,
+        )?;
+    }
+    Ok(EventBody::DirectChildReaped {
+        child_process_reap_receipt_id: id_from_last_insert::<ChildProcessReapReceiptId>(
+            transaction,
+        )?,
+        child_process_id: child_id,
+        wait_status: status,
+        group_liveness_before_cleanup: before,
+        group_liveness_after_cleanup: after,
+    })
+}
+
+fn record_child_recovery(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected: ExpectedGeneration,
+    child_id: ChildProcessId,
+    observation: ChildRecoveryObservation,
+    group_liveness_after_restart: ProcessGroupLiveness,
+) -> Result<EventBody, Rejection> {
+    let (_, state, _) = child_cycle_for_generation(transaction, child_id, expected)?;
+    // Containment failure is an immutable close blocker in M5. A later
+    // restart observation cannot down-classify a known descendant/liveness
+    // failure into merely lost parentage.
+    if matches!(
+        state,
+        ChildProcessState::Finalized
+            | ChildProcessState::DirectChildReaped
+            | ChildProcessState::RecoveryContainmentRequired
+            | ChildProcessState::LostParentage
+            | ChildProcessState::ContainmentFailed
+    ) {
+        return Err(Rejection::InvalidLifecycleTransition);
+    }
+    let liveness_regressed =
+        liveness_is_reuse_conflict(transaction, child_id, group_liveness_after_restart)?;
+    transaction.execute("INSERT INTO child_process_recovery_receipts(child_process_id, observation, group_liveness_after_restart, recorded_by_command_id) VALUES (?1, ?2, ?3, ?4)", params![child_id.value(), observation as i64, group_liveness_after_restart as i64, command_row_id]).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    match group_liveness_after_restart {
+        ProcessGroupLiveness::Absent => {
+            transaction
+                .execute(
+                    "UPDATE pi_child_processes
+            SET lifecycle_state = ?1, terminal_disposition = ?2,
+                last_transition_command_id = ?3
+          WHERE child_process_id = ?4",
+                    params![
+                        ChildProcessState::LostParentage as i64,
+                        ChildTerminalDisposition::SupervisionLost as i64,
+                        command_row_id,
+                        child_id.value(),
+                    ],
+                )
+                .map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+        }
+        ProcessGroupLiveness::Inaccessible => {
+            mark_child_containment_failed(transaction, child_id, command_row_id)?;
+        }
+        // Parentage loss plus a still-present group is deliberately not a
+        // terminal recovery fact. It enters the nonterminal
+        // RecoveryContainmentRequired
+        // containment state: no Pi protocol/new-work or wait(2) receipt may
+        // reopen it. The one-shot recovery receipt is now consumed; later
+        // containment/liveness observations use their dedicated receipt.
+        ProcessGroupLiveness::Present if liveness_regressed => {
+            mark_child_containment_failed(transaction, child_id, command_row_id)?;
+        }
+        ProcessGroupLiveness::Present => {
+            transaction
+                .execute(
+                    "UPDATE pi_child_processes
+                    SET lifecycle_state = ?1, terminal_disposition = NULL,
+                        last_transition_command_id = ?2
+                  WHERE child_process_id = ?3",
+                    params![
+                        ChildProcessState::RecoveryContainmentRequired as i64,
+                        command_row_id,
+                        child_id.value(),
+                    ],
+                )
+                .map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+        }
+    };
+    Ok(EventBody::ChildRecoveryObserved {
+        child_process_recovery_receipt_id: id_from_last_insert::<ChildProcessRecoveryReceiptId>(
+            transaction,
+        )?,
+        child_process_id: child_id,
+        observation,
+        group_liveness_after_restart,
+    })
+}
+
+fn finalize_child_process(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected: ExpectedGeneration,
+    child_id: ChildProcessId,
+) -> Result<EventBody, Rejection> {
+    let (_, state, _) = child_cycle_for_generation(transaction, child_id, expected)?;
+    let disposition = if state == ChildProcessState::DirectChildReaped {
+        let (kind, value, after, reap_command): (i64, Option<i64>, i64, i64) = transaction.query_row("SELECT wait_status_kind, status_value, group_liveness_after_cleanup, reaped_by_command_id FROM child_process_reap_receipts WHERE child_process_id = ?1", [child_id.value()], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+        let group_absent_after_reap = after == ProcessGroupLiveness::Absent as i64 || transaction.query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM child_process_liveness_observations
+                 WHERE child_process_id = ?1 AND liveness = 2 AND observed_by_command_id > ?2
+                UNION ALL
+                SELECT 1 FROM process_signal_receipts
+                 WHERE child_process_id = ?1 AND observed_liveness = 2 AND recorded_by_command_id > ?2
+            )",
+            params![child_id.value(), reap_command],
+            |row| row.get::<_, i64>(0),
+        ).map_err(|_| Rejection::ChildLifecycleReceiptMissing)? != 0;
+        if !group_absent_after_reap {
+            return Err(Rejection::ProcessContainmentFailed);
+        }
+        let retained_seals: i64 = transaction.query_row("SELECT COUNT(*) FROM child_stream_seals WHERE child_process_id = ?1 AND completeness IN (1, 2)", [child_id.value()], |r| r.get(0)).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+        if retained_seals != 4 {
+            return Err(Rejection::ChildLifecycleReceiptMissing);
+        }
+        match (kind, value) {
+            (1, Some(_)) => ChildTerminalDisposition::Exited,
+            (2, Some(signal_number)) => signal_terminal_disposition(
+                transaction,
+                child_id,
+                ProcessSignalNumber::try_from(
+                    i32::try_from(signal_number)
+                        .map_err(|_| Rejection::ChildLifecycleReceiptMissing)?,
+                )
+                .map_err(|_| Rejection::ChildLifecycleReceiptMissing)?,
+            )?,
+            // Unknown wait status is a distinct loss-of-parentage fact. M5
+            // never converts it into a close-eligible child finalization.
+            (3, None) => return Err(Rejection::ChildLifecycleReceiptMissing),
+            _ => return Err(Rejection::ChildLifecycleReceiptMissing),
+        }
+    } else if state == ChildProcessState::ContainmentFailed {
+        return Err(Rejection::ProcessContainmentFailed);
+    } else {
+        return Err(Rejection::ChildLifecycleReceiptMissing);
+    };
+    transaction.execute("UPDATE pi_child_processes SET lifecycle_state = ?1, terminal_disposition = ?2, last_transition_command_id = ?3 WHERE child_process_id = ?4", params![ChildProcessState::Finalized as i64, disposition as i64, command_row_id, child_id.value()]).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    // A physical exit is not a Pi/model outcome, submission, validation, or
+    // budget reconciliation. M5 therefore ends only the child receipt chain;
+    // later normalized supervisor/Pi receipts own semantic Attempt or Office
+    // settlement. This intentionally keeps those higher-level close fences.
+    Ok(EventBody::ChildProcessFinalized {
+        child_process_id: child_id,
+        disposition,
+    })
+}
+
+fn begin_cancellation_propagation(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected: ExpectedGeneration,
+    cancellation_request_id: CancellationRequestId,
+) -> Result<EventBody, Rejection> {
+    let row: Option<(i64, i64)> = transaction.query_row("SELECT operating_cycle_id, lifecycle_state FROM cancellation_requests WHERE cancellation_request_id = ?1", [cancellation_request_id.value()], |r| Ok((r.get(0)?, r.get(1)?))).optional().map_err(|_| Rejection::SubjectNotFound)?;
+    let Some((cycle, request_state)) = row else {
+        return Err(Rejection::SubjectNotFound);
+    };
+    let cycle_id = OperatingCycleId::try_from(cycle).map_err(|_| Rejection::SubjectNotFound)?;
+    let cycle = cycle_for_generation(transaction, cycle_id, expected)?;
+    if cycle.state != OperatingCycleState::Cancelling
+        || request_state == CancellationState::Completed as i64
+    {
+        return Err(Rejection::InvalidLifecycleTransition);
+    }
+    transaction.execute("INSERT INTO cancellation_propagations(cancellation_request_id, operating_cycle_id, observed_generation, lifecycle_state, begun_by_command_id, reconciled_by_command_id) VALUES (?1, ?2, ?3, 1, ?4, NULL)", params![cancellation_request_id.value(), cycle_id.value(), cycle.generation.value(), command_row_id]).map_err(|_| Rejection::InvalidLifecycleTransition)?;
+    let id = id_from_last_insert::<CancellationPropagationId>(transaction)?;
+    // Snapshot owners before children. An admitted-but-unspawned owner stays
+    // AwaitingChildReceipt until a typed invalidation or raced spawn resolves
+    // it; a target with no admission is the explicit `not_running` fact.
+    transaction.execute(
+        "INSERT INTO cancellation_propagation_targets(cancellation_propagation_id, actor_attempt_id, grand_architect_office_session_id, child_process_id, target_disposition)
+         SELECT ?1, a.actor_attempt_id, NULL, p.child_process_id,
+                CASE
+                  WHEN p.child_process_id IS NULL AND s.pi_child_spawn_admission_id IS NOT NULL AND s.lifecycle_state = 1 THEN 2
+                  WHEN p.child_process_id IS NULL THEN 1
+                  WHEN p.lifecycle_state = 8 AND p.terminal_disposition = 1 THEN 3
+                  WHEN p.lifecycle_state = 8 AND p.terminal_disposition = 4 THEN 4
+                  WHEN p.lifecycle_state = 8 AND p.terminal_disposition = 5 THEN 5
+                  WHEN p.lifecycle_state = 7 THEN 6
+                  WHEN p.lifecycle_state = 6 AND p.terminal_disposition = 6 THEN 7
+                  WHEN p.lifecycle_state = 5 THEN 2
+                  ELSE 2
+                END
+           FROM attempts a
+      LEFT JOIN pi_child_spawn_admissions s ON s.actor_attempt_id = a.actor_attempt_id
+      LEFT JOIN pi_child_processes p ON p.pi_child_spawn_admission_id = s.pi_child_spawn_admission_id
+          WHERE a.operating_cycle_id = ?2 AND a.lifecycle_state IN (1, 2)",
+        params![id.value(), cycle_id.value()],
+    ).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    transaction.execute(
+        "INSERT INTO cancellation_propagation_targets(cancellation_propagation_id, actor_attempt_id, grand_architect_office_session_id, child_process_id, target_disposition)
+         SELECT ?1, NULL, o.grand_architect_office_session_id, p.child_process_id,
+                CASE
+                  WHEN p.child_process_id IS NULL AND s.pi_child_spawn_admission_id IS NOT NULL AND s.lifecycle_state = 1 THEN 2
+                  WHEN p.child_process_id IS NULL THEN 1
+                  WHEN p.lifecycle_state = 8 AND p.terminal_disposition = 1 THEN 3
+                  WHEN p.lifecycle_state = 8 AND p.terminal_disposition = 4 THEN 4
+                  WHEN p.lifecycle_state = 8 AND p.terminal_disposition = 5 THEN 5
+                  WHEN p.lifecycle_state = 7 THEN 6
+                  WHEN p.lifecycle_state = 6 AND p.terminal_disposition = 6 THEN 7
+                  WHEN p.lifecycle_state = 5 THEN 2
+                  ELSE 2
+                END
+           FROM grand_architect_office_sessions o
+      LEFT JOIN pi_child_spawn_admissions s ON s.grand_architect_office_session_id = o.grand_architect_office_session_id
+      LEFT JOIN pi_child_processes p ON p.pi_child_spawn_admission_id = s.pi_child_spawn_admission_id
+          WHERE o.operating_cycle_id = ?2 AND o.lifecycle_state NOT IN (8, 10, 11)",
+        params![id.value(), cycle_id.value()],
+    ).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    transaction.execute("INSERT INTO cancellation_propagation_children(cancellation_propagation_id, child_process_id) SELECT ?1, child_process_id FROM cancellation_propagation_targets WHERE cancellation_propagation_id = ?1 AND child_process_id IS NOT NULL AND target_disposition = 2", [id.value()]).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    transaction.execute("UPDATE cancellation_requests SET lifecycle_state = ?1 WHERE cancellation_request_id = ?2", params![CancellationState::Propagating as i64, cancellation_request_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    Ok(EventBody::CancellationPropagationBegun {
+        cancellation_propagation_id: id,
+        cancellation_request_id,
+    })
+}
+
+fn reconcile_cancellation_propagation(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected: ExpectedGeneration,
+    propagation_id: CancellationPropagationId,
+) -> Result<EventBody, Rejection> {
+    let row: Option<(i64, i64, i64)> = transaction.query_row("SELECT operating_cycle_id, lifecycle_state, cancellation_request_id FROM cancellation_propagations WHERE cancellation_propagation_id = ?1", [propagation_id.value()], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).optional().map_err(|_| Rejection::SubjectNotFound)?;
+    let Some((cycle, state, _)) = row else {
+        return Err(Rejection::SubjectNotFound);
+    };
+    let cycle_id = OperatingCycleId::try_from(cycle).map_err(|_| Rejection::SubjectNotFound)?;
+    let _ = cycle_for_generation(transaction, cycle_id, expected)?;
+    if state != CancellationPropagationState::Propagating as i64 {
+        return Err(Rejection::InvalidLifecycleTransition);
+    }
+    transaction
+        .execute(
+            "UPDATE cancellation_propagation_targets
+            SET target_disposition = CASE
+                 WHEN p.lifecycle_state = 8 AND p.terminal_disposition = 1 THEN 3
+                 WHEN p.lifecycle_state = 8 AND p.terminal_disposition = 4 THEN 4
+                 WHEN p.lifecycle_state = 8 AND p.terminal_disposition = 5 THEN 5
+                 WHEN p.lifecycle_state = 7 THEN 6
+                 WHEN p.lifecycle_state = 6 AND p.terminal_disposition = 6 THEN 7
+                 ELSE target_disposition
+               END
+           FROM pi_child_processes p
+          WHERE cancellation_propagation_targets.cancellation_propagation_id = ?1
+            AND cancellation_propagation_targets.child_process_id = p.child_process_id",
+            [propagation_id.value()],
+        )
+        .map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    let containment: i64 = transaction.query_row("SELECT COUNT(*) FROM cancellation_propagation_targets WHERE cancellation_propagation_id = ?1 AND target_disposition = 6", [propagation_id.value()], |r| r.get(0)).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    if containment != 0 {
+        transaction.execute("UPDATE cancellation_propagations SET lifecycle_state = 3 WHERE cancellation_propagation_id = ?1", [propagation_id.value()]).map_err(|_| Rejection::ProcessContainmentFailed)?;
+        return Ok(EventBody::CancellationPropagationContainmentFailed {
+            cancellation_propagation_id: propagation_id,
+        });
+    }
+    let unfinished: i64 = transaction.query_row("SELECT COUNT(*) FROM cancellation_propagation_targets WHERE cancellation_propagation_id = ?1 AND target_disposition = 2", [propagation_id.value()], |r| r.get(0)).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    if unfinished != 0 {
+        return Err(Rejection::CancellationPropagationIncomplete);
+    }
+    transaction.execute("UPDATE cancellation_propagations SET lifecycle_state = 2, reconciled_by_command_id = ?1 WHERE cancellation_propagation_id = ?2", params![command_row_id, propagation_id.value()]).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    Ok(EventBody::CancellationPropagationReconciled {
+        cancellation_propagation_id: propagation_id,
+    })
+}
+
+fn set_child_state(
+    transaction: &Transaction<'_>,
+    child_id: ChildProcessId,
+    state: ChildProcessState,
+    command_row_id: i64,
+) -> Result<(), Rejection> {
+    transaction.execute("UPDATE pi_child_processes SET lifecycle_state = ?1, last_transition_command_id = ?2 WHERE child_process_id = ?3", params![state as i64, command_row_id, child_id.value()]).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    Ok(())
+}
+
+fn mark_child_containment_failed(
+    transaction: &Transaction<'_>,
+    child_id: ChildProcessId,
+    command_row_id: i64,
+) -> Result<(), Rejection> {
+    transaction
+        .execute(
+            "UPDATE pi_child_processes
+            SET lifecycle_state = ?1, terminal_disposition = ?2,
+                last_transition_command_id = ?3
+          WHERE child_process_id = ?4",
+            params![
+                ChildProcessState::ContainmentFailed as i64,
+                ChildTerminalDisposition::ContainmentFailed as i64,
+                command_row_id,
+                child_id.value(),
+            ],
+        )
+        .map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    Ok(())
+}
+
+fn pi_protocol_state(
+    transaction: &Transaction<'_>,
+    child_id: ChildProcessId,
+) -> Result<PiChildSessionState, Rejection> {
+    let value: i64 = transaction
+        .query_row(
+            "SELECT lifecycle_state FROM pi_child_session_protocols WHERE child_process_id = ?1",
+            [child_id.value()],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|_| Rejection::ChildLifecycleReceiptMissing)?
+        .ok_or(Rejection::ChildLifecycleReceiptMissing)?;
+    match value {
+        1 => Ok(PiChildSessionState::InertSpawned),
+        2 => Ok(PiChildSessionState::AdapterReady),
+        3 => Ok(PiChildSessionState::CreateAuthorized),
+        4 => Ok(PiChildSessionState::CreateDelivered),
+        5 => Ok(PiChildSessionState::SessionReady),
+        _ => Err(Rejection::ChildLifecycleReceiptMissing),
+    }
+}
+
+fn set_pi_protocol_state(
+    transaction: &Transaction<'_>,
+    child_id: ChildProcessId,
+    state: PiChildSessionState,
+) -> Result<(), Rejection> {
+    transaction.execute("UPDATE pi_child_session_protocols SET lifecycle_state = ?1 WHERE child_process_id = ?2", params![state as i64, child_id.value()]).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    Ok(())
+}
+
+fn signal_terminal_disposition(
+    transaction: &Transaction<'_>,
+    child_id: ChildProcessId,
+    signal_number: ProcessSignalNumber,
+) -> Result<ChildTerminalDisposition, Rejection> {
+    // A delivered supervisory action is not itself proof of the process's
+    // terminal cause. The waited signal must agree with an exact delivered
+    // action. AdapterAbort is intentionally absent: without a typed Pi
+    // terminal receipt it cannot turn an arbitrary crash into "cooperative".
+    let expected_action = match signal_number.value() {
+        15 => ProcessSignalAction::Terminate,
+        9 => ProcessSignalAction::Kill,
+        _ => return Err(Rejection::ChildLifecycleReceiptMissing),
+    };
+    let delivered: bool = transaction
+        .query_row(
+            "SELECT EXISTS(
+           SELECT 1 FROM process_signal_receipts
+            WHERE child_process_id = ?1
+              AND signal_action IN (?2, ?3)
+              AND delivery = ?4)",
+            params![
+                child_id.value(),
+                expected_action as i64,
+                if expected_action == ProcessSignalAction::Kill {
+                    ProcessSignalAction::LingeringGroupKill as i64
+                } else {
+                    -1_i64
+                },
+                ProcessSignalDelivery::Delivered as i64,
+            ],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|_| Rejection::ChildLifecycleReceiptMissing)?
+        != 0;
+    if !delivered {
+        return Err(Rejection::ChildLifecycleReceiptMissing);
+    }
+    Ok(match expected_action {
+        ProcessSignalAction::Terminate => ChildTerminalDisposition::Terminated,
+        ProcessSignalAction::Kill => ChildTerminalDisposition::Killed,
+        _ => return Err(Rejection::ChildLifecycleReceiptMissing),
+    })
+}
+
 fn capability_grant(
     transaction: &Transaction<'_>,
     principal_id: PrincipalId,
@@ -5827,6 +7686,36 @@ fn live_actor_attempt_count(
         .map_err(|_| Rejection::SubjectNotFound)
 }
 
+/// Physical Pi children are an independent close fence. Their terminal
+/// disposition is intentionally not an Attempt/Office semantic settlement,
+/// but a cycle cannot disappear while any process remains live or indeterminate.
+fn live_pi_child_count(
+    transaction: &Transaction<'_>,
+    cycle_id: OperatingCycleId,
+) -> Result<i64, Rejection> {
+    transaction.query_row(
+        "SELECT COUNT(*) FROM pi_child_processes p
+         JOIN pi_child_spawn_admissions a ON a.pi_child_spawn_admission_id = p.pi_child_spawn_admission_id
+         WHERE a.operating_cycle_id = ?1 AND p.lifecycle_state != ?2",
+        params![cycle_id.value(), ChildProcessState::Finalized as i64],
+        |row| row.get(0),
+    ).map_err(|_| Rejection::SubjectNotFound)
+}
+
+fn undisposed_pi_workspace_count(
+    transaction: &Transaction<'_>,
+    cycle_id: OperatingCycleId,
+) -> Result<i64, Rejection> {
+    transaction
+        .query_row(
+            "SELECT COUNT(*) FROM pi_child_spawn_admissions
+          WHERE operating_cycle_id = ?1",
+            [cycle_id.value()],
+            |row| row.get(0),
+        )
+        .map_err(|_| Rejection::SubjectNotFound)
+}
+
 fn active_cancellation_for_cycle(
     transaction: &Transaction<'_>,
     cycle_id: OperatingCycleId,
@@ -6394,6 +8283,168 @@ fn request_fingerprint(request: &CommandRequest) -> Sha256Digest {
             put_i64(&mut bytes, outcome_obligation_id.value());
             put_i64(&mut bytes, *disposition as i64);
         }
+        CommandBody::OpenSupervisorEpoch {
+            supervisor_epoch_id,
+            supervisor_epoch_identity,
+        } => {
+            put_i64(&mut bytes, supervisor_epoch_id.value());
+            put_bytes(&mut bytes, supervisor_epoch_identity.as_str().as_bytes());
+        }
+        CommandBody::AdmitPiChildSpawn {
+            operating_cycle_id,
+            owner,
+            budget_reservation_id,
+            execution_profile_id,
+            native_workspace_id,
+            canonical_workspace_path,
+            supervisor_epoch_id,
+            supervisor_epoch_identity,
+            pi_session_identity,
+            spawn_nonce,
+        } => {
+            put_i64(&mut bytes, operating_cycle_id.value());
+            match owner {
+                PiChildOwner::ActorAttempt(id) => {
+                    put_i64(&mut bytes, 1);
+                    put_i64(&mut bytes, id.value());
+                }
+                PiChildOwner::GrandArchitectOfficeSession(id) => {
+                    put_i64(&mut bytes, 2);
+                    put_i64(&mut bytes, id.value());
+                }
+            }
+            put_i64(&mut bytes, budget_reservation_id.value());
+            put_i64(&mut bytes, execution_profile_id.value());
+            put_bytes(&mut bytes, native_workspace_id.as_str().as_bytes());
+            put_bytes(&mut bytes, canonical_workspace_path.as_str().as_bytes());
+            put_i64(&mut bytes, supervisor_epoch_id.value());
+            put_bytes(&mut bytes, supervisor_epoch_identity.as_str().as_bytes());
+            put_bytes(&mut bytes, pi_session_identity.as_str().as_bytes());
+            put_bytes(&mut bytes, spawn_nonce.as_str().as_bytes());
+        }
+        CommandBody::RecordInertChildSpawn {
+            pi_child_spawn_admission_id,
+            child_identity,
+            direct_child_pid,
+            process_group_id,
+        } => {
+            put_i64(&mut bytes, pi_child_spawn_admission_id.value());
+            put_bytes(&mut bytes, child_identity.as_str().as_bytes());
+            put_i64(&mut bytes, i64::from(direct_child_pid.value()));
+            put_i64(&mut bytes, i64::from(process_group_id.value()));
+        }
+        CommandBody::RecordPiAdapterReady {
+            child_process_id,
+            pi_session_identity,
+            spawn_nonce,
+        } => {
+            put_i64(&mut bytes, child_process_id.value());
+            put_bytes(&mut bytes, pi_session_identity.as_str().as_bytes());
+            put_bytes(&mut bytes, spawn_nonce.as_str().as_bytes());
+        }
+        CommandBody::AuthorizePiCreateSession {
+            child_process_id,
+            correlation_identity,
+            create_request_digest,
+        }
+        | CommandBody::RecordPiCreateSessionDelivery {
+            child_process_id,
+            correlation_identity,
+            create_request_digest,
+        } => {
+            put_i64(&mut bytes, child_process_id.value());
+            put_bytes(&mut bytes, correlation_identity.as_str().as_bytes());
+            put_bytes(&mut bytes, &create_request_digest.as_bytes());
+        }
+        CommandBody::RecordPiSessionReady {
+            child_process_id,
+            pi_session_identity,
+        } => {
+            put_i64(&mut bytes, child_process_id.value());
+            put_bytes(&mut bytes, pi_session_identity.as_str().as_bytes());
+        }
+        CommandBody::RecordPiAbortControlDelivery {
+            child_process_id,
+            cancellation_propagation_id,
+            correlation_identity,
+            abort_command_digest,
+            outcome,
+        } => {
+            put_i64(&mut bytes, child_process_id.value());
+            put_i64(&mut bytes, cancellation_propagation_id.value());
+            put_bytes(&mut bytes, correlation_identity.as_str().as_bytes());
+            put_bytes(&mut bytes, &abort_command_digest.as_bytes());
+            put_i64(&mut bytes, *outcome as i64);
+        }
+        CommandBody::RecordChildStreamSeal {
+            child_process_id,
+            stream_kind,
+            full_observed_digest,
+            retained_content_object_id,
+            completeness,
+        } => {
+            put_i64(&mut bytes, child_process_id.value());
+            put_i64(&mut bytes, *stream_kind as i64);
+            put_bytes(&mut bytes, &full_observed_digest.as_bytes());
+            put_i64(&mut bytes, retained_content_object_id.value());
+            put_i64(&mut bytes, *completeness as i64);
+        }
+        CommandBody::RecordChildProcessLiveness {
+            child_process_id,
+            liveness,
+        } => {
+            put_i64(&mut bytes, child_process_id.value());
+            put_i64(&mut bytes, *liveness as i64);
+        }
+        CommandBody::RecordProcessSignalReceipt {
+            child_process_id,
+            action,
+            delivery,
+            observed_liveness,
+            cause,
+        } => {
+            put_i64(&mut bytes, child_process_id.value());
+            put_i64(&mut bytes, *action as i64);
+            put_i64(&mut bytes, *delivery as i64);
+            put_i64(&mut bytes, *observed_liveness as i64);
+            put_process_signal_cause(&mut bytes, *cause);
+        }
+        CommandBody::RecordDirectChildReap {
+            child_process_id,
+            wait_status,
+            group_liveness_before_cleanup,
+            group_liveness_after_cleanup,
+        } => {
+            put_i64(&mut bytes, child_process_id.value());
+            put_direct_wait_status(&mut bytes, *wait_status);
+            put_i64(&mut bytes, *group_liveness_before_cleanup as i64);
+            put_i64(&mut bytes, *group_liveness_after_cleanup as i64);
+        }
+        CommandBody::RecordChildRecovery {
+            child_process_id,
+            observation,
+            group_liveness_after_restart,
+        } => {
+            put_i64(&mut bytes, child_process_id.value());
+            put_i64(&mut bytes, *observation as i64);
+            put_i64(&mut bytes, *group_liveness_after_restart as i64);
+        }
+        CommandBody::FinalizeChildProcess { child_process_id } => {
+            put_i64(&mut bytes, child_process_id.value())
+        }
+        CommandBody::BeginCancellationPropagation {
+            cancellation_request_id,
+        } => put_i64(&mut bytes, cancellation_request_id.value()),
+        CommandBody::ReconcileCancellationPropagation {
+            cancellation_propagation_id,
+        } => put_i64(&mut bytes, cancellation_propagation_id.value()),
+        CommandBody::RecordPiChildNotSpawned {
+            pi_child_spawn_admission_id,
+            reason,
+        } => {
+            put_i64(&mut bytes, pi_child_spawn_admission_id.value());
+            put_i64(&mut bytes, *reason as i64);
+        }
     }
     Sha256Digest::of_bytes(&bytes)
 }
@@ -6801,6 +8852,150 @@ fn event_fingerprint(event_id: EventId, command_id: &CommandId, body: &EventBody
         EventBody::DeterministicExperimentClosed {
             deterministic_experiment_id,
         } => put_i64(&mut bytes, deterministic_experiment_id.value()),
+        EventBody::PiChildSpawnAdmitted {
+            pi_child_spawn_admission_id,
+            owner,
+            budget_reservation_id,
+        } => {
+            put_i64(&mut bytes, pi_child_spawn_admission_id.value());
+            match owner {
+                PiChildOwner::ActorAttempt(id) => {
+                    put_i64(&mut bytes, 1);
+                    put_i64(&mut bytes, id.value());
+                }
+                PiChildOwner::GrandArchitectOfficeSession(id) => {
+                    put_i64(&mut bytes, 2);
+                    put_i64(&mut bytes, id.value());
+                }
+            }
+            put_i64(&mut bytes, budget_reservation_id.value());
+        }
+        EventBody::InertPiChildSpawnRecorded {
+            child_process_id,
+            pi_child_spawn_admission_id,
+        } => {
+            put_i64(&mut bytes, child_process_id.value());
+            put_i64(&mut bytes, pi_child_spawn_admission_id.value());
+        }
+        EventBody::PiAdapterReadyRecorded {
+            child_process_id,
+            pi_session_id,
+        }
+        | EventBody::PiSessionReadyRecorded {
+            child_process_id,
+            pi_session_id,
+        } => {
+            put_i64(&mut bytes, child_process_id.value());
+            put_i64(&mut bytes, pi_session_id.value());
+        }
+        EventBody::PiAbortControlDeliveryRecorded {
+            pi_abort_control_receipt_id,
+            child_process_id,
+            cancellation_propagation_id,
+            correlation_identity,
+            abort_command_digest,
+            outcome,
+        } => {
+            put_i64(&mut bytes, pi_abort_control_receipt_id.value());
+            put_i64(&mut bytes, child_process_id.value());
+            put_i64(&mut bytes, cancellation_propagation_id.value());
+            put_bytes(&mut bytes, correlation_identity.as_str().as_bytes());
+            put_bytes(&mut bytes, &abort_command_digest.as_bytes());
+            put_i64(&mut bytes, *outcome as i64);
+        }
+        EventBody::PiCreateSessionAuthorized { child_process_id }
+        | EventBody::PiCreateSessionDeliveryRecorded { child_process_id } => {
+            put_i64(&mut bytes, child_process_id.value())
+        }
+        EventBody::ChildStreamSealed {
+            child_stream_seal_id,
+            child_process_id,
+            stream_kind,
+            completeness,
+        } => {
+            put_i64(&mut bytes, child_stream_seal_id.value());
+            put_i64(&mut bytes, child_process_id.value());
+            put_i64(&mut bytes, *stream_kind as i64);
+            put_i64(&mut bytes, *completeness as i64);
+        }
+        EventBody::ChildProcessLivenessObserved {
+            child_process_liveness_observation_id,
+            child_process_id,
+            liveness,
+        } => {
+            put_i64(&mut bytes, child_process_liveness_observation_id.value());
+            put_i64(&mut bytes, child_process_id.value());
+            put_i64(&mut bytes, *liveness as i64);
+        }
+        EventBody::ProcessSignalReceiptRecorded {
+            process_signal_receipt_id,
+            child_process_id,
+            action,
+            delivery,
+            observed_liveness,
+            cause,
+        } => {
+            put_i64(&mut bytes, process_signal_receipt_id.value());
+            put_i64(&mut bytes, child_process_id.value());
+            put_i64(&mut bytes, *action as i64);
+            put_i64(&mut bytes, *delivery as i64);
+            put_i64(&mut bytes, *observed_liveness as i64);
+            put_process_signal_cause(&mut bytes, *cause);
+        }
+        EventBody::DirectChildReaped {
+            child_process_reap_receipt_id,
+            child_process_id,
+            wait_status,
+            group_liveness_before_cleanup,
+            group_liveness_after_cleanup,
+        } => {
+            put_i64(&mut bytes, child_process_reap_receipt_id.value());
+            put_i64(&mut bytes, child_process_id.value());
+            put_direct_wait_status(&mut bytes, *wait_status);
+            put_i64(&mut bytes, *group_liveness_before_cleanup as i64);
+            put_i64(&mut bytes, *group_liveness_after_cleanup as i64);
+        }
+        EventBody::ChildRecoveryObserved {
+            child_process_recovery_receipt_id,
+            child_process_id,
+            observation,
+            group_liveness_after_restart,
+        } => {
+            put_i64(&mut bytes, child_process_recovery_receipt_id.value());
+            put_i64(&mut bytes, child_process_id.value());
+            put_i64(&mut bytes, *observation as i64);
+            put_i64(&mut bytes, *group_liveness_after_restart as i64);
+        }
+        EventBody::ChildProcessFinalized {
+            child_process_id,
+            disposition,
+        } => {
+            put_i64(&mut bytes, child_process_id.value());
+            put_i64(&mut bytes, *disposition as i64);
+        }
+        EventBody::CancellationPropagationBegun {
+            cancellation_propagation_id,
+            cancellation_request_id,
+        } => {
+            put_i64(&mut bytes, cancellation_propagation_id.value());
+            put_i64(&mut bytes, cancellation_request_id.value());
+        }
+        EventBody::CancellationPropagationReconciled {
+            cancellation_propagation_id,
+        } => put_i64(&mut bytes, cancellation_propagation_id.value()),
+        EventBody::SupervisorEpochOpened {
+            supervisor_epoch_id,
+        } => put_i64(&mut bytes, supervisor_epoch_id.value()),
+        EventBody::CancellationPropagationContainmentFailed {
+            cancellation_propagation_id,
+        } => put_i64(&mut bytes, cancellation_propagation_id.value()),
+        EventBody::PiChildSpawnInvalidated {
+            pi_child_spawn_admission_id,
+            reason,
+        } => {
+            put_i64(&mut bytes, pi_child_spawn_admission_id.value());
+            put_i64(&mut bytes, *reason as i64);
+        }
     }
     Sha256Digest::of_bytes(&bytes)
 }
@@ -6824,6 +9019,33 @@ fn put_optional_i64(bytes: &mut Vec<u8>, value: Option<i64>) {
     }
 }
 
+fn put_direct_wait_status(bytes: &mut Vec<u8>, status: DirectChildWaitStatus) {
+    match status {
+        DirectChildWaitStatus::Exited { exit_code } => {
+            put_i64(bytes, 1);
+            put_i64(bytes, i64::from(exit_code.value()));
+        }
+        DirectChildWaitStatus::Signaled { signal_number } => {
+            put_i64(bytes, 2);
+            put_i64(bytes, i64::from(signal_number.value()));
+        }
+        DirectChildWaitStatus::Unknown => put_i64(bytes, 3),
+    }
+}
+
+fn put_process_signal_cause(bytes: &mut Vec<u8>, cause: ProcessSignalCause) {
+    match cause {
+        ProcessSignalCause::CancellationPropagation(propagation_id) => {
+            put_i64(bytes, 1);
+            put_i64(bytes, propagation_id.value());
+        }
+        ProcessSignalCause::AutomaticBoundaryContainment => {
+            put_i64(bytes, 2);
+            put_i64(bytes, 0);
+        }
+    }
+}
+
 fn insert_command_body(
     transaction: &Transaction<'_>,
     command_row_id: i64,
@@ -6834,6 +9056,18 @@ fn insert_command_body(
             transaction.execute(
                 "INSERT INTO command_create_society_identity(command_row_id, name) VALUES (?1, ?2)",
                 params![command_row_id, name.as_str()],
+            )?;
+        }
+        CommandBody::RecordPiAbortControlDelivery {
+            child_process_id,
+            cancellation_propagation_id,
+            correlation_identity,
+            abort_command_digest,
+            outcome,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_record_pi_abort_control_delivery VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![command_row_id, child_process_id.value(), cancellation_propagation_id.value(), correlation_identity.as_str(), abort_command_digest.as_bytes().as_slice(), *outcome as i64],
             )?;
         }
         CommandBody::InstallGrandArchitectOffice => {
@@ -7590,6 +9824,227 @@ fn insert_command_body(
                 ],
             )?;
         }
+        CommandBody::OpenSupervisorEpoch {
+            supervisor_epoch_id,
+            supervisor_epoch_identity,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_open_supervisor_epoch VALUES (?1, ?2, ?3)",
+                params![
+                    command_row_id,
+                    supervisor_epoch_id.value(),
+                    supervisor_epoch_identity.as_str()
+                ],
+            )?;
+        }
+        CommandBody::AdmitPiChildSpawn {
+            operating_cycle_id,
+            owner,
+            budget_reservation_id,
+            execution_profile_id,
+            native_workspace_id,
+            canonical_workspace_path,
+            supervisor_epoch_id,
+            supervisor_epoch_identity,
+            pi_session_identity,
+            spawn_nonce,
+        } => {
+            let (attempt, office) = match owner {
+                PiChildOwner::ActorAttempt(id) => (Some(id.value()), None),
+                PiChildOwner::GrandArchitectOfficeSession(id) => (None, Some(id.value())),
+            };
+            transaction.execute("INSERT INTO command_admit_pi_child_spawn VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)", params![command_row_id, operating_cycle_id.value(), attempt, office, budget_reservation_id.value(), execution_profile_id.value(), native_workspace_id.as_str(), canonical_workspace_path.as_str(), supervisor_epoch_id.value(), supervisor_epoch_identity.as_str(), pi_session_identity.as_str(), spawn_nonce.as_str()])?;
+        }
+        CommandBody::RecordInertChildSpawn {
+            pi_child_spawn_admission_id,
+            child_identity,
+            direct_child_pid,
+            process_group_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_record_inert_pi_child_spawn VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    command_row_id,
+                    pi_child_spawn_admission_id.value(),
+                    child_identity.as_str(),
+                    direct_child_pid.value(),
+                    process_group_id.value()
+                ],
+            )?;
+        }
+        CommandBody::RecordPiAdapterReady {
+            child_process_id,
+            pi_session_identity,
+            spawn_nonce,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_record_pi_adapter_ready VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    command_row_id,
+                    child_process_id.value(),
+                    pi_session_identity.as_str(),
+                    spawn_nonce.as_str()
+                ],
+            )?;
+        }
+        CommandBody::AuthorizePiCreateSession {
+            child_process_id,
+            correlation_identity,
+            create_request_digest,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_authorize_pi_create_session VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    command_row_id,
+                    child_process_id.value(),
+                    correlation_identity.as_str(),
+                    create_request_digest.as_bytes().as_slice()
+                ],
+            )?;
+        }
+        CommandBody::RecordPiCreateSessionDelivery {
+            child_process_id,
+            correlation_identity,
+            create_request_digest,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_record_pi_create_session_delivery VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    command_row_id,
+                    child_process_id.value(),
+                    correlation_identity.as_str(),
+                    create_request_digest.as_bytes().as_slice()
+                ],
+            )?;
+        }
+        CommandBody::RecordPiSessionReady {
+            child_process_id,
+            pi_session_identity,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_record_pi_session_ready VALUES (?1, ?2, ?3)",
+                params![
+                    command_row_id,
+                    child_process_id.value(),
+                    pi_session_identity.as_str()
+                ],
+            )?;
+        }
+        CommandBody::RecordChildStreamSeal {
+            child_process_id,
+            stream_kind,
+            full_observed_digest,
+            retained_content_object_id,
+            completeness,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_record_child_stream_seal VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    command_row_id,
+                    child_process_id.value(),
+                    *stream_kind as i64,
+                    full_observed_digest.as_bytes().as_slice(),
+                    retained_content_object_id.value(),
+                    *completeness as i64
+                ],
+            )?;
+        }
+        CommandBody::RecordChildProcessLiveness {
+            child_process_id,
+            liveness,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_record_child_process_liveness VALUES (?1, ?2, ?3)",
+                params![command_row_id, child_process_id.value(), *liveness as i64],
+            )?;
+        }
+        CommandBody::RecordProcessSignalReceipt {
+            child_process_id,
+            action,
+            delivery,
+            observed_liveness,
+            cause,
+        } => {
+            let (cause_kind, propagation_id) = signal_cause_parts(*cause);
+            transaction.execute("INSERT INTO command_record_process_signal_receipt VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)", params![command_row_id, child_process_id.value(), *action as i64, *delivery as i64, *observed_liveness as i64, cause_kind, propagation_id])?;
+        }
+        CommandBody::RecordDirectChildReap {
+            child_process_id,
+            wait_status,
+            group_liveness_before_cleanup,
+            group_liveness_after_cleanup,
+        } => {
+            let (kind, value): (i64, Option<i64>) = match wait_status {
+                DirectChildWaitStatus::Exited { exit_code } => {
+                    (1, Some(i64::from(exit_code.value())))
+                }
+                DirectChildWaitStatus::Signaled { signal_number } => {
+                    (2, Some(i64::from(signal_number.value())))
+                }
+                DirectChildWaitStatus::Unknown => (3, None),
+            };
+            transaction.execute(
+                "INSERT INTO command_record_direct_child_reap VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    command_row_id,
+                    child_process_id.value(),
+                    kind,
+                    value,
+                    *group_liveness_before_cleanup as i64,
+                    *group_liveness_after_cleanup as i64
+                ],
+            )?;
+        }
+        CommandBody::RecordChildRecovery {
+            child_process_id,
+            observation,
+            group_liveness_after_restart,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_record_child_recovery VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    command_row_id,
+                    child_process_id.value(),
+                    *observation as i64,
+                    *group_liveness_after_restart as i64
+                ],
+            )?;
+        }
+        CommandBody::FinalizeChildProcess { child_process_id } => {
+            transaction.execute(
+                "INSERT INTO command_finalize_child_process VALUES (?1, ?2)",
+                params![command_row_id, child_process_id.value()],
+            )?;
+        }
+        CommandBody::BeginCancellationPropagation {
+            cancellation_request_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_begin_cancellation_propagation VALUES (?1, ?2)",
+                params![command_row_id, cancellation_request_id.value()],
+            )?;
+        }
+        CommandBody::ReconcileCancellationPropagation {
+            cancellation_propagation_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_reconcile_cancellation_propagation VALUES (?1, ?2)",
+                params![command_row_id, cancellation_propagation_id.value()],
+            )?;
+        }
+        CommandBody::RecordPiChildNotSpawned {
+            pi_child_spawn_admission_id,
+            reason,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_record_pi_child_not_spawned VALUES (?1, ?2, ?3)",
+                params![
+                    command_row_id,
+                    pi_child_spawn_admission_id.value(),
+                    *reason as i64
+                ],
+            )?;
+        }
     }
     Ok(())
 }
@@ -8214,6 +10669,242 @@ fn insert_event_body(
                 params![event_id.value(), deterministic_experiment_id.value()],
             )?;
         }
+        EventBody::PiChildSpawnAdmitted {
+            pi_child_spawn_admission_id,
+            owner,
+            budget_reservation_id,
+        } => {
+            let (attempt, office) = match owner {
+                PiChildOwner::ActorAttempt(id) => (Some(id.value()), None),
+                PiChildOwner::GrandArchitectOfficeSession(id) => (None, Some(id.value())),
+            };
+            transaction.execute(
+                "INSERT INTO event_pi_child_spawn_admitted VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    event_id.value(),
+                    pi_child_spawn_admission_id.value(),
+                    attempt,
+                    office,
+                    budget_reservation_id.value()
+                ],
+            )?;
+        }
+        EventBody::InertPiChildSpawnRecorded {
+            child_process_id,
+            pi_child_spawn_admission_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_inert_pi_child_spawn_recorded VALUES (?1, ?2, ?3)",
+                params![
+                    event_id.value(),
+                    child_process_id.value(),
+                    pi_child_spawn_admission_id.value()
+                ],
+            )?;
+        }
+        EventBody::PiAdapterReadyRecorded {
+            child_process_id,
+            pi_session_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_pi_adapter_ready_recorded VALUES (?1, ?2, ?3)",
+                params![
+                    event_id.value(),
+                    child_process_id.value(),
+                    pi_session_id.value()
+                ],
+            )?;
+        }
+        EventBody::PiCreateSessionAuthorized { child_process_id } => {
+            transaction.execute(
+                "INSERT INTO event_pi_create_session_authorized VALUES (?1, ?2)",
+                params![event_id.value(), child_process_id.value()],
+            )?;
+        }
+        EventBody::PiCreateSessionDeliveryRecorded { child_process_id } => {
+            transaction.execute(
+                "INSERT INTO event_pi_create_session_delivery_recorded VALUES (?1, ?2)",
+                params![event_id.value(), child_process_id.value()],
+            )?;
+        }
+        EventBody::PiSessionReadyRecorded {
+            child_process_id,
+            pi_session_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_pi_session_ready_recorded VALUES (?1, ?2, ?3)",
+                params![
+                    event_id.value(),
+                    child_process_id.value(),
+                    pi_session_id.value()
+                ],
+            )?;
+        }
+        EventBody::PiAbortControlDeliveryRecorded {
+            pi_abort_control_receipt_id,
+            child_process_id,
+            cancellation_propagation_id,
+            correlation_identity,
+            abort_command_digest,
+            outcome,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_pi_abort_control_delivery_recorded VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![event_id.value(), pi_abort_control_receipt_id.value(), child_process_id.value(), cancellation_propagation_id.value(), correlation_identity.as_str(), abort_command_digest.as_bytes().as_slice(), *outcome as i64],
+            )?;
+        }
+        EventBody::ChildStreamSealed {
+            child_stream_seal_id,
+            child_process_id,
+            stream_kind,
+            completeness,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_child_stream_sealed VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    event_id.value(),
+                    child_stream_seal_id.value(),
+                    child_process_id.value(),
+                    *stream_kind as i64,
+                    *completeness as i64
+                ],
+            )?;
+        }
+        EventBody::ChildProcessLivenessObserved {
+            child_process_liveness_observation_id,
+            child_process_id,
+            liveness,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_child_process_liveness_observed VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    event_id.value(),
+                    child_process_liveness_observation_id.value(),
+                    child_process_id.value(),
+                    *liveness as i64
+                ],
+            )?;
+        }
+        EventBody::ProcessSignalReceiptRecorded {
+            process_signal_receipt_id,
+            child_process_id,
+            action,
+            delivery,
+            observed_liveness,
+            cause,
+        } => {
+            let (cause_kind, propagation_id) = signal_cause_parts(*cause);
+            transaction.execute("INSERT INTO event_process_signal_receipt_recorded VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)", params![event_id.value(), process_signal_receipt_id.value(), child_process_id.value(), *action as i64, *delivery as i64, *observed_liveness as i64, cause_kind, propagation_id])?;
+        }
+        EventBody::DirectChildReaped {
+            child_process_reap_receipt_id,
+            child_process_id,
+            wait_status,
+            group_liveness_before_cleanup,
+            group_liveness_after_cleanup,
+        } => {
+            let (kind, value): (i64, Option<i64>) = match wait_status {
+                DirectChildWaitStatus::Exited { exit_code } => {
+                    (1, Some(i64::from(exit_code.value())))
+                }
+                DirectChildWaitStatus::Signaled { signal_number } => {
+                    (2, Some(i64::from(signal_number.value())))
+                }
+                DirectChildWaitStatus::Unknown => (3, None),
+            };
+            transaction.execute(
+                "INSERT INTO event_direct_child_reaped VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    event_id.value(),
+                    child_process_reap_receipt_id.value(),
+                    child_process_id.value(),
+                    kind,
+                    value,
+                    *group_liveness_before_cleanup as i64,
+                    *group_liveness_after_cleanup as i64
+                ],
+            )?;
+        }
+        EventBody::ChildRecoveryObserved {
+            child_process_recovery_receipt_id,
+            child_process_id,
+            observation,
+            group_liveness_after_restart,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_child_recovery_observed VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    event_id.value(),
+                    child_process_recovery_receipt_id.value(),
+                    child_process_id.value(),
+                    *observation as i64,
+                    *group_liveness_after_restart as i64
+                ],
+            )?;
+        }
+        EventBody::ChildProcessFinalized {
+            child_process_id,
+            disposition,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_child_process_finalized VALUES (?1, ?2, ?3)",
+                params![
+                    event_id.value(),
+                    child_process_id.value(),
+                    *disposition as i64
+                ],
+            )?;
+        }
+        EventBody::CancellationPropagationBegun {
+            cancellation_propagation_id,
+            cancellation_request_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_cancellation_propagation_begun VALUES (?1, ?2, ?3)",
+                params![
+                    event_id.value(),
+                    cancellation_propagation_id.value(),
+                    cancellation_request_id.value()
+                ],
+            )?;
+        }
+        EventBody::CancellationPropagationReconciled {
+            cancellation_propagation_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_cancellation_propagation_reconciled VALUES (?1, ?2)",
+                params![event_id.value(), cancellation_propagation_id.value()],
+            )?;
+        }
+        EventBody::SupervisorEpochOpened {
+            supervisor_epoch_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_supervisor_epoch_opened VALUES (?1, ?2)",
+                params![event_id.value(), supervisor_epoch_id.value()],
+            )?;
+        }
+        EventBody::CancellationPropagationContainmentFailed {
+            cancellation_propagation_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_cancellation_propagation_containment_failed VALUES (?1, ?2)",
+                params![event_id.value(), cancellation_propagation_id.value()],
+            )?;
+        }
+        EventBody::PiChildSpawnInvalidated {
+            pi_child_spawn_admission_id,
+            reason,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_pi_child_spawn_invalidated VALUES (?1, ?2, ?3)",
+                params![
+                    event_id.value(),
+                    pi_child_spawn_admission_id.value(),
+                    *reason as i64
+                ],
+            )?;
+        }
     }
     Ok(())
 }
@@ -8822,6 +11513,200 @@ fn decode_event_body(
                 event_id_typed,
             )?,
         },
+        EventKind::PiChildSpawnAdmitted => {
+            let row: (i64, Option<i64>, Option<i64>, i64) = connection.query_row("SELECT pi_child_spawn_admission_id, actor_attempt_id, grand_architect_office_session_id, budget_reservation_id FROM event_pi_child_spawn_admitted WHERE event_id = ?1", [event_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi child admission event body"))?;
+            let owner = decode_child_owner(row.1, row.2)?;
+            EventBody::PiChildSpawnAdmitted {
+                pi_child_spawn_admission_id: PiChildSpawnAdmissionId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                owner,
+                budget_reservation_id: BudgetReservationId::try_from(row.3)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        EventKind::InertPiChildSpawnRecorded => {
+            let (child, admission) =
+                query_event_pair(connection, "event_inert_pi_child_spawn_recorded", event_id)?;
+            EventBody::InertPiChildSpawnRecorded {
+                child_process_id: ChildProcessId::try_from(child)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                pi_child_spawn_admission_id: PiChildSpawnAdmissionId::try_from(admission)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        EventKind::PiAdapterReadyRecorded => {
+            let (child, session) =
+                query_event_pair(connection, "event_pi_adapter_ready_recorded", event_id)?;
+            EventBody::PiAdapterReadyRecorded {
+                child_process_id: ChildProcessId::try_from(child)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                pi_session_id: PiSessionId::try_from(session)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        EventKind::PiCreateSessionAuthorized => EventBody::PiCreateSessionAuthorized {
+            child_process_id: query_event_id(
+                connection,
+                "event_pi_create_session_authorized",
+                "child_process_id",
+                event_id_typed,
+            )?,
+        },
+        EventKind::PiCreateSessionDeliveryRecorded => EventBody::PiCreateSessionDeliveryRecorded {
+            child_process_id: query_event_id(
+                connection,
+                "event_pi_create_session_delivery_recorded",
+                "child_process_id",
+                event_id_typed,
+            )?,
+        },
+        EventKind::PiSessionReadyRecorded => {
+            let (child, session) =
+                query_event_pair(connection, "event_pi_session_ready_recorded", event_id)?;
+            EventBody::PiSessionReadyRecorded {
+                child_process_id: ChildProcessId::try_from(child)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                pi_session_id: PiSessionId::try_from(session)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        EventKind::PiAbortControlDeliveryRecorded => {
+            let row: (i64, i64, i64, String, Vec<u8>, i64) = connection.query_row(
+                "SELECT pi_abort_control_receipt_id, child_process_id, cancellation_propagation_id, correlation_identity, abort_command_digest, physical_write_outcome FROM event_pi_abort_control_delivery_recorded WHERE event_id = ?1",
+                [event_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+            ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Abort event body"))?;
+            EventBody::PiAbortControlDeliveryRecorded {
+                pi_abort_control_receipt_id: PiAbortControlReceiptId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                child_process_id: ChildProcessId::try_from(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                cancellation_propagation_id: CancellationPropagationId::try_from(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                correlation_identity: PiCorrelationIdentity::parse(row.3)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                abort_command_digest: digest_from_stored_bytes(&row.4)?,
+                outcome: pi_abort_control_write_outcome_from_i64(row.5)?,
+            }
+        }
+        EventKind::ChildStreamSealed => {
+            let row: (i64,i64,i64,i64) = connection.query_row("SELECT child_stream_seal_id, child_process_id, stream_kind, completeness FROM event_child_stream_sealed WHERE event_id = ?1", [event_id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing child stream event body"))?;
+            EventBody::ChildStreamSealed {
+                child_stream_seal_id: ChildStreamSealId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                child_process_id: ChildProcessId::try_from(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                stream_kind: child_stream_kind_from_i64(row.2)?,
+                completeness: child_stream_completeness_from_i64(row.3)?,
+            }
+        }
+        EventKind::ChildProcessLivenessObserved => {
+            let row:(i64,i64,i64)=connection.query_row("SELECT child_process_liveness_observation_id, child_process_id, liveness FROM event_child_process_liveness_observed WHERE event_id = ?1",[event_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing liveness event body"))?;
+            EventBody::ChildProcessLivenessObserved {
+                child_process_liveness_observation_id: ChildProcessLivenessObservationId::try_from(
+                    row.0,
+                )
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+                child_process_id: ChildProcessId::try_from(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                liveness: process_group_liveness_from_i64(row.2)?,
+            }
+        }
+        EventKind::ProcessSignalReceiptRecorded => {
+            let row:(i64,i64,i64,i64,i64,i64,Option<i64>)=connection.query_row("SELECT process_signal_receipt_id, child_process_id, signal_action, delivery, observed_liveness, cause_kind, cancellation_propagation_id FROM event_process_signal_receipt_recorded WHERE event_id = ?1",[event_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing signal event body"))?;
+            EventBody::ProcessSignalReceiptRecorded {
+                process_signal_receipt_id: ProcessSignalReceiptId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                child_process_id: ChildProcessId::try_from(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                action: process_signal_action_from_i64(row.2)?,
+                delivery: process_signal_delivery_from_i64(row.3)?,
+                observed_liveness: process_group_liveness_from_i64(row.4)?,
+                cause: process_signal_cause_from_sql(row.5, row.6)?,
+            }
+        }
+        EventKind::DirectChildReaped => {
+            let row:(i64,i64,i64,Option<i64>,i64,i64)=connection.query_row("SELECT child_process_reap_receipt_id, child_process_id, wait_status_kind, status_value, group_liveness_before_cleanup, group_liveness_after_cleanup FROM event_direct_child_reaped WHERE event_id = ?1",[event_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing reap event body"))?;
+            EventBody::DirectChildReaped {
+                child_process_reap_receipt_id: ChildProcessReapReceiptId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                child_process_id: ChildProcessId::try_from(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                wait_status: direct_wait_status_from_sql(row.2, row.3)?,
+                group_liveness_before_cleanup: process_group_liveness_from_i64(row.4)?,
+                group_liveness_after_cleanup: process_group_liveness_from_i64(row.5)?,
+            }
+        }
+        EventKind::ChildRecoveryObserved => {
+            let row:(i64,i64,i64,i64)=connection.query_row("SELECT child_process_recovery_receipt_id, child_process_id, observation, group_liveness_after_restart FROM event_child_recovery_observed WHERE event_id = ?1",[event_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing recovery event body"))?;
+            EventBody::ChildRecoveryObserved {
+                child_process_recovery_receipt_id: ChildProcessRecoveryReceiptId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                child_process_id: ChildProcessId::try_from(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                observation: child_recovery_observation_from_i64(row.2)?,
+                group_liveness_after_restart: process_group_liveness_from_i64(row.3)?,
+            }
+        }
+        EventKind::ChildProcessFinalized => {
+            let (child, disposition) =
+                query_event_pair(connection, "event_child_process_finalized", event_id)?;
+            EventBody::ChildProcessFinalized {
+                child_process_id: ChildProcessId::try_from(child)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                disposition: child_terminal_disposition_from_i64(disposition)?,
+            }
+        }
+        EventKind::CancellationPropagationBegun => {
+            let (propagation, request) =
+                query_event_pair(connection, "event_cancellation_propagation_begun", event_id)?;
+            EventBody::CancellationPropagationBegun {
+                cancellation_propagation_id: CancellationPropagationId::try_from(propagation)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                cancellation_request_id: CancellationRequestId::try_from(request)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        EventKind::CancellationPropagationReconciled => {
+            EventBody::CancellationPropagationReconciled {
+                cancellation_propagation_id: query_event_id(
+                    connection,
+                    "event_cancellation_propagation_reconciled",
+                    "cancellation_propagation_id",
+                    event_id_typed,
+                )?,
+            }
+        }
+        EventKind::SupervisorEpochOpened => EventBody::SupervisorEpochOpened {
+            supervisor_epoch_id: query_event_id(
+                connection,
+                "event_supervisor_epoch_opened",
+                "supervisor_epoch_id",
+                event_id_typed,
+            )?,
+        },
+        EventKind::CancellationPropagationContainmentFailed => {
+            EventBody::CancellationPropagationContainmentFailed {
+                cancellation_propagation_id: query_event_id(
+                    connection,
+                    "event_cancellation_propagation_containment_failed",
+                    "cancellation_propagation_id",
+                    event_id_typed,
+                )?,
+            }
+        }
+        EventKind::PiChildSpawnInvalidated => {
+            let (admission, reason): (i64, i64) = connection.query_row(
+                "SELECT pi_child_spawn_admission_id, reason FROM event_pi_child_spawn_invalidated WHERE event_id = ?1",
+                [event_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi child invalidation event body"))?;
+            EventBody::PiChildSpawnInvalidated {
+                pi_child_spawn_admission_id: PiChildSpawnAdmissionId::try_from(admission)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                reason: pi_child_not_spawned_reason_from_i64(reason)?,
+            }
+        }
     };
     let stored_fingerprint: Vec<u8> = connection.query_row(
         "SELECT event_fingerprint FROM events WHERE event_id = ?1",
@@ -9010,7 +11895,7 @@ fn replay_command_requests(
     Ok(commands)
 }
 
-const MATERIALIZED_TABLES: [&str; 60] = [
+const MATERIALIZED_TABLES: [&str; 77] = [
     "principals",
     "societies",
     "office_contracts",
@@ -9071,6 +11956,23 @@ const MATERIALIZED_TABLES: [&str; 60] = [
     "deterministic_experiments",
     "deterministic_evaluation_receipts",
     "evidence_admissions",
+    "supervisor_epochs",
+    "workspaces",
+    "pi_child_sessions",
+    "pi_child_spawn_admissions",
+    "pi_child_spawn_invalidations",
+    "office_session_budget_reservations",
+    "pi_child_processes",
+    "pi_child_session_protocols",
+    "child_process_liveness_observations",
+    "process_signal_receipts",
+    "child_process_reap_receipts",
+    "child_process_recovery_receipts",
+    "pi_abort_control_receipts",
+    "child_stream_seals",
+    "cancellation_propagations",
+    "cancellation_propagation_children",
+    "cancellation_propagation_targets",
 ];
 
 fn materialized_state_digest(connection: &Connection) -> Result<Sha256Digest, StoreError> {
@@ -9944,6 +12846,206 @@ fn decode_command_body(
                     .map_err(|_| StoreError::InvalidStoredValue)?,
             }
         }
+        CommandKind::OpenSupervisorEpoch => {
+            let row:(i64,String)=connection.query_row("SELECT supervisor_epoch_id, supervisor_epoch_identity FROM command_open_supervisor_epoch WHERE command_row_id = ?1",[command_row_id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing supervisor epoch command body"))?;
+            CommandBody::OpenSupervisorEpoch {
+                supervisor_epoch_id: SupervisorEpochId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                supervisor_epoch_identity: SupervisorEpochIdentity::parse(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::AdmitPiChildSpawn => {
+            let row: StoredPiChildAdmissionCommand = connection.query_row("SELECT operating_cycle_id, actor_attempt_id, grand_architect_office_session_id, budget_reservation_id, execution_profile_id, native_workspace_id, canonical_workspace_path, supervisor_epoch_id, supervisor_epoch_identity, pi_session_identity, spawn_nonce FROM command_admit_pi_child_spawn WHERE command_row_id = ?1",[command_row_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,r.get(8)?,r.get(9)?,r.get(10)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi child admission command body"))?;
+            CommandBody::AdmitPiChildSpawn {
+                operating_cycle_id: OperatingCycleId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                owner: decode_child_owner(row.1, row.2)?,
+                budget_reservation_id: BudgetReservationId::try_from(row.3)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                execution_profile_id: ExecutionProfileId::try_from(row.4)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                native_workspace_id: NativeWorkspaceId::parse(row.5)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                canonical_workspace_path: CanonicalWorkspacePath::parse(row.6)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                supervisor_epoch_id: SupervisorEpochId::try_from(row.7)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                supervisor_epoch_identity: SupervisorEpochIdentity::parse(row.8)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                pi_session_identity: PiBoundarySessionIdentity::parse(row.9)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                spawn_nonce: SpawnNonce::parse(row.10)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::RecordInertChildSpawn => {
+            let row:(i64,String,i64,i64)=connection.query_row("SELECT pi_child_spawn_admission_id, child_identity, direct_child_pid, process_group_id FROM command_record_inert_pi_child_spawn WHERE command_row_id = ?1",[command_row_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing inert Pi child command body"))?;
+            CommandBody::RecordInertChildSpawn {
+                pi_child_spawn_admission_id: PiChildSpawnAdmissionId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                child_identity: SupervisedChildIdentity::parse(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                direct_child_pid: NativeChildPid::try_from(
+                    i32::try_from(row.2).map_err(|_| StoreError::InvalidStoredValue)?,
+                )
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+                process_group_id: OwnedProcessGroupId::try_from(
+                    i32::try_from(row.3).map_err(|_| StoreError::InvalidStoredValue)?,
+                )
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::RecordPiAdapterReady => {
+            let row:(i64,String,String)=connection.query_row("SELECT child_process_id, pi_session_identity, spawn_nonce FROM command_record_pi_adapter_ready WHERE command_row_id = ?1",[command_row_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing adapter ready command body"))?;
+            CommandBody::RecordPiAdapterReady {
+                child_process_id: ChildProcessId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                pi_session_identity: PiBoundarySessionIdentity::parse(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                spawn_nonce: SpawnNonce::parse(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::AuthorizePiCreateSession | CommandKind::RecordPiCreateSessionDelivery => {
+            let row:(i64,String,Vec<u8>)=connection.query_row(if kind == CommandKind::AuthorizePiCreateSession { "SELECT child_process_id, correlation_identity, create_request_digest FROM command_authorize_pi_create_session WHERE command_row_id = ?1" } else { "SELECT child_process_id, correlation_identity, create_request_digest FROM command_record_pi_create_session_delivery WHERE command_row_id = ?1" },[command_row_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Create command body"))?;
+            let child_process_id =
+                ChildProcessId::try_from(row.0).map_err(|_| StoreError::InvalidStoredValue)?;
+            let correlation_identity =
+                PiCorrelationIdentity::parse(row.1).map_err(|_| StoreError::InvalidStoredValue)?;
+            let create_request_digest = digest_from_stored_bytes(&row.2)?;
+            if kind == CommandKind::AuthorizePiCreateSession {
+                CommandBody::AuthorizePiCreateSession {
+                    child_process_id,
+                    correlation_identity,
+                    create_request_digest,
+                }
+            } else {
+                CommandBody::RecordPiCreateSessionDelivery {
+                    child_process_id,
+                    correlation_identity,
+                    create_request_digest,
+                }
+            }
+        }
+        CommandKind::RecordPiSessionReady => {
+            let row:(i64,String)=connection.query_row("SELECT child_process_id, pi_session_identity FROM command_record_pi_session_ready WHERE command_row_id = ?1",[command_row_id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi ready command body"))?;
+            CommandBody::RecordPiSessionReady {
+                child_process_id: ChildProcessId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                pi_session_identity: PiBoundarySessionIdentity::parse(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::RecordPiAbortControlDelivery => {
+            let row: (i64, i64, String, Vec<u8>, i64) = connection.query_row(
+                "SELECT child_process_id, cancellation_propagation_id, correlation_identity, abort_command_digest, physical_write_outcome FROM command_record_pi_abort_control_delivery WHERE command_row_id = ?1",
+                [command_row_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Abort command body"))?;
+            CommandBody::RecordPiAbortControlDelivery {
+                child_process_id: ChildProcessId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                cancellation_propagation_id: CancellationPropagationId::try_from(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                correlation_identity: PiCorrelationIdentity::parse(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                abort_command_digest: digest_from_stored_bytes(&row.3)?,
+                outcome: pi_abort_control_write_outcome_from_i64(row.4)?,
+            }
+        }
+        CommandKind::RecordChildStreamSeal => {
+            let row:(i64,i64,Vec<u8>,i64,i64)=connection.query_row("SELECT child_process_id, stream_kind, full_observed_digest, retained_content_object_id, completeness FROM command_record_child_stream_seal WHERE command_row_id = ?1",[command_row_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing stream seal command body"))?;
+            CommandBody::RecordChildStreamSeal {
+                child_process_id: ChildProcessId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                stream_kind: child_stream_kind_from_i64(row.1)?,
+                full_observed_digest: digest_from_stored_bytes(&row.2)?,
+                retained_content_object_id: ContentObjectId::try_from(row.3)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                completeness: child_stream_completeness_from_i64(row.4)?,
+            }
+        }
+        CommandKind::RecordChildProcessLiveness => {
+            let (child, liveness) = query_command_pair(
+                connection,
+                "command_record_child_process_liveness",
+                command_row_id,
+            )?;
+            CommandBody::RecordChildProcessLiveness {
+                child_process_id: ChildProcessId::try_from(child)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                liveness: process_group_liveness_from_i64(liveness)?,
+            }
+        }
+        CommandKind::RecordProcessSignalReceipt => {
+            let row:(i64,i64,i64,i64,i64,Option<i64>)=connection.query_row("SELECT child_process_id, signal_action, delivery, observed_liveness, cause_kind, cancellation_propagation_id FROM command_record_process_signal_receipt WHERE command_row_id = ?1",[command_row_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing signal command body"))?;
+            CommandBody::RecordProcessSignalReceipt {
+                child_process_id: ChildProcessId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                action: process_signal_action_from_i64(row.1)?,
+                delivery: process_signal_delivery_from_i64(row.2)?,
+                observed_liveness: process_group_liveness_from_i64(row.3)?,
+                cause: process_signal_cause_from_sql(row.4, row.5)?,
+            }
+        }
+        CommandKind::RecordDirectChildReap => {
+            let row:(i64,i64,Option<i64>,i64,i64)=connection.query_row("SELECT child_process_id, wait_status_kind, status_value, group_liveness_before_cleanup, group_liveness_after_cleanup FROM command_record_direct_child_reap WHERE command_row_id = ?1",[command_row_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing reap command body"))?;
+            CommandBody::RecordDirectChildReap {
+                child_process_id: ChildProcessId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                wait_status: direct_wait_status_from_sql(row.1, row.2)?,
+                group_liveness_before_cleanup: process_group_liveness_from_i64(row.3)?,
+                group_liveness_after_cleanup: process_group_liveness_from_i64(row.4)?,
+            }
+        }
+        CommandKind::RecordChildRecovery => {
+            let (child, obs, liveness):(i64,i64,i64) = connection.query_row("SELECT child_process_id, observation, group_liveness_after_restart FROM command_record_child_recovery WHERE command_row_id = ?1", [command_row_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing recovery command body"))?;
+            CommandBody::RecordChildRecovery {
+                child_process_id: ChildProcessId::try_from(child)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                observation: child_recovery_observation_from_i64(obs)?,
+                group_liveness_after_restart: process_group_liveness_from_i64(liveness)?,
+            }
+        }
+        CommandKind::FinalizeChildProcess => CommandBody::FinalizeChildProcess {
+            child_process_id: query_command_id(
+                connection,
+                "command_finalize_child_process",
+                "child_process_id",
+                command_row_id,
+            )?,
+        },
+        CommandKind::BeginCancellationPropagation => CommandBody::BeginCancellationPropagation {
+            cancellation_request_id: query_command_id(
+                connection,
+                "command_begin_cancellation_propagation",
+                "cancellation_request_id",
+                command_row_id,
+            )?,
+        },
+        CommandKind::ReconcileCancellationPropagation => {
+            CommandBody::ReconcileCancellationPropagation {
+                cancellation_propagation_id: query_command_id(
+                    connection,
+                    "command_reconcile_cancellation_propagation",
+                    "cancellation_propagation_id",
+                    command_row_id,
+                )?,
+            }
+        }
+        CommandKind::RecordPiChildNotSpawned => {
+            let (admission, reason): (i64, i64) = connection.query_row(
+                "SELECT pi_child_spawn_admission_id, reason FROM command_record_pi_child_not_spawned WHERE command_row_id = ?1",
+                [command_row_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi child invalidation command body"))?;
+            CommandBody::RecordPiChildNotSpawned {
+                pi_child_spawn_admission_id: PiChildSpawnAdmissionId::try_from(admission)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                reason: pi_child_not_spawned_reason_from_i64(reason)?,
+            }
+        }
     };
     Ok(body)
 }
@@ -10317,6 +13419,23 @@ fn command_kind_from_i64(value: i64) -> Result<CommandKind, StoreError> {
         66 => Ok(CommandKind::RecordDeterministicEvaluationReceipt),
         67 => Ok(CommandKind::AdmitDeterministicEvidence),
         68 => Ok(CommandKind::CloseDeterministicExperiment),
+        69 => Ok(CommandKind::AdmitPiChildSpawn),
+        70 => Ok(CommandKind::RecordInertChildSpawn),
+        71 => Ok(CommandKind::RecordPiAdapterReady),
+        72 => Ok(CommandKind::AuthorizePiCreateSession),
+        73 => Ok(CommandKind::RecordPiCreateSessionDelivery),
+        74 => Ok(CommandKind::RecordPiSessionReady),
+        75 => Ok(CommandKind::RecordChildStreamSeal),
+        76 => Ok(CommandKind::RecordChildProcessLiveness),
+        77 => Ok(CommandKind::RecordProcessSignalReceipt),
+        78 => Ok(CommandKind::RecordDirectChildReap),
+        79 => Ok(CommandKind::RecordChildRecovery),
+        80 => Ok(CommandKind::FinalizeChildProcess),
+        81 => Ok(CommandKind::BeginCancellationPropagation),
+        82 => Ok(CommandKind::ReconcileCancellationPropagation),
+        83 => Ok(CommandKind::OpenSupervisorEpoch),
+        84 => Ok(CommandKind::RecordPiAbortControlDelivery),
+        85 => Ok(CommandKind::RecordPiChildNotSpawned),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }
@@ -10391,6 +13510,23 @@ fn capability_from_i64(value: i64) -> Result<Capability, StoreError> {
         66 => Ok(Capability::RecordDeterministicEvaluationReceipt),
         67 => Ok(Capability::AdmitDeterministicEvidence),
         68 => Ok(Capability::CloseDeterministicExperiment),
+        69 => Ok(Capability::AdmitPiChildSpawn),
+        70 => Ok(Capability::RecordInertChildSpawn),
+        71 => Ok(Capability::RecordPiAdapterReady),
+        72 => Ok(Capability::AuthorizePiCreateSession),
+        73 => Ok(Capability::RecordPiCreateSessionDelivery),
+        74 => Ok(Capability::RecordPiSessionReady),
+        75 => Ok(Capability::RecordChildStreamSeal),
+        76 => Ok(Capability::RecordChildProcessLiveness),
+        77 => Ok(Capability::RecordProcessSignalReceipt),
+        78 => Ok(Capability::RecordDirectChildReap),
+        79 => Ok(Capability::RecordChildRecovery),
+        80 => Ok(Capability::FinalizeChildProcess),
+        81 => Ok(Capability::BeginCancellationPropagation),
+        82 => Ok(Capability::ReconcileCancellationPropagation),
+        83 => Ok(Capability::OpenSupervisorEpoch),
+        84 => Ok(Capability::RecordPiAbortControlDelivery),
+        85 => Ok(Capability::RecordPiChildNotSpawned),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }
@@ -10466,51 +13602,7 @@ fn decode_office_turn_settled_event(
 }
 
 fn rejection_from_i64(value: i64) -> Result<Rejection, StoreError> {
-    match value {
-        1 => Ok(Rejection::CapabilityMismatch),
-        2 => Ok(Rejection::CapabilityNotGranted),
-        3 => Ok(Rejection::CapabilityNoLongerActive),
-        4 => Ok(Rejection::InvalidExpectedGeneration),
-        5 => Ok(Rejection::StaleAdmissionGeneration),
-        6 => Ok(Rejection::InvalidLifecycleTransition),
-        7 => Ok(Rejection::FoundingInvariant),
-        8 => Ok(Rejection::ActiveCycleAlreadyExists),
-        9 => Ok(Rejection::ActiveOfficeOccupancyAlreadyExists),
-        10 => Ok(Rejection::BudgetCeilingExceeded),
-        11 => Ok(Rejection::ReservationNotActive),
-        12 => Ok(Rejection::CostExceedsReservation),
-        13 => Ok(Rejection::IncompleteCycleReconciliation),
-        14 => Ok(Rejection::SessionTurnAlreadyActive),
-        15 => Ok(Rejection::CancellationAlreadyTerminal),
-        16 => Ok(Rejection::SubjectNotFound),
-        17 => Ok(Rejection::BudgetPolicyViolation),
-        18 => Ok(Rejection::CostPostmortemNotOpen),
-        19 => Ok(Rejection::InvalidCostPostmortemResolution),
-        20 => Ok(Rejection::ProjectCloseBlocked),
-        21 => Ok(Rejection::TicketPrerequisiteIncomplete),
-        22 => Ok(Rejection::GraphRevisionNotCommitted),
-        23 => Ok(Rejection::IllegalGraphEdgeEndpoint),
-        24 => Ok(Rejection::ReviewSelfDispositionDenied),
-        25 => Ok(Rejection::ReviewDispositionIncomplete),
-        26 => Ok(Rejection::PostmortemCloseBlocked),
-        27 => Ok(Rejection::ReviewAssignmentNotIndependent),
-        28 => Ok(Rejection::ActorJurisdictionDenied),
-        29 => Ok(Rejection::WorkLeaseUnavailable),
-        30 => Ok(Rejection::ActorAttemptNotTerminal),
-        31 => Ok(Rejection::ActorAttemptNotValidatable),
-        32 => Ok(Rejection::OutcomeObligationOpen),
-        33 => Ok(Rejection::ReviewAssignmentEvidenceMissing),
-        34 => Ok(Rejection::ExecutionProfileIneligible),
-        35 => Ok(Rejection::TicketAcceptanceConditionUnsatisfied),
-        36 => Ok(Rejection::QualificationTreatmentRestricted),
-        37 => Ok(Rejection::ContentSealReceiptMissing),
-        38 => Ok(Rejection::ContentObjectNotSealed),
-        39 => Ok(Rejection::ForensicManifestBindingMismatch),
-        40 => Ok(Rejection::DeterministicExperimentBindingMismatch),
-        41 => Ok(Rejection::DeterministicEvaluationBindingMismatch),
-        42 => Ok(Rejection::EvidenceAdmissionRequired),
-        _ => Err(StoreError::InvalidStoredValue),
-    }
+    Rejection::try_from(value).map_err(|_| StoreError::InvalidStoredValue)
 }
 
 fn event_kind_from_i64(value: i64) -> Result<EventKind, StoreError> {
@@ -10576,6 +13668,24 @@ fn event_kind_from_i64(value: i64) -> Result<EventKind, StoreError> {
         59 => Ok(EventKind::DeterministicEvaluationReceiptRecorded),
         60 => Ok(EventKind::DeterministicEvidenceAdmitted),
         61 => Ok(EventKind::DeterministicExperimentClosed),
+        62 => Ok(EventKind::PiChildSpawnAdmitted),
+        63 => Ok(EventKind::InertPiChildSpawnRecorded),
+        64 => Ok(EventKind::PiAdapterReadyRecorded),
+        65 => Ok(EventKind::PiCreateSessionAuthorized),
+        66 => Ok(EventKind::PiCreateSessionDeliveryRecorded),
+        67 => Ok(EventKind::PiSessionReadyRecorded),
+        68 => Ok(EventKind::ChildStreamSealed),
+        69 => Ok(EventKind::ChildProcessLivenessObserved),
+        70 => Ok(EventKind::ProcessSignalReceiptRecorded),
+        71 => Ok(EventKind::DirectChildReaped),
+        72 => Ok(EventKind::ChildRecoveryObserved),
+        73 => Ok(EventKind::ChildProcessFinalized),
+        74 => Ok(EventKind::CancellationPropagationBegun),
+        75 => Ok(EventKind::CancellationPropagationReconciled),
+        76 => Ok(EventKind::SupervisorEpochOpened),
+        77 => Ok(EventKind::CancellationPropagationContainmentFailed),
+        78 => Ok(EventKind::PiAbortControlDeliveryRecorded),
+        79 => Ok(EventKind::PiChildSpawnInvalidated),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }
@@ -10593,6 +13703,163 @@ fn operating_cycle_state_from_i64(value: i64) -> Result<OperatingCycleState, Sto
         9 => Ok(OperatingCycleState::Reaping),
         10 => Ok(OperatingCycleState::Cancelled),
         11 => Ok(OperatingCycleState::Failed),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+
+fn child_process_state_from_i64(value: i64) -> Result<ChildProcessState, StoreError> {
+    match value {
+        1 => Ok(ChildProcessState::Spawned),
+        2 => Ok(ChildProcessState::Running),
+        3 => Ok(ChildProcessState::CancellationRequested),
+        4 => Ok(ChildProcessState::DirectChildReaped),
+        5 => Ok(ChildProcessState::RecoveryContainmentRequired),
+        6 => Ok(ChildProcessState::LostParentage),
+        7 => Ok(ChildProcessState::ContainmentFailed),
+        8 => Ok(ChildProcessState::Finalized),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+
+fn decode_child_owner(
+    attempt: Option<i64>,
+    office: Option<i64>,
+) -> Result<PiChildOwner, StoreError> {
+    match (attempt, office) {
+        (Some(attempt), None) => Ok(PiChildOwner::ActorAttempt(
+            ActorAttemptId::try_from(attempt).map_err(|_| StoreError::InvalidStoredValue)?,
+        )),
+        (None, Some(office)) => Ok(PiChildOwner::GrandArchitectOfficeSession(
+            GrandArchitectOfficeSessionId::try_from(office)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+        )),
+        _ => Err(StoreError::LedgerCorruption("invalid Pi child owner union")),
+    }
+}
+
+fn child_stream_kind_from_i64(value: i64) -> Result<ChildStreamKind, StoreError> {
+    match value {
+        1 => Ok(ChildStreamKind::AdmittedControl),
+        2 => Ok(ChildStreamKind::PhysicalStdin),
+        3 => Ok(ChildStreamKind::Stdout),
+        4 => Ok(ChildStreamKind::Stderr),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+fn child_stream_completeness_from_i64(
+    value: i64,
+) -> Result<ChildStreamSealCompleteness, StoreError> {
+    match value {
+        1 => Ok(ChildStreamSealCompleteness::Complete),
+        2 => Ok(ChildStreamSealCompleteness::PrefixBounded),
+        3 => Ok(ChildStreamSealCompleteness::CountOverflow),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+fn process_group_liveness_from_i64(value: i64) -> Result<ProcessGroupLiveness, StoreError> {
+    match value {
+        1 => Ok(ProcessGroupLiveness::Present),
+        2 => Ok(ProcessGroupLiveness::Absent),
+        3 => Ok(ProcessGroupLiveness::Inaccessible),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+fn process_signal_action_from_i64(value: i64) -> Result<ProcessSignalAction, StoreError> {
+    match value {
+        1 => Ok(ProcessSignalAction::Terminate),
+        2 => Ok(ProcessSignalAction::Kill),
+        3 => Ok(ProcessSignalAction::LingeringGroupKill),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+fn process_signal_delivery_from_i64(value: i64) -> Result<ProcessSignalDelivery, StoreError> {
+    match value {
+        1 => Ok(ProcessSignalDelivery::Delivered),
+        2 => Ok(ProcessSignalDelivery::AbsentBeforeSignal),
+        3 => Ok(ProcessSignalDelivery::AbsentDuringSignal),
+        4 => Ok(ProcessSignalDelivery::Inaccessible),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+
+fn pi_abort_control_write_outcome_from_i64(
+    value: i64,
+) -> Result<PiAbortControlWriteOutcome, StoreError> {
+    match value {
+        1 => Ok(PiAbortControlWriteOutcome::FullyWritten),
+        2 => Ok(PiAbortControlWriteOutcome::PipeClosedBeforeWrite),
+        3 => Ok(PiAbortControlWriteOutcome::WriteFailed),
+        4 => Ok(PiAbortControlWriteOutcome::PartialWriteDiscarded),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+
+fn pi_child_not_spawned_reason_from_i64(value: i64) -> Result<PiChildNotSpawnedReason, StoreError> {
+    match value {
+        1 => Ok(PiChildNotSpawnedReason::CancelledBeforeSpawn),
+        2 => Ok(PiChildNotSpawnedReason::WorkspacePreparationFailed),
+        3 => Ok(PiChildNotSpawnedReason::ArtifactQualificationFailed),
+        4 => Ok(PiChildNotSpawnedReason::NativeSpawnFailed),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+fn child_recovery_observation_from_i64(value: i64) -> Result<ChildRecoveryObservation, StoreError> {
+    match value {
+        1 => Ok(ChildRecoveryObservation::ParentageLost),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+fn child_terminal_disposition_from_i64(value: i64) -> Result<ChildTerminalDisposition, StoreError> {
+    match value {
+        1 => Ok(ChildTerminalDisposition::Exited),
+        4 => Ok(ChildTerminalDisposition::Terminated),
+        5 => Ok(ChildTerminalDisposition::Killed),
+        6 => Ok(ChildTerminalDisposition::SupervisionLost),
+        7 => Ok(ChildTerminalDisposition::ContainmentFailed),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+fn direct_wait_status_from_sql(
+    kind: i64,
+    value: Option<i64>,
+) -> Result<DirectChildWaitStatus, StoreError> {
+    match (kind, value) {
+        (1, Some(exit_code)) => Ok(DirectChildWaitStatus::Exited {
+            exit_code: ProcessExitCode::try_from(
+                i32::try_from(exit_code).map_err(|_| StoreError::InvalidStoredValue)?,
+            )
+            .map_err(|_| StoreError::InvalidStoredValue)?,
+        }),
+        (2, Some(signal_number)) => Ok(DirectChildWaitStatus::Signaled {
+            signal_number: ProcessSignalNumber::try_from(
+                i32::try_from(signal_number).map_err(|_| StoreError::InvalidStoredValue)?,
+            )
+            .map_err(|_| StoreError::InvalidStoredValue)?,
+        }),
+        (3, None) => Ok(DirectChildWaitStatus::Unknown),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+
+fn signal_cause_parts(cause: ProcessSignalCause) -> (i64, Option<i64>) {
+    match cause {
+        ProcessSignalCause::CancellationPropagation(propagation_id) => {
+            (1, Some(propagation_id.value()))
+        }
+        ProcessSignalCause::AutomaticBoundaryContainment => (2, None),
+    }
+}
+
+fn process_signal_cause_from_sql(
+    kind: i64,
+    propagation_id: Option<i64>,
+) -> Result<ProcessSignalCause, StoreError> {
+    match (kind, propagation_id) {
+        (1, Some(propagation_id)) => Ok(ProcessSignalCause::CancellationPropagation(
+            CancellationPropagationId::try_from(propagation_id)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+        )),
+        (2, None) => Ok(ProcessSignalCause::AutomaticBoundaryContainment),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }

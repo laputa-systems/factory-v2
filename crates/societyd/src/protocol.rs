@@ -829,7 +829,7 @@ fn encode_receipt(bytes: &mut Vec<u8>, receipt: CommandReceiptView) {
             idempotent,
         } => {
             put_u8(bytes, 2);
-            put_u8(bytes, rejection as u8);
+            put_u8(bytes, rejection.as_u8());
             put_bool(bytes, idempotent);
         }
     }
@@ -1050,51 +1050,7 @@ fn cost_postmortem_resolution_from_u8(value: u8) -> Result<CostPostmortemResolut
 }
 
 fn rejection_from_u8(value: u8) -> Result<Rejection, WireError> {
-    match value {
-        1 => Ok(Rejection::CapabilityMismatch),
-        2 => Ok(Rejection::CapabilityNotGranted),
-        3 => Ok(Rejection::CapabilityNoLongerActive),
-        4 => Ok(Rejection::InvalidExpectedGeneration),
-        5 => Ok(Rejection::StaleAdmissionGeneration),
-        6 => Ok(Rejection::InvalidLifecycleTransition),
-        7 => Ok(Rejection::FoundingInvariant),
-        8 => Ok(Rejection::ActiveCycleAlreadyExists),
-        9 => Ok(Rejection::ActiveOfficeOccupancyAlreadyExists),
-        10 => Ok(Rejection::BudgetCeilingExceeded),
-        11 => Ok(Rejection::ReservationNotActive),
-        12 => Ok(Rejection::CostExceedsReservation),
-        13 => Ok(Rejection::IncompleteCycleReconciliation),
-        14 => Ok(Rejection::SessionTurnAlreadyActive),
-        15 => Ok(Rejection::CancellationAlreadyTerminal),
-        16 => Ok(Rejection::SubjectNotFound),
-        17 => Ok(Rejection::BudgetPolicyViolation),
-        18 => Ok(Rejection::CostPostmortemNotOpen),
-        19 => Ok(Rejection::InvalidCostPostmortemResolution),
-        20 => Ok(Rejection::ProjectCloseBlocked),
-        21 => Ok(Rejection::TicketPrerequisiteIncomplete),
-        22 => Ok(Rejection::GraphRevisionNotCommitted),
-        23 => Ok(Rejection::IllegalGraphEdgeEndpoint),
-        24 => Ok(Rejection::ReviewSelfDispositionDenied),
-        25 => Ok(Rejection::ReviewDispositionIncomplete),
-        26 => Ok(Rejection::PostmortemCloseBlocked),
-        27 => Ok(Rejection::ReviewAssignmentNotIndependent),
-        28 => Ok(Rejection::ActorJurisdictionDenied),
-        29 => Ok(Rejection::WorkLeaseUnavailable),
-        30 => Ok(Rejection::ActorAttemptNotTerminal),
-        31 => Ok(Rejection::ActorAttemptNotValidatable),
-        32 => Ok(Rejection::OutcomeObligationOpen),
-        33 => Ok(Rejection::ReviewAssignmentEvidenceMissing),
-        34 => Ok(Rejection::ExecutionProfileIneligible),
-        35 => Ok(Rejection::TicketAcceptanceConditionUnsatisfied),
-        36 => Ok(Rejection::QualificationTreatmentRestricted),
-        37 => Ok(Rejection::ContentSealReceiptMissing),
-        38 => Ok(Rejection::ContentObjectNotSealed),
-        39 => Ok(Rejection::ForensicManifestBindingMismatch),
-        40 => Ok(Rejection::DeterministicExperimentBindingMismatch),
-        41 => Ok(Rejection::DeterministicEvaluationBindingMismatch),
-        42 => Ok(Rejection::EvidenceAdmissionRequired),
-        _ => Err(WireError::InvalidValue),
-    }
+    Rejection::try_from(value).map_err(|_| WireError::InvalidValue)
 }
 
 fn protocol_error_from_u8(value: u8) -> Result<ProtocolErrorCode, WireError> {
@@ -1108,5 +1064,31 @@ fn protocol_error_from_u8(value: u8) -> Result<ProtocolErrorCode, WireError> {
         7 => Ok(ProtocolErrorCode::KernelFailure),
         8 => Ok(ProtocolErrorCode::DaemonStopping),
         _ => Err(WireError::InvalidValue),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_kernel_rejection_round_trips_through_the_receipt_wire() {
+        for rejection in Rejection::ALL {
+            let response = Response::CommandReceipt {
+                correlation: CorrelationId::new(1).expect("the fixed nonzero correlation is valid"),
+                receipt: CommandReceiptView::Rejected {
+                    rejection: *rejection,
+                    idempotent: false,
+                },
+            };
+            let mut encoded = Vec::new();
+            write_response(&mut encoded, &response)
+                .expect("the closed rejection receipt must encode");
+            assert_eq!(
+                read_response(&mut encoded.as_slice())
+                    .expect("the closed rejection receipt must decode"),
+                response
+            );
+        }
     }
 }

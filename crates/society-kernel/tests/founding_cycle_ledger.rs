@@ -11,17 +11,20 @@ use std::{
 use rusqlite::Connection;
 use society_kernel::{
     AdmissionGeneration, AdversarialReviewId, BudgetFreezeReason, BudgetReservationId,
-    CancellationRequestId, Capability, CausalEpisodeId, CommandBody, CommandDisposition, CommandId,
-    CommandReceipt, CommandRequest, CostObservation, CostPostmortemResolution,
-    CostUnavailableReason, CostUnknownReason, EpisodeState, EventBody, ExpectedGeneration,
-    GrandArchitectOfficeSessionId, GraphEdgeKind, GraphRevisionBody, GraphRevisionId,
-    HypothesisRevisionText, KernelStore, ObservationRevisionText, OfficeSessionTerminalState,
-    OfficeTurnId, OfficeTurnPurpose, OperatingCycleId, OperatingCycleState,
-    OperatingCycleTreatment, PostmortemActionKind, PostmortemActionProposalText,
-    PostmortemCausalClaimKind, PostmortemCausalClaimText, PostmortemId, PrincipalDisplayName,
-    PrincipalId, ProjectId, ProjectMilestoneName, ProjectName, ProjectObjectiveText, ProjectState,
+    CancellationRequestId, CanonicalWorkspacePath, Capability, CausalEpisodeId, ChildProcessId,
+    CommandBody, CommandDisposition, CommandId, CommandReceipt, CommandRequest, CostObservation,
+    CostPostmortemResolution, CostUnavailableReason, CostUnknownReason, EpisodeState, EventBody,
+    ExpectedGeneration, GrandArchitectOfficeSessionId, GraphEdgeKind, GraphRevisionBody,
+    GraphRevisionId, HypothesisRevisionText, KernelStore, NativeChildPid, NativeWorkspaceId,
+    ObservationRevisionText, OfficeSessionTerminalState, OfficeTurnId, OfficeTurnPurpose,
+    OperatingCycleId, OperatingCycleState, OperatingCycleTreatment, OwnedProcessGroupId,
+    PiBoundarySessionIdentity, PiChildOwner, PiChildSpawnAdmissionId, PiCorrelationIdentity,
+    PostmortemActionKind, PostmortemActionProposalText, PostmortemCausalClaimKind,
+    PostmortemCausalClaimText, PostmortemId, PrincipalDisplayName, PrincipalId, ProjectId,
+    ProjectMilestoneName, ProjectName, ProjectObjectiveText, ProjectState,
     ProjectStopConditionText, Rejection, ReviewChallengeSeverity, ReviewFailureHypothesis,
-    Sha256Digest, SocietyName, StoreError, UsdMicros,
+    Sha256Digest, SocietyName, SpawnNonce, StoreError, SupervisedChildIdentity, SupervisorEpochId,
+    SupervisorEpochIdentity, UsdMicros,
 };
 
 fn submit(
@@ -155,7 +158,7 @@ fn found_cycle(store: &mut KernelStore) -> (PrincipalId, OperatingCycleId) {
         Capability::ProposeOperatingCycle,
         ExpectedGeneration::NotApplicable,
         CommandBody::ProposeOperatingCycle {
-            treatment: OperatingCycleTreatment::Vs001LiveV1,
+            treatment: OperatingCycleTreatment::Vs001DeterministicV1,
         },
     );
     let cycle_id = OperatingCycleId::new(1).unwrap();
@@ -168,6 +171,150 @@ fn found_cycle(store: &mut KernelStore) -> (PrincipalId, OperatingCycleId) {
         CommandBody::AdmitOperatingCycle { cycle_id },
     );
     (PrincipalId::new(3).unwrap(), cycle_id)
+}
+
+/// The M5 Office Ready fact is no longer a synthetic service assertion. This
+/// fixture builds the provider-free deterministic child receipt chain needed
+/// before an Office can open ordinary turns. The tiny reservation is settled
+/// after Create/Ready so these earlier lifecycle tests retain their own cost
+/// accounting focus; it is not evidence of a paid Pi run.
+fn ready_supervised_office_session(
+    store: &mut KernelStore,
+    architect: PrincipalId,
+    cycle_id: OperatingCycleId,
+    session_id: GrandArchitectOfficeSessionId,
+    label: &str,
+) {
+    let generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
+    accepted(
+        store,
+        &format!("{label}-reserve"),
+        architect,
+        Capability::ReserveBudget,
+        generation,
+        CommandBody::ReserveBudget {
+            cycle_id,
+            amount: UsdMicros::new(1).unwrap(),
+        },
+    );
+    let epoch = SupervisorEpochId::new(1).unwrap();
+    let epoch_identity = SupervisorEpochIdentity::parse("foundation-supervisor-1").unwrap();
+    accepted(
+        store,
+        &format!("{label}-epoch"),
+        PrincipalId::KERNEL,
+        Capability::OpenSupervisorEpoch,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::OpenSupervisorEpoch {
+            supervisor_epoch_id: epoch,
+            supervisor_epoch_identity: epoch_identity.clone(),
+        },
+    );
+    let session_identity = PiBoundarySessionIdentity::parse(format!("pi-{label}-session")).unwrap();
+    let spawn_nonce = SpawnNonce::parse(format!("pi-{label}-nonce")).unwrap();
+    accepted(
+        store,
+        &format!("{label}-admit"),
+        PrincipalId::KERNEL,
+        Capability::AdmitPiChildSpawn,
+        generation,
+        CommandBody::AdmitPiChildSpawn {
+            operating_cycle_id: cycle_id,
+            owner: PiChildOwner::GrandArchitectOfficeSession(session_id),
+            budget_reservation_id: BudgetReservationId::new(1).unwrap(),
+            execution_profile_id:
+                society_kernel::ExecutionProfileId::DETERMINISTIC_PI_HOST_DOUBLE_V1,
+            native_workspace_id: NativeWorkspaceId::parse(format!("workspace-{label}")).unwrap(),
+            canonical_workspace_path: CanonicalWorkspacePath::parse(format!("/tmp/{label}"))
+                .unwrap(),
+            supervisor_epoch_id: epoch,
+            supervisor_epoch_identity: epoch_identity,
+            pi_session_identity: session_identity.clone(),
+            spawn_nonce: spawn_nonce.clone(),
+        },
+    );
+    let child = ChildProcessId::new(1).unwrap();
+    accepted(
+        store,
+        &format!("{label}-spawn"),
+        PrincipalId::KERNEL,
+        Capability::RecordInertChildSpawn,
+        generation,
+        CommandBody::RecordInertChildSpawn {
+            pi_child_spawn_admission_id: PiChildSpawnAdmissionId::new(1).unwrap(),
+            child_identity: SupervisedChildIdentity::parse(format!("child-{label}")).unwrap(),
+            direct_child_pid: NativeChildPid::try_from(3001).unwrap(),
+            process_group_id: OwnedProcessGroupId::try_from(3001).unwrap(),
+        },
+    );
+    accepted(
+        store,
+        &format!("{label}-adapter-ready"),
+        PrincipalId::KERNEL,
+        Capability::RecordPiAdapterReady,
+        generation,
+        CommandBody::RecordPiAdapterReady {
+            child_process_id: child,
+            pi_session_identity: session_identity.clone(),
+            spawn_nonce,
+        },
+    );
+    let correlation = PiCorrelationIdentity::parse(format!("create-{label}")).unwrap();
+    let create_digest = Sha256Digest::of_bytes(format!("create-{label}").as_bytes());
+    accepted(
+        store,
+        &format!("{label}-create-authorized"),
+        PrincipalId::KERNEL,
+        Capability::AuthorizePiCreateSession,
+        generation,
+        CommandBody::AuthorizePiCreateSession {
+            child_process_id: child,
+            correlation_identity: correlation.clone(),
+            create_request_digest: create_digest,
+        },
+    );
+    accepted(
+        store,
+        &format!("{label}-create-delivered"),
+        PrincipalId::KERNEL,
+        Capability::RecordPiCreateSessionDelivery,
+        generation,
+        CommandBody::RecordPiCreateSessionDelivery {
+            child_process_id: child,
+            correlation_identity: correlation,
+            create_request_digest: create_digest,
+        },
+    );
+    accepted(
+        store,
+        &format!("{label}-session-ready"),
+        PrincipalId::KERNEL,
+        Capability::RecordPiSessionReady,
+        generation,
+        CommandBody::RecordPiSessionReady {
+            child_process_id: child,
+            pi_session_identity: session_identity,
+        },
+    );
+    accepted(
+        store,
+        &format!("{label}-office-ready"),
+        PrincipalId::KERNEL,
+        Capability::RecordOfficeSessionReady,
+        generation,
+        CommandBody::RecordOfficeSessionReady { session_id },
+    );
+    accepted(
+        store,
+        &format!("{label}-settle-bootstrap-reservation"),
+        PrincipalId::KERNEL,
+        Capability::ReconcileBudget,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::ReconcileBudget {
+            reservation_id: BudgetReservationId::new(1).unwrap(),
+            observation: CostObservation::Known(UsdMicros::ZERO),
+        },
+    );
 }
 
 #[test]
@@ -672,7 +819,7 @@ fn empty_schema_one_upgrades_as_atomic_version_steps() {
         upgraded
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        4
+        5
     );
     assert_eq!(
         upgraded
@@ -917,7 +1064,7 @@ fn failed_migration_three_rolls_back_its_version_step_and_a_reopen_retries() {
         retried
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        4
+        5
     );
     drop(retried);
     fs::remove_file(path).unwrap();
@@ -1056,10 +1203,94 @@ fn failed_migration_four_rolls_back_its_version_step_and_an_empty_reopen_retries
         retried
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        4
+        5
     );
     drop(retried);
     fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn migration_five_is_atomic_and_refuses_a_nonempty_schema_four_ledger() {
+    let path = std::env::temp_dir().join(format!(
+        "xsh-society-m5-atomicity-{}-{}.sqlite",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let connection = Connection::open(&path).unwrap();
+    for migration in [
+        include_str!("../../../migrations/0001_kernel.sql"),
+        include_str!("../../../migrations/0002_coordination_graph.sql"),
+        include_str!("../../../migrations/0003_execution_foundation.sql"),
+        include_str!("../../../migrations/0004_content_evidence_foundation.sql"),
+    ] {
+        connection.execute_batch(migration).unwrap();
+    }
+    let injected_failure =
+        include_str!("../../../migrations/0005_native_child_process_foundation.sql").replacen(
+            "CREATE TABLE supervisor_epochs (",
+            "SELECT missing_migration_five_fault();\nCREATE TABLE supervisor_epochs (",
+            1,
+        );
+    assert!(connection.execute_batch(&injected_failure).is_err());
+    connection
+        .execute_batch("ROLLBACK; PRAGMA foreign_keys = ON;")
+        .unwrap();
+    assert_eq!(
+        connection
+            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        4
+    );
+    assert_eq!(connection.query_row("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'supervisor_epochs'", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
+    connection.execute(
+        "INSERT INTO commands(command_id, principal_id, capability_grant_id, capability_kind,
+                              expected_generation, command_kind, request_fingerprint, command_status,
+                              rejection_code, accepted_event_id)
+         VALUES ('m4-historical-rejected', 1, 1, 1, NULL, 1, zeroblob(32), 2, 16, NULL)",
+        [],
+    ).unwrap();
+    connection.execute(
+        "INSERT INTO command_create_society_identity(command_row_id, name) VALUES (1, 'historic')",
+        [],
+    ).unwrap();
+    drop(connection);
+    assert!(matches!(
+        KernelStore::open(&path),
+        Err(StoreError::NonemptySchemaV4LedgerUpgradeRefused {
+            command_count: 1,
+            event_count: 0
+        })
+    ));
+    let inspect = Connection::open(&path).unwrap();
+    assert_eq!(
+        inspect
+            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        4
+    );
+    assert_eq!(
+        inspect
+            .query_row("SELECT COUNT(*) FROM commands", [], |row| row
+                .get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
+    assert_eq!(inspect.query_row("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'supervisor_epochs'", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
+    drop(inspect);
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn rejection_wire_codes_have_one_closed_round_trip_authority() {
+    for rejection in Rejection::ALL {
+        assert_eq!(Rejection::try_from(rejection.as_i64()).unwrap(), *rejection);
+        assert_eq!(Rejection::try_from(rejection.as_u8()).unwrap(), *rejection);
+    }
+    assert!(Rejection::try_from(0_i64).is_err());
+    assert!(Rejection::try_from(255_u8).is_err());
 }
 
 #[test]
@@ -1331,13 +1562,12 @@ fn office_turn_and_cross_cut_budget_freeze_unknown_cost() {
         zero,
         CommandBody::StartGrandArchitectOfficeSession { cycle_id },
     );
-    accepted(
+    ready_supervised_office_session(
         &mut store,
-        "kernel-office-ready",
-        PrincipalId::KERNEL,
-        Capability::RecordOfficeSessionReady,
-        zero,
-        CommandBody::RecordOfficeSessionReady { session_id },
+        grand_architect,
+        cycle_id,
+        session_id,
+        "office-turn",
     );
     accepted(
         &mut store,
@@ -1415,7 +1645,7 @@ fn office_turn_and_cross_cut_budget_freeze_unknown_cost() {
         Capability::ReconcileBudget,
         ExpectedGeneration::NotApplicable,
         CommandBody::ReconcileBudget {
-            reservation_id: BudgetReservationId::new(1).unwrap(),
+            reservation_id: BudgetReservationId::new(2).unwrap(),
             observation: CostObservation::Known(UsdMicros::new(300_000).unwrap()),
         },
     );
@@ -1437,7 +1667,7 @@ fn office_turn_and_cross_cut_budget_freeze_unknown_cost() {
         Capability::ReconcileBudget,
         ExpectedGeneration::NotApplicable,
         CommandBody::ReconcileBudget {
-            reservation_id: BudgetReservationId::new(2).unwrap(),
+            reservation_id: BudgetReservationId::new(3).unwrap(),
             observation: CostObservation::Unknown(CostUnknownReason::AdapterStreamInterrupted),
         },
     );
@@ -1609,13 +1839,12 @@ fn office_turn_purpose_and_session_fences_follow_cycle_state() {
         zero,
         CommandBody::StartGrandArchitectOfficeSession { cycle_id },
     );
-    accepted(
+    ready_supervised_office_session(
         &mut store,
-        "kernel-ready-purpose-session",
-        PrincipalId::KERNEL,
-        Capability::RecordOfficeSessionReady,
-        zero,
-        CommandBody::RecordOfficeSessionReady { session_id },
+        grand_architect,
+        cycle_id,
+        session_id,
+        "office-purpose",
     );
     accepted(
         &mut store,
@@ -1667,53 +1896,18 @@ fn office_turn_purpose_and_session_fences_follow_cycle_state() {
             turn_id: OfficeTurnId::new(1).unwrap(),
         },
     );
-    accepted(
+    // A real supervised Office may run recovery turns while the cycle is
+    // quiescing, but cannot claim the cycle is drained while its native child
+    // still has no terminal/containment receipts. M5 deliberately keeps the
+    // former synthetic drained path unavailable.
+    rejected(
         &mut store,
-        "kernel-record-purpose-cycle-drained",
+        "kernel-reject-purpose-cycle-drained-with-live-child",
         PrincipalId::KERNEL,
         Capability::RecordCycleDrained,
         ExpectedGeneration::NotApplicable,
         CommandBody::RecordCycleDrained { cycle_id },
-    );
-    accepted(
-        &mut store,
-        "ga-closure-turn-while-drained",
-        grand_architect,
-        Capability::OpenOfficeTurn,
-        one,
-        CommandBody::OpenOfficeTurn {
-            session_id,
-            purpose: OfficeTurnPurpose::Closure,
-        },
-    );
-    accepted(
-        &mut store,
-        "kernel-settle-closure-turn",
-        PrincipalId::KERNEL,
-        Capability::SettleOfficeTurn,
-        ExpectedGeneration::NotApplicable,
-        CommandBody::SettleOfficeTurn {
-            turn_id: OfficeTurnId::new(2).unwrap(),
-        },
-    );
-    accepted(
-        &mut store,
-        "ga-begin-purpose-reconciliation",
-        grand_architect,
-        Capability::ReconcileOperatingCycle,
-        one,
-        CommandBody::ReconcileOperatingCycle { cycle_id },
-    );
-    accepted(
-        &mut store,
-        "ga-recovery-turn-while-reconciling",
-        grand_architect,
-        Capability::OpenOfficeTurn,
-        one,
-        CommandBody::OpenOfficeTurn {
-            session_id,
-            purpose: OfficeTurnPurpose::Recovery,
-        },
+        Rejection::InvalidLifecycleTransition,
     );
     assert!(store.replay_ledger().unwrap().iter().any(|event| matches!(
         event.body,
@@ -1740,13 +1934,12 @@ fn terminal_session_fact_cannot_close_an_active_turn() {
         zero,
         CommandBody::StartGrandArchitectOfficeSession { cycle_id },
     );
-    accepted(
+    ready_supervised_office_session(
         &mut store,
-        "kernel-ready-terminal-fence-session",
-        PrincipalId::KERNEL,
-        Capability::RecordOfficeSessionReady,
-        zero,
-        CommandBody::RecordOfficeSessionReady { session_id },
+        grand_architect,
+        cycle_id,
+        session_id,
+        "office-terminal",
     );
     accepted(
         &mut store,
@@ -1799,14 +1992,6 @@ fn known_overrun_fences_admission_and_frozen_charge_blocks_cycle_close() {
         Capability::StartGrandArchitectOfficeSession,
         zero,
         CommandBody::StartGrandArchitectOfficeSession { cycle_id },
-    );
-    accepted(
-        &mut store,
-        "kernel-ready-known-overrun-session",
-        PrincipalId::KERNEL,
-        Capability::RecordOfficeSessionReady,
-        zero,
-        CommandBody::RecordOfficeSessionReady { session_id },
     );
     accepted(
         &mut store,
@@ -1928,14 +2113,6 @@ fn cost_postmortem_is_the_only_conservative_frozen_cost_resolution() {
         Capability::StartGrandArchitectOfficeSession,
         zero,
         CommandBody::StartGrandArchitectOfficeSession { cycle_id },
-    );
-    accepted(
-        &mut store,
-        "kernel-ready-postmortem-session",
-        PrincipalId::KERNEL,
-        Capability::RecordOfficeSessionReady,
-        zero,
-        CommandBody::RecordOfficeSessionReady { session_id },
     );
     accepted(
         &mut store,
@@ -2061,14 +2238,6 @@ fn known_overrun_postmortem_records_actual_spend_even_above_admission_ceiling() 
         Capability::StartGrandArchitectOfficeSession,
         zero,
         CommandBody::StartGrandArchitectOfficeSession { cycle_id },
-    );
-    accepted(
-        &mut store,
-        "kernel-ready-actual-overrun-session",
-        PrincipalId::KERNEL,
-        Capability::RecordOfficeSessionReady,
-        zero,
-        CommandBody::RecordOfficeSessionReady { session_id },
     );
     accepted(
         &mut store,
@@ -2386,7 +2555,7 @@ fn on_disk_reopen_preserves_treatment_and_detects_materialized_tampering() {
             event.body,
             EventBody::OperatingCycleProposed {
                 cycle_id: event_cycle_id,
-                treatment: OperatingCycleTreatment::Vs001LiveV1,
+                treatment: OperatingCycleTreatment::Vs001DeterministicV1,
                 ..
             } if event_cycle_id == cycle_id
         )));
@@ -2415,7 +2584,7 @@ fn on_disk_reopen_preserves_treatment_and_detects_materialized_tampering() {
     assert_eq!(
         (treatment, ceiling),
         (
-            OperatingCycleTreatment::Vs001LiveV1 as i64,
+            OperatingCycleTreatment::Vs001DeterministicV1 as i64,
             UsdMicros::VS001_CYCLE_CEILING.value(),
         )
     );

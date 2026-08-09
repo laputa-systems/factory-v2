@@ -74,6 +74,148 @@ identifier!(EvaluatorRevisionId);
 identifier!(InputManifestId);
 identifier!(DeterministicEvaluationReceiptId);
 identifier!(EvidenceAdmissionId);
+identifier!(SupervisorEpochId);
+identifier!(WorkspaceId);
+identifier!(PiSessionId);
+identifier!(PiChildSpawnAdmissionId);
+identifier!(ChildProcessId);
+identifier!(ChildProcessLivenessObservationId);
+identifier!(ProcessSignalReceiptId);
+identifier!(PiAbortControlReceiptId);
+identifier!(ChildProcessReapReceiptId);
+identifier!(ChildProcessRecoveryReceiptId);
+identifier!(ChildStreamSealId);
+identifier!(CancellationPropagationId);
+identifier!(CancellationPropagationTargetId);
+
+macro_rules! native_process_value {
+    ($name:ident, $predicate:expr, $message:literal) => {
+        #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+        pub struct $name(i32);
+
+        impl $name {
+            pub fn new(value: i32) -> Option<Self> {
+                if $predicate(value) {
+                    Some(Self(value))
+                } else {
+                    None
+                }
+            }
+            pub const fn value(self) -> i32 {
+                self.0
+            }
+        }
+
+        impl TryFrom<i32> for $name {
+            type Error = DomainValueError;
+            fn try_from(value: i32) -> Result<Self, Self::Error> {
+                Self::new(value).ok_or(DomainValueError::InvalidNativeProcessValue {
+                    type_name: stringify!($name),
+                    value,
+                    rule: $message,
+                })
+            }
+        }
+    };
+}
+
+native_process_value!(NativeChildPid, |value: i32| value > 0, "must be positive");
+native_process_value!(
+    OwnedProcessGroupId,
+    |value: i32| value > 0,
+    "must be positive"
+);
+native_process_value!(
+    ProcessExitCode,
+    |value: i32| (0..=255).contains(&value),
+    "must be in the POSIX direct-child exit range 0..=255"
+);
+native_process_value!(
+    ProcessSignalNumber,
+    |value: i32| value > 0,
+    "must be positive"
+);
+
+macro_rules! boundary_identity {
+    ($name:ident) => {
+        #[derive(Clone, Debug, Eq, Hash, PartialEq)]
+        pub struct $name(String);
+
+        impl $name {
+            pub fn parse(value: impl Into<String>) -> Result<Self, DomainValueError> {
+                let value = value.into();
+                if value.is_empty()
+                    || value.len() > 128
+                    || !value.bytes().all(|byte| {
+                        byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-')
+                    })
+                    || !value
+                        .as_bytes()
+                        .first()
+                        .is_some_and(u8::is_ascii_alphanumeric)
+                    || !value
+                        .as_bytes()
+                        .last()
+                        .is_some_and(u8::is_ascii_alphanumeric)
+                {
+                    return Err(DomainValueError::InvalidOperationalIdentity {
+                        type_name: stringify!($name),
+                    });
+                }
+                Ok(Self(value))
+            }
+
+            pub fn as_str(&self) -> &str {
+                &self.0
+            }
+        }
+    };
+}
+
+// These opaque boundary identities use exactly the same portable ASCII grammar
+// as `society-pi` and `PiSupervisor`: an ASCII alphanumeric byte at both
+// ends, with only ASCII alphanumerics, `.`, `_`, and `-` in between. They are
+// intentionally distinct so a workspace, SDK session, child correlation, and
+// spawn nonce cannot be accidentally recombined at the trusted boundary.
+boundary_identity!(NativeWorkspaceId);
+boundary_identity!(PiBoundarySessionIdentity);
+boundary_identity!(PiCorrelationIdentity);
+boundary_identity!(SupervisedChildIdentity);
+boundary_identity!(SpawnNonce);
+boundary_identity!(SupervisorEpochIdentity);
+
+/// A resolved POSIX custody path is not a workspace identity. The resident
+/// supervisor supplies this only after its own canonicalization/private-root
+/// checks; kernel persists it separately so a logical workspace name cannot
+/// be mistaken for an executable filesystem location.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct CanonicalWorkspacePath(String);
+
+impl CanonicalWorkspacePath {
+    pub fn parse(value: impl Into<String>) -> Result<Self, DomainValueError> {
+        let value = value.into();
+        if value.len() < 2
+            || value.len() > 4096
+            || !value.starts_with('/')
+            || value.contains('\0')
+            || value.bytes().any(|byte| byte.is_ascii_control())
+            || value
+                .split('/')
+                .skip(1)
+                .any(|part| part.is_empty() || part == "." || part == "..")
+            || value.ends_with('/')
+        {
+            return Err(DomainValueError::InvalidOperationalIdentity {
+                type_name: "CanonicalWorkspacePath",
+            });
+        }
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
 
 impl ExecutionProfileId {
     /// A provider-free process-double profile for deterministic fixture work.
@@ -362,6 +504,29 @@ pub enum Capability {
     RecordDeterministicEvaluationReceipt = 66,
     AdmitDeterministicEvidence = 67,
     CloseDeterministicExperiment = 68,
+    AdmitPiChildSpawn = 69,
+    RecordInertChildSpawn = 70,
+    RecordPiAdapterReady = 71,
+    AuthorizePiCreateSession = 72,
+    RecordPiCreateSessionDelivery = 73,
+    RecordPiSessionReady = 74,
+    RecordChildStreamSeal = 75,
+    RecordChildProcessLiveness = 76,
+    RecordProcessSignalReceipt = 77,
+    RecordDirectChildReap = 78,
+    RecordChildRecovery = 79,
+    FinalizeChildProcess = 80,
+    BeginCancellationPropagation = 81,
+    ReconcileCancellationPropagation = 82,
+    /// Opens one exact resident-supervisor epoch before it can admit children.
+    /// A caller cannot silently reuse a prior epoch as a new daemon lifetime.
+    OpenSupervisorEpoch = 83,
+    /// Records a Pi SDK Abort control separately from TERM/KILL process
+    /// signals, binding exact canonical bytes to its correlation identity.
+    RecordPiAbortControlDelivery = 84,
+    /// Resolves an admitted-but-never-spawned child after cancellation froze
+    /// its owner target. A later inert spawn is then impossible.
+    RecordPiChildNotSpawned = 85,
 }
 
 impl Capability {
@@ -423,7 +588,7 @@ impl Capability {
         Self::CloseDeterministicExperiment,
     ];
 
-    pub const KERNEL_SERVICE: [Self; 17] = [
+    pub const KERNEL_SERVICE: [Self; 34] = [
         Self::RecordCycleDrained,
         Self::RecordOfficeSessionReady,
         Self::SettleOfficeTurn,
@@ -441,6 +606,23 @@ impl Capability {
         Self::RegisterForensicManifest,
         Self::RecordDeterministicEvaluationReceipt,
         Self::AdmitDeterministicEvidence,
+        Self::AdmitPiChildSpawn,
+        Self::RecordInertChildSpawn,
+        Self::RecordPiAdapterReady,
+        Self::AuthorizePiCreateSession,
+        Self::RecordPiCreateSessionDelivery,
+        Self::RecordPiSessionReady,
+        Self::RecordChildStreamSeal,
+        Self::RecordChildProcessLiveness,
+        Self::RecordProcessSignalReceipt,
+        Self::RecordDirectChildReap,
+        Self::RecordChildRecovery,
+        Self::FinalizeChildProcess,
+        Self::BeginCancellationPropagation,
+        Self::ReconcileCancellationPropagation,
+        Self::OpenSupervisorEpoch,
+        Self::RecordPiAbortControlDelivery,
+        Self::RecordPiChildNotSpawned,
     ];
 
     pub const fn requires_consumption(self) -> bool {
@@ -754,6 +936,190 @@ pub enum WorkLeaseState {
     Released = 2,
     Expired = 3,
     Cancelled = 4,
+}
+
+/// The only durable owners of a native child.  An owner is an exact union,
+/// never a polymorphic string: a child belongs either to one ActorAttempt or
+/// to the Grand Architect's Office session that initiated it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PiChildOwner {
+    ActorAttempt(ActorAttemptId),
+    GrandArchitectOfficeSession(GrandArchitectOfficeSessionId),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum PiChildSpawnAdmissionState {
+    Admitted = 1,
+    Spawned = 2,
+    Invalidated = 3,
+}
+
+/// Generic OS-child lifecycle. Pi protocol phases are deliberately in the
+/// one-to-one Pi session sidecar, so a deterministic evaluator can later use
+/// the same process, signal, reaping, and containment physics without a fake
+/// adapter-ready/Create/nonce state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum ChildProcessState {
+    Spawned = 1,
+    Running = 2,
+    CancellationRequested = 3,
+    DirectChildReaped = 4,
+    /// The parent process is gone but the owned group was still present after
+    /// recovery. Only containment/liveness receipts may advance this state;
+    /// no Pi protocol or wait(2) fact may recreate supervision authority.
+    RecoveryContainmentRequired = 5,
+    /// Exact post-restart absence proves the supervisor lost parentage but
+    /// has no remaining owned group to contain. It remains a close blocker.
+    LostParentage = 6,
+    ContainmentFailed = 7,
+    Finalized = 8,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum PiChildSessionState {
+    InertSpawned = 1,
+    AdapterReady = 2,
+    CreateAuthorized = 3,
+    CreateDelivered = 4,
+    SessionReady = 5,
+}
+
+impl ChildProcessState {
+    pub const fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            Self::Finalized | Self::LostParentage | Self::ContainmentFailed
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum ChildStreamKind {
+    AdmittedControl = 1,
+    PhysicalStdin = 2,
+    Stdout = 3,
+    Stderr = 4,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum ChildStreamSealCompleteness {
+    Complete = 1,
+    PrefixBounded = 2,
+    CountOverflow = 3,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum ProcessGroupLiveness {
+    Present = 1,
+    Absent = 2,
+    Inaccessible = 3,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum ProcessSignalAction {
+    Terminate = 1,
+    Kill = 2,
+    LingeringGroupKill = 3,
+}
+
+/// Physical result of one canonical Pi `Abort` control write. This is not an
+/// OS signal receipt: the abort correlation and digest name the exact JSONL
+/// command whose bytes were (or were not) handed to the host pipe.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum PiAbortControlWriteOutcome {
+    FullyWritten = 1,
+    PipeClosedBeforeWrite = 2,
+    WriteFailed = 3,
+    /// A nonblocking write staged a prefix which cancellation/deadline then
+    /// discarded. The physical stdin seal, not this receipt, owns that prefix.
+    PartialWriteDiscarded = 4,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum ProcessSignalDelivery {
+    Delivered = 1,
+    AbsentBeforeSignal = 2,
+    AbsentDuringSignal = 3,
+    Inaccessible = 4,
+}
+
+/// A signal receipt is either an intentional part of one durably snapshotted
+/// cancellation propagation or a narrow automatic containment action.  It is
+/// not a free-form supervisor annotation: cancellation signals must be
+/// attributable to the exact target set that was frozen before escalation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProcessSignalCause {
+    CancellationPropagation(CancellationPropagationId),
+    AutomaticBoundaryContainment,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DirectChildWaitStatus {
+    Exited { exit_code: ProcessExitCode },
+    Signaled { signal_number: ProcessSignalNumber },
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum ChildRecoveryObservation {
+    /// The resident supervisor no longer has a parentage-preserving handle.
+    /// The separately recorded group observation determines whether this is
+    /// terminal absence, live containment work, or inaccessible containment.
+    ParentageLost = 1,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum PiChildNotSpawnedReason {
+    CancelledBeforeSpawn = 1,
+    WorkspacePreparationFailed = 2,
+    ArtifactQualificationFailed = 3,
+    NativeSpawnFailed = 4,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum ChildTerminalDisposition {
+    /// Exact exit status remains on `DirectChildWaitStatus`; M5 does not call
+    /// a nonzero process exit "normal" or infer a model outcome from it.
+    Exited = 1,
+    Terminated = 4,
+    Killed = 5,
+    SupervisionLost = 6,
+    ContainmentFailed = 7,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum CancellationPropagationState {
+    Propagating = 1,
+    Reconciled = 2,
+    ContainmentFailed = 3,
+}
+
+/// The frozen cancellation target set retains more than a boolean "done".
+/// It records whether an owner never had a child, still owes a child receipt,
+/// or which physical outcome blocks/allows the propagation to advance.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum CancellationPropagationTargetDisposition {
+    NotRunning = 1,
+    AwaitingChildReceipt = 2,
+    Exited = 3,
+    Terminated = 4,
+    Killed = 5,
+    ContainmentFailed = 6,
+    SupervisionLost = 7,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1437,6 +1803,104 @@ pub enum CommandBody {
         operating_cycle_id: OperatingCycleId,
         deterministic_experiment_id: DeterministicExperimentId,
     },
+    /// The sole M5 opening fact for a resident supervisor lifetime. The epoch
+    /// has event-sequence ordering only; it does not claim a durable clock.
+    OpenSupervisorEpoch {
+        supervisor_epoch_id: SupervisorEpochId,
+        supervisor_epoch_identity: SupervisorEpochIdentity,
+    },
+    /// Pre-spawn authority is durable before native process creation.  The
+    /// caller cannot create a child by merely presenting an owner ID: this
+    /// binds the exact active reservation, profile, generation, workspace,
+    /// supervisor epoch, and Pi boundary session/nonce.
+    AdmitPiChildSpawn {
+        operating_cycle_id: OperatingCycleId,
+        owner: PiChildOwner,
+        budget_reservation_id: BudgetReservationId,
+        execution_profile_id: ExecutionProfileId,
+        native_workspace_id: NativeWorkspaceId,
+        canonical_workspace_path: CanonicalWorkspacePath,
+        supervisor_epoch_id: SupervisorEpochId,
+        supervisor_epoch_identity: SupervisorEpochIdentity,
+        pi_session_identity: PiBoundarySessionIdentity,
+        spawn_nonce: SpawnNonce,
+    },
+    RecordInertChildSpawn {
+        pi_child_spawn_admission_id: PiChildSpawnAdmissionId,
+        child_identity: SupervisedChildIdentity,
+        direct_child_pid: NativeChildPid,
+        process_group_id: OwnedProcessGroupId,
+    },
+    RecordPiAdapterReady {
+        child_process_id: ChildProcessId,
+        pi_session_identity: PiBoundarySessionIdentity,
+        spawn_nonce: SpawnNonce,
+    },
+    AuthorizePiCreateSession {
+        child_process_id: ChildProcessId,
+        correlation_identity: PiCorrelationIdentity,
+        create_request_digest: Sha256Digest,
+    },
+    RecordPiCreateSessionDelivery {
+        child_process_id: ChildProcessId,
+        correlation_identity: PiCorrelationIdentity,
+        create_request_digest: Sha256Digest,
+    },
+    RecordPiSessionReady {
+        child_process_id: ChildProcessId,
+        pi_session_identity: PiBoundarySessionIdentity,
+    },
+    RecordPiAbortControlDelivery {
+        child_process_id: ChildProcessId,
+        cancellation_propagation_id: CancellationPropagationId,
+        correlation_identity: PiCorrelationIdentity,
+        abort_command_digest: Sha256Digest,
+        outcome: PiAbortControlWriteOutcome,
+    },
+    RecordChildStreamSeal {
+        child_process_id: ChildProcessId,
+        stream_kind: ChildStreamKind,
+        full_observed_digest: Sha256Digest,
+        retained_content_object_id: ContentObjectId,
+        completeness: ChildStreamSealCompleteness,
+    },
+    RecordChildProcessLiveness {
+        child_process_id: ChildProcessId,
+        liveness: ProcessGroupLiveness,
+    },
+    RecordProcessSignalReceipt {
+        child_process_id: ChildProcessId,
+        action: ProcessSignalAction,
+        delivery: ProcessSignalDelivery,
+        observed_liveness: ProcessGroupLiveness,
+        cause: ProcessSignalCause,
+    },
+    RecordDirectChildReap {
+        child_process_id: ChildProcessId,
+        wait_status: DirectChildWaitStatus,
+        group_liveness_before_cleanup: ProcessGroupLiveness,
+        group_liveness_after_cleanup: ProcessGroupLiveness,
+    },
+    RecordChildRecovery {
+        child_process_id: ChildProcessId,
+        observation: ChildRecoveryObservation,
+        group_liveness_after_restart: ProcessGroupLiveness,
+    },
+    /// A terminal classification is derived only from preceding receipt rows;
+    /// this command does not accept a caller-selected result.
+    FinalizeChildProcess {
+        child_process_id: ChildProcessId,
+    },
+    BeginCancellationPropagation {
+        cancellation_request_id: CancellationRequestId,
+    },
+    ReconcileCancellationPropagation {
+        cancellation_propagation_id: CancellationPropagationId,
+    },
+    RecordPiChildNotSpawned {
+        pi_child_spawn_admission_id: PiChildSpawnAdmissionId,
+        reason: PiChildNotSpawnedReason,
+    },
 }
 
 impl CommandBody {
@@ -1516,6 +1980,27 @@ impl CommandBody {
             }
             Self::AdmitDeterministicEvidence { .. } => CommandKind::AdmitDeterministicEvidence,
             Self::CloseDeterministicExperiment { .. } => CommandKind::CloseDeterministicExperiment,
+            Self::OpenSupervisorEpoch { .. } => CommandKind::OpenSupervisorEpoch,
+            Self::AdmitPiChildSpawn { .. } => CommandKind::AdmitPiChildSpawn,
+            Self::RecordInertChildSpawn { .. } => CommandKind::RecordInertChildSpawn,
+            Self::RecordPiAdapterReady { .. } => CommandKind::RecordPiAdapterReady,
+            Self::AuthorizePiCreateSession { .. } => CommandKind::AuthorizePiCreateSession,
+            Self::RecordPiCreateSessionDelivery { .. } => {
+                CommandKind::RecordPiCreateSessionDelivery
+            }
+            Self::RecordPiSessionReady { .. } => CommandKind::RecordPiSessionReady,
+            Self::RecordPiAbortControlDelivery { .. } => CommandKind::RecordPiAbortControlDelivery,
+            Self::RecordChildStreamSeal { .. } => CommandKind::RecordChildStreamSeal,
+            Self::RecordChildProcessLiveness { .. } => CommandKind::RecordChildProcessLiveness,
+            Self::RecordProcessSignalReceipt { .. } => CommandKind::RecordProcessSignalReceipt,
+            Self::RecordDirectChildReap { .. } => CommandKind::RecordDirectChildReap,
+            Self::RecordChildRecovery { .. } => CommandKind::RecordChildRecovery,
+            Self::FinalizeChildProcess { .. } => CommandKind::FinalizeChildProcess,
+            Self::BeginCancellationPropagation { .. } => CommandKind::BeginCancellationPropagation,
+            Self::ReconcileCancellationPropagation { .. } => {
+                CommandKind::ReconcileCancellationPropagation
+            }
+            Self::RecordPiChildNotSpawned { .. } => CommandKind::RecordPiChildNotSpawned,
         }
     }
 
@@ -1595,6 +2080,25 @@ impl CommandBody {
             }
             Self::AdmitDeterministicEvidence { .. } => Capability::AdmitDeterministicEvidence,
             Self::CloseDeterministicExperiment { .. } => Capability::CloseDeterministicExperiment,
+            Self::OpenSupervisorEpoch { .. } => Capability::OpenSupervisorEpoch,
+            Self::AdmitPiChildSpawn { .. } => Capability::AdmitPiChildSpawn,
+            Self::RecordInertChildSpawn { .. } => Capability::RecordInertChildSpawn,
+            Self::RecordPiAdapterReady { .. } => Capability::RecordPiAdapterReady,
+            Self::AuthorizePiCreateSession { .. } => Capability::AuthorizePiCreateSession,
+            Self::RecordPiCreateSessionDelivery { .. } => Capability::RecordPiCreateSessionDelivery,
+            Self::RecordPiSessionReady { .. } => Capability::RecordPiSessionReady,
+            Self::RecordPiAbortControlDelivery { .. } => Capability::RecordPiAbortControlDelivery,
+            Self::RecordChildStreamSeal { .. } => Capability::RecordChildStreamSeal,
+            Self::RecordChildProcessLiveness { .. } => Capability::RecordChildProcessLiveness,
+            Self::RecordProcessSignalReceipt { .. } => Capability::RecordProcessSignalReceipt,
+            Self::RecordDirectChildReap { .. } => Capability::RecordDirectChildReap,
+            Self::RecordChildRecovery { .. } => Capability::RecordChildRecovery,
+            Self::FinalizeChildProcess { .. } => Capability::FinalizeChildProcess,
+            Self::BeginCancellationPropagation { .. } => Capability::BeginCancellationPropagation,
+            Self::ReconcileCancellationPropagation { .. } => {
+                Capability::ReconcileCancellationPropagation
+            }
+            Self::RecordPiChildNotSpawned { .. } => Capability::RecordPiChildNotSpawned,
         }
     }
 }
@@ -1670,6 +2174,23 @@ pub enum CommandKind {
     RecordDeterministicEvaluationReceipt = 66,
     AdmitDeterministicEvidence = 67,
     CloseDeterministicExperiment = 68,
+    AdmitPiChildSpawn = 69,
+    RecordInertChildSpawn = 70,
+    RecordPiAdapterReady = 71,
+    AuthorizePiCreateSession = 72,
+    RecordPiCreateSessionDelivery = 73,
+    RecordPiSessionReady = 74,
+    RecordChildStreamSeal = 75,
+    RecordChildProcessLiveness = 76,
+    RecordProcessSignalReceipt = 77,
+    RecordDirectChildReap = 78,
+    RecordChildRecovery = 79,
+    FinalizeChildProcess = 80,
+    BeginCancellationPropagation = 81,
+    ReconcileCancellationPropagation = 82,
+    OpenSupervisorEpoch = 83,
+    RecordPiAbortControlDelivery = 84,
+    RecordPiChildNotSpawned = 85,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1697,9 +2218,43 @@ pub struct CommandReceipt {
     pub idempotent: bool,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[repr(i64)]
-pub enum Rejection {
+/// The single authority for durable rejection wire values.  The daemon must
+/// eventually delegate its protocol conversion here rather than mirror a
+/// handwritten numeric match.  SQLite stores the `i64` value; the local
+/// control protocol uses `u8`, and neither conversion accepts gaps.
+macro_rules! closed_rejection_codes {
+    ($($name:ident = $value:literal),+ $(,)?) => {
+        #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+        #[repr(i64)]
+        pub enum Rejection { $($name = $value,)+ }
+
+        impl Rejection {
+            pub const ALL: &'static [Self] = &[$(Self::$name,)+];
+
+            pub const fn as_i64(self) -> i64 { self as i64 }
+
+            pub const fn as_u8(self) -> u8 { self as u8 }
+        }
+
+        impl TryFrom<i64> for Rejection {
+            type Error = DomainValueError;
+
+            fn try_from(value: i64) -> Result<Self, Self::Error> {
+                match value { $($value => Ok(Self::$name),)+ _ => Err(DomainValueError::InvalidRejectionCode(value)), }
+            }
+        }
+
+        impl TryFrom<u8> for Rejection {
+            type Error = DomainValueError;
+
+            fn try_from(value: u8) -> Result<Self, Self::Error> {
+                Self::try_from(i64::from(value))
+            }
+        }
+    };
+}
+
+closed_rejection_codes! {
     CapabilityMismatch = 1,
     CapabilityNotGranted = 2,
     CapabilityNoLongerActive = 3,
@@ -1742,6 +2297,12 @@ pub enum Rejection {
     DeterministicExperimentBindingMismatch = 40,
     DeterministicEvaluationBindingMismatch = 41,
     EvidenceAdmissionRequired = 42,
+    ChildSpawnAdmissionInvalid = 43,
+    ChildLifecycleReceiptMissing = 44,
+    ChildStreamSealBindingMismatch = 45,
+    ProcessContainmentFailed = 46,
+    CancellationPropagationIncomplete = 47,
+    SupervisedTerminalReceiptRequired = 48,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1994,6 +2555,90 @@ pub enum EventBody {
     DeterministicExperimentClosed {
         deterministic_experiment_id: DeterministicExperimentId,
     },
+    PiChildSpawnAdmitted {
+        pi_child_spawn_admission_id: PiChildSpawnAdmissionId,
+        owner: PiChildOwner,
+        budget_reservation_id: BudgetReservationId,
+    },
+    InertPiChildSpawnRecorded {
+        child_process_id: ChildProcessId,
+        pi_child_spawn_admission_id: PiChildSpawnAdmissionId,
+    },
+    PiAdapterReadyRecorded {
+        child_process_id: ChildProcessId,
+        pi_session_id: PiSessionId,
+    },
+    PiCreateSessionAuthorized {
+        child_process_id: ChildProcessId,
+    },
+    PiCreateSessionDeliveryRecorded {
+        child_process_id: ChildProcessId,
+    },
+    PiSessionReadyRecorded {
+        child_process_id: ChildProcessId,
+        pi_session_id: PiSessionId,
+    },
+    PiAbortControlDeliveryRecorded {
+        pi_abort_control_receipt_id: PiAbortControlReceiptId,
+        child_process_id: ChildProcessId,
+        cancellation_propagation_id: CancellationPropagationId,
+        correlation_identity: PiCorrelationIdentity,
+        abort_command_digest: Sha256Digest,
+        outcome: PiAbortControlWriteOutcome,
+    },
+    ChildStreamSealed {
+        child_stream_seal_id: ChildStreamSealId,
+        child_process_id: ChildProcessId,
+        stream_kind: ChildStreamKind,
+        completeness: ChildStreamSealCompleteness,
+    },
+    ChildProcessLivenessObserved {
+        child_process_liveness_observation_id: ChildProcessLivenessObservationId,
+        child_process_id: ChildProcessId,
+        liveness: ProcessGroupLiveness,
+    },
+    ProcessSignalReceiptRecorded {
+        process_signal_receipt_id: ProcessSignalReceiptId,
+        child_process_id: ChildProcessId,
+        action: ProcessSignalAction,
+        delivery: ProcessSignalDelivery,
+        observed_liveness: ProcessGroupLiveness,
+        cause: ProcessSignalCause,
+    },
+    DirectChildReaped {
+        child_process_reap_receipt_id: ChildProcessReapReceiptId,
+        child_process_id: ChildProcessId,
+        wait_status: DirectChildWaitStatus,
+        group_liveness_before_cleanup: ProcessGroupLiveness,
+        group_liveness_after_cleanup: ProcessGroupLiveness,
+    },
+    ChildRecoveryObserved {
+        child_process_recovery_receipt_id: ChildProcessRecoveryReceiptId,
+        child_process_id: ChildProcessId,
+        observation: ChildRecoveryObservation,
+        group_liveness_after_restart: ProcessGroupLiveness,
+    },
+    ChildProcessFinalized {
+        child_process_id: ChildProcessId,
+        disposition: ChildTerminalDisposition,
+    },
+    CancellationPropagationBegun {
+        cancellation_propagation_id: CancellationPropagationId,
+        cancellation_request_id: CancellationRequestId,
+    },
+    CancellationPropagationReconciled {
+        cancellation_propagation_id: CancellationPropagationId,
+    },
+    CancellationPropagationContainmentFailed {
+        cancellation_propagation_id: CancellationPropagationId,
+    },
+    PiChildSpawnInvalidated {
+        pi_child_spawn_admission_id: PiChildSpawnAdmissionId,
+        reason: PiChildNotSpawnedReason,
+    },
+    SupervisorEpochOpened {
+        supervisor_epoch_id: SupervisorEpochId,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2060,6 +2705,24 @@ pub enum EventKind {
     DeterministicEvaluationReceiptRecorded = 59,
     DeterministicEvidenceAdmitted = 60,
     DeterministicExperimentClosed = 61,
+    PiChildSpawnAdmitted = 62,
+    InertPiChildSpawnRecorded = 63,
+    PiAdapterReadyRecorded = 64,
+    PiCreateSessionAuthorized = 65,
+    PiCreateSessionDeliveryRecorded = 66,
+    PiSessionReadyRecorded = 67,
+    ChildStreamSealed = 68,
+    ChildProcessLivenessObserved = 69,
+    ProcessSignalReceiptRecorded = 70,
+    DirectChildReaped = 71,
+    ChildRecoveryObserved = 72,
+    ChildProcessFinalized = 73,
+    CancellationPropagationBegun = 74,
+    CancellationPropagationReconciled = 75,
+    SupervisorEpochOpened = 76,
+    CancellationPropagationContainmentFailed = 77,
+    PiAbortControlDeliveryRecorded = 78,
+    PiChildSpawnInvalidated = 79,
 }
 
 impl EventBody {
@@ -2136,6 +2799,32 @@ impl EventBody {
             }
             Self::DeterministicEvidenceAdmitted { .. } => EventKind::DeterministicEvidenceAdmitted,
             Self::DeterministicExperimentClosed { .. } => EventKind::DeterministicExperimentClosed,
+            Self::PiChildSpawnAdmitted { .. } => EventKind::PiChildSpawnAdmitted,
+            Self::InertPiChildSpawnRecorded { .. } => EventKind::InertPiChildSpawnRecorded,
+            Self::PiAdapterReadyRecorded { .. } => EventKind::PiAdapterReadyRecorded,
+            Self::PiCreateSessionAuthorized { .. } => EventKind::PiCreateSessionAuthorized,
+            Self::PiCreateSessionDeliveryRecorded { .. } => {
+                EventKind::PiCreateSessionDeliveryRecorded
+            }
+            Self::PiSessionReadyRecorded { .. } => EventKind::PiSessionReadyRecorded,
+            Self::PiAbortControlDeliveryRecorded { .. } => {
+                EventKind::PiAbortControlDeliveryRecorded
+            }
+            Self::ChildStreamSealed { .. } => EventKind::ChildStreamSealed,
+            Self::ChildProcessLivenessObserved { .. } => EventKind::ChildProcessLivenessObserved,
+            Self::ProcessSignalReceiptRecorded { .. } => EventKind::ProcessSignalReceiptRecorded,
+            Self::DirectChildReaped { .. } => EventKind::DirectChildReaped,
+            Self::ChildRecoveryObserved { .. } => EventKind::ChildRecoveryObserved,
+            Self::ChildProcessFinalized { .. } => EventKind::ChildProcessFinalized,
+            Self::CancellationPropagationBegun { .. } => EventKind::CancellationPropagationBegun,
+            Self::CancellationPropagationReconciled { .. } => {
+                EventKind::CancellationPropagationReconciled
+            }
+            Self::SupervisorEpochOpened { .. } => EventKind::SupervisorEpochOpened,
+            Self::CancellationPropagationContainmentFailed { .. } => {
+                EventKind::CancellationPropagationContainmentFailed
+            }
+            Self::PiChildSpawnInvalidated { .. } => EventKind::PiChildSpawnInvalidated,
         }
     }
 }
@@ -2159,10 +2848,20 @@ pub enum DomainValueError {
     InvalidPrincipalDisplayName,
     #[error("{type_name} must be nonblank, shorter than 1025 bytes, and contain no NUL")]
     InvalidCoordinationText { type_name: &'static str },
+    #[error("{type_name} must use canonical boundary identity grammar")]
+    InvalidOperationalIdentity { type_name: &'static str },
     #[error("micro-US-dollars cannot be negative: {0}")]
     NegativeUsdMicros(i64),
     #[error("admission generation cannot be negative: {0}")]
     NegativeAdmissionGeneration(i64),
     #[error("admission generation overflow")]
     GenerationOverflow,
+    #[error("unknown durable rejection code: {0}")]
+    InvalidRejectionCode(i64),
+    #[error("{type_name} {value} {rule}")]
+    InvalidNativeProcessValue {
+        type_name: &'static str,
+        value: i32,
+        rule: &'static str,
+    },
 }

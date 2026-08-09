@@ -12,20 +12,27 @@ use rusqlite::Connection;
 use society_kernel::{
     ActorAttemptCancellationReason, ActorAttemptId, ActorAttemptTerminalKind,
     ActorConfigurationName, ActorConfigurationRevisionId, ActorInstanceId, ActorModelPolicy,
-    AdmissionGeneration, AdversarialReviewId, Capability, CommandBody, CommandDisposition,
-    CommandId, CommandReceipt, CommandRequest, ContentObjectId, ContentSealReceiptId,
-    ContextPackPurpose, DeterministicEvaluationReceiptId, DeterministicExperimentId,
-    DevelopmentalAttractor, EvaluatorRevisionId, EventBody, EvidenceApplicability,
-    EvidenceLimitationText, EvidenceSemanticRole, ExecutionProfileId, ExpectedGeneration,
-    ForensicManifestCapturePolicy, ForensicManifestId, GraphRevisionBody, GraphRevisionId,
-    HypothesisRevisionText, InputManifestId, KernelStore, OperatingCycleId,
-    OperatingCycleTreatment, OutcomeObligationDisposition, OutcomeObligationId,
-    OutcomeObligationText, PrincipalDisplayName, PrincipalId, ProjectId, ProjectMilestoneId,
-    ProjectMilestoneName, ProjectName, ProjectObjectiveText, ProjectState,
-    ProjectStopConditionText, Rejection, RetentionAccessClass, ReviewChallengeId,
-    ReviewChallengeSeverity, ReviewDispositionKind, ReviewFailureHypothesis, ReviewResolutionKind,
-    ReviewResponseText, Sha256Digest, SocietyName, TicketAcceptanceConditionText, TicketId,
-    TicketTitle, UsdMicros, WorkAssignmentText, WorkItemId, WorkItemKind, WorkLeaseId,
+    AdmissionGeneration, AdversarialReviewId, BudgetReservationId, CancellationMode,
+    CancellationPropagationId, CancellationRequestId, CanonicalWorkspacePath, Capability,
+    ChildProcessId, ChildRecoveryObservation, ChildStreamKind, ChildStreamSealCompleteness,
+    CommandBody, CommandDisposition, CommandId, CommandReceipt, CommandRequest, ContentObjectId,
+    ContentSealReceiptId, ContextPackPurpose, DeterministicEvaluationReceiptId,
+    DeterministicExperimentId, DevelopmentalAttractor, DirectChildWaitStatus, EvaluatorRevisionId,
+    EventBody, EvidenceApplicability, EvidenceLimitationText, EvidenceSemanticRole,
+    ExecutionProfileId, ExpectedGeneration, ForensicManifestCapturePolicy, ForensicManifestId,
+    GrandArchitectOfficeSessionId, GraphRevisionBody, GraphRevisionId, HypothesisRevisionText,
+    InputManifestId, KernelStore, NativeChildPid, NativeWorkspaceId, OfficeTurnPurpose,
+    OperatingCycleId, OperatingCycleTreatment, OutcomeObligationDisposition, OutcomeObligationId,
+    OutcomeObligationText, OwnedProcessGroupId, PiAbortControlWriteOutcome,
+    PiBoundarySessionIdentity, PiChildOwner, PiChildSpawnAdmissionId, PiCorrelationIdentity,
+    PrincipalDisplayName, PrincipalId, ProcessExitCode, ProcessGroupLiveness, ProcessSignalAction,
+    ProcessSignalCause, ProcessSignalDelivery, ProjectId, ProjectMilestoneId, ProjectMilestoneName,
+    ProjectName, ProjectObjectiveText, ProjectState, ProjectStopConditionText, Rejection,
+    RetentionAccessClass, ReviewChallengeId, ReviewChallengeSeverity, ReviewDispositionKind,
+    ReviewFailureHypothesis, ReviewResolutionKind, ReviewResponseText, Sha256Digest, SocietyName,
+    SpawnNonce, SupervisedChildIdentity, SupervisorEpochId, SupervisorEpochIdentity,
+    TicketAcceptanceConditionText, TicketId, TicketTitle, UsdMicros, WorkAssignmentText,
+    WorkItemId, WorkItemKind, WorkLeaseId,
 };
 
 fn request(
@@ -255,6 +262,250 @@ fn active_project(
         },
     );
     project_id
+}
+
+/// A fresh deterministic M5 fixture with an exact Office owner, active
+/// reservation, epoch, and Pi child admission. It stops before the OS spawn
+/// so each regression can establish its own physical receipt ordering.
+struct AdmittedPiOfficeFixture {
+    architect: PrincipalId,
+    cycle: OperatingCycleId,
+    office_session: GrandArchitectOfficeSessionId,
+    admission: PiChildSpawnAdmissionId,
+    child: ChildProcessId,
+    pi_session_identity: PiBoundarySessionIdentity,
+    spawn_nonce: SpawnNonce,
+}
+
+fn admitted_pi_office_fixture(store: &mut KernelStore, label: &str) -> AdmittedPiOfficeFixture {
+    let (architect, cycle) = founded_cycle(store, OperatingCycleTreatment::Vs001DeterministicV1);
+    let _project = active_project(store, architect, cycle);
+    let generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
+    let office_session = GrandArchitectOfficeSessionId::new(1).unwrap();
+    accepted(
+        store,
+        &format!("{label}-reserve"),
+        architect,
+        Capability::ReserveBudget,
+        generation,
+        CommandBody::ReserveBudget {
+            cycle_id: cycle,
+            amount: UsdMicros::new(10_000).unwrap(),
+        },
+    );
+    let epoch = SupervisorEpochId::new(1).unwrap();
+    let epoch_identity = SupervisorEpochIdentity::parse(format!("epoch-{label}")).unwrap();
+    accepted(
+        store,
+        &format!("{label}-epoch"),
+        PrincipalId::KERNEL,
+        Capability::OpenSupervisorEpoch,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::OpenSupervisorEpoch {
+            supervisor_epoch_id: epoch,
+            supervisor_epoch_identity: epoch_identity.clone(),
+        },
+    );
+    let pi_session_identity = PiBoundarySessionIdentity::parse(format!("session-{label}")).unwrap();
+    let spawn_nonce = SpawnNonce::parse(format!("nonce-{label}")).unwrap();
+    accepted(
+        store,
+        &format!("{label}-admit"),
+        PrincipalId::KERNEL,
+        Capability::AdmitPiChildSpawn,
+        generation,
+        CommandBody::AdmitPiChildSpawn {
+            operating_cycle_id: cycle,
+            owner: PiChildOwner::GrandArchitectOfficeSession(office_session),
+            budget_reservation_id: BudgetReservationId::new(1).unwrap(),
+            execution_profile_id: ExecutionProfileId::DETERMINISTIC_PI_HOST_DOUBLE_V1,
+            native_workspace_id: NativeWorkspaceId::parse(format!("workspace-{label}")).unwrap(),
+            canonical_workspace_path: CanonicalWorkspacePath::parse(format!("/tmp/{label}"))
+                .unwrap(),
+            supervisor_epoch_id: epoch,
+            supervisor_epoch_identity: epoch_identity,
+            pi_session_identity: pi_session_identity.clone(),
+            spawn_nonce: spawn_nonce.clone(),
+        },
+    );
+    AdmittedPiOfficeFixture {
+        architect,
+        cycle,
+        office_session,
+        admission: PiChildSpawnAdmissionId::new(1).unwrap(),
+        child: ChildProcessId::new(1).unwrap(),
+        pi_session_identity,
+        spawn_nonce,
+    }
+}
+
+fn record_fixture_inert_spawn(
+    store: &mut KernelStore,
+    fixture: &AdmittedPiOfficeFixture,
+    label: &str,
+    expected_generation: ExpectedGeneration,
+) {
+    accepted(
+        store,
+        &format!("{label}-spawn"),
+        PrincipalId::KERNEL,
+        Capability::RecordInertChildSpawn,
+        expected_generation,
+        CommandBody::RecordInertChildSpawn {
+            pi_child_spawn_admission_id: fixture.admission,
+            child_identity: SupervisedChildIdentity::parse(format!("child-{label}")).unwrap(),
+            direct_child_pid: NativeChildPid::try_from(7101).unwrap(),
+            process_group_id: OwnedProcessGroupId::try_from(7101).unwrap(),
+        },
+    );
+}
+
+fn record_fixture_session_ready(
+    store: &mut KernelStore,
+    fixture: &AdmittedPiOfficeFixture,
+    label: &str,
+    expected_generation: ExpectedGeneration,
+    mark_office_ready: bool,
+) {
+    record_fixture_inert_spawn(store, fixture, label, expected_generation);
+    accepted(
+        store,
+        &format!("{label}-adapter-ready"),
+        PrincipalId::KERNEL,
+        Capability::RecordPiAdapterReady,
+        expected_generation,
+        CommandBody::RecordPiAdapterReady {
+            child_process_id: fixture.child,
+            pi_session_identity: fixture.pi_session_identity.clone(),
+            spawn_nonce: fixture.spawn_nonce.clone(),
+        },
+    );
+    let correlation = PiCorrelationIdentity::parse(format!("create-{label}")).unwrap();
+    let create_digest = Sha256Digest::of_bytes(format!("create-{label}").as_bytes());
+    accepted(
+        store,
+        &format!("{label}-create-authorized"),
+        PrincipalId::KERNEL,
+        Capability::AuthorizePiCreateSession,
+        expected_generation,
+        CommandBody::AuthorizePiCreateSession {
+            child_process_id: fixture.child,
+            correlation_identity: correlation.clone(),
+            create_request_digest: create_digest,
+        },
+    );
+    accepted(
+        store,
+        &format!("{label}-create-delivered"),
+        PrincipalId::KERNEL,
+        Capability::RecordPiCreateSessionDelivery,
+        expected_generation,
+        CommandBody::RecordPiCreateSessionDelivery {
+            child_process_id: fixture.child,
+            correlation_identity: correlation,
+            create_request_digest: create_digest,
+        },
+    );
+    accepted(
+        store,
+        &format!("{label}-session-ready"),
+        PrincipalId::KERNEL,
+        Capability::RecordPiSessionReady,
+        expected_generation,
+        CommandBody::RecordPiSessionReady {
+            child_process_id: fixture.child,
+            pi_session_identity: fixture.pi_session_identity.clone(),
+        },
+    );
+    if mark_office_ready {
+        accepted(
+            store,
+            &format!("{label}-office-ready"),
+            PrincipalId::KERNEL,
+            Capability::RecordOfficeSessionReady,
+            expected_generation,
+            CommandBody::RecordOfficeSessionReady {
+                session_id: fixture.office_session,
+            },
+        );
+    }
+}
+
+fn finalize_fixture_child(
+    store: &mut KernelStore,
+    fixture: &AdmittedPiOfficeFixture,
+    label: &str,
+    expected_generation: ExpectedGeneration,
+) {
+    accepted(
+        store,
+        &format!("{label}-direct-reap"),
+        PrincipalId::KERNEL,
+        Capability::RecordDirectChildReap,
+        expected_generation,
+        CommandBody::RecordDirectChildReap {
+            child_process_id: fixture.child,
+            wait_status: DirectChildWaitStatus::Exited {
+                exit_code: ProcessExitCode::try_from(0).unwrap(),
+            },
+            group_liveness_before_cleanup: ProcessGroupLiveness::Present,
+            group_liveness_after_cleanup: ProcessGroupLiveness::Absent,
+        },
+    );
+    for (index, stream) in [
+        ChildStreamKind::AdmittedControl,
+        ChildStreamKind::PhysicalStdin,
+        ChildStreamKind::Stdout,
+        ChildStreamKind::Stderr,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let number = i64::try_from(index + 1).unwrap();
+        let digest = Sha256Digest::of_bytes(format!("{label}-stream-{number}").as_bytes());
+        accepted(
+            store,
+            &format!("{label}-seal-{number}"),
+            PrincipalId::KERNEL,
+            Capability::RecordContentSealReceipt,
+            ExpectedGeneration::NotApplicable,
+            CommandBody::RecordContentSealReceipt { digest },
+        );
+        accepted(
+            store,
+            &format!("{label}-register-{number}"),
+            PrincipalId::KERNEL,
+            Capability::RegisterContentObject,
+            ExpectedGeneration::NotApplicable,
+            CommandBody::RegisterContentObject {
+                content_seal_receipt_id: ContentSealReceiptId::new(number).unwrap(),
+            },
+        );
+        accepted(
+            store,
+            &format!("{label}-stream-{number}"),
+            PrincipalId::KERNEL,
+            Capability::RecordChildStreamSeal,
+            expected_generation,
+            CommandBody::RecordChildStreamSeal {
+                child_process_id: fixture.child,
+                stream_kind: stream,
+                full_observed_digest: digest,
+                retained_content_object_id: ContentObjectId::new(number).unwrap(),
+                completeness: ChildStreamSealCompleteness::Complete,
+            },
+        );
+    }
+    accepted(
+        store,
+        &format!("{label}-finalize"),
+        PrincipalId::KERNEL,
+        Capability::FinalizeChildProcess,
+        expected_generation,
+        CommandBody::FinalizeChildProcess {
+            child_process_id: fixture.child,
+        },
+    );
 }
 
 #[test]
@@ -1282,6 +1533,1658 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
             .is_err()
     );
     fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn pi_child_receipts_bind_epoch_treatment_cancellation_and_containment() {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("xsh-m5-child-replay-{nonce}.sqlite"));
+    let mut store = KernelStore::open(&path).unwrap();
+    let (architect, cycle) =
+        founded_cycle(&mut store, OperatingCycleTreatment::Vs001DeterministicV1);
+    let generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
+    let _project = active_project(&mut store, architect, cycle);
+    let office_session = GrandArchitectOfficeSessionId::new(1).unwrap();
+
+    accepted(
+        &mut store,
+        "m5-reserve-office-child-budget",
+        architect,
+        Capability::ReserveBudget,
+        generation,
+        CommandBody::ReserveBudget {
+            cycle_id: cycle,
+            amount: UsdMicros::new(10_000).unwrap(),
+        },
+    );
+    let reservation = society_kernel::BudgetReservationId::new(1).unwrap();
+    let epoch = SupervisorEpochId::new(41).unwrap();
+    let epoch_identity = SupervisorEpochIdentity::parse("resident-supervisor-41").unwrap();
+    accepted(
+        &mut store,
+        "m5-open-supervisor-epoch",
+        PrincipalId::KERNEL,
+        Capability::OpenSupervisorEpoch,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::OpenSupervisorEpoch {
+            supervisor_epoch_id: epoch,
+            supervisor_epoch_identity: epoch_identity.clone(),
+        },
+    );
+    rejected(
+        &mut store,
+        "m5-reject-duplicate-supervisor-epoch",
+        PrincipalId::KERNEL,
+        Capability::OpenSupervisorEpoch,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::OpenSupervisorEpoch {
+            supervisor_epoch_id: epoch,
+            supervisor_epoch_identity: epoch_identity.clone(),
+        },
+        Rejection::ChildSpawnAdmissionInvalid,
+    );
+    rejected(
+        &mut store,
+        "m5-reject-second-supervisor-epoch-lifetime",
+        PrincipalId::KERNEL,
+        Capability::OpenSupervisorEpoch,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::OpenSupervisorEpoch {
+            supervisor_epoch_id: SupervisorEpochId::new(42).unwrap(),
+            supervisor_epoch_identity: SupervisorEpochIdentity::parse("resident-supervisor-42")
+                .unwrap(),
+        },
+        Rejection::ChildSpawnAdmissionInvalid,
+    );
+
+    let workspace = NativeWorkspaceId::parse("xsh-m5-proof").unwrap();
+    let workspace_path = CanonicalWorkspacePath::parse("/tmp/xsh-m5-proof").unwrap();
+    assert!(NativeWorkspaceId::parse("xsh-m5-proof-").is_err());
+    assert!(PiBoundarySessionIdentity::parse("π-session").is_err());
+    assert!(CanonicalWorkspacePath::parse("/tmp//xsh-m5-proof").is_err());
+    let pi_session = PiBoundarySessionIdentity::parse("pi-session-m5-proof").unwrap();
+    let nonce = SpawnNonce::parse("spawn-nonce-m5-proof").unwrap();
+    rejected(
+        &mut store,
+        "m5-reject-native-profile-in-deterministic-cycle",
+        PrincipalId::KERNEL,
+        Capability::AdmitPiChildSpawn,
+        generation,
+        CommandBody::AdmitPiChildSpawn {
+            operating_cycle_id: cycle,
+            owner: PiChildOwner::GrandArchitectOfficeSession(office_session),
+            budget_reservation_id: reservation,
+            execution_profile_id: ExecutionProfileId::NATIVE_PINNED_PI_SDK_V1,
+            native_workspace_id: workspace.clone(),
+            canonical_workspace_path: workspace_path.clone(),
+            supervisor_epoch_id: epoch,
+            supervisor_epoch_identity: epoch_identity.clone(),
+            pi_session_identity: pi_session.clone(),
+            spawn_nonce: nonce.clone(),
+        },
+        Rejection::ExecutionProfileIneligible,
+    );
+    accepted(
+        &mut store,
+        "m5-admit-double-child",
+        PrincipalId::KERNEL,
+        Capability::AdmitPiChildSpawn,
+        generation,
+        CommandBody::AdmitPiChildSpawn {
+            operating_cycle_id: cycle,
+            owner: PiChildOwner::GrandArchitectOfficeSession(office_session),
+            budget_reservation_id: reservation,
+            execution_profile_id: ExecutionProfileId::DETERMINISTIC_PI_HOST_DOUBLE_V1,
+            native_workspace_id: workspace,
+            canonical_workspace_path: workspace_path,
+            supervisor_epoch_id: epoch,
+            supervisor_epoch_identity: epoch_identity.clone(),
+            pi_session_identity: pi_session.clone(),
+            spawn_nonce: nonce.clone(),
+        },
+    );
+    let admission = PiChildSpawnAdmissionId::new(1).unwrap();
+    let child = ChildProcessId::new(1).unwrap();
+    assert!(NativeChildPid::try_from(0).is_err());
+    assert!(OwnedProcessGroupId::try_from(-1).is_err());
+    assert!(ProcessExitCode::try_from(-1).is_err());
+    assert!(ProcessExitCode::try_from(256).is_err());
+    rejected(
+        &mut store,
+        "m5-reject-nonleader-process-group",
+        PrincipalId::KERNEL,
+        Capability::RecordInertChildSpawn,
+        generation,
+        CommandBody::RecordInertChildSpawn {
+            pi_child_spawn_admission_id: admission,
+            child_identity: SupervisedChildIdentity::parse("native-child-m5-proof").unwrap(),
+            direct_child_pid: NativeChildPid::try_from(4182).unwrap(),
+            process_group_id: OwnedProcessGroupId::try_from(4183).unwrap(),
+        },
+        Rejection::ChildSpawnAdmissionInvalid,
+    );
+    accepted(
+        &mut store,
+        "m5-record-inert-child",
+        PrincipalId::KERNEL,
+        Capability::RecordInertChildSpawn,
+        generation,
+        CommandBody::RecordInertChildSpawn {
+            pi_child_spawn_admission_id: admission,
+            child_identity: SupervisedChildIdentity::parse("native-child-m5-proof").unwrap(),
+            direct_child_pid: NativeChildPid::try_from(4182).unwrap(),
+            process_group_id: OwnedProcessGroupId::try_from(4182).unwrap(),
+        },
+    );
+    // An Office authority fact cannot bypass an admitted child whose Pi
+    // session has not reached the exact durable SessionReady phase.
+    rejected(
+        &mut store,
+        "m5-office-ready-requires-supervised-pi-ready",
+        PrincipalId::KERNEL,
+        Capability::RecordOfficeSessionReady,
+        generation,
+        CommandBody::RecordOfficeSessionReady {
+            session_id: office_session,
+        },
+        Rejection::ChildLifecycleReceiptMissing,
+    );
+    accepted(
+        &mut store,
+        "m5-adapter-ready",
+        PrincipalId::KERNEL,
+        Capability::RecordPiAdapterReady,
+        generation,
+        CommandBody::RecordPiAdapterReady {
+            child_process_id: child,
+            pi_session_identity: pi_session.clone(),
+            spawn_nonce: nonce.clone(),
+        },
+    );
+    let correlation = PiCorrelationIdentity::parse("create-correlation-m5-proof").unwrap();
+    let create_digest = Sha256Digest::of_bytes(b"canonical-create-request");
+    accepted(
+        &mut store,
+        "m5-authorize-create",
+        PrincipalId::KERNEL,
+        Capability::AuthorizePiCreateSession,
+        generation,
+        CommandBody::AuthorizePiCreateSession {
+            child_process_id: child,
+            correlation_identity: correlation.clone(),
+            create_request_digest: create_digest,
+        },
+    );
+    rejected(
+        &mut store,
+        "m5-reject-recombined-create-digest",
+        PrincipalId::KERNEL,
+        Capability::RecordPiCreateSessionDelivery,
+        generation,
+        CommandBody::RecordPiCreateSessionDelivery {
+            child_process_id: child,
+            correlation_identity: correlation.clone(),
+            create_request_digest: Sha256Digest::of_bytes(b"altered-create-request"),
+        },
+        Rejection::InvalidLifecycleTransition,
+    );
+    accepted(
+        &mut store,
+        "m5-record-create-delivery",
+        PrincipalId::KERNEL,
+        Capability::RecordPiCreateSessionDelivery,
+        generation,
+        CommandBody::RecordPiCreateSessionDelivery {
+            child_process_id: child,
+            correlation_identity: correlation,
+            create_request_digest: create_digest,
+        },
+    );
+    accepted(
+        &mut store,
+        "m5-record-session-ready",
+        PrincipalId::KERNEL,
+        Capability::RecordPiSessionReady,
+        generation,
+        CommandBody::RecordPiSessionReady {
+            child_process_id: child,
+            pi_session_identity: pi_session,
+        },
+    );
+    accepted(
+        &mut store,
+        "m5-office-ready-after-supervised-pi-ready",
+        PrincipalId::KERNEL,
+        Capability::RecordOfficeSessionReady,
+        generation,
+        CommandBody::RecordOfficeSessionReady {
+            session_id: office_session,
+        },
+    );
+    rejected(
+        &mut store,
+        "m5-reject-automatic-kill-before-term",
+        PrincipalId::KERNEL,
+        Capability::RecordProcessSignalReceipt,
+        generation,
+        CommandBody::RecordProcessSignalReceipt {
+            child_process_id: child,
+            action: ProcessSignalAction::Kill,
+            delivery: ProcessSignalDelivery::Delivered,
+            observed_liveness: ProcessGroupLiveness::Present,
+            cause: ProcessSignalCause::AutomaticBoundaryContainment,
+        },
+        Rejection::CancellationPropagationIncomplete,
+    );
+    accepted(
+        &mut store,
+        "m5-automatic-containment-term",
+        PrincipalId::KERNEL,
+        Capability::RecordProcessSignalReceipt,
+        generation,
+        CommandBody::RecordProcessSignalReceipt {
+            child_process_id: child,
+            action: ProcessSignalAction::Terminate,
+            delivery: ProcessSignalDelivery::Delivered,
+            observed_liveness: ProcessGroupLiveness::Present,
+            cause: ProcessSignalCause::AutomaticBoundaryContainment,
+        },
+    );
+    rejected(
+        &mut store,
+        "m5-reject-contradictory-absent-signal-receipt",
+        PrincipalId::KERNEL,
+        Capability::RecordProcessSignalReceipt,
+        generation,
+        CommandBody::RecordProcessSignalReceipt {
+            child_process_id: child,
+            action: ProcessSignalAction::Terminate,
+            delivery: ProcessSignalDelivery::AbsentBeforeSignal,
+            observed_liveness: ProcessGroupLiveness::Present,
+            cause: ProcessSignalCause::AutomaticBoundaryContainment,
+        },
+        Rejection::ChildLifecycleReceiptMissing,
+    );
+    rejected(
+        &mut store,
+        "m5-reject-unsnapshotted-cancellation-abort-control",
+        PrincipalId::KERNEL,
+        Capability::RecordPiAbortControlDelivery,
+        generation,
+        CommandBody::RecordPiAbortControlDelivery {
+            child_process_id: child,
+            cancellation_propagation_id: CancellationPropagationId::new(1).unwrap(),
+            correlation_identity: PiCorrelationIdentity::parse("abort-unsnapshotted-m5").unwrap(),
+            abort_command_digest: Sha256Digest::of_bytes(b"canonical-abort-unsnapshotted"),
+            outcome: PiAbortControlWriteOutcome::FullyWritten,
+        },
+        Rejection::CancellationPropagationIncomplete,
+    );
+
+    accepted(
+        &mut store,
+        "m5-request-cancellation",
+        architect,
+        Capability::RequestCancellation,
+        generation,
+        CommandBody::RequestCancellation {
+            cycle_id: cycle,
+            mode: CancellationMode::EmergencyStop,
+        },
+    );
+    let post_cancel_generation =
+        ExpectedGeneration::Exact(AdmissionGeneration::try_from(1).unwrap());
+    let cancellation = CancellationRequestId::new(1).unwrap();
+    let propagation = CancellationPropagationId::new(1).unwrap();
+    accepted(
+        &mut store,
+        "m5-snapshot-cancellation-targets",
+        PrincipalId::KERNEL,
+        Capability::BeginCancellationPropagation,
+        post_cancel_generation,
+        CommandBody::BeginCancellationPropagation {
+            cancellation_request_id: cancellation,
+        },
+    );
+    rejected(
+        &mut store,
+        "m5-reject-cancellation-term-before-adapter-abort",
+        PrincipalId::KERNEL,
+        Capability::RecordProcessSignalReceipt,
+        post_cancel_generation,
+        CommandBody::RecordProcessSignalReceipt {
+            child_process_id: child,
+            action: ProcessSignalAction::Terminate,
+            delivery: ProcessSignalDelivery::Delivered,
+            observed_liveness: ProcessGroupLiveness::Present,
+            cause: ProcessSignalCause::CancellationPropagation(propagation),
+        },
+        Rejection::CancellationPropagationIncomplete,
+    );
+    accepted(
+        &mut store,
+        "m5-cancellation-abort-control",
+        PrincipalId::KERNEL,
+        Capability::RecordPiAbortControlDelivery,
+        post_cancel_generation,
+        CommandBody::RecordPiAbortControlDelivery {
+            child_process_id: child,
+            cancellation_propagation_id: propagation,
+            correlation_identity: PiCorrelationIdentity::parse("abort-cancellation-m5").unwrap(),
+            abort_command_digest: Sha256Digest::of_bytes(b"canonical-abort-cancellation"),
+            outcome: PiAbortControlWriteOutcome::FullyWritten,
+        },
+    );
+    accepted(
+        &mut store,
+        "m5-cancellation-term-after-adapter-abort",
+        PrincipalId::KERNEL,
+        Capability::RecordProcessSignalReceipt,
+        post_cancel_generation,
+        CommandBody::RecordProcessSignalReceipt {
+            child_process_id: child,
+            action: ProcessSignalAction::Terminate,
+            delivery: ProcessSignalDelivery::Delivered,
+            observed_liveness: ProcessGroupLiveness::Present,
+            cause: ProcessSignalCause::CancellationPropagation(propagation),
+        },
+    );
+    accepted(
+        &mut store,
+        "m5-direct-reap-with-inaccessible-group",
+        PrincipalId::KERNEL,
+        Capability::RecordDirectChildReap,
+        post_cancel_generation,
+        CommandBody::RecordDirectChildReap {
+            child_process_id: child,
+            wait_status: DirectChildWaitStatus::Exited {
+                exit_code: ProcessExitCode::try_from(0).unwrap(),
+            },
+            group_liveness_before_cleanup: ProcessGroupLiveness::Present,
+            group_liveness_after_cleanup: ProcessGroupLiveness::Inaccessible,
+        },
+    );
+    rejected(
+        &mut store,
+        "m5-containment-cannot-finalize",
+        PrincipalId::KERNEL,
+        Capability::FinalizeChildProcess,
+        post_cancel_generation,
+        CommandBody::FinalizeChildProcess {
+            child_process_id: child,
+        },
+        Rejection::ProcessContainmentFailed,
+    );
+    rejected(
+        &mut store,
+        "m5-recovery-cannot-downclassify-containment",
+        PrincipalId::KERNEL,
+        Capability::RecordChildRecovery,
+        post_cancel_generation,
+        CommandBody::RecordChildRecovery {
+            child_process_id: child,
+            observation: society_kernel::ChildRecoveryObservation::ParentageLost,
+            group_liveness_after_restart: ProcessGroupLiveness::Absent,
+        },
+        Rejection::InvalidLifecycleTransition,
+    );
+    accepted(
+        &mut store,
+        "m5-record-containment-propagation-failure",
+        PrincipalId::KERNEL,
+        Capability::ReconcileCancellationPropagation,
+        post_cancel_generation,
+        CommandBody::ReconcileCancellationPropagation {
+            cancellation_propagation_id: propagation,
+        },
+    );
+    assert!(store.replay_ledger().unwrap().iter().any(|event| matches!(
+        event.body,
+        EventBody::CancellationPropagationContainmentFailed { cancellation_propagation_id }
+            if cancellation_propagation_id == propagation
+    )));
+    assert!(store.validate_replayed_materialized_state().is_ok());
+
+    // The same pre-spawn fence applies before live Create authorization: M5
+    // must not turn the schema-seeded, still-unqualified native profile into
+    // an admissible live child merely because an Office has a reservation.
+    let mut live = KernelStore::open_in_memory().unwrap();
+    let (live_architect, live_cycle) =
+        founded_cycle(&mut live, OperatingCycleTreatment::Vs001LiveV1);
+    let live_generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
+    let _live_project = active_project(&mut live, live_architect, live_cycle);
+    accepted(
+        &mut live,
+        "m5-live-reserve",
+        live_architect,
+        Capability::ReserveBudget,
+        live_generation,
+        CommandBody::ReserveBudget {
+            cycle_id: live_cycle,
+            amount: UsdMicros::new(10_000).unwrap(),
+        },
+    );
+    let live_epoch = SupervisorEpochId::new(77).unwrap();
+    let live_epoch_identity =
+        SupervisorEpochIdentity::parse("resident-supervisor-live-77").unwrap();
+    accepted(
+        &mut live,
+        "m5-live-open-epoch",
+        PrincipalId::KERNEL,
+        Capability::OpenSupervisorEpoch,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::OpenSupervisorEpoch {
+            supervisor_epoch_id: live_epoch,
+            supervisor_epoch_identity: live_epoch_identity.clone(),
+        },
+    );
+    rejected(
+        &mut live,
+        "m5-live-reject-unqualified-native-admission",
+        PrincipalId::KERNEL,
+        Capability::AdmitPiChildSpawn,
+        live_generation,
+        CommandBody::AdmitPiChildSpawn {
+            operating_cycle_id: live_cycle,
+            owner: PiChildOwner::GrandArchitectOfficeSession(
+                GrandArchitectOfficeSessionId::new(1).unwrap(),
+            ),
+            budget_reservation_id: society_kernel::BudgetReservationId::new(1).unwrap(),
+            execution_profile_id: ExecutionProfileId::NATIVE_PINNED_PI_SDK_V1,
+            native_workspace_id: NativeWorkspaceId::parse("xsh-m5-live").unwrap(),
+            canonical_workspace_path: CanonicalWorkspacePath::parse("/tmp/xsh-m5-live").unwrap(),
+            supervisor_epoch_id: live_epoch,
+            supervisor_epoch_identity: live_epoch_identity,
+            pi_session_identity: PiBoundarySessionIdentity::parse("pi-session-m5-live").unwrap(),
+            spawn_nonce: SpawnNonce::parse("spawn-nonce-m5-live").unwrap(),
+        },
+        Rejection::ExecutionProfileIneligible,
+    );
+    drop(live);
+    drop(store);
+    let inspect = Connection::open(&path).unwrap();
+    // SQLite independently rejects a contradictory accepted signal receipt;
+    // rejected typed commands above remain ledgered because their command body
+    // table deliberately does not encode this transition predicate.
+    assert!(inspect
+        .execute(
+            "INSERT INTO process_signal_receipts(child_process_id, signal_action, delivery, observed_liveness, cause_kind, cancellation_propagation_id, recorded_by_command_id)
+             VALUES (1, 1, 2, 1, 2, NULL, 1)",
+            [],
+        )
+        .is_err());
+    inspect
+        .execute(
+            "UPDATE pi_child_processes SET child_identity = 'tampered-child-m5' WHERE child_process_id = 1",
+            [],
+        )
+        .unwrap();
+    drop(inspect);
+    assert!(
+        KernelStore::open(&path)
+            .unwrap()
+            .validate_replayed_materialized_state()
+            .is_err()
+    );
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn lingering_group_cleanup_requires_later_absence_before_finalization() {
+    let mut store = KernelStore::open_in_memory().unwrap();
+    let (architect, cycle) =
+        founded_cycle(&mut store, OperatingCycleTreatment::Vs001DeterministicV1);
+    let generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
+    let _project = active_project(&mut store, architect, cycle);
+    accepted(
+        &mut store,
+        "m5-linger-reserve",
+        architect,
+        Capability::ReserveBudget,
+        generation,
+        CommandBody::ReserveBudget {
+            cycle_id: cycle,
+            amount: UsdMicros::new(10_000).unwrap(),
+        },
+    );
+    let epoch = SupervisorEpochId::new(88).unwrap();
+    let epoch_identity = SupervisorEpochIdentity::parse("resident-supervisor-linger-88").unwrap();
+    accepted(
+        &mut store,
+        "m5-linger-open-epoch",
+        PrincipalId::KERNEL,
+        Capability::OpenSupervisorEpoch,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::OpenSupervisorEpoch {
+            supervisor_epoch_id: epoch,
+            supervisor_epoch_identity: epoch_identity.clone(),
+        },
+    );
+    let pi_session = PiBoundarySessionIdentity::parse("pi-session-m5-linger").unwrap();
+    let nonce = SpawnNonce::parse("spawn-nonce-m5-linger").unwrap();
+    accepted(
+        &mut store,
+        "m5-linger-admit",
+        PrincipalId::KERNEL,
+        Capability::AdmitPiChildSpawn,
+        generation,
+        CommandBody::AdmitPiChildSpawn {
+            operating_cycle_id: cycle,
+            owner: PiChildOwner::GrandArchitectOfficeSession(
+                GrandArchitectOfficeSessionId::new(1).unwrap(),
+            ),
+            budget_reservation_id: society_kernel::BudgetReservationId::new(1).unwrap(),
+            execution_profile_id: ExecutionProfileId::DETERMINISTIC_PI_HOST_DOUBLE_V1,
+            native_workspace_id: NativeWorkspaceId::parse("xsh-m5-linger").unwrap(),
+            canonical_workspace_path: CanonicalWorkspacePath::parse("/tmp/xsh-m5-linger").unwrap(),
+            supervisor_epoch_id: epoch,
+            supervisor_epoch_identity: epoch_identity,
+            pi_session_identity: pi_session.clone(),
+            spawn_nonce: nonce.clone(),
+        },
+    );
+    let child = ChildProcessId::new(1).unwrap();
+    accepted(
+        &mut store,
+        "m5-linger-spawn",
+        PrincipalId::KERNEL,
+        Capability::RecordInertChildSpawn,
+        generation,
+        CommandBody::RecordInertChildSpawn {
+            pi_child_spawn_admission_id: PiChildSpawnAdmissionId::new(1).unwrap(),
+            child_identity: SupervisedChildIdentity::parse("native-child-m5-linger").unwrap(),
+            direct_child_pid: NativeChildPid::try_from(5182).unwrap(),
+            process_group_id: OwnedProcessGroupId::try_from(5182).unwrap(),
+        },
+    );
+    accepted(
+        &mut store,
+        "m5-linger-adapter",
+        PrincipalId::KERNEL,
+        Capability::RecordPiAdapterReady,
+        generation,
+        CommandBody::RecordPiAdapterReady {
+            child_process_id: child,
+            pi_session_identity: pi_session.clone(),
+            spawn_nonce: nonce,
+        },
+    );
+    let digest = Sha256Digest::of_bytes(b"linger-create");
+    let correlation = PiCorrelationIdentity::parse("linger-correlation").unwrap();
+    accepted(
+        &mut store,
+        "m5-linger-authorize",
+        PrincipalId::KERNEL,
+        Capability::AuthorizePiCreateSession,
+        generation,
+        CommandBody::AuthorizePiCreateSession {
+            child_process_id: child,
+            correlation_identity: correlation.clone(),
+            create_request_digest: digest,
+        },
+    );
+    accepted(
+        &mut store,
+        "m5-linger-deliver",
+        PrincipalId::KERNEL,
+        Capability::RecordPiCreateSessionDelivery,
+        generation,
+        CommandBody::RecordPiCreateSessionDelivery {
+            child_process_id: child,
+            correlation_identity: correlation,
+            create_request_digest: digest,
+        },
+    );
+    accepted(
+        &mut store,
+        "m5-linger-ready",
+        PrincipalId::KERNEL,
+        Capability::RecordPiSessionReady,
+        generation,
+        CommandBody::RecordPiSessionReady {
+            child_process_id: child,
+            pi_session_identity: pi_session,
+        },
+    );
+    accepted(
+        &mut store,
+        "m5-linger-direct-reap",
+        PrincipalId::KERNEL,
+        Capability::RecordDirectChildReap,
+        generation,
+        CommandBody::RecordDirectChildReap {
+            child_process_id: child,
+            wait_status: DirectChildWaitStatus::Exited {
+                exit_code: ProcessExitCode::try_from(0).unwrap(),
+            },
+            group_liveness_before_cleanup: ProcessGroupLiveness::Present,
+            group_liveness_after_cleanup: ProcessGroupLiveness::Present,
+        },
+    );
+    accepted(
+        &mut store,
+        "m5-linger-kill",
+        PrincipalId::KERNEL,
+        Capability::RecordProcessSignalReceipt,
+        generation,
+        CommandBody::RecordProcessSignalReceipt {
+            child_process_id: child,
+            action: ProcessSignalAction::LingeringGroupKill,
+            delivery: ProcessSignalDelivery::Delivered,
+            observed_liveness: ProcessGroupLiveness::Present,
+            cause: ProcessSignalCause::AutomaticBoundaryContainment,
+        },
+    );
+    rejected(
+        &mut store,
+        "m5-linger-cannot-finalize-while-group-present",
+        PrincipalId::KERNEL,
+        Capability::FinalizeChildProcess,
+        generation,
+        CommandBody::FinalizeChildProcess {
+            child_process_id: child,
+        },
+        Rejection::ProcessContainmentFailed,
+    );
+    accepted(
+        &mut store,
+        "m5-linger-post-kill-group-absent",
+        PrincipalId::KERNEL,
+        Capability::RecordChildProcessLiveness,
+        generation,
+        CommandBody::RecordChildProcessLiveness {
+            child_process_id: child,
+            liveness: ProcessGroupLiveness::Absent,
+        },
+    );
+    for (index, stream_kind) in [
+        society_kernel::ChildStreamKind::AdmittedControl,
+        society_kernel::ChildStreamKind::PhysicalStdin,
+        society_kernel::ChildStreamKind::Stdout,
+        society_kernel::ChildStreamKind::Stderr,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let digest = Sha256Digest::of_bytes(format!("m5-linger-stream-{index}").as_bytes());
+        accepted(
+            &mut store,
+            &format!("m5-linger-seal-{index}"),
+            PrincipalId::KERNEL,
+            Capability::RecordContentSealReceipt,
+            ExpectedGeneration::NotApplicable,
+            CommandBody::RecordContentSealReceipt { digest },
+        );
+        accepted(
+            &mut store,
+            &format!("m5-linger-register-{index}"),
+            PrincipalId::KERNEL,
+            Capability::RegisterContentObject,
+            ExpectedGeneration::NotApplicable,
+            CommandBody::RegisterContentObject {
+                content_seal_receipt_id: ContentSealReceiptId::new((index + 1) as i64).unwrap(),
+            },
+        );
+        accepted(
+            &mut store,
+            &format!("m5-linger-stream-seal-{index}"),
+            PrincipalId::KERNEL,
+            Capability::RecordChildStreamSeal,
+            generation,
+            CommandBody::RecordChildStreamSeal {
+                child_process_id: child,
+                stream_kind,
+                full_observed_digest: digest,
+                retained_content_object_id: ContentObjectId::new((index + 1) as i64).unwrap(),
+                completeness: society_kernel::ChildStreamSealCompleteness::Complete,
+            },
+        );
+    }
+    accepted(
+        &mut store,
+        "m5-linger-finalize-after-group-absence",
+        PrincipalId::KERNEL,
+        Capability::FinalizeChildProcess,
+        generation,
+        CommandBody::FinalizeChildProcess {
+            child_process_id: child,
+        },
+    );
+}
+
+#[test]
+fn cancellation_freezes_an_admitted_unspawned_child_until_a_typed_not_spawned_fact() {
+    let mut store = KernelStore::open_in_memory().unwrap();
+    let (architect, cycle) =
+        founded_cycle(&mut store, OperatingCycleTreatment::Vs001DeterministicV1);
+    let generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
+    let _project = active_project(&mut store, architect, cycle);
+    accepted(
+        &mut store,
+        "m5-unspawned-reserve",
+        architect,
+        Capability::ReserveBudget,
+        generation,
+        CommandBody::ReserveBudget {
+            cycle_id: cycle,
+            amount: UsdMicros::new(10_000).unwrap(),
+        },
+    );
+    accepted(
+        &mut store,
+        "m5-unspawned-epoch",
+        PrincipalId::KERNEL,
+        Capability::OpenSupervisorEpoch,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::OpenSupervisorEpoch {
+            supervisor_epoch_id: SupervisorEpochId::new(91).unwrap(),
+            supervisor_epoch_identity: SupervisorEpochIdentity::parse("resident-supervisor-91")
+                .unwrap(),
+        },
+    );
+    accepted(
+        &mut store,
+        "m5-unspawned-admission",
+        PrincipalId::KERNEL,
+        Capability::AdmitPiChildSpawn,
+        generation,
+        CommandBody::AdmitPiChildSpawn {
+            operating_cycle_id: cycle,
+            owner: PiChildOwner::GrandArchitectOfficeSession(
+                GrandArchitectOfficeSessionId::new(1).unwrap(),
+            ),
+            budget_reservation_id: society_kernel::BudgetReservationId::new(1).unwrap(),
+            execution_profile_id: ExecutionProfileId::DETERMINISTIC_PI_HOST_DOUBLE_V1,
+            native_workspace_id: NativeWorkspaceId::parse("xsh-m5-unspawned").unwrap(),
+            canonical_workspace_path: CanonicalWorkspacePath::parse("/tmp/xsh-m5-unspawned")
+                .unwrap(),
+            supervisor_epoch_id: SupervisorEpochId::new(91).unwrap(),
+            supervisor_epoch_identity: SupervisorEpochIdentity::parse("resident-supervisor-91")
+                .unwrap(),
+            pi_session_identity: PiBoundarySessionIdentity::parse("pi-session-m5-unspawned")
+                .unwrap(),
+            spawn_nonce: SpawnNonce::parse("spawn-nonce-m5-unspawned").unwrap(),
+        },
+    );
+    accepted(
+        &mut store,
+        "m5-unspawned-cancel",
+        architect,
+        Capability::RequestCancellation,
+        generation,
+        CommandBody::RequestCancellation {
+            cycle_id: cycle,
+            mode: CancellationMode::EmergencyStop,
+        },
+    );
+    let cancelled_generation = ExpectedGeneration::Exact(AdmissionGeneration::try_from(1).unwrap());
+    accepted(
+        &mut store,
+        "m5-unspawned-snapshot",
+        PrincipalId::KERNEL,
+        Capability::BeginCancellationPropagation,
+        cancelled_generation,
+        CommandBody::BeginCancellationPropagation {
+            cancellation_request_id: CancellationRequestId::new(1).unwrap(),
+        },
+    );
+    rejected(
+        &mut store,
+        "m5-unspawned-reconcile-too-early",
+        PrincipalId::KERNEL,
+        Capability::ReconcileCancellationPropagation,
+        cancelled_generation,
+        CommandBody::ReconcileCancellationPropagation {
+            cancellation_propagation_id: CancellationPropagationId::new(1).unwrap(),
+        },
+        Rejection::CancellationPropagationIncomplete,
+    );
+    accepted(
+        &mut store,
+        "m5-unspawned-invalidate",
+        PrincipalId::KERNEL,
+        Capability::RecordPiChildNotSpawned,
+        cancelled_generation,
+        CommandBody::RecordPiChildNotSpawned {
+            pi_child_spawn_admission_id: PiChildSpawnAdmissionId::new(1).unwrap(),
+            reason: society_kernel::PiChildNotSpawnedReason::CancelledBeforeSpawn,
+        },
+    );
+    rejected(
+        &mut store,
+        "m5-unspawned-raced-spawn-after-invalidation",
+        PrincipalId::KERNEL,
+        Capability::RecordInertChildSpawn,
+        cancelled_generation,
+        CommandBody::RecordInertChildSpawn {
+            pi_child_spawn_admission_id: PiChildSpawnAdmissionId::new(1).unwrap(),
+            child_identity: SupervisedChildIdentity::parse("native-child-m5-unspawned").unwrap(),
+            direct_child_pid: NativeChildPid::try_from(9191).unwrap(),
+            process_group_id: OwnedProcessGroupId::try_from(9191).unwrap(),
+        },
+        Rejection::InvalidLifecycleTransition,
+    );
+    accepted(
+        &mut store,
+        "m5-unspawned-reconcile-after-invalidation",
+        PrincipalId::KERNEL,
+        Capability::ReconcileCancellationPropagation,
+        cancelled_generation,
+        CommandBody::ReconcileCancellationPropagation {
+            cancellation_propagation_id: CancellationPropagationId::new(1).unwrap(),
+        },
+    );
+    assert!(store.validate_replayed_materialized_state().is_ok());
+}
+
+#[test]
+fn office_ready_requires_an_exact_supervised_pi_session_ready_fact() {
+    let mut store = KernelStore::open_in_memory().unwrap();
+    let fixture = admitted_pi_office_fixture(&mut store, "m5-office-authority");
+    let generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
+
+    rejected(
+        &mut store,
+        "m5-office-ready-without-child",
+        PrincipalId::KERNEL,
+        Capability::RecordOfficeSessionReady,
+        generation,
+        CommandBody::RecordOfficeSessionReady {
+            session_id: fixture.office_session,
+        },
+        Rejection::ChildLifecycleReceiptMissing,
+    );
+    record_fixture_inert_spawn(&mut store, &fixture, "m5-office-authority", generation);
+    rejected(
+        &mut store,
+        "m5-office-ready-before-pi-session",
+        PrincipalId::KERNEL,
+        Capability::RecordOfficeSessionReady,
+        generation,
+        CommandBody::RecordOfficeSessionReady {
+            session_id: fixture.office_session,
+        },
+        Rejection::ChildLifecycleReceiptMissing,
+    );
+    assert!(store.validate_replayed_materialized_state().is_ok());
+}
+
+#[test]
+fn supervised_office_turns_recheck_the_exact_live_pi_child() {
+    let zero = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
+    let mut store = KernelStore::open_in_memory().unwrap();
+    let fixture = admitted_pi_office_fixture(&mut store, "m5-turn-reap-finalize");
+    record_fixture_session_ready(&mut store, &fixture, "m5-turn-reap-finalize", zero, true);
+    accepted(
+        &mut store,
+        "m5-turn-direct-reap",
+        PrincipalId::KERNEL,
+        Capability::RecordDirectChildReap,
+        zero,
+        CommandBody::RecordDirectChildReap {
+            child_process_id: fixture.child,
+            wait_status: DirectChildWaitStatus::Exited {
+                exit_code: ProcessExitCode::try_from(0).unwrap(),
+            },
+            group_liveness_before_cleanup: ProcessGroupLiveness::Present,
+            group_liveness_after_cleanup: ProcessGroupLiveness::Absent,
+        },
+    );
+    rejected(
+        &mut store,
+        "m5-turn-reject-after-direct-reap",
+        fixture.architect,
+        Capability::OpenOfficeTurn,
+        zero,
+        CommandBody::OpenOfficeTurn {
+            session_id: fixture.office_session,
+            purpose: OfficeTurnPurpose::OrdinaryWork,
+        },
+        Rejection::InvalidLifecycleTransition,
+    );
+    for (index, stream) in [
+        ChildStreamKind::AdmittedControl,
+        ChildStreamKind::PhysicalStdin,
+        ChildStreamKind::Stdout,
+        ChildStreamKind::Stderr,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let number = i64::try_from(index + 1).unwrap();
+        let digest = Sha256Digest::of_bytes(format!("m5-turn-final-stream-{number}").as_bytes());
+        accepted(
+            &mut store,
+            &format!("m5-turn-final-seal-{number}"),
+            PrincipalId::KERNEL,
+            Capability::RecordContentSealReceipt,
+            ExpectedGeneration::NotApplicable,
+            CommandBody::RecordContentSealReceipt { digest },
+        );
+        accepted(
+            &mut store,
+            &format!("m5-turn-final-register-{number}"),
+            PrincipalId::KERNEL,
+            Capability::RegisterContentObject,
+            ExpectedGeneration::NotApplicable,
+            CommandBody::RegisterContentObject {
+                content_seal_receipt_id: ContentSealReceiptId::new(number).unwrap(),
+            },
+        );
+        accepted(
+            &mut store,
+            &format!("m5-turn-final-stream-{number}"),
+            PrincipalId::KERNEL,
+            Capability::RecordChildStreamSeal,
+            zero,
+            CommandBody::RecordChildStreamSeal {
+                child_process_id: fixture.child,
+                stream_kind: stream,
+                full_observed_digest: digest,
+                retained_content_object_id: ContentObjectId::new(number).unwrap(),
+                completeness: ChildStreamSealCompleteness::Complete,
+            },
+        );
+    }
+    accepted(
+        &mut store,
+        "m5-turn-finalize-child",
+        PrincipalId::KERNEL,
+        Capability::FinalizeChildProcess,
+        zero,
+        CommandBody::FinalizeChildProcess {
+            child_process_id: fixture.child,
+        },
+    );
+    rejected(
+        &mut store,
+        "m5-turn-reject-after-finalize",
+        fixture.architect,
+        Capability::OpenOfficeTurn,
+        zero,
+        CommandBody::OpenOfficeTurn {
+            session_id: fixture.office_session,
+            purpose: OfficeTurnPurpose::OrdinaryWork,
+        },
+        Rejection::InvalidLifecycleTransition,
+    );
+    assert!(store.validate_replayed_materialized_state().is_ok());
+
+    let mut finalized_before_ready = KernelStore::open_in_memory().unwrap();
+    let before_ready_fixture = admitted_pi_office_fixture(
+        &mut finalized_before_ready,
+        "m5-turn-finalized-before-ready",
+    );
+    record_fixture_session_ready(
+        &mut finalized_before_ready,
+        &before_ready_fixture,
+        "m5-turn-finalized-before-ready",
+        zero,
+        false,
+    );
+    finalize_fixture_child(
+        &mut finalized_before_ready,
+        &before_ready_fixture,
+        "m5-turn-finalized-before-ready",
+        zero,
+    );
+    rejected(
+        &mut finalized_before_ready,
+        "m5-turn-ready-rejects-finalized-child",
+        PrincipalId::KERNEL,
+        Capability::RecordOfficeSessionReady,
+        zero,
+        CommandBody::RecordOfficeSessionReady {
+            session_id: before_ready_fixture.office_session,
+        },
+        Rejection::ChildLifecycleReceiptMissing,
+    );
+    assert!(
+        finalized_before_ready
+            .validate_replayed_materialized_state()
+            .is_ok()
+    );
+
+    for (label, liveness) in [
+        (
+            "m5-turn-recovery-containment",
+            ProcessGroupLiveness::Present,
+        ),
+        ("m5-turn-lost-parentage", ProcessGroupLiveness::Absent),
+        (
+            "m5-turn-containment-failed",
+            ProcessGroupLiveness::Inaccessible,
+        ),
+    ] {
+        let mut secondary = KernelStore::open_in_memory().unwrap();
+        let secondary_fixture = admitted_pi_office_fixture(&mut secondary, label);
+        record_fixture_session_ready(&mut secondary, &secondary_fixture, label, zero, true);
+        accepted(
+            &mut secondary,
+            &format!("{label}-recovery"),
+            PrincipalId::KERNEL,
+            Capability::RecordChildRecovery,
+            zero,
+            CommandBody::RecordChildRecovery {
+                child_process_id: secondary_fixture.child,
+                observation: ChildRecoveryObservation::ParentageLost,
+                group_liveness_after_restart: liveness,
+            },
+        );
+        rejected(
+            &mut secondary,
+            &format!("{label}-reject-turn"),
+            secondary_fixture.architect,
+            Capability::OpenOfficeTurn,
+            zero,
+            CommandBody::OpenOfficeTurn {
+                session_id: secondary_fixture.office_session,
+                purpose: OfficeTurnPurpose::Recovery,
+            },
+            Rejection::InvalidLifecycleTransition,
+        );
+        assert!(secondary.validate_replayed_materialized_state().is_ok());
+    }
+}
+
+#[test]
+fn buffered_pi_receipts_after_cancellation_are_attributed_without_reopening_work() {
+    let mut store = KernelStore::open_in_memory().unwrap();
+    let fixture = admitted_pi_office_fixture(&mut store, "m5-buffered-receipts");
+    let zero = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
+    let one = ExpectedGeneration::Exact(AdmissionGeneration::try_from(1).unwrap());
+    record_fixture_inert_spawn(&mut store, &fixture, "m5-buffered-receipts", zero);
+    accepted(
+        &mut store,
+        "m5-buffered-adapter-before-cancel",
+        PrincipalId::KERNEL,
+        Capability::RecordPiAdapterReady,
+        zero,
+        CommandBody::RecordPiAdapterReady {
+            child_process_id: fixture.child,
+            pi_session_identity: fixture.pi_session_identity.clone(),
+            spawn_nonce: fixture.spawn_nonce.clone(),
+        },
+    );
+    let correlation = PiCorrelationIdentity::parse("buffered-create-correlation").unwrap();
+    let create_digest = Sha256Digest::of_bytes(b"buffered-create-request");
+    accepted(
+        &mut store,
+        "m5-buffered-authorize-before-cancel",
+        PrincipalId::KERNEL,
+        Capability::AuthorizePiCreateSession,
+        zero,
+        CommandBody::AuthorizePiCreateSession {
+            child_process_id: fixture.child,
+            correlation_identity: correlation.clone(),
+            create_request_digest: create_digest,
+        },
+    );
+    accepted(
+        &mut store,
+        "m5-buffered-request-cancel",
+        fixture.architect,
+        Capability::RequestCancellation,
+        zero,
+        CommandBody::RequestCancellation {
+            cycle_id: fixture.cycle,
+            mode: CancellationMode::EmergencyStop,
+        },
+    );
+    accepted(
+        &mut store,
+        "m5-buffered-begin-propagation",
+        PrincipalId::KERNEL,
+        Capability::BeginCancellationPropagation,
+        one,
+        CommandBody::BeginCancellationPropagation {
+            cancellation_request_id: CancellationRequestId::new(1).unwrap(),
+        },
+    );
+    let propagation = CancellationPropagationId::new(1).unwrap();
+    accepted(
+        &mut store,
+        "m5-buffered-term-before-delivery-receipt",
+        PrincipalId::KERNEL,
+        Capability::RecordProcessSignalReceipt,
+        one,
+        CommandBody::RecordProcessSignalReceipt {
+            child_process_id: fixture.child,
+            action: ProcessSignalAction::Terminate,
+            delivery: ProcessSignalDelivery::Delivered,
+            observed_liveness: ProcessGroupLiveness::Present,
+            cause: ProcessSignalCause::CancellationPropagation(propagation),
+        },
+    );
+    rejected(
+        &mut store,
+        "m5-buffered-reject-altered-create-delivery",
+        PrincipalId::KERNEL,
+        Capability::RecordPiCreateSessionDelivery,
+        one,
+        CommandBody::RecordPiCreateSessionDelivery {
+            child_process_id: fixture.child,
+            correlation_identity: correlation.clone(),
+            create_request_digest: Sha256Digest::of_bytes(b"altered-buffered-create"),
+        },
+        Rejection::InvalidLifecycleTransition,
+    );
+    accepted(
+        &mut store,
+        "m5-buffered-record-create-delivery-after-cancel",
+        PrincipalId::KERNEL,
+        Capability::RecordPiCreateSessionDelivery,
+        one,
+        CommandBody::RecordPiCreateSessionDelivery {
+            child_process_id: fixture.child,
+            correlation_identity: correlation.clone(),
+            create_request_digest: create_digest,
+        },
+    );
+    accepted(
+        &mut store,
+        "m5-buffered-record-session-ready-after-cancel",
+        PrincipalId::KERNEL,
+        Capability::RecordPiSessionReady,
+        one,
+        CommandBody::RecordPiSessionReady {
+            child_process_id: fixture.child,
+            pi_session_identity: fixture.pi_session_identity.clone(),
+        },
+    );
+    rejected(
+        &mut store,
+        "m5-buffered-create-remains-fenced-after-cancel",
+        PrincipalId::KERNEL,
+        Capability::AuthorizePiCreateSession,
+        one,
+        CommandBody::AuthorizePiCreateSession {
+            child_process_id: fixture.child,
+            correlation_identity: PiCorrelationIdentity::parse("second-buffered-create").unwrap(),
+            create_request_digest: Sha256Digest::of_bytes(b"second-buffered-create"),
+        },
+        Rejection::StaleAdmissionGeneration,
+    );
+    assert!(store.validate_replayed_materialized_state().is_ok());
+}
+
+#[test]
+fn adapter_ready_race_after_cancellation_preserves_receipt_but_rejects_create() {
+    let mut store = KernelStore::open_in_memory().unwrap();
+    let fixture = admitted_pi_office_fixture(&mut store, "m5-adapter-race");
+    let zero = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
+    let one = ExpectedGeneration::Exact(AdmissionGeneration::try_from(1).unwrap());
+    record_fixture_inert_spawn(&mut store, &fixture, "m5-adapter-race", zero);
+    accepted(
+        &mut store,
+        "m5-adapter-race-request-cancel",
+        fixture.architect,
+        Capability::RequestCancellation,
+        zero,
+        CommandBody::RequestCancellation {
+            cycle_id: fixture.cycle,
+            mode: CancellationMode::EmergencyStop,
+        },
+    );
+    accepted(
+        &mut store,
+        "m5-adapter-race-begin-propagation",
+        PrincipalId::KERNEL,
+        Capability::BeginCancellationPropagation,
+        one,
+        CommandBody::BeginCancellationPropagation {
+            cancellation_request_id: CancellationRequestId::new(1).unwrap(),
+        },
+    );
+    accepted(
+        &mut store,
+        "m5-adapter-race-term",
+        PrincipalId::KERNEL,
+        Capability::RecordProcessSignalReceipt,
+        one,
+        CommandBody::RecordProcessSignalReceipt {
+            child_process_id: fixture.child,
+            action: ProcessSignalAction::Terminate,
+            delivery: ProcessSignalDelivery::Delivered,
+            observed_liveness: ProcessGroupLiveness::Present,
+            cause: ProcessSignalCause::CancellationPropagation(
+                CancellationPropagationId::new(1).unwrap(),
+            ),
+        },
+    );
+    accepted(
+        &mut store,
+        "m5-adapter-race-record-ready-after-cancel",
+        PrincipalId::KERNEL,
+        Capability::RecordPiAdapterReady,
+        one,
+        CommandBody::RecordPiAdapterReady {
+            child_process_id: fixture.child,
+            pi_session_identity: fixture.pi_session_identity.clone(),
+            spawn_nonce: fixture.spawn_nonce.clone(),
+        },
+    );
+    for (command_id, expected) in [
+        ("m5-adapter-race-old-generation-create", zero),
+        ("m5-adapter-race-current-generation-create", one),
+    ] {
+        rejected(
+            &mut store,
+            command_id,
+            PrincipalId::KERNEL,
+            Capability::AuthorizePiCreateSession,
+            expected,
+            CommandBody::AuthorizePiCreateSession {
+                child_process_id: fixture.child,
+                correlation_identity: PiCorrelationIdentity::parse(format!(
+                    "{command_id}-correlation"
+                ))
+                .unwrap(),
+                create_request_digest: Sha256Digest::of_bytes(command_id.as_bytes()),
+            },
+            Rejection::StaleAdmissionGeneration,
+        );
+    }
+    assert!(store.validate_replayed_materialized_state().is_ok());
+}
+
+#[test]
+fn partial_abort_is_a_durable_attempt_and_allows_cancellation_escalation() {
+    let mut store = KernelStore::open_in_memory().unwrap();
+    let fixture = admitted_pi_office_fixture(&mut store, "m5-partial-abort");
+    let zero = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
+    let one = ExpectedGeneration::Exact(AdmissionGeneration::try_from(1).unwrap());
+    record_fixture_inert_spawn(&mut store, &fixture, "m5-partial-abort", zero);
+    accepted(
+        &mut store,
+        "m5-partial-abort-adapter-ready",
+        PrincipalId::KERNEL,
+        Capability::RecordPiAdapterReady,
+        zero,
+        CommandBody::RecordPiAdapterReady {
+            child_process_id: fixture.child,
+            pi_session_identity: fixture.pi_session_identity.clone(),
+            spawn_nonce: fixture.spawn_nonce.clone(),
+        },
+    );
+    let create = PiCorrelationIdentity::parse("partial-abort-create").unwrap();
+    let create_digest = Sha256Digest::of_bytes(b"partial-abort-create");
+    accepted(
+        &mut store,
+        "m5-partial-abort-authorize-create",
+        PrincipalId::KERNEL,
+        Capability::AuthorizePiCreateSession,
+        zero,
+        CommandBody::AuthorizePiCreateSession {
+            child_process_id: fixture.child,
+            correlation_identity: create.clone(),
+            create_request_digest: create_digest,
+        },
+    );
+    accepted(
+        &mut store,
+        "m5-partial-abort-deliver-create",
+        PrincipalId::KERNEL,
+        Capability::RecordPiCreateSessionDelivery,
+        zero,
+        CommandBody::RecordPiCreateSessionDelivery {
+            child_process_id: fixture.child,
+            correlation_identity: create,
+            create_request_digest: create_digest,
+        },
+    );
+    accepted(
+        &mut store,
+        "m5-partial-abort-session-ready",
+        PrincipalId::KERNEL,
+        Capability::RecordPiSessionReady,
+        zero,
+        CommandBody::RecordPiSessionReady {
+            child_process_id: fixture.child,
+            pi_session_identity: fixture.pi_session_identity.clone(),
+        },
+    );
+    accepted(
+        &mut store,
+        "m5-partial-abort-request-cancel",
+        fixture.architect,
+        Capability::RequestCancellation,
+        zero,
+        CommandBody::RequestCancellation {
+            cycle_id: fixture.cycle,
+            mode: CancellationMode::EmergencyStop,
+        },
+    );
+    accepted(
+        &mut store,
+        "m5-partial-abort-begin-propagation",
+        PrincipalId::KERNEL,
+        Capability::BeginCancellationPropagation,
+        one,
+        CommandBody::BeginCancellationPropagation {
+            cancellation_request_id: CancellationRequestId::new(1).unwrap(),
+        },
+    );
+    let propagation = CancellationPropagationId::new(1).unwrap();
+    rejected(
+        &mut store,
+        "m5-partial-abort-term-without-attempt",
+        PrincipalId::KERNEL,
+        Capability::RecordProcessSignalReceipt,
+        one,
+        CommandBody::RecordProcessSignalReceipt {
+            child_process_id: fixture.child,
+            action: ProcessSignalAction::Terminate,
+            delivery: ProcessSignalDelivery::Delivered,
+            observed_liveness: ProcessGroupLiveness::Present,
+            cause: ProcessSignalCause::CancellationPropagation(propagation),
+        },
+        Rejection::CancellationPropagationIncomplete,
+    );
+    accepted(
+        &mut store,
+        "m5-partial-abort-record-partial-write",
+        PrincipalId::KERNEL,
+        Capability::RecordPiAbortControlDelivery,
+        one,
+        CommandBody::RecordPiAbortControlDelivery {
+            child_process_id: fixture.child,
+            cancellation_propagation_id: propagation,
+            correlation_identity: PiCorrelationIdentity::parse("partial-abort-attempt").unwrap(),
+            abort_command_digest: Sha256Digest::of_bytes(b"partial-abort-command"),
+            outcome: PiAbortControlWriteOutcome::PartialWriteDiscarded,
+        },
+    );
+    accepted(
+        &mut store,
+        "m5-partial-abort-term-after-attempt",
+        PrincipalId::KERNEL,
+        Capability::RecordProcessSignalReceipt,
+        one,
+        CommandBody::RecordProcessSignalReceipt {
+            child_process_id: fixture.child,
+            action: ProcessSignalAction::Terminate,
+            delivery: ProcessSignalDelivery::Delivered,
+            observed_liveness: ProcessGroupLiveness::Present,
+            cause: ProcessSignalCause::CancellationPropagation(propagation),
+        },
+    );
+    assert!(store.validate_replayed_materialized_state().is_ok());
+}
+
+#[test]
+fn recovery_containment_and_liveness_reuse_remain_durable_close_blockers() {
+    let mut store = KernelStore::open_in_memory().unwrap();
+    let fixture = admitted_pi_office_fixture(&mut store, "m5-recovery-present");
+    let zero = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
+    let one = ExpectedGeneration::Exact(AdmissionGeneration::try_from(1).unwrap());
+    record_fixture_inert_spawn(&mut store, &fixture, "m5-recovery-present", zero);
+    accepted(
+        &mut store,
+        "m5-recovery-parentage-lost-group-present",
+        PrincipalId::KERNEL,
+        Capability::RecordChildRecovery,
+        zero,
+        CommandBody::RecordChildRecovery {
+            child_process_id: fixture.child,
+            observation: ChildRecoveryObservation::ParentageLost,
+            group_liveness_after_restart: ProcessGroupLiveness::Present,
+        },
+    );
+    rejected(
+        &mut store,
+        "m5-recovery-cannot-record-adapter-ready",
+        PrincipalId::KERNEL,
+        Capability::RecordPiAdapterReady,
+        zero,
+        CommandBody::RecordPiAdapterReady {
+            child_process_id: fixture.child,
+            pi_session_identity: fixture.pi_session_identity.clone(),
+            spawn_nonce: fixture.spawn_nonce.clone(),
+        },
+        Rejection::InvalidLifecycleTransition,
+    );
+    rejected(
+        &mut store,
+        "m5-recovery-cannot-direct-reap-with-lost-parentage",
+        PrincipalId::KERNEL,
+        Capability::RecordDirectChildReap,
+        zero,
+        CommandBody::RecordDirectChildReap {
+            child_process_id: fixture.child,
+            wait_status: DirectChildWaitStatus::Exited {
+                exit_code: ProcessExitCode::try_from(0).unwrap(),
+            },
+            group_liveness_before_cleanup: ProcessGroupLiveness::Present,
+            group_liveness_after_cleanup: ProcessGroupLiveness::Present,
+        },
+        Rejection::InvalidLifecycleTransition,
+    );
+    accepted(
+        &mut store,
+        "m5-recovery-request-cancel",
+        fixture.architect,
+        Capability::RequestCancellation,
+        zero,
+        CommandBody::RequestCancellation {
+            cycle_id: fixture.cycle,
+            mode: CancellationMode::EmergencyStop,
+        },
+    );
+    accepted(
+        &mut store,
+        "m5-recovery-begin-propagation",
+        PrincipalId::KERNEL,
+        Capability::BeginCancellationPropagation,
+        one,
+        CommandBody::BeginCancellationPropagation {
+            cancellation_request_id: CancellationRequestId::new(1).unwrap(),
+        },
+    );
+    rejected(
+        &mut store,
+        "m5-recovery-cannot-reconcile-present-group",
+        PrincipalId::KERNEL,
+        Capability::ReconcileCancellationPropagation,
+        one,
+        CommandBody::ReconcileCancellationPropagation {
+            cancellation_propagation_id: CancellationPropagationId::new(1).unwrap(),
+        },
+        Rejection::CancellationPropagationIncomplete,
+    );
+    accepted(
+        &mut store,
+        "m5-recovery-liveness-absent",
+        PrincipalId::KERNEL,
+        Capability::RecordChildProcessLiveness,
+        one,
+        CommandBody::RecordChildProcessLiveness {
+            child_process_id: fixture.child,
+            liveness: ProcessGroupLiveness::Absent,
+        },
+    );
+    accepted(
+        &mut store,
+        "m5-recovery-reconcile-absent-group",
+        PrincipalId::KERNEL,
+        Capability::ReconcileCancellationPropagation,
+        one,
+        CommandBody::ReconcileCancellationPropagation {
+            cancellation_propagation_id: CancellationPropagationId::new(1).unwrap(),
+        },
+    );
+
+    let mut inaccessible = KernelStore::open_in_memory().unwrap();
+    let inaccessible_fixture =
+        admitted_pi_office_fixture(&mut inaccessible, "m5-recovery-inaccessible");
+    record_fixture_inert_spawn(
+        &mut inaccessible,
+        &inaccessible_fixture,
+        "m5-recovery-inaccessible",
+        zero,
+    );
+    accepted(
+        &mut inaccessible,
+        "m5-recovery-parentage-lost-group-inaccessible",
+        PrincipalId::KERNEL,
+        Capability::RecordChildRecovery,
+        zero,
+        CommandBody::RecordChildRecovery {
+            child_process_id: inaccessible_fixture.child,
+            observation: ChildRecoveryObservation::ParentageLost,
+            group_liveness_after_restart: ProcessGroupLiveness::Inaccessible,
+        },
+    );
+    rejected(
+        &mut inaccessible,
+        "m5-recovery-inaccessible-cannot-finalize",
+        PrincipalId::KERNEL,
+        Capability::FinalizeChildProcess,
+        zero,
+        CommandBody::FinalizeChildProcess {
+            child_process_id: inaccessible_fixture.child,
+        },
+        Rejection::ProcessContainmentFailed,
+    );
+    assert!(inaccessible.validate_replayed_materialized_state().is_ok());
+
+    let mut reappearance = KernelStore::open_in_memory().unwrap();
+    let reappearance_fixture = admitted_pi_office_fixture(&mut reappearance, "m5-reappearance");
+    record_fixture_inert_spawn(
+        &mut reappearance,
+        &reappearance_fixture,
+        "m5-reappearance",
+        zero,
+    );
+    accepted(
+        &mut reappearance,
+        "m5-reappearance-observe-absent",
+        PrincipalId::KERNEL,
+        Capability::RecordChildProcessLiveness,
+        zero,
+        CommandBody::RecordChildProcessLiveness {
+            child_process_id: reappearance_fixture.child,
+            liveness: ProcessGroupLiveness::Absent,
+        },
+    );
+    accepted(
+        &mut reappearance,
+        "m5-reappearance-observe-present-conflict",
+        PrincipalId::KERNEL,
+        Capability::RecordChildProcessLiveness,
+        zero,
+        CommandBody::RecordChildProcessLiveness {
+            child_process_id: reappearance_fixture.child,
+            liveness: ProcessGroupLiveness::Present,
+        },
+    );
+    rejected(
+        &mut reappearance,
+        "m5-reappearance-containment-cannot-finalize",
+        PrincipalId::KERNEL,
+        Capability::FinalizeChildProcess,
+        zero,
+        CommandBody::FinalizeChildProcess {
+            child_process_id: reappearance_fixture.child,
+        },
+        Rejection::ProcessContainmentFailed,
+    );
+    assert!(store.validate_replayed_materialized_state().is_ok());
+    assert!(reappearance.validate_replayed_materialized_state().is_ok());
+}
+
+#[test]
+fn pre_spawn_failure_and_raced_spawn_are_accounted_before_cancellation_reconciliation() {
+    let mut ordinary = KernelStore::open_in_memory().unwrap();
+    let ordinary_fixture = admitted_pi_office_fixture(&mut ordinary, "m5-ordinary-no-spawn");
+    let zero = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
+    let body = CommandBody::RecordPiChildNotSpawned {
+        pi_child_spawn_admission_id: ordinary_fixture.admission,
+        reason: society_kernel::PiChildNotSpawnedReason::NativeSpawnFailed,
+    };
+    let first = accepted(
+        &mut ordinary,
+        "m5-ordinary-no-spawn",
+        PrincipalId::KERNEL,
+        Capability::RecordPiChildNotSpawned,
+        zero,
+        body.clone(),
+    );
+    let repeat_request = request(
+        &mut ordinary,
+        "m5-ordinary-no-spawn",
+        PrincipalId::KERNEL,
+        Capability::RecordPiChildNotSpawned,
+        zero,
+        body,
+    );
+    let repeated = ordinary.execute(repeat_request).unwrap();
+    assert!(repeated.idempotent);
+    assert_eq!(repeated.disposition, first.disposition);
+    assert!(ordinary.validate_replayed_materialized_state().is_ok());
+
+    let mut raced = KernelStore::open_in_memory().unwrap();
+    let raced_fixture = admitted_pi_office_fixture(&mut raced, "m5-raced-spawn");
+    accepted(
+        &mut raced,
+        "m5-raced-spawn-request-cancel",
+        raced_fixture.architect,
+        Capability::RequestCancellation,
+        zero,
+        CommandBody::RequestCancellation {
+            cycle_id: raced_fixture.cycle,
+            mode: CancellationMode::EmergencyStop,
+        },
+    );
+    let one = ExpectedGeneration::Exact(AdmissionGeneration::try_from(1).unwrap());
+    accepted(
+        &mut raced,
+        "m5-raced-spawn-snapshot",
+        PrincipalId::KERNEL,
+        Capability::BeginCancellationPropagation,
+        one,
+        CommandBody::BeginCancellationPropagation {
+            cancellation_request_id: CancellationRequestId::new(1).unwrap(),
+        },
+    );
+    record_fixture_inert_spawn(&mut raced, &raced_fixture, "m5-raced-spawn", one);
+    rejected(
+        &mut raced,
+        "m5-raced-spawn-cannot-reconcile-live-child",
+        PrincipalId::KERNEL,
+        Capability::ReconcileCancellationPropagation,
+        one,
+        CommandBody::ReconcileCancellationPropagation {
+            cancellation_propagation_id: CancellationPropagationId::new(1).unwrap(),
+        },
+        Rejection::CancellationPropagationIncomplete,
+    );
+    accepted(
+        &mut raced,
+        "m5-raced-spawn-recovery-inaccessible",
+        PrincipalId::KERNEL,
+        Capability::RecordChildRecovery,
+        one,
+        CommandBody::RecordChildRecovery {
+            child_process_id: raced_fixture.child,
+            observation: ChildRecoveryObservation::ParentageLost,
+            group_liveness_after_restart: ProcessGroupLiveness::Inaccessible,
+        },
+    );
+    accepted(
+        &mut raced,
+        "m5-raced-spawn-reconcile-containment",
+        PrincipalId::KERNEL,
+        Capability::ReconcileCancellationPropagation,
+        one,
+        CommandBody::ReconcileCancellationPropagation {
+            cancellation_propagation_id: CancellationPropagationId::new(1).unwrap(),
+        },
+    );
+    assert!(raced.validate_replayed_materialized_state().is_ok());
 }
 
 #[test]
