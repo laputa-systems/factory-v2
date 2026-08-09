@@ -1,0 +1,24 @@
+{
+  "name": "@xsh-society/society-pi-host",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Pinned, authority-free Pi SDK execution adapter for XSH Society V2.",
+  "bin": {
+    "society-pi-host": "./dist/src/main.js"
+  },
+  "scripts": {
+    "build": "tsc --project tsconfig.json",
+    "test": "npm run build && node --test dist/test/*.test.js"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "0.83.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.12.4",
+    "typescript": "5.9.3"
+  }
+}
