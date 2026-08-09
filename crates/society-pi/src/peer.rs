@@ -1109,19 +1109,30 @@ fn digest(bytes: &[u8]) -> Blake3Digest {
 
 /// The host's final outcome must be derivable from the final non-retried
 /// `agent_end` messages. Retry-era assistant errors are not terminal facts.
-fn final_assistant_stop_reason(messages: &[serde_json::Value]) -> Option<AssistantStopReason> {
+fn final_assistant_stop_reason(messages: &[miniserde::json::Value]) -> Option<AssistantStopReason> {
     for message in messages.iter().rev() {
-        let Some(object) = message.as_object() else {
+        let miniserde::json::Value::Object(object) = message else {
             continue;
         };
-        if object.get("role").and_then(serde_json::Value::as_str) != Some("assistant") {
+        if !matches!(
+            object.get("role"),
+            Some(miniserde::json::Value::String(role)) if role == "assistant"
+        ) {
             continue;
         }
-        return match object.get("stopReason").and_then(serde_json::Value::as_str) {
-            Some("stop") => Some(AssistantStopReason::Stop),
-            Some("length") => Some(AssistantStopReason::Length),
-            Some("error") => Some(AssistantStopReason::Error),
-            Some("aborted") => Some(AssistantStopReason::Aborted),
+        return match object.get("stopReason") {
+            Some(miniserde::json::Value::String(reason)) if reason == "stop" => {
+                Some(AssistantStopReason::Stop)
+            }
+            Some(miniserde::json::Value::String(reason)) if reason == "length" => {
+                Some(AssistantStopReason::Length)
+            }
+            Some(miniserde::json::Value::String(reason)) if reason == "error" => {
+                Some(AssistantStopReason::Error)
+            }
+            Some(miniserde::json::Value::String(reason)) if reason == "aborted" => {
+                Some(AssistantStopReason::Aborted)
+            }
             _ => None,
         };
     }
@@ -1143,6 +1154,7 @@ mod peer_tests {
         ProviderCostObservationV1, RetryPolicyV1, SettledClassification, ThinkingLevel,
         ToolProfile, Transport, UsageTotals,
     };
+    use miniserde::json::{Object, Value};
 
     const DIGEST: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
@@ -1328,9 +1340,16 @@ mod peer_tests {
     }
     fn terminal_stop_event() -> ProjectedAgentEvent {
         ProjectedAgentEvent::AgentEnd {
-            messages: vec![serde_json::json!({"role":"assistant","stopReason":"stop"})],
+            messages: vec![assistant_message("stop")],
             will_retry: false,
         }
+    }
+
+    fn assistant_message(stop_reason: &str) -> Value {
+        Value::Object(Object::from_iter([
+            ("role".into(), Value::String("assistant".into())),
+            ("stopReason".into(), Value::String(stop_reason.into())),
+        ]))
     }
 
     fn materialized_prompt_sequence(peer: &mut BoundaryPeer, start_sequence: u64) -> u64 {
@@ -2246,7 +2265,7 @@ mod peer_tests {
             Some("prompt-001"),
             OutboundEvent::AgentEvent {
                 agent_event: ProjectedAgentEvent::AgentEnd {
-                    messages: vec![serde_json::json!({"role":"assistant","stopReason":"stop"})],
+                    messages: vec![assistant_message("stop")],
                     will_retry: false,
                 },
             },
@@ -2436,7 +2455,7 @@ mod peer_tests {
             Some("prompt-001"),
             OutboundEvent::AgentEvent {
                 agent_event: ProjectedAgentEvent::AgentEnd {
-                    messages: vec![serde_json::json!({"role":"assistant","stopReason":"error"})],
+                    messages: vec![assistant_message("error")],
                     will_retry: true,
                 },
             },
@@ -2471,7 +2490,7 @@ mod peer_tests {
             Some("prompt-001"),
             OutboundEvent::AgentEvent {
                 agent_event: ProjectedAgentEvent::AgentEnd {
-                    messages: vec![serde_json::json!({"role":"assistant","stopReason":"stop"})],
+                    messages: vec![assistant_message("stop")],
                     will_retry: false,
                 },
             },

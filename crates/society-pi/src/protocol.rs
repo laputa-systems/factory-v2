@@ -1,14 +1,14 @@
 //! The complete closed `society-pi-host/v4` wire schema.
 //!
-//! `serde_json::Value` is used only after [`reject_duplicate_object_keys`] has
-//! ruled out JSON's last-key-wins ambiguity.  The subsequent decoder checks
+//! `miniserde::json::Value` is used only after [`reject_duplicate_object_keys`]
+//! has ruled out JSON's last-key-wins ambiguity. The subsequent decoder checks
 //! every object for exact keys and converts every discriminant into a Rust
-//! enum.  JSON-safe Pi evidence is intentionally represented by `Value`: it
-//! is sealed forensic content, not a generic workflow payload.
+//! enum. JSON-safe Pi evidence is intentionally represented by `Value`: it is
+//! sealed forensic content, not a generic workflow payload.
 
 use std::{collections::BTreeSet, fmt, path::Path};
 
-use serde_json::{Map, Value};
+use miniserde::json::{Array, Number, Object, Value};
 use thiserror::Error;
 
 pub const ADAPTER_PROTOCOL_VERSION: &str = "society-pi-host/v4";
@@ -710,7 +710,7 @@ pub enum UsageUnavailableReason {
     UsageInconsistent,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum ProjectedAgentEvent {
     AgentStart,
     AgentEnd {
@@ -799,6 +799,274 @@ pub enum ProjectedAgentEvent {
         reason: Option<CompactionReason>,
     },
     SummarizationRetryFinished,
+}
+
+fn json_value_equal(left: &Value, right: &Value) -> bool {
+    match (left, right) {
+        (Value::Null, Value::Null) => true,
+        (Value::Bool(left), Value::Bool(right)) => left == right,
+        (Value::String(left), Value::String(right)) => left == right,
+        (Value::Number(left), Value::Number(right)) => match (left, right) {
+            (Number::U64(left), Number::U64(right)) => left == right,
+            (Number::I64(left), Number::I64(right)) => left == right,
+            (Number::F64(left), Number::F64(right)) => left == right,
+            _ => false,
+        },
+        (Value::Array(left), Value::Array(right)) => {
+            left.len() == right.len()
+                && left
+                    .iter()
+                    .zip(right.iter())
+                    .all(|(left, right)| json_value_equal(left, right))
+        }
+        (Value::Object(left), Value::Object(right)) => {
+            left.len() == right.len()
+                && left.iter().all(|(key, value)| {
+                    right
+                        .get(key)
+                        .is_some_and(|other| json_value_equal(value, other))
+                })
+        }
+        _ => false,
+    }
+}
+
+impl PartialEq for ProjectedAgentEvent {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::AgentStart, Self::AgentStart)
+            | (Self::AgentSettled, Self::AgentSettled)
+            | (Self::TurnStart, Self::TurnStart)
+            | (Self::SummarizationRetryFinished, Self::SummarizationRetryFinished) => true,
+            (
+                Self::AgentEnd {
+                    messages: left_messages,
+                    will_retry: left_retry,
+                },
+                Self::AgentEnd {
+                    messages: right_messages,
+                    will_retry: right_retry,
+                },
+            ) => {
+                left_retry == right_retry
+                    && left_messages.len() == right_messages.len()
+                    && left_messages
+                        .iter()
+                        .zip(right_messages)
+                        .all(|(left, right)| json_value_equal(left, right))
+            }
+            (
+                Self::TurnEnd {
+                    message: left,
+                    tool_results: left_results,
+                },
+                Self::TurnEnd {
+                    message: right,
+                    tool_results: right_results,
+                },
+            ) => {
+                json_value_equal(left, right)
+                    && left_results.len() == right_results.len()
+                    && left_results
+                        .iter()
+                        .zip(right_results)
+                        .all(|(left, right)| json_value_equal(left, right))
+            }
+            (Self::MessageStart { message: left }, Self::MessageStart { message: right })
+            | (Self::MessageEnd { message: left }, Self::MessageEnd { message: right })
+            | (Self::EntryAppended { entry: left }, Self::EntryAppended { entry: right }) => {
+                json_value_equal(left, right)
+            }
+            (
+                Self::MessageUpdate {
+                    message: left_message,
+                    assistant_message_event: left_event,
+                },
+                Self::MessageUpdate {
+                    message: right_message,
+                    assistant_message_event: right_event,
+                },
+            ) => {
+                json_value_equal(left_message, right_message)
+                    && json_value_equal(left_event, right_event)
+            }
+            (
+                Self::ToolExecutionStart {
+                    tool_call_identity: left_id,
+                    tool_name: left_name,
+                    args: left_args,
+                },
+                Self::ToolExecutionStart {
+                    tool_call_identity: right_id,
+                    tool_name: right_name,
+                    args: right_args,
+                },
+            ) => {
+                left_id == right_id
+                    && left_name == right_name
+                    && json_value_equal(left_args, right_args)
+            }
+            (
+                Self::ToolExecutionUpdate {
+                    tool_call_identity: left_id,
+                    tool_name: left_name,
+                    args: left_args,
+                    partial_result: left_result,
+                },
+                Self::ToolExecutionUpdate {
+                    tool_call_identity: right_id,
+                    tool_name: right_name,
+                    args: right_args,
+                    partial_result: right_result,
+                },
+            ) => {
+                left_id == right_id
+                    && left_name == right_name
+                    && json_value_equal(left_args, right_args)
+                    && json_value_equal(left_result, right_result)
+            }
+            (
+                Self::ToolExecutionEnd {
+                    tool_call_identity: left_id,
+                    tool_name: left_name,
+                    result: left_result,
+                    is_error: left_error,
+                },
+                Self::ToolExecutionEnd {
+                    tool_call_identity: right_id,
+                    tool_name: right_name,
+                    result: right_result,
+                    is_error: right_error,
+                },
+            ) => {
+                left_id == right_id
+                    && left_name == right_name
+                    && left_error == right_error
+                    && json_value_equal(left_result, right_result)
+            }
+            (
+                Self::QueueUpdate {
+                    steering: left_steering,
+                    follow_up: left_follow_up,
+                },
+                Self::QueueUpdate {
+                    steering: right_steering,
+                    follow_up: right_follow_up,
+                },
+            ) => left_steering == right_steering && left_follow_up == right_follow_up,
+            (
+                Self::BashExecutionUpdate {
+                    execution_identity: left_id,
+                    delta: left_delta,
+                },
+                Self::BashExecutionUpdate {
+                    execution_identity: right_id,
+                    delta: right_delta,
+                },
+            ) => left_id == right_id && left_delta == right_delta,
+            (Self::CompactionStart { reason: left }, Self::CompactionStart { reason: right }) => {
+                left == right
+            }
+            (
+                Self::ThinkingLevelChanged { level: left },
+                Self::ThinkingLevelChanged { level: right },
+            ) => left == right,
+            (Self::SessionInfoChanged { name: left }, Self::SessionInfoChanged { name: right }) => {
+                left == right
+            }
+            (
+                Self::CompactionEnd {
+                    reason: left_reason,
+                    result: left_result,
+                    aborted: left_aborted,
+                    will_retry: left_retry,
+                    error_message: left_error,
+                },
+                Self::CompactionEnd {
+                    reason: right_reason,
+                    result: right_result,
+                    aborted: right_aborted,
+                    will_retry: right_retry,
+                    error_message: right_error,
+                },
+            ) => {
+                left_reason == right_reason
+                    && left_aborted == right_aborted
+                    && left_retry == right_retry
+                    && left_error == right_error
+                    && match (left_result.as_ref(), right_result.as_ref()) {
+                        (Some(left), Some(right)) => json_value_equal(left, right),
+                        (None, None) => true,
+                        _ => false,
+                    }
+            }
+            (
+                Self::AutoRetryStart {
+                    attempt: left_attempt,
+                    max_attempts: left_max,
+                    delay_milliseconds: left_delay,
+                    error_message: left_error,
+                },
+                Self::AutoRetryStart {
+                    attempt: right_attempt,
+                    max_attempts: right_max,
+                    delay_milliseconds: right_delay,
+                    error_message: right_error,
+                },
+            ) => {
+                left_attempt == right_attempt
+                    && left_max == right_max
+                    && left_delay == right_delay
+                    && left_error == right_error
+            }
+            (
+                Self::AutoRetryEnd {
+                    success: left_success,
+                    attempt: left_attempt,
+                    final_error: left_error,
+                },
+                Self::AutoRetryEnd {
+                    success: right_success,
+                    attempt: right_attempt,
+                    final_error: right_error,
+                },
+            ) => {
+                left_success == right_success
+                    && left_attempt == right_attempt
+                    && left_error == right_error
+            }
+            (
+                Self::SummarizationRetryScheduled {
+                    attempt: left_attempt,
+                    max_attempts: left_max,
+                    delay_milliseconds: left_delay,
+                    error_message: left_error,
+                },
+                Self::SummarizationRetryScheduled {
+                    attempt: right_attempt,
+                    max_attempts: right_max,
+                    delay_milliseconds: right_delay,
+                    error_message: right_error,
+                },
+            ) => {
+                left_attempt == right_attempt
+                    && left_max == right_max
+                    && left_delay == right_delay
+                    && left_error == right_error
+            }
+            (
+                Self::SummarizationRetryAttemptStart {
+                    source: left_source,
+                    reason: left_reason,
+                },
+                Self::SummarizationRetryAttemptStart {
+                    source: right_source,
+                    reason: right_reason,
+                },
+            ) => left_source == right_source && left_reason == right_reason,
+            _ => false,
+        }
+    }
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CompactionReason {
@@ -901,7 +1169,7 @@ pub enum TranscriptFlushReceiptV1 {
         session_file: AbsolutePath,
     },
 }
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum OutboundEvent {
     AdapterReady {
         pid: HostProcessId,
@@ -929,12 +1197,104 @@ pub enum OutboundEvent {
         failure_code: AdapterFailureCode,
     },
 }
+
+impl PartialEq for OutboundEvent {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                Self::AdapterReady {
+                    pid: left_pid,
+                    spawn_nonce: left_nonce,
+                    runtime: left_runtime,
+                },
+                Self::AdapterReady {
+                    pid: right_pid,
+                    spawn_nonce: right_nonce,
+                    runtime: right_runtime,
+                },
+            ) => {
+                left_pid == right_pid && left_nonce == right_nonce && left_runtime == right_runtime
+            }
+            (
+                Self::SessionReady {
+                    configuration: left,
+                },
+                Self::SessionReady {
+                    configuration: right,
+                },
+            ) => left == right,
+            (Self::CommandResult(left), Self::CommandResult(right)) => left == right,
+            (Self::AgentEvent { agent_event: left }, Self::AgentEvent { agent_event: right }) => {
+                left == right
+            }
+            (Self::UsageSnapshot { usage: left }, Self::UsageSnapshot { usage: right }) => {
+                match (left, right) {
+                    (UsageObservation::Unavailable(left), UsageObservation::Unavailable(right)) => {
+                        left == right
+                    }
+                    (UsageObservation::Known(left), UsageObservation::Known(right)) => {
+                        left == right
+                    }
+                    _ => false,
+                }
+            }
+            (
+                Self::Settled {
+                    classification: left_classification,
+                    final_assistant_outcome: left_outcome,
+                },
+                Self::Settled {
+                    classification: right_classification,
+                    final_assistant_outcome: right_outcome,
+                },
+            ) => left_classification == right_classification && left_outcome == right_outcome,
+            (
+                Self::Disposed {
+                    transcript_flush_receipt: left,
+                },
+                Self::Disposed {
+                    transcript_flush_receipt: right,
+                },
+            ) => left == right,
+            (
+                Self::Fatal { failure_code: left },
+                Self::Fatal {
+                    failure_code: right,
+                },
+            ) => left == right,
+            _ => false,
+        }
+    }
+}
 #[derive(Clone, Debug, PartialEq)]
 pub struct OutboundFrame {
     pub sequence: BoundarySequence,
     pub session_identity: SessionIdentity,
     pub correlation_identity: Option<CorrelationIdentity>,
     pub event: OutboundEvent,
+}
+
+// `miniserde::json::Object` is deliberately a closed, typed boundary here.
+// These tiny constructors keep the wire writers explicit without bringing a
+// general-purpose serialization framework back into the Pi protocol.
+macro_rules! json_object {
+    () => {
+        Value::Object(Object::new())
+    };
+    ($($key:literal => $value:expr),* $(,)?) => {{
+        let mut object = Object::new();
+        $(object.insert($key.to_owned(), $value);)*
+        Value::Object(object)
+    }};
+}
+fn json_string(value: &str) -> Value {
+    Value::String(value.to_owned())
+}
+fn json_u64(value: u64) -> Value {
+    Value::Number(Number::U64(value))
+}
+fn json_bool(value: bool) -> Value {
+    Value::Bool(value)
 }
 
 pub fn decode_inbound_jsonl(line: &str) -> Result<InboundFrame, ProtocolError> {
@@ -987,31 +1347,30 @@ pub fn encode_inbound_jsonl(frame: &InboundFrame) -> Result<String, ProtocolErro
     let payload = match &frame.command {
         InboundCommand::CreateSession(payload) => encode_create_session(payload),
         InboundCommand::Prompt(payload) => {
-            serde_json::json!({ "purpose": prompt_purpose_wire(payload.purpose), "text": payload.text })
+            json_object!("purpose" => json_string(prompt_purpose_wire(payload.purpose)), "text" => json_string(&payload.text))
         }
         InboundCommand::FollowUp(payload) => {
-            serde_json::json!({ "noticeDeliveryIdentity": payload.notice_delivery_identity.as_str(), "ledgerFrontier": payload.ledger_frontier.value(), "text": payload.text })
+            json_object!("noticeDeliveryIdentity" => json_string(payload.notice_delivery_identity.as_str()), "ledgerFrontier" => json_u64(payload.ledger_frontier.value()), "text" => json_string(&payload.text))
         }
         InboundCommand::Steer(payload) => {
-            serde_json::json!({ "reason": steer_reason_wire(payload.reason), "text": payload.text })
+            json_object!("reason" => json_string(steer_reason_wire(payload.reason)), "text" => json_string(&payload.text))
         }
         InboundCommand::Abort(payload) => {
-            serde_json::json!({ "reason": abort_reason_wire(payload.reason) })
+            json_object!("reason" => json_string(abort_reason_wire(payload.reason)))
         }
-        InboundCommand::GetState => serde_json::json!({}),
+        InboundCommand::GetState => json_object!(),
         InboundCommand::Dispose(payload) => {
-            serde_json::json!({ "reason": dispose_reason_wire(payload.reason) })
+            json_object!("reason" => json_string(dispose_reason_wire(payload.reason)))
         }
     };
-    let line = serde_json::json!({
-        "protocolVersion": ADAPTER_PROTOCOL_VERSION,
-        "sequence": frame.sequence.value(),
-        "sessionIdentity": frame.session_identity.as_str(),
-        "correlationIdentity": frame.correlation_identity.as_str(),
-        "command": command_name_wire(frame.command.name()),
-        "payload": payload,
-    })
-    .to_string();
+    let line = miniserde::json::to_string(&json_object!(
+        "protocolVersion" => json_string(ADAPTER_PROTOCOL_VERSION),
+        "sequence" => json_u64(frame.sequence.value()),
+        "sessionIdentity" => json_string(frame.session_identity.as_str()),
+        "correlationIdentity" => json_string(frame.correlation_identity.as_str()),
+        "command" => json_string(command_name_wire(frame.command.name())),
+        "payload" => payload,
+    ));
     if line.len() > MAX_JSONL_FRAME_BYTES {
         return Err(ProtocolError::FrameTooLarge);
     }
@@ -1020,39 +1379,75 @@ pub fn encode_inbound_jsonl(frame: &InboundFrame) -> Result<String, ProtocolErro
 }
 
 fn encode_create_session(payload: &CreateSessionPayload) -> Value {
-    serde_json::json!({
-        "sessionKind": session_kind_wire(payload.session_kind),
-        "cwd": payload.cwd.as_str(),
-        "agentDirectory": payload.agent_directory.as_str(),
-        "authPath": payload.auth_path.as_str(),
-        "modelsPath": payload.models_path.as_str(),
-        "sessionDirectory": payload.session_directory.as_str(),
-        "systemPrompt": payload.system_prompt,
-        "systemPromptDigest": payload.system_prompt_digest.as_str(),
-        "model": encode_model_selection(&payload.model),
-        "modelCatalog": encode_model_catalog(&payload.model_catalog),
-        "toolProfile": tool_profile_wire(payload.tool_profile),
-        "settings": encode_settings(&payload.settings),
-    })
+    json_object!(
+        "sessionKind" => json_string(session_kind_wire(payload.session_kind)),
+        "cwd" => json_string(payload.cwd.as_str()),
+        "agentDirectory" => json_string(payload.agent_directory.as_str()),
+        "authPath" => json_string(payload.auth_path.as_str()),
+        "modelsPath" => json_string(payload.models_path.as_str()),
+        "sessionDirectory" => json_string(payload.session_directory.as_str()),
+        "systemPrompt" => json_string(&payload.system_prompt),
+        "systemPromptDigest" => json_string(payload.system_prompt_digest.as_str()),
+        "model" => encode_model_selection(&payload.model),
+        "modelCatalog" => encode_model_catalog(&payload.model_catalog),
+        "toolProfile" => json_string(tool_profile_wire(payload.tool_profile)),
+        "settings" => encode_settings(&payload.settings),
+    )
 }
 fn encode_model_selection(value: &ModelSelection) -> Value {
-    serde_json::json!({ "provider": provider_wire(value.provider), "modelId": model_id_wire(value.model_id), "thinkingLevel": thinking_level_wire(value.thinking_level) })
+    json_object!("provider" => json_string(provider_wire(value.provider)), "modelId" => json_string(model_id_wire(value.model_id)), "thinkingLevel" => json_string(thinking_level_wire(value.thinking_level)))
 }
 fn encode_model_catalog(value: &ModelCatalogPolicyV1) -> Value {
     let model = &value.effective_model;
-    serde_json::json!({ "catalogBlake3": value.catalog_blake3.as_str(), "effectiveModel": { "provider": provider_wire(model.provider), "baseUrl": base_url_wire(model.base_url), "api": model_api_wire(model.api), "modelId": model_id_wire(model.model_id), "canonicalSlug": canonical_slug_wire(model.canonical_slug), "input": model_input_wire(model.input), "contextWindow": model.context_window.value(), "maxTokens": model.max_tokens.value(), "inputUsdPerMillion": encode_rate(&model.input_usd_per_million), "outputUsdPerMillion": encode_rate(&model.output_usd_per_million), "cacheReadUsdPerMillion": encode_rate(&model.cache_read_usd_per_million), "cacheWriteUsdPerMillion": encode_cache_write_rate(&model.cache_write_usd_per_million) } })
+    json_object!(
+        "catalogBlake3" => json_string(value.catalog_blake3.as_str()),
+        "effectiveModel" => json_object!(
+            "provider" => json_string(provider_wire(model.provider)),
+            "baseUrl" => json_string(base_url_wire(model.base_url)),
+            "api" => json_string(model_api_wire(model.api)),
+            "modelId" => json_string(model_id_wire(model.model_id)),
+            "canonicalSlug" => json_string(canonical_slug_wire(model.canonical_slug)),
+            "input" => json_string(model_input_wire(model.input)),
+            "contextWindow" => json_u64(model.context_window.value()),
+            "maxTokens" => json_u64(model.max_tokens.value()),
+            "inputUsdPerMillion" => encode_rate(&model.input_usd_per_million),
+            "outputUsdPerMillion" => encode_rate(&model.output_usd_per_million),
+            "cacheReadUsdPerMillion" => encode_rate(&model.cache_read_usd_per_million),
+            "cacheWriteUsdPerMillion" => encode_cache_write_rate(&model.cache_write_usd_per_million),
+        ),
+    )
 }
 fn encode_rate(value: &KnownPerMillionRateV1) -> Value {
-    serde_json::json!({ "kind": "Known", "usdPerMillion": value.usd_per_million.as_str() })
+    json_object!("kind" => json_string("Known"), "usdPerMillion" => json_string(value.usd_per_million.as_str()))
 }
 fn encode_cache_write_rate(value: &CacheWritePerMillionRateV1) -> Value {
     match value {
         CacheWritePerMillionRateV1::Known(value) => encode_rate(value),
-        CacheWritePerMillionRateV1::Absent => serde_json::json!({ "kind": "Absent" }),
+        CacheWritePerMillionRateV1::Absent => json_object!("kind" => json_string("Absent")),
     }
 }
 fn encode_settings(value: &ActorModelPolicyV1) -> Value {
-    serde_json::json!({ "retry": { "maxRetries": value.retry.max_retries.value(), "baseDelayMilliseconds": value.retry.base_delay_milliseconds.value(), "providerTimeoutMilliseconds": value.retry.provider_timeout_milliseconds.value(), "providerMaxRetries": value.retry.provider_max_retries.value(), "providerMaxRetryDelayMilliseconds": value.retry.provider_max_retry_delay_milliseconds.value() }, "compaction": { "mode": compaction_mode_wire(value.compaction.mode), "reserveTokens": value.compaction.reserve_tokens.value(), "keepRecentTokens": value.compaction.keep_recent_tokens.value() }, "steeringMode": queue_mode_wire(value.steering_mode), "followUpMode": queue_mode_wire(value.follow_up_mode), "transport": transport_wire(value.transport), "projectTrust": project_trust_wire(value.project_trust), "installTelemetryEnabled": false, "analyticsEnabled": false, "images": images_wire(value.images) })
+    json_object!(
+        "retry" => json_object!(
+            "maxRetries" => json_u64(value.retry.max_retries.value()),
+            "baseDelayMilliseconds" => json_u64(value.retry.base_delay_milliseconds.value()),
+            "providerTimeoutMilliseconds" => json_u64(value.retry.provider_timeout_milliseconds.value()),
+            "providerMaxRetries" => json_u64(value.retry.provider_max_retries.value()),
+            "providerMaxRetryDelayMilliseconds" => json_u64(value.retry.provider_max_retry_delay_milliseconds.value()),
+        ),
+        "compaction" => json_object!(
+            "mode" => json_string(compaction_mode_wire(value.compaction.mode)),
+            "reserveTokens" => json_u64(value.compaction.reserve_tokens.value()),
+            "keepRecentTokens" => json_u64(value.compaction.keep_recent_tokens.value()),
+        ),
+        "steeringMode" => json_string(queue_mode_wire(value.steering_mode)),
+        "followUpMode" => json_string(queue_mode_wire(value.follow_up_mode)),
+        "transport" => json_string(transport_wire(value.transport)),
+        "projectTrust" => json_string(project_trust_wire(value.project_trust)),
+        "installTelemetryEnabled" => json_bool(false),
+        "analyticsEnabled" => json_bool(false),
+        "images" => json_string(images_wire(value.images)),
+    )
 }
 
 macro_rules! wire { ($name:ident, $enum:ident, {$($variant:ident => $text:literal),+ $(,)?}) => { fn $name(value: $enum) -> &'static str { match value { $($enum::$variant => $text),+ } } }; }
@@ -1329,12 +1724,10 @@ fn decode_frame_value(line: &str) -> Result<Value, ProtocolError> {
         return Err(ProtocolError::FrameTooLarge);
     }
     reject_duplicate_object_keys(line)?;
-    serde_json::from_str(line).map_err(|_| ProtocolError::InvalidJson)
+    miniserde::json::from_str(line).map_err(|_| ProtocolError::InvalidJson)
 }
 
-fn decode_create_session(
-    value: &Map<String, Value>,
-) -> Result<CreateSessionPayload, ProtocolError> {
+fn decode_create_session(value: &Object) -> Result<CreateSessionPayload, ProtocolError> {
     exact_keys(
         value,
         &[
@@ -1382,14 +1775,14 @@ fn decode_create_session(
     decoded.settings.assert_pinned()?;
     Ok(decoded)
 }
-fn decode_prompt(value: &Map<String, Value>) -> Result<PromptPayload, ProtocolError> {
+fn decode_prompt(value: &Object) -> Result<PromptPayload, ProtocolError> {
     exact_keys(value, &["purpose", "text"])?;
     Ok(PromptPayload {
         purpose: prompt_purpose(string(value, "purpose")?)?,
         text: nonempty(value, "text")?,
     })
 }
-fn decode_follow_up(value: &Map<String, Value>) -> Result<FollowUpPayload, ProtocolError> {
+fn decode_follow_up(value: &Object) -> Result<FollowUpPayload, ProtocolError> {
     exact_keys(value, &["noticeDeliveryIdentity", "ledgerFrontier", "text"])?;
     Ok(FollowUpPayload {
         notice_delivery_identity: CorrelationIdentity::parse(string(
@@ -1400,27 +1793,27 @@ fn decode_follow_up(value: &Map<String, Value>) -> Result<FollowUpPayload, Proto
         text: nonempty(value, "text")?,
     })
 }
-fn decode_steer(value: &Map<String, Value>) -> Result<SteerPayload, ProtocolError> {
+fn decode_steer(value: &Object) -> Result<SteerPayload, ProtocolError> {
     exact_keys(value, &["reason", "text"])?;
     Ok(SteerPayload {
         reason: steer_reason(string(value, "reason")?)?,
         text: nonempty(value, "text")?,
     })
 }
-fn decode_abort(value: &Map<String, Value>) -> Result<AbortPayload, ProtocolError> {
+fn decode_abort(value: &Object) -> Result<AbortPayload, ProtocolError> {
     exact_keys(value, &["reason"])?;
     Ok(AbortPayload {
         reason: abort_reason(string(value, "reason")?)?,
     })
 }
-fn decode_dispose(value: &Map<String, Value>) -> Result<DisposePayload, ProtocolError> {
+fn decode_dispose(value: &Object) -> Result<DisposePayload, ProtocolError> {
     exact_keys(value, &["reason"])?;
     Ok(DisposePayload {
         reason: dispose_reason(string(value, "reason")?)?,
     })
 }
 
-fn decode_model_catalog(value: &Map<String, Value>) -> Result<ModelCatalogPolicyV1, ProtocolError> {
+fn decode_model_catalog(value: &Object) -> Result<ModelCatalogPolicyV1, ProtocolError> {
     exact_keys(value, &["catalogBlake3", "effectiveModel"])?;
     let model = object(required(value, "effectiveModel")?)?;
     exact_keys(
@@ -1470,16 +1863,14 @@ fn decode_model_catalog(value: &Map<String, Value>) -> Result<ModelCatalogPolicy
         },
     })
 }
-fn decode_known_rate(value: &Map<String, Value>) -> Result<KnownPerMillionRateV1, ProtocolError> {
+fn decode_known_rate(value: &Object) -> Result<KnownPerMillionRateV1, ProtocolError> {
     exact_keys(value, &["kind", "usdPerMillion"])?;
     literal(value, "kind", "Known")?;
     Ok(KnownPerMillionRateV1 {
         usd_per_million: UsdPerMillionDecimal::parse(string(value, "usdPerMillion")?)?,
     })
 }
-fn decode_cache_write_rate(
-    value: &Map<String, Value>,
-) -> Result<CacheWritePerMillionRateV1, ProtocolError> {
+fn decode_cache_write_rate(value: &Object) -> Result<CacheWritePerMillionRateV1, ProtocolError> {
     match string(value, "kind")? {
         "Absent" => {
             exact_keys(value, &["kind"])?;
@@ -1489,7 +1880,7 @@ fn decode_cache_write_rate(
         _ => Err(ProtocolError::InvalidFrame("cache write rate")),
     }
 }
-fn decode_settings(value: &Map<String, Value>) -> Result<ActorModelPolicyV1, ProtocolError> {
+fn decode_settings(value: &Object) -> Result<ActorModelPolicyV1, ProtocolError> {
     exact_keys(
         value,
         &[
@@ -1543,7 +1934,7 @@ fn decode_settings(value: &Map<String, Value>) -> Result<ActorModelPolicyV1, Pro
     })
 }
 
-fn decode_runtime(value: &Map<String, Value>) -> Result<RuntimeIdentity, ProtocolError> {
+fn decode_runtime(value: &Object) -> Result<RuntimeIdentity, ProtocolError> {
     exact_keys(
         value,
         &[
@@ -1572,7 +1963,7 @@ fn decode_runtime(value: &Map<String, Value>) -> Result<RuntimeIdentity, Protoco
     Ok(runtime)
 }
 fn decode_effective_configuration(
-    value: &Map<String, Value>,
+    value: &Object,
 ) -> Result<EffectiveSessionConfiguration, ProtocolError> {
     exact_keys(
         value,
@@ -1609,9 +2000,7 @@ fn decode_effective_configuration(
     config.assert_pinned()?;
     Ok(config)
 }
-fn decode_command_result_detail(
-    value: &Map<String, Value>,
-) -> Result<CommandResultDetail, ProtocolError> {
+fn decode_command_result_detail(value: &Object) -> Result<CommandResultDetail, ProtocolError> {
     match string(value, "kind")? {
         "acknowledged" => {
             exact_keys(value, &["kind"])?;
@@ -1637,7 +2026,7 @@ fn decode_command_result_detail(
         _ => Err(ProtocolError::InvalidFrame("CommandResult detail")),
     }
 }
-fn decode_usage(value: &Map<String, Value>) -> Result<UsageObservation, ProtocolError> {
+fn decode_usage(value: &Object) -> Result<UsageObservation, ProtocolError> {
     match string(value, "kind")? {
         "Known" => {
             exact_keys(value, &["kind", "totals"])?;
@@ -1680,9 +2069,7 @@ fn decode_usage(value: &Map<String, Value>) -> Result<UsageObservation, Protocol
         _ => Err(ProtocolError::InvalidFrame("usage observation")),
     }
 }
-fn decode_final_outcome(
-    value: &Map<String, Value>,
-) -> Result<FinalAssistantOutcome, ProtocolError> {
+fn decode_final_outcome(value: &Object) -> Result<FinalAssistantOutcome, ProtocolError> {
     match string(value, "kind")? {
         "Observed" => {
             exact_keys(value, &["kind", "stopReason"])?;
@@ -1699,9 +2086,7 @@ fn decode_final_outcome(
         _ => Err(ProtocolError::InvalidFrame("final assistant outcome")),
     }
 }
-fn decode_transcript_receipt(
-    value: &Map<String, Value>,
-) -> Result<TranscriptFlushReceiptV1, ProtocolError> {
+fn decode_transcript_receipt(value: &Object) -> Result<TranscriptFlushReceiptV1, ProtocolError> {
     literal(value, "format", "pi_session_manager_jsonl_v3")?;
     let materialization = string(value, "materialization")?;
     match materialization {
@@ -1751,9 +2136,7 @@ fn decode_transcript_receipt(
         _ => Err(ProtocolError::InvalidFrame("transcript materialization")),
     }
 }
-fn decode_first_user_prompt(
-    value: &Map<String, Value>,
-) -> Result<FirstUserPromptReceipt, ProtocolError> {
+fn decode_first_user_prompt(value: &Object) -> Result<FirstUserPromptReceipt, ProtocolError> {
     match string(value, "kind")? {
         "absent" => {
             exact_keys(value, &["kind"])?;
@@ -1769,7 +2152,7 @@ fn decode_first_user_prompt(
     }
 }
 
-fn decode_agent_event(value: &Map<String, Value>) -> Result<ProjectedAgentEvent, ProtocolError> {
+fn decode_agent_event(value: &Object) -> Result<ProjectedAgentEvent, ProtocolError> {
     let kind = string(value, "type")?;
     macro_rules! keys { ($($key:expr),* $(,)?) => { exact_keys(value, &["type", $($key),*])? }; }
     match kind {
@@ -1996,30 +2379,36 @@ fn decode_agent_event(value: &Map<String, Value>) -> Result<ProjectedAgentEvent,
     }
 }
 
-fn object(value: &Value) -> Result<&Map<String, Value>, ProtocolError> {
-    value
-        .as_object()
-        .ok_or(ProtocolError::InvalidFrame("object"))
+fn object(value: &Value) -> Result<&Object, ProtocolError> {
+    match value {
+        Value::Object(object) => Ok(object),
+        _ => Err(ProtocolError::InvalidFrame("object")),
+    }
 }
-fn array(value: &Value) -> Result<&Vec<Value>, ProtocolError> {
-    value.as_array().ok_or(ProtocolError::InvalidFrame("array"))
+fn array(value: &Value) -> Result<&Array, ProtocolError> {
+    match value {
+        Value::Array(array) => Ok(array),
+        _ => Err(ProtocolError::InvalidFrame("array")),
+    }
 }
-fn required<'a>(object: &'a Map<String, Value>, key: &str) -> Result<&'a Value, ProtocolError> {
+fn required<'a>(object: &'a Object, key: &str) -> Result<&'a Value, ProtocolError> {
     object
         .get(key)
         .ok_or(ProtocolError::InvalidFrame("missing field"))
 }
-fn string<'a>(object: &'a Map<String, Value>, key: &str) -> Result<&'a str, ProtocolError> {
-    required(object, key)?
-        .as_str()
-        .ok_or(ProtocolError::InvalidFrame("string field"))
+fn string<'a>(object: &'a Object, key: &str) -> Result<&'a str, ProtocolError> {
+    match required(object, key)? {
+        Value::String(value) => Ok(value),
+        _ => Err(ProtocolError::InvalidFrame("string field")),
+    }
 }
 fn value_string(value: &Value) -> Result<&str, ProtocolError> {
-    value
-        .as_str()
-        .ok_or(ProtocolError::InvalidFrame("string array member"))
+    match value {
+        Value::String(value) => Ok(value),
+        _ => Err(ProtocolError::InvalidFrame("string array member")),
+    }
 }
-fn nonempty(object: &Map<String, Value>, key: &str) -> Result<String, ProtocolError> {
+fn nonempty(object: &Object, key: &str) -> Result<String, ProtocolError> {
     let value = string(object, key)?;
     if value.is_empty() {
         Err(ProtocolError::InvalidFrame("nonempty string"))
@@ -2027,65 +2416,53 @@ fn nonempty(object: &Map<String, Value>, key: &str) -> Result<String, ProtocolEr
         Ok(value.into())
     }
 }
-fn boolean(object: &Map<String, Value>, key: &str) -> Result<bool, ProtocolError> {
-    required(object, key)?
-        .as_bool()
-        .ok_or(ProtocolError::InvalidFrame("boolean field"))
+fn boolean(object: &Object, key: &str) -> Result<bool, ProtocolError> {
+    match required(object, key)? {
+        Value::Bool(value) => Ok(*value),
+        _ => Err(ProtocolError::InvalidFrame("boolean field")),
+    }
 }
-fn unsigned(object: &Map<String, Value>, key: &str) -> Result<u64, ProtocolError> {
-    required(object, key)?
-        .as_u64()
-        .filter(|value| *value <= MAX_SAFE_INTEGER)
-        .ok_or(ProtocolError::InvalidFrame("safe unsigned integer"))
+fn unsigned(object: &Object, key: &str) -> Result<u64, ProtocolError> {
+    match required(object, key)? {
+        Value::Number(Number::U64(value)) if *value <= MAX_SAFE_INTEGER => Ok(*value),
+        _ => Err(ProtocolError::InvalidFrame("safe unsigned integer")),
+    }
 }
-fn boundary_sequence(
-    object: &Map<String, Value>,
-    key: &str,
-) -> Result<BoundarySequence, ProtocolError> {
+fn boundary_sequence(object: &Object, key: &str) -> Result<BoundarySequence, ProtocolError> {
     BoundarySequence::parse(unsigned(object, key)?)
 }
-fn nonnegative(
-    object: &Map<String, Value>,
-    key: &str,
-) -> Result<NonNegativeInteger, ProtocolError> {
+fn nonnegative(object: &Object, key: &str) -> Result<NonNegativeInteger, ProtocolError> {
     NonNegativeInteger::parse(unsigned(object, key)?)
 }
-fn positive(object: &Map<String, Value>, key: &str) -> Result<PositiveInteger, ProtocolError> {
+fn positive(object: &Object, key: &str) -> Result<PositiveInteger, ProtocolError> {
     PositiveInteger::parse(unsigned(object, key)?)
 }
-fn path(object: &Map<String, Value>, key: &str) -> Result<AbsolutePath, ProtocolError> {
+fn path(object: &Object, key: &str) -> Result<AbsolutePath, ProtocolError> {
     AbsolutePath::parse(string(object, key)?)
 }
-fn optional_correlation(
-    object: &Map<String, Value>,
-) -> Result<Option<CorrelationIdentity>, ProtocolError> {
+fn optional_correlation(object: &Object) -> Result<Option<CorrelationIdentity>, ProtocolError> {
     object
         .get("correlationIdentity")
-        .map(|value| {
-            value
-                .as_str()
-                .ok_or(ProtocolError::InvalidFrame("correlation identity"))
-                .and_then(CorrelationIdentity::parse)
-        })
+        .map(|value| value_string(value).and_then(CorrelationIdentity::parse))
         .transpose()
 }
-fn json_array(object: &Map<String, Value>, key: &str) -> Result<Vec<Value>, ProtocolError> {
-    Ok(array(required(object, key)?)?.clone())
+fn json_array(object: &Object, key: &str) -> Result<Vec<Value>, ProtocolError> {
+    Ok(array(required(object, key)?)?.iter().cloned().collect())
 }
-fn string_array(object: &Map<String, Value>, key: &str) -> Result<Vec<String>, ProtocolError> {
+fn string_array(object: &Object, key: &str) -> Result<Vec<String>, ProtocolError> {
     array(required(object, key)?)?
         .iter()
         .map(|value| value_string(value).map(Into::into))
         .collect()
 }
-fn exact_keys(object: &Map<String, Value>, expected: &[&str]) -> Result<(), ProtocolError> {
+fn exact_keys(object: &Object, expected: &[&str]) -> Result<(), ProtocolError> {
     if object.len() != expected.len() || expected.iter().any(|key| !object.contains_key(*key)) {
         Err(ProtocolError::InvalidFrame("exact object keys"))
     } else {
         Ok(())
     }
 }
-fn literal(object: &Map<String, Value>, key: &str, expected: &str) -> Result<(), ProtocolError> {
+fn literal(object: &Object, key: &str, expected: &str) -> Result<(), ProtocolError> {
     if string(object, key)? == expected {
         Ok(())
     } else {
@@ -2134,7 +2511,7 @@ fn disabled(value: bool) -> Result<Disabled, ProtocolError> {
     }
 }
 
-fn decode_model_selection(value: &Map<String, Value>) -> Result<ModelSelection, ProtocolError> {
+fn decode_model_selection(value: &Object) -> Result<ModelSelection, ProtocolError> {
     Ok(ModelSelection {
         provider: provider(string(value, "provider")?)?,
         model_id: model_id(string(value, "modelId")?)?,
@@ -2158,7 +2535,7 @@ fn identifier_edge(byte: u8) -> bool {
     byte.is_ascii_alphanumeric()
 }
 
-/// Detect duplicate decoded object keys before `serde_json` would discard them.
+/// Detect duplicate decoded object keys before miniserde's object insertion.
 fn reject_duplicate_object_keys(input: &str) -> Result<(), ProtocolError> {
     struct Scanner<'a> {
         bytes: &'a [u8],
@@ -2180,8 +2557,14 @@ fn reject_duplicate_object_keys(input: &str) -> Result<(), ProtocolError> {
                 match *byte {
                     b'"' => {
                         self.at += 1;
-                        return serde_json::from_slice::<String>(&self.bytes[start..self.at])
-                            .map_err(|_| ProtocolError::InvalidJson);
+                        let string = std::str::from_utf8(&self.bytes[start..self.at])
+                            .map_err(|_| ProtocolError::InvalidJson)?;
+                        return match miniserde::json::from_str::<Value>(string)
+                            .map_err(|_| ProtocolError::InvalidJson)?
+                        {
+                            Value::String(value) => Ok(value),
+                            _ => Err(ProtocolError::InvalidJson),
+                        };
                     }
                     b'\\' => {
                         self.at += 1;
@@ -2281,17 +2664,10 @@ fn reject_duplicate_object_keys(input: &str) -> Result<(), ProtocolError> {
                 return Err(ProtocolError::InvalidJson);
             }
             let primitive = &self.bytes[start..self.at];
-            // `serde_json` otherwise accepts every lexical spelling of IEEE
-            // negative zero. The TS evidence projector rejects it because
+            // The TS evidence projector rejects negative zero because
             // JSON.stringify would rewrite it as `0`; mirror that guarantee
             // before an opaque Pi evidence value reaches the peer.
-            if primitive.first() == Some(&b'-')
-                && serde_json::from_slice::<serde_json::Number>(primitive).is_ok()
-                && std::str::from_utf8(primitive)
-                    .ok()
-                    .and_then(|number| number.parse::<f64>().ok())
-                    .is_some_and(|number| number == 0.0 && number.is_sign_negative())
-            {
+            if is_negative_zero_number(primitive) {
                 return Err(ProtocolError::NegativeZero);
             }
             Ok(())
@@ -2310,6 +2686,56 @@ fn reject_duplicate_object_keys(input: &str) -> Result<(), ProtocolError> {
     }
 }
 
+fn is_negative_zero_number(value: &[u8]) -> bool {
+    if value.first() != Some(&b'-') {
+        return false;
+    }
+    let mut at = 1;
+    let mut integer_digits = 0;
+    let mut integer_zero = true;
+    while let Some(byte) = value.get(at).copied() {
+        if !byte.is_ascii_digit() {
+            break;
+        }
+        integer_digits += 1;
+        integer_zero &= byte == b'0';
+        at += 1;
+    }
+    if integer_digits == 0 {
+        return false;
+    }
+    let mut fraction_digits = 0;
+    let mut fraction_zero = true;
+    if value.get(at) == Some(&b'.') {
+        at += 1;
+        while let Some(byte) = value.get(at).copied() {
+            if !byte.is_ascii_digit() {
+                break;
+            }
+            fraction_digits += 1;
+            fraction_zero &= byte == b'0';
+            at += 1;
+        }
+        if fraction_digits == 0 {
+            return false;
+        }
+    }
+    if matches!(value.get(at), Some(b'e' | b'E')) {
+        at += 1;
+        if matches!(value.get(at), Some(b'+' | b'-')) {
+            at += 1;
+        }
+        let exponent_start = at;
+        while value.get(at).is_some_and(u8::is_ascii_digit) {
+            at += 1;
+        }
+        if exponent_start == at {
+            return false;
+        }
+    }
+    at == value.len() && integer_zero && fraction_zero
+}
+
 #[cfg(test)]
 mod protocol_tests {
     // These are closed fixture constructors and assertion boundaries; panicking
@@ -2317,12 +2743,21 @@ mod protocol_tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-    use serde_json::json;
+
+    fn json_value(input: &str) -> Value {
+        miniserde::json::from_str(input).unwrap()
+    }
     #[test]
     fn rejects_duplicate_nested_keys_and_negative_zero() {
         assert_eq!(
             decode_inbound_jsonl(
                 r#"{"protocolVersion":"society-pi-host/v4","sequence":1,"sequence":2,"sessionIdentity":"session-1","correlationIdentity":"correlation-1","command":"GetState","payload":{}}"#
+            ),
+            Err(ProtocolError::DuplicateObjectKey)
+        );
+        assert_eq!(
+            decode_inbound_jsonl(
+                r#"{"protocolVersion":"society-pi-host/v4","se\u0071uence":1,"sequence":2,"sessionIdentity":"session-1","correlationIdentity":"correlation-1","command":"GetState","payload":{}}"#
             ),
             Err(ProtocolError::DuplicateObjectKey)
         );
@@ -2382,35 +2817,61 @@ mod protocol_tests {
     #[test]
     fn pinned_agent_event_fixture_covers_every_host_v1_variant() {
         let events = vec![
-            json!({"type":"agent_start"}),
-            json!({"type":"agent_end","messages":[{"type":"assistant"}],"willRetry":true}),
-            json!({"type":"agent_settled"}),
-            json!({"type":"turn_start"}),
-            json!({"type":"turn_end","message":{"type":"assistant"},"toolResults":[]}),
-            json!({"type":"message_start","message":{"role":"assistant"}}),
-            json!({"type":"message_update","message":{"role":"assistant"},"assistantMessageEvent":{"type":"text_delta","delta":"x"}}),
-            json!({"type":"message_end","message":{"role":"assistant"}}),
-            json!({"type":"tool_execution_start","toolCallIdentity":"call-001","toolName":"read","args":{"path":"society"}}),
-            json!({"type":"tool_execution_update","toolCallIdentity":"call-001","toolName":"read","args":{"path":"society"},"partialResult":"part"}),
-            json!({"type":"tool_execution_end","toolCallIdentity":"call-001","toolName":"read","result":"done","isError":false}),
-            json!({"type":"queue_update","steering":["urgent"],"followUp":["notice"]}),
-            json!({"type":"entry_appended","entry":{"type":"message"}}),
-            json!({"type":"bash_execution_update","executionIdentity":"bash-001","delta":"output"}),
-            json!({"type":"compaction_start","reason":"threshold"}),
-            json!({"type":"session_info_changed","name":"session"}),
-            json!({"type":"thinking_level_changed","level":"high"}),
-            json!({"type":"compaction_end","reason":"overflow","result":{"summary":"ok"},"aborted":false,"willRetry":true,"errorMessage":"retry"}),
-            json!({"type":"auto_retry_start","attempt":1,"maxAttempts":2,"delayMilliseconds":2000,"errorMessage":"network"}),
-            json!({"type":"auto_retry_end","success":true,"attempt":1}),
-            json!({"type":"summarization_retry_scheduled","attempt":1,"maxAttempts":2,"delayMilliseconds":2000,"errorMessage":"summary"}),
-            json!({"type":"summarization_retry_attempt_start","source":"branchSummary"}),
-            json!({"type":"summarization_retry_attempt_start","source":"compaction","reason":"manual"}),
-            json!({"type":"summarization_retry_finished"}),
+            json_value(r#"{"type":"agent_start"}"#),
+            json_value(
+                r#"{"type":"agent_end","messages":[{"type":"assistant"}],"willRetry":true}"#,
+            ),
+            json_value(r#"{"type":"agent_settled"}"#),
+            json_value(r#"{"type":"turn_start"}"#),
+            json_value(r#"{"type":"turn_end","message":{"type":"assistant"},"toolResults":[]}"#),
+            json_value(r#"{"type":"message_start","message":{"role":"assistant"}}"#),
+            json_value(
+                r#"{"type":"message_update","message":{"role":"assistant"},"assistantMessageEvent":{"type":"text_delta","delta":"x"}}"#,
+            ),
+            json_value(r#"{"type":"message_end","message":{"role":"assistant"}}"#),
+            json_value(
+                r#"{"type":"tool_execution_start","toolCallIdentity":"call-001","toolName":"read","args":{"path":"society"}}"#,
+            ),
+            json_value(
+                r#"{"type":"tool_execution_update","toolCallIdentity":"call-001","toolName":"read","args":{"path":"society"},"partialResult":"part"}"#,
+            ),
+            json_value(
+                r#"{"type":"tool_execution_end","toolCallIdentity":"call-001","toolName":"read","result":"done","isError":false}"#,
+            ),
+            json_value(r#"{"type":"queue_update","steering":["urgent"],"followUp":["notice"]}"#),
+            json_value(r#"{"type":"entry_appended","entry":{"type":"message"}}"#),
+            json_value(
+                r#"{"type":"bash_execution_update","executionIdentity":"bash-001","delta":"output"}"#,
+            ),
+            json_value(r#"{"type":"compaction_start","reason":"threshold"}"#),
+            json_value(r#"{"type":"session_info_changed","name":"session"}"#),
+            json_value(r#"{"type":"thinking_level_changed","level":"high"}"#),
+            json_value(
+                r#"{"type":"compaction_end","reason":"overflow","result":{"summary":"ok"},"aborted":false,"willRetry":true,"errorMessage":"retry"}"#,
+            ),
+            json_value(
+                r#"{"type":"auto_retry_start","attempt":1,"maxAttempts":2,"delayMilliseconds":2000,"errorMessage":"network"}"#,
+            ),
+            json_value(r#"{"type":"auto_retry_end","success":true,"attempt":1}"#),
+            json_value(
+                r#"{"type":"summarization_retry_scheduled","attempt":1,"maxAttempts":2,"delayMilliseconds":2000,"errorMessage":"summary"}"#,
+            ),
+            json_value(r#"{"type":"summarization_retry_attempt_start","source":"branchSummary"}"#),
+            json_value(
+                r#"{"type":"summarization_retry_attempt_start","source":"compaction","reason":"manual"}"#,
+            ),
+            json_value(r#"{"type":"summarization_retry_finished"}"#),
         ];
         for (sequence, agent_event) in events.into_iter().enumerate() {
-            let frame = json!({"protocolVersion":ADAPTER_PROTOCOL_VERSION,"sequence":sequence + 1,"sessionIdentity":"session-001","event":"AgentEvent","agentEvent":agent_event});
+            let frame = json_object!(
+                "protocolVersion" => json_string(ADAPTER_PROTOCOL_VERSION),
+                "sequence" => json_u64(sequence as u64 + 1),
+                "sessionIdentity" => json_string("session-001"),
+                "event" => json_string("AgentEvent"),
+                "agentEvent" => agent_event,
+            );
             assert!(matches!(
-                decode_outbound_jsonl(&frame.to_string()),
+                decode_outbound_jsonl(&miniserde::json::to_string(&frame)),
                 Ok(OutboundFrame {
                     event: OutboundEvent::AgentEvent { .. },
                     ..
@@ -2420,8 +2881,14 @@ mod protocol_tests {
     }
     #[test]
     fn unknown_event_and_oversize_frame_are_not_fallback_data() {
-        let unknown = json!({"protocolVersion":ADAPTER_PROTOCOL_VERSION,"sequence":1,"sessionIdentity":"session-001","event":"AgentEvent","agentEvent":{"type":"future_sdk_event"}});
-        assert!(decode_outbound_jsonl(&unknown.to_string()).is_err());
+        let unknown = json_object!(
+            "protocolVersion" => json_string(ADAPTER_PROTOCOL_VERSION),
+            "sequence" => json_u64(1),
+            "sessionIdentity" => json_string("session-001"),
+            "event" => json_string("AgentEvent"),
+            "agentEvent" => json_value(r#"{"type":"future_sdk_event"}"#),
+        );
+        assert!(decode_outbound_jsonl(&miniserde::json::to_string(&unknown)).is_err());
         assert_eq!(
             decode_outbound_jsonl(&"x".repeat(MAX_JSONL_FRAME_BYTES + 1)),
             Err(ProtocolError::FrameTooLarge)

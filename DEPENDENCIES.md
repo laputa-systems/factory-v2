@@ -19,8 +19,7 @@ the resolved transitive graph is committed in `Cargo.lock`.
 | `blake3` | 1.8.5 | Canonical 32-byte BLAKE3 identities for immutable content, command bodies, revisions, trees, execution artifacts, and the resident physical content store. Git object IDs remain governed by each repository's own object format. |
 | `tracing` | 0.1.44 | Typed spans and lifecycle events in `societyd`. |
 | `tracing-subscriber` | 0.3.23 | Mandatory monitor and bounded diagnostic rendering; only `fmt`, `registry`, and `std` features are enabled. |
-| `serde` | 1.0.229 | Serialization derives only in `society-pi`, at the closed Pi SDK-host protocol boundary. |
-| `serde_json` | 1.0.151 | JSONL and closed submission parsing only in `society-pi`; SQLite and the local daemon protocol remain non-JSON. |
+| `miniserde` | 0.1.46 | Provider-free JSONL and closed submission parsing only in `society-pi`, at the closed Pi SDK-host protocol boundary; SQLite and the local daemon protocol remain non-JSON. |
 | `libc` | 0.2.177 | Narrow Unix process-group, signal, peer-credential, ownership, and content-store file-lock calls. The stable 0.2 line is used instead of the 1.0 prerelease. |
 
 `rusqlite` disables its default feature set and enables `bundled`. This pins the

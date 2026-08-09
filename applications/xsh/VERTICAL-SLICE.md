@@ -3289,7 +3289,7 @@ could be honest.
 The dependency gate is resolved by `DEPENDENCIES.md` and the exact workspace
 pins in `Cargo.toml`. The allowed Rust surface is `rusqlite` with bundled SQLite
 and default features disabled, `thiserror`, `blake3`, `tracing`,
-`tracing-subscriber`, Pi-boundary-only `serde`/`serde_json`, and narrow Unix
+`tracing-subscriber`, Pi-boundary-only `miniserde`, and narrow Unix
 `libc` calls. The TypeScript package exact-pins
 `@earendil-works/pi-coding-agent` 0.83.0 and its build/test support in
 `package-lock.json`. The prototype kernel executes one atomic embedded-SQL

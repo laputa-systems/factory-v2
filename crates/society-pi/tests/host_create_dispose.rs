@@ -15,7 +15,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use serde_json::json;
+use miniserde::json::{self, Number, Value};
 use society_pi::{
     AdapterVersion, Blake3Digest, BoundaryPeer, HostProcessId, NodeRuntimeVersion, PiSdkVersion,
     RuntimeIdentity, SessionIdentity, SpawnNonce,
@@ -44,20 +44,33 @@ fn committed_host_create_then_dispose_is_sealed_without_a_provider_call() {
         1,
         "create-correlation-001",
         "CreateSession",
-        json!({
-            "sessionKind": "TaskAttempt",
-            "cwd": root.to_str().unwrap(),
-            "agentDirectory": agent.to_str().unwrap(),
-            "authPath": auth.to_str().unwrap(),
-            "modelsPath": models.to_str().unwrap(),
-            "sessionDirectory": sessions.to_str().unwrap(),
-            "systemPrompt": system_prompt,
-            "systemPromptDigest": blake3(system_prompt),
-            "model": { "provider": "openrouter", "modelId": "deepseek/deepseek-v4-flash-0731", "thinkingLevel": "high" },
-            "modelCatalog": { "catalogBlake3": catalog_blake3, "effectiveModel": admitted_effective_model() },
-            "toolProfile": "read_execute_v1",
-            "settings": admitted_settings(),
-        }),
+        object([
+            ("sessionKind", string("TaskAttempt")),
+            ("cwd", string(root.to_str().unwrap())),
+            ("agentDirectory", string(agent.to_str().unwrap())),
+            ("authPath", string(auth.to_str().unwrap())),
+            ("modelsPath", string(models.to_str().unwrap())),
+            ("sessionDirectory", string(sessions.to_str().unwrap())),
+            ("systemPrompt", string(system_prompt)),
+            ("systemPromptDigest", string(blake3(system_prompt))),
+            (
+                "model",
+                object([
+                    ("provider", string("openrouter")),
+                    ("modelId", string("deepseek/deepseek-v4-flash-0731")),
+                    ("thinkingLevel", string("high")),
+                ]),
+            ),
+            (
+                "modelCatalog",
+                object([
+                    ("catalogBlake3", string(catalog_blake3)),
+                    ("effectiveModel", admitted_effective_model()),
+                ]),
+            ),
+            ("toolProfile", string("read_execute_v1")),
+            ("settings", admitted_settings()),
+        ]),
     );
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let repository = manifest.parent().and_then(std::path::Path::parent).unwrap();
@@ -142,7 +155,7 @@ fn committed_host_create_then_dispose_is_sealed_without_a_provider_call() {
         2,
         "dispose-correlation-001",
         "Dispose",
-        json!({ "reason": "ProcessRecovery" }),
+        object([("reason", string("ProcessRecovery"))]),
     );
     peer.admit_inbound_jsonl(&dispose).unwrap();
     writeln!(stdin, "{dispose}").unwrap();
@@ -166,17 +179,130 @@ fn committed_host_create_then_dispose_is_sealed_without_a_provider_call() {
     let _ = fs::remove_dir_all(&root);
 }
 
-fn envelope(sequence: u64, correlation: &str, command: &str, payload: serde_json::Value) -> String {
-    json!({ "protocolVersion":"society-pi-host/v4", "sequence":sequence, "sessionIdentity":SESSION, "correlationIdentity":correlation, "command":command, "payload":payload }).to_string()
+fn envelope(sequence: u64, correlation: &str, command: &str, payload: Value) -> String {
+    json::to_string(&object([
+        ("protocolVersion", string("society-pi-host/v4")),
+        ("sequence", number_u64(sequence)),
+        ("sessionIdentity", string(SESSION)),
+        ("correlationIdentity", string(correlation)),
+        ("command", string(command)),
+        ("payload", payload),
+    ]))
 }
 fn admitted_catalog() -> String {
-    json!({ "providers": { "openrouter": { "baseUrl":"https://openrouter.ai/api/v1", "api":"openai-completions", "models":[{ "id":"deepseek/deepseek-v4-flash-0731", "name":"admitted", "reasoning":true, "input":["text"], "contextWindow":1_048_576, "maxTokens":384_000, "cost":{"input":0.00000009,"output":0.00000018,"cacheRead":0.000000018,"cacheWrite":0} }] } } }).to_string()
+    json::to_string(&object([(
+        "providers",
+        object([(
+            "openrouter",
+            object([
+                ("baseUrl", string("https://openrouter.ai/api/v1")),
+                ("api", string("openai-completions")),
+                (
+                    "models",
+                    array([object([
+                        ("id", string("deepseek/deepseek-v4-flash-0731")),
+                        ("name", string("admitted")),
+                        ("reasoning", Value::Bool(true)),
+                        ("input", array([string("text")])),
+                        ("contextWindow", number_u64(1_048_576)),
+                        ("maxTokens", number_u64(384_000)),
+                        (
+                            "cost",
+                            object([
+                                ("input", number_f64(0.00000009)),
+                                ("output", number_f64(0.00000018)),
+                                ("cacheRead", number_f64(0.000000018)),
+                                ("cacheWrite", number_u64(0)),
+                            ]),
+                        ),
+                    ])]),
+                ),
+            ]),
+        )]),
+    )]))
 }
-fn admitted_effective_model() -> serde_json::Value {
-    json!({ "provider":"openrouter", "baseUrl":"https://openrouter.ai/api/v1", "api":"openai-completions", "modelId":"deepseek/deepseek-v4-flash-0731", "canonicalSlug":"deepseek/deepseek-v4-flash-20260731", "input":"text_only", "contextWindow":1_048_576, "maxTokens":384_000, "inputUsdPerMillion":{"kind":"Known","usdPerMillion":"0.09"}, "outputUsdPerMillion":{"kind":"Known","usdPerMillion":"0.18"}, "cacheReadUsdPerMillion":{"kind":"Known","usdPerMillion":"0.018"}, "cacheWriteUsdPerMillion":{"kind":"Absent"} })
+fn admitted_effective_model() -> Value {
+    object([
+        ("provider", string("openrouter")),
+        ("baseUrl", string("https://openrouter.ai/api/v1")),
+        ("api", string("openai-completions")),
+        ("modelId", string("deepseek/deepseek-v4-flash-0731")),
+        (
+            "canonicalSlug",
+            string("deepseek/deepseek-v4-flash-20260731"),
+        ),
+        ("input", string("text_only")),
+        ("contextWindow", number_u64(1_048_576)),
+        ("maxTokens", number_u64(384_000)),
+        (
+            "inputUsdPerMillion",
+            object([("kind", string("Known")), ("usdPerMillion", string("0.09"))]),
+        ),
+        (
+            "outputUsdPerMillion",
+            object([("kind", string("Known")), ("usdPerMillion", string("0.18"))]),
+        ),
+        (
+            "cacheReadUsdPerMillion",
+            object([
+                ("kind", string("Known")),
+                ("usdPerMillion", string("0.018")),
+            ]),
+        ),
+        (
+            "cacheWriteUsdPerMillion",
+            object([("kind", string("Absent"))]),
+        ),
+    ])
 }
-fn admitted_settings() -> serde_json::Value {
-    json!({ "retry":{"maxRetries":2,"baseDelayMilliseconds":2_000,"providerTimeoutMilliseconds":300_000,"providerMaxRetries":1,"providerMaxRetryDelayMilliseconds":30_000}, "compaction":{"mode":"enabled","reserveTokens":16_384,"keepRecentTokens":20_000}, "steeringMode":"one-at-a-time", "followUpMode":"one-at-a-time", "transport":"sse", "projectTrust":"never", "installTelemetryEnabled":false, "analyticsEnabled":false, "images":"blocked" })
+fn admitted_settings() -> Value {
+    object([
+        (
+            "retry",
+            object([
+                ("maxRetries", number_u64(2)),
+                ("baseDelayMilliseconds", number_u64(2_000)),
+                ("providerTimeoutMilliseconds", number_u64(300_000)),
+                ("providerMaxRetries", number_u64(1)),
+                ("providerMaxRetryDelayMilliseconds", number_u64(30_000)),
+            ]),
+        ),
+        (
+            "compaction",
+            object([
+                ("mode", string("enabled")),
+                ("reserveTokens", number_u64(16_384)),
+                ("keepRecentTokens", number_u64(20_000)),
+            ]),
+        ),
+        ("steeringMode", string("one-at-a-time")),
+        ("followUpMode", string("one-at-a-time")),
+        ("transport", string("sse")),
+        ("projectTrust", string("never")),
+        ("installTelemetryEnabled", Value::Bool(false)),
+        ("analyticsEnabled", Value::Bool(false)),
+        ("images", string("blocked")),
+    ])
+}
+fn object(entries: impl IntoIterator<Item = (&'static str, Value)>) -> Value {
+    Value::Object(
+        entries
+            .into_iter()
+            .map(|(key, value)| (key.to_owned(), value))
+            .collect(),
+    )
+}
+fn array(values: impl IntoIterator<Item = Value>) -> Value {
+    Value::Array(values.into_iter().collect())
+}
+fn string(value: impl Into<String>) -> Value {
+    Value::String(value.into())
+}
+fn number_u64(value: u64) -> Value {
+    Value::Number(Number::U64(value))
+}
+fn number_f64(value: f64) -> Value {
+    Value::Number(Number::F64(value))
 }
 fn blake3(value: impl AsRef<[u8]>) -> String {
     let digest = blake3::hash(value.as_ref());
