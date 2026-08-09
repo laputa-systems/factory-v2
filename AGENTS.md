@@ -52,10 +52,11 @@ rust-toolchain.toml        exact Rust toolchain for trusted physics
 Cargo.toml                 Rust workspace manifest
 crates/society-kernel/     implemented bootstrap, coordination, bounded
                            execution, deterministic evidence, and durable
-                           native Pi-child/cancellation foundations; remaining
-                           Milestone-1 domains grow here
-migrations/                normalized monotonic SQLite migrations; migrations
-                           1 through 5 own the current kernel foundation schema
+                           native Pi-child/cancellation and Pi Office-turn
+                           accounting foundations; remaining Milestone-1
+                           domains grow here
+migrations/                one atomic canonical fresh-schema bootstrap;
+                           historical prototype schemas are not upgraded
 
 packages/society-pi-host/  implemented and provider-free-audited Pi SDK host;
                            durable Rust authority remains outside this boundary

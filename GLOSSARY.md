@@ -89,6 +89,14 @@ A typed control-plane command over a named scope, represented as
 grace deadline, propagation rule, and evidence-retention policy. Cancellation
 is not a derived demand signal and cannot be created by signal pressure alone.
 
+### Canonical fresh schema
+
+The one atomic embedded-SQL bootstrap accepted by the prototype kernel. The
+current schema has `PRAGMA user_version = 6`; version zero means an empty
+database eligible for bootstrap, while historical prototype versions one
+through five are rejected without mutation. This is deliberate prototype
+replacement, not an upgrade or compatibility claim.
+
 ### Cancellation propagation
 
 The durable expansion of one accepted `CancellationRequest` into an exact,
@@ -518,6 +526,37 @@ It is not a PID claim. Native spawn is recorded separately; an admission which
 never spawns must be invalidated with a closed reason before cancellation can
 reconcile.
 
+### Pi Office turn cost checkpoint
+
+The atomic accounting step that closes one successfully completed Grand
+Architect Office turn without creating another cross-cut budget reservation.
+It computes the charge from exact session-cumulative usage relative to the
+prior checkpoint, debits that delta from the existing Office-session parent
+reservation, and rechecks the live `SessionReady` child, cycle generation, and
+cancellation state before returning the Office to `Ready`. The parent remains
+reserved until a future typed `Dispose` reconciliation releases its unused
+remainder.
+
+### Pi Office turn prompt authorization
+
+The durable authority for one exact deterministic Grand Architect Office
+`Prompt`. It binds the active Office turn, live Pi session and child, prompt
+content object and digest, correlation identity, current ledger event head,
+current admission generation, and the existing Office-session budget reservation.
+Separate KERNEL-service delivery and accepted-result attestations follow;
+authorization alone never claims that bytes reached the child or that the Pi
+host emitted either observation.
+
+### Pi Office turn terminal receipt
+
+The typed terminal fact for one authorized Office prompt. It binds a closed Pi
+disposition and assistant outcome to either exact final cumulative usage or an
+exact accounting-failure receipt under the session-wide protocol sequence.
+Only `Completed` with `ObservedStop` is currently eligible for the atomic cost
+checkpoint and return to Office `Ready`; other valid outcomes remain durable
+non-ready blockers. Transcript verification is explicitly deferred until the
+future Office-session `Dispose` boundary.
+
 ### Pi SDK host
 
 The V2-owned TypeScript executable `society-pi-host`, pinned with
@@ -566,6 +605,14 @@ There is still no resident scheduler call site, Prompt/FollowUp/Steer path,
 typed cancellation-propagation/Abort driver, usage or cost reconciliation,
 semantic settlement, transcript-file admission, restart orchestration,
 workspace disposal, or execution-profile qualification.
+
+The M6 kernel foundation now owns durable deterministic Office-turn prompt,
+usage, accounting-failure, terminal, and incremental parent-reservation
+transitions. It does not yet make `PiSupervisor` send a prompt or translate
+`society-pi` observations: the resident bridge stops after provider-free
+session readiness and disposal. Final transcript sealing, semantic submission,
+Office-session Dispose accounting, release of unused parent reserve, and
+settlement of non-ready turns remain separate later transitions.
 
 ### Portfolio
 

@@ -796,6 +796,19 @@ write before admitting `SessionReady`. This is a same-resident-lifetime bridge,
 not an independent OS attestation or a resident scheduler: no Prompt, usage,
 cost, semantic settlement, or restart recovery follows from the row.
 
+The M6 kernel adds the durable authority on the other side of that missing
+Prompt boundary. One deterministic Office turn binds exact prompt content,
+correlation, the current ledger event head, live session, admission generation,
+and the existing Office-session budget reservation. KERNEL-service delivery
+and accepted-result attestations, session-cumulative usage or an accounting
+failure, and terminal disposition are separate ordered facts under one
+session-wide sequence watermark. Only a
+`Completed`/`ObservedStop` terminal can atomically checkpoint its new cumulative
+cost delta and restore Office `Ready`; no per-turn reservation double-books the
+Society or Cycle envelope. The resident driver does not yet exercise these
+transitions, and Office-session Dispose remains responsible for future final
+usage, transcript sealing, and release of the unused parent reserve.
+
 Pipe EOF normally makes a still-inert host exit without constructing a session,
 but a daemon restart does not infer that physical outcome. A durable admission
 without a spawn receipt remains an explicit unresolved obligation; a registered
@@ -3201,7 +3214,8 @@ of the Rust kernel. Initial XSH surfaces may include:
 - actor tools, replay experiments, and outcome-observation scripts; and
 - the society's own native behavior tests at the XSH boundary.
 
-Rust owns `societyd`, SQLite, transactions, migrations, capabilities, Offices,
+Rust owns `societyd`, SQLite, transactions, the canonical schema, capabilities,
+Offices,
 Operating Cycles, admission, Pi/process supervision, sessions, costs,
 cancellation, tracing, workspaces, Git materialization, content sealing, ledger
 replay, and crash recovery. XSH never becomes a database DSL, alternate durable
@@ -3422,7 +3436,7 @@ The kernel and constitution support:
 - product and policy rollback to an exact parent configuration;
 - retraction fan-out to affected active work;
 - read-only forensic mode; and
-- full materialized-state rebuild from schema migrations, ledger, and sealed
+- full materialized-state rebuild from the canonical schema, ledger, and sealed
   artifacts.
 
 Emergency action records authority and reason. It may stop harm before normal
@@ -3432,7 +3446,7 @@ which triggered it.
 ### Cancellation is a control-plane primitive
 
 Cancellation is designed into admission, process ownership, costs, notices,
-and coordination from the first migration. It is not cleanup after a failed
+and coordination from the first schema. It is not cleanup after a failed
 workflow and not an ordinary `DerivedSignal`. A signal may create an attention
 bid asking the Grand Architect to quiesce or cancel; only an authorized command
 or an exact trusted circuit breaker changes control state.
@@ -3690,8 +3704,10 @@ repository      Git/worktree identity and product-delivery receipts
 ```
 
 Module boundaries may change; these ownership boundaries may not disappear into
-one generic job table. SQLite migrations and protocol versions are reviewed
-contracts from the first vertical slice.
+one generic job table. The SQLite schema and protocol versions are reviewed
+contracts from the first vertical slice. During prototype development the
+repository owns one canonical fresh-schema bootstrap and deliberately carries
+no historical schema upgrade path.
 
 ### TypeScript Pi SDK host
 

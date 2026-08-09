@@ -1052,7 +1052,7 @@ packages/
     ├── tsconfig.json
     ├── src/
     └── tests/
-migrations/                # monotonic V2-owned SQLite migrations
+migrations/                # one atomic V2-owned fresh-schema bootstrap
 xsh/
 └── experiments/           # optional R2 XSH workloads/evaluators; no authority
 circuits/
@@ -3073,6 +3073,7 @@ An enclosing milestone remains open until its exit judge passes.
 | `64a5977` | root-workspace physical content integration: the resident daemon exclusively owns the physical store, seals exact bytes before issuing the existing receipt and global-object commands, resumes the closed `Absent`/`SealReceiptOnly`/`Registered` split within one live authority using retry-stable command identities, rejects tamper/symlink/limit and changed-byte recombination, and exposes no public or supervisor content mutation tag across 14 daemon integration tests plus the nine physical-store tests | post-process restart completion or reconciliation (restart remains `RecoveryFenced`); evaluator execution or artifact authentication; media/schema, producer, retention, provenance, evidence, graph, or influence meaning; durable child/process integration; and Milestone 1 as a whole |
 | `6e2931e` | durable native Pi-child and cancellation authority foundation: one restart-fenced supervisor epoch; exact pre-spawn owner/budget/profile/generation/workspace/session admission; separately recorded inert spawn, `AdapterReady`, final Create authorization and delivery, and `SessionReady`; live-child Office gates; typed four-direction stream seals; append-only liveness, Pi Abort, TERM/KILL, direct reap, recovery-containment, finalization, admitted-not-spawned, and frozen cancellation-target receipts; closed migration/body/rejection-wire/replay contracts across 42 kernel tests | resident `PiSupervisor`-to-kernel driver; actual stream/transcript sealing; Prompt/FollowUp/Steer and semantic settlement; provider cost charging; elapsed-time/deadline proof; workspace disposal; native SDK qualification; post-restart containment orchestration and successor policy; deterministic evaluator children; and Milestone 5 as a whole |
 | `8e4bf4e` | daemon-private same-lifetime Office bridge from native `PiSupervisor` physics to M5 receipts: exact Office-kind preflight; pre-spawn admission; immediate PID/PGID registration; ordered `AdapterReady`/final Create authorization/complete physical delivery/`SessionReady` and repeated live-child Office gates; provider-free `Dispose`; direct-reap-before-lingering-kill ordering; content sealing of logical admitted control and physical stdin/stdout/stderr; finalization; typed recovery-fenced custody when registration fails after `exec`; and generic boundary-error containment across ten bridge tests, 23 process tests, 48 host tests, and one exact built-host no-Prompt smoke | resident scheduler/control-loop call site; Prompt/FollowUp/Steer and turn/Attempt settlement; cancellation-propagation/Abort driver; usage, cost, transcript-file, and workspace reconciliation; post-restart child recovery; dynamic Pi import-graph proof and native qualification; task/evaluator children; and Milestone 5 as a whole |
+| `c329798` | fresh-only canonical SQLite schema plus deterministic Pi Office-turn authority: exact prompt content/correlation/current-ledger-head authorization, separate KERNEL-service delivery and accepted-result attestations, a session-wide protocol-sequence watermark, closed Known cumulative-usage snapshots and typed Unknown/Unavailable accounting failures, terminal finality, incremental charging of the single existing Office-session parent reservation, cancellation/live-child/generation fences, and atomic `Completed`/`ObservedStop` return to Office `Ready`; replay, raw collision, idempotency, accounting, and material-tamper controls pass across 41 kernel integration tests | resident Prompt transport and peer-observation projection; disclosure-frontier policy enforcement; FollowUp/Steer; semantic submission; typed Office-session Dispose and transcript-file sealing; final parent-reservation release; settlement of non-ready terminal outcomes; live/paid profile admission; and Milestone 5 or VS-001 as a whole |
 
 The current coordination, M3 execution, and deterministic-evidence kernel is
 still a bounded foundation,
@@ -3108,12 +3109,38 @@ bytes; this provider-free foundation does not prove that an arbitrary adapter
 dynamically imports the claimed Pi package set and does not qualify the native
 execution profile.
 
+The current M6 kernel foundation durably authorizes one deterministic Office
+`Prompt`, records correlated KERNEL-service delivery and accepted-result
+attestations, and
+then admits either exact session-cumulative usage or an exact accounting
+failure before a typed terminal receipt. The session-wide protocol sequence is
+one closed watermark across prompt results, usage, accounting failures, and
+terminal evidence; terminalized turns reject later accounting facts, and the
+usage/failure tables cannot claim the same sequence. A successful
+`Completed`/`ObservedStop` settlement atomically rechecks the live
+`SessionReady` child, cycle generation and cancellation state, charges only the
+new cumulative delta against the existing Office-session parent reservation,
+and returns the Office to `Ready`. It creates no second Society or Cycle
+reservation. Unknown or unavailable usage freezes that parent and preserves
+the uncharged remainder. `Error` and other peer-valid outcomes may still carry
+known cost, but remain non-ready closure blockers rather than fabricated
+accounting failures.
+
+This is durable authority vocabulary, not a resident Prompt execution path.
+The daemon bridge does not yet send `Prompt`, project peer observations into
+these commands, or reconcile semantic submissions. Transcript disposition is
+deferred to Office-session `Dispose`; typed Dispose, transcript-file sealing,
+final parent-reservation reconciliation/release, and cancellation settlement
+for non-ready turns remain open. Consequently there is not yet an honest
+end-to-end path for closing a prompted Office session or its parent budget.
+
 ### Milestone 1: contracts in executable form
 
 Write observable transition tests first, then implement newtypes, closed enums,
-commands/events and their one-to-one bodies, typed errors, SQLite migration 1,
-ledger replay, and idempotent receipts. Include founding bootstrap, Universe
-Seed, Office/occupancy, Operating Cycle, Office session/turn, cancellation,
+commands/events and their one-to-one bodies, typed errors, the canonical fresh
+SQLite schema, ledger replay, and idempotent receipts. Include founding
+bootstrap, Universe Seed, Office/occupancy, Operating Cycle, Office
+session/turn, cancellation,
 child process, cross-cutting budget, Project/Ticket/review/Postmortem, graph,
 content/evidence/curation, disclosure, influence, propagation, and product
 states.
@@ -3278,8 +3305,9 @@ and default features disabled, `thiserror`, `sha2`, `tracing`,
 `tracing-subscriber`, Pi-boundary-only `serde`/`serde_json`, and narrow Unix
 `libc` calls. The TypeScript package exact-pins
 `@earendil-works/pi-coding-agent` 0.83.0 and its build/test support in
-`package-lock.json`. Migrations are monotonic embedded SQL run by the kernel;
-there is no migration framework.
+`package-lock.json`. The prototype kernel executes one atomic embedded-SQL
+bootstrap for the canonical fresh schema. It performs no historical schema
+upgrade or compatibility rewrite, and there is no migration framework.
 
 This decision does not authorize an async runtime, tracing appender,
 process-control framework, ORM, workflow engine, generic schema framework, or
