@@ -338,6 +338,8 @@ pub enum StoreError {
     },
     #[error("command id was already used with a different typed request")]
     IdempotencyConflict,
+    #[error("ledger event {0:?} was not found")]
+    LedgerEventNotFound(EventId),
     #[error("ledger corruption: {0}")]
     LedgerCorruption(&'static str),
     #[error("stored integer does not represent a valid domain value")]
@@ -638,6 +640,72 @@ impl KernelStore {
             });
         }
         Ok(events)
+    }
+
+    /// Reads one accepted event through its exact command and named event body.
+    ///
+    /// This is the narrow daemon bridge: it verifies the linked command's
+    /// typed request fingerprint and command/event receipt relation, then the
+    /// requested event's one-to-one body and fingerprint. It intentionally
+    /// does not scan unrelated events or establish whole-ledger sequence
+    /// continuity; `replay_ledger` remains the ledger-wide verifier.
+    pub fn ledger_event(&self, event_id: EventId) -> Result<LedgerEvent, StoreError> {
+        let row = self
+            .connection
+            .query_row(
+                "SELECT e.command_row_id, c.command_id, e.event_kind, e.event_sequence,
+                        c.command_status, c.accepted_event_id
+                 FROM events e
+                 LEFT JOIN commands c ON c.command_row_id = e.command_row_id
+                 WHERE e.event_id = ?1",
+                [event_id.value()],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, Option<i64>>(4)?,
+                        row.get::<_, Option<i64>>(5)?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or(StoreError::LedgerEventNotFound(event_id))?;
+        let (
+            command_row_id,
+            command_id,
+            event_kind,
+            event_sequence,
+            command_status,
+            accepted_event_id,
+        ) = row;
+
+        if event_sequence <= 0 {
+            return Err(StoreError::LedgerCorruption(
+                "event sequence is not positive",
+            ));
+        }
+        let command_id = command_id.ok_or(StoreError::LedgerCorruption(
+            "event references a missing command",
+        ))?;
+        let command_status = command_status.ok_or(StoreError::LedgerCorruption(
+            "event references a missing command",
+        ))?;
+        verify_command_body(&self.connection, command_row_id)?;
+        if command_status != 1 || accepted_event_id != Some(event_id.value()) {
+            return Err(StoreError::LedgerCorruption(
+                "requested event is not the command's accepted receipt",
+            ));
+        }
+        let command_id =
+            CommandId::parse(command_id).map_err(|_| StoreError::InvalidStoredValue)?;
+        let body = decode_event_body(&self.connection, event_id.value(), event_kind, &command_id)?;
+        Ok(LedgerEvent {
+            event_id,
+            command_id,
+            body,
+        })
     }
 
     /// Reconstructs this bounded kernel's materialized state by re-executing
@@ -11728,97 +11796,111 @@ fn decode_event_body(
 /// rejected command is durable operational history, not an untyped error
 /// record that may escape integrity checks.
 fn verify_command_bodies(connection: &Connection) -> Result<(), StoreError> {
-    let mut statement = connection.prepare(
-        "SELECT command_row_id, command_id, principal_id, capability_grant_id,
-                capability_kind, expected_generation, command_kind,
-                request_fingerprint, command_status, accepted_event_id
-         FROM commands ORDER BY command_row_id ASC",
-    )?;
-    let rows = statement.query_map([], |row| {
-        Ok((
-            row.get::<_, i64>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, i64>(2)?,
-            row.get::<_, i64>(3)?,
-            row.get::<_, i64>(4)?,
-            row.get::<_, Option<i64>>(5)?,
-            row.get::<_, i64>(6)?,
-            row.get::<_, Vec<u8>>(7)?,
-            row.get::<_, i64>(8)?,
-            row.get::<_, Option<i64>>(9)?,
-        ))
-    })?;
+    let mut statement =
+        connection.prepare("SELECT command_row_id FROM commands ORDER BY command_row_id ASC")?;
+    let rows = statement.query_map([], |row| row.get::<_, i64>(0))?;
     for row in rows {
-        let (
-            command_row_id,
-            command_id,
-            principal_id,
-            capability_grant_id,
-            capability_kind,
-            expected_generation,
-            command_kind,
-            stored_fingerprint,
-            status,
-            accepted_event_id,
-        ) = row?;
-        let kind = command_kind_from_i64(command_kind)?;
-        let expected_table = command_body_table(kind)?;
-        verify_exact_named_body(
-            connection,
-            command_row_id,
-            expected_table,
-            &COMMAND_BODY_TABLES,
-        )?;
-        let request = CommandRequest {
-            command_id: CommandId::parse(command_id).map_err(|_| StoreError::InvalidStoredValue)?,
-            principal_id: PrincipalId::try_from(principal_id)
-                .map_err(|_| StoreError::InvalidStoredValue)?,
-            capability_grant_id: crate::CapabilityGrantId::try_from(capability_grant_id)
-                .map_err(|_| StoreError::InvalidStoredValue)?,
-            capability: capability_from_i64(capability_kind)?,
-            expected_generation: match expected_generation {
-                Some(generation) => ExpectedGeneration::Exact(
-                    AdmissionGeneration::try_from(generation)
-                        .map_err(|_| StoreError::InvalidStoredValue)?,
-                ),
-                None => ExpectedGeneration::NotApplicable,
-            },
-            body: decode_command_body(connection, command_row_id, kind)?,
-        };
-        if request.body.kind() != kind {
-            return Err(StoreError::LedgerCorruption(
-                "command body does not match command kind",
-            ));
-        }
-        if stored_fingerprint.as_slice() != request_fingerprint(&request).as_bytes() {
-            return Err(StoreError::LedgerCorruption(
-                "command request fingerprint mismatch",
-            ));
-        }
-        let event_count: i64 = connection.query_row(
-            "SELECT COUNT(*) FROM events WHERE command_row_id = ?1",
+        verify_command_body(connection, row?)?;
+    }
+    Ok(())
+}
+
+/// Validates the one durable typed request and receipt relation that owns a
+/// selected event. `ledger_event` uses this rather than treating an event row
+/// as authoritative on its own.
+fn verify_command_body(connection: &Connection, command_row_id: i64) -> Result<(), StoreError> {
+    let (
+        command_id,
+        principal_id,
+        capability_grant_id,
+        capability_kind,
+        expected_generation,
+        command_kind,
+        stored_fingerprint,
+        status,
+        accepted_event_id,
+    ) = connection
+        .query_row(
+            "SELECT command_id, principal_id, capability_grant_id,
+                    capability_kind, expected_generation, command_kind,
+                    request_fingerprint, command_status, accepted_event_id
+             FROM commands WHERE command_row_id = ?1",
             [command_row_id],
-            |row| row.get(0),
-        )?;
-        match (status, accepted_event_id, event_count) {
-            (1, Some(event_id), 1) => {
-                let linked: i64 = connection.query_row(
-                    "SELECT COUNT(*) FROM events WHERE event_id = ?1 AND command_row_id = ?2",
-                    params![event_id, command_row_id],
-                    |row| row.get(0),
-                )?;
-                if linked != 1 {
-                    return Err(StoreError::LedgerCorruption(
-                        "accepted command does not name its event",
-                    ));
-                }
-            }
-            (2, None, 0) => {}
-            _ => {
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, Option<i64>>(4)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, Vec<u8>>(6)?,
+                    row.get::<_, i64>(7)?,
+                    row.get::<_, Option<i64>>(8)?,
+                ))
+            },
+        )
+        .optional()?
+        .ok_or(StoreError::LedgerCorruption(
+            "event references a missing command",
+        ))?;
+    let kind = command_kind_from_i64(command_kind)?;
+    let expected_table = command_body_table(kind)?;
+    verify_exact_named_body(
+        connection,
+        command_row_id,
+        expected_table,
+        &COMMAND_BODY_TABLES,
+    )?;
+    let request = CommandRequest {
+        command_id: CommandId::parse(command_id).map_err(|_| StoreError::InvalidStoredValue)?,
+        principal_id: PrincipalId::try_from(principal_id)
+            .map_err(|_| StoreError::InvalidStoredValue)?,
+        capability_grant_id: crate::CapabilityGrantId::try_from(capability_grant_id)
+            .map_err(|_| StoreError::InvalidStoredValue)?,
+        capability: capability_from_i64(capability_kind)?,
+        expected_generation: match expected_generation {
+            Some(generation) => ExpectedGeneration::Exact(
+                AdmissionGeneration::try_from(generation)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            ),
+            None => ExpectedGeneration::NotApplicable,
+        },
+        body: decode_command_body(connection, command_row_id, kind)?,
+    };
+    if request.body.kind() != kind {
+        return Err(StoreError::LedgerCorruption(
+            "command body does not match command kind",
+        ));
+    }
+    if stored_fingerprint.as_slice() != request_fingerprint(&request).as_bytes() {
+        return Err(StoreError::LedgerCorruption(
+            "command request fingerprint mismatch",
+        ));
+    }
+    let event_count: i64 = connection.query_row(
+        "SELECT COUNT(*) FROM events WHERE command_row_id = ?1",
+        [command_row_id],
+        |row| row.get(0),
+    )?;
+    match (status, accepted_event_id, event_count) {
+        (1, Some(event_id), 1) => {
+            let linked: i64 = connection.query_row(
+                "SELECT COUNT(*) FROM events WHERE event_id = ?1 AND command_row_id = ?2",
+                params![event_id, command_row_id],
+                |row| row.get(0),
+            )?;
+            if linked != 1 {
                 return Err(StoreError::LedgerCorruption(
-                    "command receipt and event relation disagree",
+                    "accepted command does not name its event",
                 ));
             }
+        }
+        (2, None, 0) => {}
+        _ => {
+            return Err(StoreError::LedgerCorruption(
+                "command receipt and event relation disagree",
+            ));
         }
     }
     Ok(())

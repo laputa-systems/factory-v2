@@ -18,7 +18,7 @@ use society_kernel::{
     CommandBody, CommandDisposition, CommandId, CommandReceipt, CommandRequest, ContentObjectId,
     ContentSealReceiptId, ContextPackPurpose, DeterministicEvaluationReceiptId,
     DeterministicExperimentId, DevelopmentalAttractor, DirectChildWaitStatus, EvaluatorRevisionId,
-    EventBody, EvidenceApplicability, EvidenceLimitationText, EvidenceSemanticRole,
+    EventBody, EventId, EvidenceApplicability, EvidenceLimitationText, EvidenceSemanticRole,
     ExecutionProfileId, ExpectedGeneration, ForensicManifestCapturePolicy, ForensicManifestId,
     GrandArchitectOfficeSessionId, GraphRevisionBody, GraphRevisionId, HypothesisRevisionText,
     InputManifestId, KernelStore, NativeChildPid, NativeWorkspaceId, OfficeTurnPurpose,
@@ -30,7 +30,7 @@ use society_kernel::{
     ProjectName, ProjectObjectiveText, ProjectState, ProjectStopConditionText, Rejection,
     RetentionAccessClass, ReviewChallengeId, ReviewChallengeSeverity, ReviewDispositionKind,
     ReviewFailureHypothesis, ReviewResolutionKind, ReviewResponseText, Sha256Digest, SocietyName,
-    SpawnNonce, SupervisedChildIdentity, SupervisorEpochId, SupervisorEpochIdentity,
+    SpawnNonce, StoreError, SupervisedChildIdentity, SupervisorEpochId, SupervisorEpochIdentity,
     TicketAcceptanceConditionText, TicketId, TicketTitle, UsdMicros, WorkAssignmentText,
     WorkItemId, WorkItemKind, WorkLeaseId,
 };
@@ -275,6 +275,7 @@ struct AdmittedPiOfficeFixture {
     child: ChildProcessId,
     pi_session_identity: PiBoundarySessionIdentity,
     spawn_nonce: SpawnNonce,
+    admission_event_id: EventId,
 }
 
 fn admitted_pi_office_fixture(store: &mut KernelStore, label: &str) -> AdmittedPiOfficeFixture {
@@ -308,7 +309,7 @@ fn admitted_pi_office_fixture(store: &mut KernelStore, label: &str) -> AdmittedP
     );
     let pi_session_identity = PiBoundarySessionIdentity::parse(format!("session-{label}")).unwrap();
     let spawn_nonce = SpawnNonce::parse(format!("nonce-{label}")).unwrap();
-    accepted(
+    let admission_receipt = accepted(
         store,
         &format!("{label}-admit"),
         PrincipalId::KERNEL,
@@ -328,6 +329,10 @@ fn admitted_pi_office_fixture(store: &mut KernelStore, label: &str) -> AdmittedP
             spawn_nonce: spawn_nonce.clone(),
         },
     );
+    let admission_event_id = match admission_receipt.disposition {
+        CommandDisposition::Accepted(event_id) => event_id,
+        CommandDisposition::Rejected(_) => unreachable!("accepted helper returned a rejection"),
+    };
     AdmittedPiOfficeFixture {
         architect,
         cycle,
@@ -336,6 +341,7 @@ fn admitted_pi_office_fixture(store: &mut KernelStore, label: &str) -> AdmittedP
         child: ChildProcessId::new(1).unwrap(),
         pi_session_identity,
         spawn_nonce,
+        admission_event_id,
     }
 }
 
@@ -344,7 +350,7 @@ fn record_fixture_inert_spawn(
     fixture: &AdmittedPiOfficeFixture,
     label: &str,
     expected_generation: ExpectedGeneration,
-) {
+) -> CommandReceipt {
     accepted(
         store,
         &format!("{label}-spawn"),
@@ -357,7 +363,7 @@ fn record_fixture_inert_spawn(
             direct_child_pid: NativeChildPid::try_from(7101).unwrap(),
             process_group_id: OwnedProcessGroupId::try_from(7101).unwrap(),
         },
-    );
+    )
 }
 
 fn record_fixture_session_ready(
@@ -506,6 +512,74 @@ fn finalize_fixture_child(
             child_process_id: fixture.child,
         },
     );
+}
+
+#[test]
+fn ledger_event_reads_verified_pi_child_receipts_and_rejects_tampering() {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("xsh-m5-ledger-event-{nonce}.sqlite"));
+    let mut store = KernelStore::open(&path).unwrap();
+    let fixture = admitted_pi_office_fixture(&mut store, "m5-ledger-event");
+    let generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
+    let inert_receipt =
+        record_fixture_inert_spawn(&mut store, &fixture, "m5-ledger-event", generation);
+    let inert_event_id = match inert_receipt.disposition {
+        CommandDisposition::Accepted(event_id) => event_id,
+        CommandDisposition::Rejected(_) => unreachable!("accepted helper returned a rejection"),
+    };
+
+    let admitted = store.ledger_event(fixture.admission_event_id).unwrap();
+    assert_eq!(admitted.event_id, fixture.admission_event_id);
+    assert!(matches!(
+        admitted.body,
+        EventBody::PiChildSpawnAdmitted {
+            pi_child_spawn_admission_id,
+            owner: PiChildOwner::GrandArchitectOfficeSession(office_session),
+            budget_reservation_id,
+        } if pi_child_spawn_admission_id == fixture.admission
+            && office_session == fixture.office_session
+            && budget_reservation_id == BudgetReservationId::new(1).unwrap()
+    ));
+    let inert = store.ledger_event(inert_event_id).unwrap();
+    assert_eq!(inert.event_id, inert_event_id);
+    assert!(matches!(
+        inert.body,
+        EventBody::InertPiChildSpawnRecorded {
+            child_process_id,
+            pi_child_spawn_admission_id,
+        } if child_process_id == fixture.child
+            && pi_child_spawn_admission_id == fixture.admission
+    ));
+
+    let unknown = EventId::new(9_999_999).unwrap();
+    assert!(matches!(
+        store.ledger_event(unknown),
+        Err(StoreError::LedgerEventNotFound(event_id)) if event_id == unknown
+    ));
+
+    drop(store);
+    let inspect = Connection::open(&path).unwrap();
+    // The foreign key is valid, but this second named event body is not: a
+    // trusted read must reject the one-to-one body cardinality violation.
+    inspect
+        .execute(
+            "INSERT INTO event_pi_adapter_ready_recorded(
+                 event_id, child_process_id, pi_session_id
+             ) VALUES (?1, 1, 1)",
+            [inert_event_id.value()],
+        )
+        .unwrap();
+    drop(inspect);
+    let tampered = KernelStore::open(&path).unwrap();
+    assert!(matches!(
+        tampered.ledger_event(inert_event_id),
+        Err(StoreError::LedgerCorruption(_))
+    ));
+    drop(tampered);
+    fs::remove_file(path).unwrap();
 }
 
 #[test]
