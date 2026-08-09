@@ -29,6 +29,10 @@ use thiserror::Error;
 use crate::content::{
     ContentObjectRegistration, ContentSealOperationId, ContentSealingAuthority, ContentSealingError,
 };
+use crate::pi_execution::{
+    OfficePiExecutionChild, OfficePiExecutionStart, OfficePiSpawnRegistration, PiExecutionDriver,
+    PiExecutionError, UnregisteredOfficePiChild,
+};
 use crate::protocol::{
     ClientCommandBody, ClientCommandRequest, CorrelationId, DaemonStatus, ProtocolErrorCode,
     PublicRequest, Response, SupervisorRequest, WireError,
@@ -140,6 +144,10 @@ pub struct Daemon {
     /// Its only mutation method is crate-private and has no local-wire form.
     #[allow(dead_code)]
     content_sealing: ContentSealingAuthority,
+    /// The daemon exclusively owns live Pi process physics.  The driver has
+    /// no local-wire constructor and cannot survive a restart attach.
+    #[allow(dead_code)]
+    pi_execution: PiExecutionDriver,
     listener: UnixListener,
     _lock: File,
     owner_uid: libc::uid_t,
@@ -415,6 +423,7 @@ impl Daemon {
             config,
             store,
             content_sealing,
+            pi_execution: PiExecutionDriver::new(),
             listener,
             _lock: lock,
             owner_uid,
@@ -446,6 +455,148 @@ impl Daemon {
         }
         self.content_sealing
             .seal_and_register(&mut self.store, operation, bytes)
+    }
+
+    /// Daemon-only M5 process admission.  Neither local protocol can encode
+    /// this request or acquire the kernel service capabilities it consumes.
+    /// A recovered daemon deliberately refuses it: parentage cannot be
+    /// reconstructed by spawning a replacement host.
+    #[allow(dead_code)]
+    pub(crate) fn admit_office_pi_child(
+        &mut self,
+        start: OfficePiExecutionStart,
+    ) -> Result<OfficePiSpawnRegistration, PiExecutionError> {
+        if self.mode == StartupMode::RecoveryFenced {
+            return Err(PiExecutionError::RecoveryFenced);
+        }
+        let registration = self
+            .pi_execution
+            .admit_spawn_and_register(&mut self.store, start)?;
+        if matches!(
+            &registration,
+            OfficePiSpawnRegistration::RegistrationUnresolved { .. }
+        ) {
+            // The kernel has an admission but no child-process identity, so
+            // this resident may only finish containment of the returned
+            // native handle. It must not admit a successor or new work.
+            self.mode = StartupMode::RecoveryFenced;
+        }
+        Ok(registration)
+    }
+
+    /// Drives the fixed emergency path for any registered child that crossed
+    /// a daemon-private Pi boundary failure after its PID/PGID receipt.
+    #[allow(dead_code)]
+    pub(crate) fn drive_office_pi_boundary_containment(
+        &mut self,
+        child: &OfficePiExecutionChild,
+        now: crate::supervision::MonotonicTick,
+    ) -> Result<(), PiExecutionError> {
+        self.pi_execution.drive_boundary_containment(child, now)
+    }
+
+    /// The only permitted work while a post-exec registration failure has
+    /// fenced this resident: finish physical containment of that exact
+    /// unregistered child. It does not issue a kernel process receipt.
+    #[allow(dead_code)]
+    pub(crate) fn drive_unregistered_office_pi_containment(
+        &mut self,
+        child: &mut UnregisteredOfficePiChild,
+        now: crate::supervision::MonotonicTick,
+    ) -> Result<bool, PiExecutionError> {
+        self.pi_execution
+            .drive_unregistered_spawn_containment(child, now)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn observe_office_pi_adapter_ready(
+        &mut self,
+        child: &mut OfficePiExecutionChild,
+        now: crate::supervision::MonotonicTick,
+        deadline: crate::supervision::HandshakeDeadline,
+    ) -> Result<bool, PiExecutionError> {
+        self.pi_execution
+            .observe_adapter_ready(&mut self.store, child, now, deadline)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn authorize_and_begin_office_pi_create(
+        &mut self,
+        child: &mut OfficePiExecutionChild,
+        now: crate::supervision::MonotonicTick,
+        deadline: crate::supervision::ControlWriteDeadline,
+    ) -> Result<crate::supervision::ControlWriteProgress, PiExecutionError> {
+        self.pi_execution
+            .authorize_and_begin_create(&mut self.store, child, now, deadline)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn drive_office_pi_create_delivery(
+        &mut self,
+        child: &mut OfficePiExecutionChild,
+        now: crate::supervision::MonotonicTick,
+    ) -> Result<crate::supervision::ControlWriteProgress, PiExecutionError> {
+        self.pi_execution
+            .drive_create_delivery(&mut self.store, child, now)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn observe_office_pi_session_ready(
+        &mut self,
+        child: &mut OfficePiExecutionChild,
+        now: crate::supervision::MonotonicTick,
+        deadline: crate::supervision::HandshakeDeadline,
+    ) -> Result<bool, PiExecutionError> {
+        self.pi_execution
+            .observe_session_ready(&mut self.store, child, now, deadline)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn begin_office_pi_dispose(
+        &mut self,
+        child: &mut OfficePiExecutionChild,
+        correlation: society_pi::CorrelationIdentity,
+        now: crate::supervision::MonotonicTick,
+        deadline: crate::supervision::ControlWriteDeadline,
+    ) -> Result<crate::supervision::ControlWriteProgress, PiExecutionError> {
+        self.pi_execution
+            .begin_dispose(child, correlation, now, deadline)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn drive_office_pi_dispose_delivery(
+        &mut self,
+        child: &mut OfficePiExecutionChild,
+        now: crate::supervision::MonotonicTick,
+    ) -> Result<crate::supervision::ControlWriteProgress, PiExecutionError> {
+        self.pi_execution.drive_dispose_delivery(child, now)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn observe_office_pi_disposed(
+        &mut self,
+        child: &mut OfficePiExecutionChild,
+        now: crate::supervision::MonotonicTick,
+        deadline: crate::supervision::HandshakeDeadline,
+    ) -> Result<bool, PiExecutionError> {
+        self.pi_execution.observe_disposed(child, now, deadline)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn reconcile_reaped_office_pi_child(
+        &mut self,
+        child: &mut OfficePiExecutionChild,
+        now: crate::supervision::MonotonicTick,
+    ) -> Result<bool, PiExecutionError> {
+        if self.mode == StartupMode::RecoveryFenced {
+            return Err(PiExecutionError::RecoveryFenced);
+        }
+        self.pi_execution.poll_reap_and_reconcile(
+            &mut self.store,
+            &self.content_sealing,
+            child,
+            now,
+        )
     }
 
     /// Reports whether the adopted supervisor endpoint is marked close-on-exec.

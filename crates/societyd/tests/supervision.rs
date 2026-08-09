@@ -123,6 +123,114 @@ fn inert_handshake_create_dispose_and_reap_are_provider_free() {
 }
 
 #[test]
+fn inert_spawn_returns_registration_facts_before_adapter_output() {
+    let fixture = Fixture::new("m4-spawn-facts");
+    let child_id = fixture.child_id();
+    let mut supervisor = PiSupervisor::new();
+
+    let facts = supervisor.spawn_inert(fixture.spawn_request()).unwrap();
+
+    assert_eq!(facts.child_process_id, child_id);
+    assert_eq!(facts.session_identity, fixture.session_identity);
+    assert_eq!(
+        facts.workspace_identity,
+        fixture.workspace.identity().clone()
+    );
+    assert_eq!(
+        facts.workspace_directory,
+        fixture.workspace.directory().clone()
+    );
+    assert_eq!(
+        facts.process_group_id.value(),
+        i32::try_from(facts.host_process_id.value()).unwrap()
+    );
+    assert_eq!(
+        supervisor.lifecycle(&facts.child_process_id),
+        Some(ChildLifecycle::AwaitingAdapterReady)
+    );
+
+    await_adapter(&mut supervisor, &child_id);
+    supervisor
+        .send_create_session(
+            &child_id,
+            &mut Deny,
+            MonotonicTick::ZERO,
+            control_deadline(),
+        )
+        .unwrap_err();
+    supervisor.wait_and_reap(&child_id).unwrap();
+    fixture.cleanup();
+}
+
+/// A fault after native `fork`/`exec` must leave the exact child in the
+/// registry for containment/reaping. The resident M5 bridge commits these
+/// same returned facts before it calls `finish_inert_setup`; this focused
+/// process test proves no setup error is representable as a not-spawned
+/// outcome or an unowned process.
+#[cfg(feature = "test-support")]
+#[test]
+fn injected_post_spawn_setup_failure_keeps_exact_native_child_for_containment_and_reap() {
+    let fixture = Fixture::new("m5-post-spawn-setup-failure");
+    let child_id = fixture.child_id();
+    let mut supervisor = PiSupervisor::with_post_spawn_setup_fault_for_test(
+        societyd::supervision::PostSpawnSetupFailure::StdoutNonblocking,
+    );
+
+    let facts = supervisor.spawn_native(fixture.spawn_request()).unwrap();
+    assert_eq!(facts.child_process_id, child_id);
+    assert!(facts.host_process_id.value() > 0);
+    assert!(facts.process_group_id.value() > 0);
+    assert_eq!(
+        supervisor.lifecycle(&child_id),
+        Some(ChildLifecycle::NativeSpawnRegistered)
+    );
+
+    assert!(matches!(
+        supervisor.finish_inert_setup(&child_id, MonotonicTick::ZERO),
+        Err(SupervisionError::PostSpawnSetup(
+            societyd::supervision::PostSpawnSetupFailure::StdoutNonblocking
+        ))
+    ));
+    let receipt = reap_contained_from(&mut supervisor, &child_id, MonotonicTick::ZERO);
+    assert_eq!(
+        receipt.peer_state,
+        societyd::supervision::PiPeerReceiptState::NotInitialized
+    );
+    assert_eq!(
+        receipt.terminal_disposition,
+        ChildTerminalDisposition::ContainmentFailed
+    );
+    assert!(supervisor.take_reaped_receipt(&child_id).is_some());
+    fixture.cleanup();
+}
+
+#[test]
+fn poll_reap_is_nonblocking_and_retains_the_receipt_for_later_durability() {
+    let fixture = Fixture::new("m4-exit-before-ready");
+    let child_id = fixture.child_id();
+    let mut supervisor = PiSupervisor::new();
+    supervisor.spawn_inert(fixture.spawn_request()).unwrap();
+
+    for tick in 0..1_000 {
+        if let Some(receipt) = supervisor
+            .poll_reap_at(&child_id, MonotonicTick::from_milliseconds(tick))
+            .unwrap()
+        {
+            assert_eq!(receipt.child_process_id, child_id);
+            assert!(matches!(
+                supervisor.lifecycle(&child_id),
+                Some(ChildLifecycle::Reaped | ChildLifecycle::Contained)
+            ));
+            assert!(supervisor.take_reaped_receipt(&child_id).is_some());
+            fixture.cleanup();
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    panic!("exited provider-free host double was not reaped by a nonblocking poll");
+}
+
+#[test]
 fn stale_precreate_recheck_closes_inert_control_pipe_without_creating_a_session() {
     let fixture = Fixture::new("m4-stale");
     let child_id = fixture.child_id();
@@ -148,7 +256,10 @@ fn stale_precreate_recheck_closes_inert_control_pipe_without_creating_a_session(
             .logically_admitted_inbound_frame_count,
         0
     );
-    assert_eq!(receipt.peer_phase, society_pi::PeerPhase::Inert);
+    assert_eq!(
+        receipt.peer_state,
+        societyd::supervision::PiPeerReceiptState::Observed(society_pi::PeerPhase::Inert)
+    );
     fixture.cleanup();
 }
 
@@ -614,7 +725,10 @@ fn cancellation_discards_pending_create_before_session_initialization() {
         ChildTerminalDisposition::Terminated
     );
     assert!(receipt.canonical_session_file.is_none());
-    assert_eq!(receipt.peer_phase, society_pi::PeerPhase::Fatal);
+    assert_eq!(
+        receipt.peer_state,
+        societyd::supervision::PiPeerReceiptState::Observed(society_pi::PeerPhase::Fatal)
+    );
     assert_eq!(receipt.transient_evidence.outbound_frame_count, 1);
     assert!(
         receipt
@@ -801,7 +915,10 @@ fn explicit_pinned_host_create_dispose_never_prompts_a_provider() {
         .unwrap();
     await_disposed(&mut supervisor, &child_id);
     let receipt = supervisor.wait_and_reap(&child_id).unwrap();
-    assert_eq!(receipt.peer_phase, society_pi::PeerPhase::Disposed);
+    assert_eq!(
+        receipt.peer_state,
+        societyd::supervision::PiPeerReceiptState::Observed(society_pi::PeerPhase::Disposed)
+    );
     fixture.cleanup();
 }
 

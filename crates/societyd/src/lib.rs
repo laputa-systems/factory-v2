@@ -13,6 +13,12 @@
 mod content;
 mod daemon;
 mod observability;
+// The daemon-private M5 bridge is intentionally not yet reachable from the
+// public/supervisor wire. Its provider-free integration tests exercise the
+// real kernel/process path while the next resident control-loop tranche wires
+// in its typed scheduler call site.
+#[allow(dead_code)]
+mod pi_execution;
 pub mod protocol;
 pub mod supervision;
 

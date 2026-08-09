@@ -23,7 +23,15 @@ const runtime = {
 };
 
 if (sessionIdentity.includes("exit-before-ready")) process.exit(0);
-if (sessionIdentity.includes("ignore-term")) process.on("SIGTERM", () => {});
+if (sessionIdentity.includes("ignore-term")) {
+	process.on("SIGTERM", () => {});
+}
+if (sessionIdentity.includes("m5-never-session-ready-ignore-term")) {
+	// EOF from the M5 session-readiness containment must not accidentally let
+	// this exact TERM-escalation fixture exit before its SIGKILL deadline.
+	const keepAlive = setInterval(() => {}, 60_000);
+	process.once("exit", () => clearInterval(keepAlive));
+}
 if (sessionIdentity.includes("never-adapter")) {
 	const keepAlive = setInterval(() => {}, 60_000);
 	process.once("exit", () => clearInterval(keepAlive));
@@ -72,6 +80,17 @@ if (sessionIdentity.includes("escaped-descendant-holds-pipe")) {
 		stdio: ["ignore", "inherit", "inherit"],
 	});
 	escaped.unref();
+	setImmediate(() => process.exit(0));
+}
+if (sessionIdentity.includes("owned-descendant-after-ready")) {
+	// Unlike the escaped-descendant fixture above, this descendant deliberately
+	// remains in the adapter's owned process group. The M5 bridge must first
+	// record the direct wait, then issue its one distinct LingeringGroupKill,
+	// then later observe the group absent before sealing/finalizing.
+	const { spawn } = await import("node:child_process");
+	spawn(process.execPath, ["-e", "setInterval(() => {}, 60_000)"], {
+		stdio: ["ignore", "inherit", "inherit"],
+	});
 	setImmediate(() => process.exit(0));
 }
 if (sessionIdentity.includes("malformed-after-ready")) {
@@ -156,6 +175,12 @@ function accept(frame) {
 					settings: createPayload.settings,
 				},
 			});
+			if (sessionIdentity.includes("exit-after-session-ready")) {
+				// The test-only Rust scheduling seam pauses after it has durably
+				// recorded this exact protocol fact. The direct child then exits
+				// before the separate Office-ready liveness probe.
+				setTimeout(() => process.exit(0), 1);
+			}
 			return;
 		}
 		case "Abort":

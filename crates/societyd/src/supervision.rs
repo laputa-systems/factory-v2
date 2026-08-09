@@ -348,6 +348,11 @@ impl CancellationDeadlines {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ChildLifecycle {
+    /// `fork`/`exec` succeeded and this supervisor owns the direct PID/PGID,
+    /// but no fallible pipe or Pi-peer setup has been attempted yet.  The
+    /// resident must durably register these facts before asking the host to
+    /// participate in the adapter protocol.
+    NativeSpawnRegistered,
     AwaitingAdapterReady,
     InertVerified,
     CreateSent,
@@ -399,6 +404,18 @@ pub enum SignalDelivery {
     AbsentDuringSignal,
 }
 
+/// The supervisor intent behind a signal/control receipt.  Negative delivery
+/// outcomes still retain this action, so the durable kernel never has to
+/// guess whether an absent group was being terminated, killed, or cleaned up
+/// after a direct-child exit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SignalAction {
+    AbortControl,
+    Terminate,
+    Kill,
+    LingeringGroupKill,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SignalGroupOutcome {
     AbsentBeforeSignal,
@@ -418,6 +435,7 @@ impl SignalGroupOutcome {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SignalReceipt {
+    pub action: SignalAction,
     pub delivery: SignalDelivery,
     pub observed_at: MonotonicTick,
     /// Liveness observed after the signal attempt or negative preflight. A
@@ -507,6 +525,24 @@ pub struct ReapReceipt {
     pub group_liveness_after_reap: ProcessGroupLiveness,
 }
 
+/// The direct child has been collected by `wait(2)`, while its owned process
+/// group remains a separate live subject. This is intentionally a one-shot
+/// pre-lingering-cleanup fact: the resident persists it before issuing a
+/// policy-driven group kill, so no later durable receipt invents a `Present`
+/// observation after the signal was delivered.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DirectChildReapFacts {
+    pub child_process_id: SupervisedChildId,
+    pub host_process_id: HostProcessId,
+    pub process_group_id: OwnedProcessGroupId,
+    pub status: ReapStatus,
+    pub group_liveness_after_direct_child_reap: ProcessGroupLiveness,
+    /// Exact TERM/KILL negative/delivery facts observed before `wait(2)`. A
+    /// later lingering-group cleanup is intentionally absent here because it
+    /// occurs only after this direct-reap fact is durable.
+    pub prior_signal_receipts: Vec<SignalReceipt>,
+}
+
 /// This receipt is intentionally not a durable object. The later kernel is
 /// responsible for sealing/persisting it and for deciding whether known usage
 /// may be charged or an admission generation may change.
@@ -529,7 +565,17 @@ pub struct SupervisionReceipt {
     /// chooses whether/how to content-seal them; no durable evidence exists
     /// merely because this receipt was returned.
     pub transient_evidence: TransientExecutionEvidence,
-    pub peer_phase: PeerPhase,
+    pub peer_state: PiPeerReceiptState,
+}
+
+/// A reaping receipt must distinguish an adapter peer that was never
+/// constructed from an adapter which reached `AwaitingAdapterReady`.  Calling
+/// the former phase "awaiting" would fabricate protocol evidence after a
+/// post-spawn setup failure.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PiPeerReceiptState {
+    NotInitialized,
+    Observed(PeerPhase),
 }
 
 /// Exact, pre-Create artifact identities for the Node host. Paths are
@@ -645,6 +691,24 @@ pub struct InertChildFacts {
     pub environment: NativeHostEnvironment,
 }
 
+/// Facts known immediately after `fork`/`exec` ownership succeeds, before
+/// the untrusted host has emitted any adapter protocol.  The daemon records
+/// these exact native identities promptly so a silent inert host is still a
+/// durable containment subject; `AdapterReady` remains a separate later
+/// proof of the host's claimed session/nonce/runtime identity.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SpawnedChildFacts {
+    pub child_process_id: SupervisedChildId,
+    pub session_identity: SessionIdentity,
+    pub spawn_nonce: SpawnNonce,
+    pub host_process_id: HostProcessId,
+    pub process_group_id: OwnedProcessGroupId,
+    pub workspace_identity: NativeWorkspaceId,
+    pub workspace_directory: AbsolutePath,
+    pub runtime: RuntimeIdentity,
+    pub environment: NativeHostEnvironment,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AdmissionDenied {
     StaleGeneration,
@@ -657,6 +721,8 @@ pub enum AdmissionDenied {
 pub enum SupervisionError {
     #[error("process supervision I/O failed: {0}")]
     Io(#[from] io::Error),
+    #[error("native Pi host exec did not create a child: {0}")]
+    NativeSpawn(#[source] io::Error),
     #[error("Pi boundary rejected a frame: {0}")]
     Peer(#[from] PeerError),
     #[error("Pi protocol construction failed: {0}")]
@@ -685,6 +751,8 @@ pub enum SupervisionError {
     DuplicateChildIdentity,
     #[error("child operation is invalid in its closed lifecycle")]
     InvalidLifecycle,
+    #[error("a registered native Pi child could not complete post-spawn setup: {0}")]
+    PostSpawnSetup(PostSpawnSetupFailure),
     #[error("the final pre-Create admission recheck denied this inert child")]
     AdmissionDenied(AdmissionDenied),
     #[error("stdout record exceeded the closed Pi frame bound")]
@@ -709,6 +777,31 @@ pub enum SupervisionError {
     ControlWriteZero,
 }
 
+/// Closed classification for an error after the direct PID/PGID became an
+/// owned native fact.  These are intentionally distinct from
+/// `NativeSpawn`: the resident must record the child before it contains and
+/// reaps this outcome.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PostSpawnSetupFailure {
+    BoundaryPeer,
+    MissingStdinPipe,
+    StdinNonblocking,
+    MissingStdoutPipe,
+    StdoutNonblocking,
+}
+
+impl std::fmt::Display for PostSpawnSetupFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::BoundaryPeer => "boundary peer construction",
+            Self::MissingStdinPipe => "missing child stdin pipe",
+            Self::StdinNonblocking => "stdin nonblocking configuration",
+            Self::MissingStdoutPipe => "missing child stdout pipe",
+            Self::StdoutNonblocking => "stdout nonblocking configuration",
+        })
+    }
+}
+
 impl From<AdmissionDenied> for SupervisionError {
     fn from(value: AdmissionDenied) -> Self {
         Self::AdmissionDenied(value)
@@ -720,6 +813,8 @@ impl From<AdmissionDenied> for SupervisionError {
 pub struct PiSupervisor {
     children: BTreeMap<SupervisedChildId, ManagedPiChild>,
     historical_child_ids: BTreeSet<SupervisedChildId>,
+    #[cfg(feature = "test-support")]
+    post_spawn_setup_fault: Option<PostSpawnSetupFailure>,
 }
 
 impl Default for PiSupervisor {
@@ -733,21 +828,66 @@ impl PiSupervisor {
         Self {
             children: BTreeMap::new(),
             historical_child_ids: BTreeSet::new(),
+            #[cfg(feature = "test-support")]
+            post_spawn_setup_fault: None,
         }
     }
 
-    /// Verifies all exact artifacts and creates a new native process group.
-    /// The returned child remains inert until [`Self::observe_adapter_ready`]
-    /// and [`Self::send_create_session`] complete their two-step handshake.
-    pub fn spawn_inert(&mut self, request: PiSpawnRequest) -> Result<(), SupervisionError> {
+    /// Provider-free test seam for the otherwise platform-dependent pipe and
+    /// peer initialization failures. It is compiled only with the explicit
+    /// `test-support` feature and has no daemon/wire representation.
+    #[cfg(feature = "test-support")]
+    pub fn with_post_spawn_setup_fault_for_test(failure: PostSpawnSetupFailure) -> Self {
+        Self {
+            children: BTreeMap::new(),
+            historical_child_ids: BTreeSet::new(),
+            post_spawn_setup_fault: Some(failure),
+        }
+    }
+
+    /// Verifies exact artifacts, creates a native process group, and performs
+    /// the remaining local setup as a convenience for standalone supervision
+    /// users.  The resident M5 bridge instead uses [`Self::spawn_native`] and
+    /// [`Self::finish_inert_setup`] separately so it can commit the native
+    /// PID/PGID receipt before any fallible pipe or Pi-peer setup.
+    pub fn spawn_inert(
+        &mut self,
+        request: PiSpawnRequest,
+    ) -> Result<SpawnedChildFacts, SupervisionError> {
+        let facts = self.spawn_native(request)?;
+        // The registered child remains owned by this supervisor in automatic
+        // containment if setup fails. A standalone caller may drive/reap it;
+        // its Drop path remains a final physical containment backstop.
+        self.finish_inert_setup(&facts.child_process_id, MonotonicTick::ZERO)?;
+        Ok(facts)
+    }
+
+    /// Side-effect-free validation for the resident's durable pre-spawn
+    /// admission. It deliberately performs the same path/artifact checks as
+    /// `spawn_native`, then the latter rechecks immediately before `exec` to
+    /// close the TOCTOU window. A failure here occurs before any ledger
+    /// admission or native process exists.
+    pub fn preflight_spawn(&self, request: &PiSpawnRequest) -> Result<(), SupervisionError> {
         if self
             .historical_child_ids
             .contains(&request.child_process_id)
         {
             return Err(SupervisionError::DuplicateChildIdentity);
         }
-        validate_spawn_request(&request)?;
+        validate_spawn_request(request)?;
         request.host_execution.verify_before_spawn()?;
+        Ok(())
+    }
+
+    /// Creates and registers the native direct child before any operation
+    /// which can fail while configuring pipes or constructing the Pi peer.
+    /// The returned identities are the exact facts the resident must durably
+    /// record before it calls [`Self::finish_inert_setup`].
+    pub fn spawn_native(
+        &mut self,
+        request: PiSpawnRequest,
+    ) -> Result<SpawnedChildFacts, SupervisionError> {
+        self.preflight_spawn(&request)?;
 
         let mut command = Command::new(request.host_execution.node_executable.path().as_path());
         command
@@ -792,57 +932,77 @@ impl PiSupervisor {
                 Ok(())
             });
         }
-        let mut child = command.spawn()?;
+        let mut child = command.spawn().map_err(SupervisionError::NativeSpawn)?;
         let host_process_id =
             HostProcessId::parse(u64::from(child.id())).map_err(SupervisionError::Protocol)?;
         let process_group_id = OwnedProcessGroupId::from_child_pid(host_process_id)?;
-        let stdin = child
-            .stdin
-            .take()
-            .ok_or(SupervisionError::InvalidLifecycle)?;
-        set_nonblocking_stdin(&stdin)?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or(SupervisionError::InvalidLifecycle)?;
-        set_nonblocking_stdout(&stdout)?;
-        let stderr = child
-            .stderr
-            .take()
-            .ok_or(SupervisionError::InvalidLifecycle)?;
-        let stderr_capture = spawn_stderr_capture(stderr);
-        let peer = BoundaryPeer::new(
-            request.session_identity.clone(),
-            host_process_id,
-            request.spawn_nonce.clone(),
-            request.host_execution.runtime.clone(),
-        )?;
-        self.historical_child_ids
-            .insert(request.child_process_id.clone());
+        // `Stdio::piped` makes these handles expected, but retaining their
+        // optional shape until `finish_inert_setup` means a hypothetical
+        // platform/runtime violation is a *registered* setup failure rather
+        // than an orphaned physical child.
+        let stdin = child.stdin.take();
+        let stdout = child.stdout.take().map(BufReader::new);
+        let stderr_capture = child.stderr.take().map(spawn_stderr_capture);
+        let child_process_id = request.child_process_id.clone();
+        self.historical_child_ids.insert(child_process_id.clone());
         self.children.insert(
-            request.child_process_id.clone(),
+            child_process_id.clone(),
             ManagedPiChild {
                 request,
                 child,
                 host_process_id,
                 process_group_id,
-                stdin: Some(stdin),
-                stdout: BufReader::new(stdout),
-                stderr_capture: Some(stderr_capture),
-                peer,
-                lifecycle: ChildLifecycle::AwaitingAdapterReady,
+                stdin,
+                stdout,
+                stderr_capture,
+                peer: None,
+                lifecycle: ChildLifecycle::NativeSpawnRegistered,
                 next_inbound_sequence: 1,
                 stdin_capture: StreamCapture::default(),
                 admitted_control_capture: StreamCapture::default(),
                 stdout_capture: StreamCapture::default(),
                 stdout_partial_record: Vec::new(),
                 pending_control: None,
+                #[cfg(feature = "test-support")]
+                force_next_control_write_pending_for_test: false,
+                pending_direct_reap: None,
                 physically_delivered_inbound_frame_count: 0,
                 cancellation: None,
                 deliveries: Vec::new(),
                 completed_receipt: None,
             },
         );
+        self.children
+            .get(&child_process_id)
+            .map(ManagedPiChild::spawned_facts)
+            .ok_or(SupervisionError::InvalidLifecycle)
+    }
+
+    /// Completes local pipe/Pi-peer setup only after the caller has made the
+    /// native `SpawnedChildFacts` durable.  A failure starts automatic owned
+    /// containment but leaves the child in the registry for typed
+    /// cancellation, reaping, stream sealing, and final reconciliation.
+    pub fn finish_inert_setup(
+        &mut self,
+        child_process_id: &SupervisedChildId,
+        now: MonotonicTick,
+    ) -> Result<(), SupervisionError> {
+        #[cfg(feature = "test-support")]
+        let injected_fault = self.post_spawn_setup_fault.take();
+        let child = self.child_mut(child_process_id)?;
+        if child.lifecycle != ChildLifecycle::NativeSpawnRegistered {
+            return Err(SupervisionError::InvalidLifecycle);
+        }
+        #[cfg(feature = "test-support")]
+        if let Some(failure) = injected_fault {
+            child.start_automatic_boundary_containment(now)?;
+            return Err(SupervisionError::PostSpawnSetup(failure));
+        }
+        if let Err(failure) = child.finish_inert_setup() {
+            child.start_automatic_boundary_containment(now)?;
+            return Err(SupervisionError::PostSpawnSetup(failure));
+        }
+        child.lifecycle = ChildLifecycle::AwaitingAdapterReady;
         Ok(())
     }
 
@@ -850,6 +1010,24 @@ impl PiSupervisor {
         self.children
             .get(child_process_id)
             .map(|child| child.lifecycle)
+    }
+
+    #[cfg(feature = "test-support")]
+    pub fn registered_child_count_for_test(&self) -> usize {
+        self.children.len()
+    }
+
+    /// Injects one non-writing `WouldBlock` equivalent after logical peer
+    /// admission. This is test-only process physics: it proves callers do
+    /// not confuse a pending control suffix with a delivered native frame.
+    #[cfg(feature = "test-support")]
+    pub fn force_next_control_write_pending_for_test(
+        &mut self,
+        child_process_id: &SupervisedChildId,
+    ) -> Result<(), SupervisionError> {
+        self.child_mut(child_process_id)?
+            .force_next_control_write_pending_for_test = true;
+        Ok(())
     }
 
     /// Records that the host boundary is no longer trustworthy, closes its
@@ -887,7 +1065,7 @@ impl PiSupervisor {
                 return Ok(None);
             }
             Ok(OutboundRead::Observation(_)) => {
-                if child.peer.phase() == PeerPhase::Fatal {
+                if child.peer()?.phase() == PeerPhase::Fatal {
                     child.start_automatic_boundary_containment(now)?;
                     return Err(SupervisionError::Peer(PeerError::Fatal));
                 }
@@ -904,7 +1082,7 @@ impl PiSupervisor {
                 return Err(error);
             }
         };
-        if child.peer.phase() != PeerPhase::Inert || !owns_expected_group {
+        if child.peer()?.phase() != PeerPhase::Inert || !owns_expected_group {
             child.start_automatic_boundary_containment(now)?;
             return Err(SupervisionError::InvalidLifecycle);
         }
@@ -978,7 +1156,7 @@ impl PiSupervisor {
                     return Ok(false);
                 }
                 Ok(OutboundRead::Observation(_)) => {
-                    if child.peer.phase() == PeerPhase::Fatal {
+                    if child.peer()?.phase() == PeerPhase::Fatal {
                         child.start_automatic_boundary_containment(now)?;
                         return Err(SupervisionError::Peer(PeerError::Fatal));
                     }
@@ -988,7 +1166,7 @@ impl PiSupervisor {
                     return Err(error);
                 }
             }
-            if child.peer.phase() == PeerPhase::Ready {
+            if child.peer()?.phase() == PeerPhase::Ready {
                 child.lifecycle = ChildLifecycle::SessionReady;
                 return Ok(true);
             }
@@ -1048,7 +1226,7 @@ impl PiSupervisor {
                     return Ok(false);
                 }
                 Ok(OutboundRead::Observation(_)) => {
-                    if child.peer.phase() == PeerPhase::Fatal {
+                    if child.peer()?.phase() == PeerPhase::Fatal {
                         child.start_automatic_boundary_containment(now)?;
                         return Err(SupervisionError::Peer(PeerError::Fatal));
                     }
@@ -1058,7 +1236,7 @@ impl PiSupervisor {
                     return Err(error);
                 }
             }
-            if child.peer.phase() == PeerPhase::Disposed {
+            if child.peer()?.phase() == PeerPhase::Disposed {
                 child.stdin.take();
                 return Ok(true);
             }
@@ -1079,7 +1257,7 @@ impl PiSupervisor {
         match child.read_one_outbound() {
             Ok(OutboundRead::NotReady) => Ok(None),
             Ok(OutboundRead::Observation(observation)) => {
-                if child.peer.phase() == PeerPhase::Fatal {
+                if child.peer()?.phase() == PeerPhase::Fatal {
                     child.start_automatic_boundary_containment(now)?;
                     return Err(SupervisionError::Peer(PeerError::Fatal));
                 }
@@ -1204,45 +1382,77 @@ impl PiSupervisor {
         if let Some(receipt) = child.try_reap(now)? {
             return Ok(Some(receipt));
         }
-        let Some(progress) = child.cancellation.as_ref() else {
-            return Err(SupervisionError::InvalidLifecycle);
-        };
-        if matches!(progress.mode, CancellationMode::Quiesce) {
-            return Ok(None);
-        }
-        let send_term = !progress.term_sent && now >= progress.abort_deadline;
-        if send_term {
-            let outcome = child.signal_group(libc::SIGTERM)?;
-            let delivered = outcome.was_delivered();
-            child
-                .deliveries
-                .push(signal_receipt(outcome, SignalDelivery::TermSent, now));
-            let progress = child
-                .cancellation
-                .as_mut()
-                .ok_or(SupervisionError::InvalidLifecycle)?;
-            progress.term_sent = true;
-            progress.term_delivered = delivered;
-            child.lifecycle = ChildLifecycle::AwaitingTermination;
-        }
-        let send_kill = child.cancellation.as_ref().is_some_and(|progress| {
-            progress.term_sent && !progress.kill_sent && now >= progress.kill_deadline
-        });
-        if send_kill {
-            let outcome = child.signal_group(libc::SIGKILL)?;
-            let delivered = outcome.was_delivered();
-            child
-                .deliveries
-                .push(signal_receipt(outcome, SignalDelivery::KillSent, now));
-            let progress = child
-                .cancellation
-                .as_mut()
-                .ok_or(SupervisionError::InvalidLifecycle)?;
-            progress.kill_sent = true;
-            progress.kill_delivered = delivered;
-            child.lifecycle = ChildLifecycle::AwaitingKill;
-        }
+        child.advance_cancellation_without_reap(now)?;
         Ok(None)
+    }
+
+    /// Advances only TERM/KILL deadlines. The M5 bridge uses this after a
+    /// post-spawn setup failure so its later explicit direct-child wait can
+    /// be durably recorded before any lingering-group cleanup occurs.
+    pub fn drive_cancellation_without_reap(
+        &mut self,
+        child_process_id: &SupervisedChildId,
+        now: MonotonicTick,
+    ) -> Result<(), SupervisionError> {
+        self.child_mut(child_process_id)?
+            .advance_cancellation_without_reap(now)
+    }
+
+    /// Polls the direct child and retains its actual wait status without
+    /// touching a still-live owned process group. The caller must first make
+    /// this fact durable, then call the distinct lingering-cleanup methods
+    /// below. This is the only path suitable for M5's direct-reap-before-
+    /// lingering-signal ledger ordering.
+    pub fn poll_direct_child_reap_at(
+        &mut self,
+        child_process_id: &SupervisedChildId,
+    ) -> Result<Option<DirectChildReapFacts>, SupervisionError> {
+        self.child_mut(child_process_id)?.poll_direct_child_reap()
+    }
+
+    /// Issues the one policy cleanup signal for a group that was still
+    /// present/inaccessible after its direct child had already been reaped.
+    /// It returns the exact signal/negative-delivery observation for a later
+    /// durable receipt; `Absent` needs no signal and returns `None`.
+    pub fn issue_lingering_group_cleanup(
+        &mut self,
+        child_process_id: &SupervisedChildId,
+        now: MonotonicTick,
+    ) -> Result<Option<SignalReceipt>, SupervisionError> {
+        self.child_mut(child_process_id)?
+            .issue_lingering_group_cleanup(now)
+    }
+
+    /// Reads group liveness after the distinct lingering cleanup signal. This
+    /// observation is intentionally separate from the direct-child wait fact.
+    pub fn observe_group_liveness(
+        &mut self,
+        child_process_id: &SupervisedChildId,
+    ) -> Result<ProcessGroupLiveness, SupervisionError> {
+        self.child_mut(child_process_id)?.group_liveness()
+    }
+
+    /// Once the daemon has recorded the direct wait and any required signal/
+    /// liveness facts, completes bounded pipe capture and produces the stable
+    /// receipt for content sealing/finalization. A still-live/inaccessible
+    /// group is not drained or finalized.
+    pub fn complete_deferred_reap_at(
+        &mut self,
+        child_process_id: &SupervisedChildId,
+    ) -> Result<SupervisionReceipt, SupervisionError> {
+        self.child_mut(child_process_id)?.complete_deferred_reap()
+    }
+
+    /// Polls the direct child without blocking the resident control loop.
+    /// Once a reap receipt exists, this returns its stable copy while keeping
+    /// ownership in the supervisor; only `take_reaped_receipt` releases that
+    /// child after the daemon has durably recorded the receipt chain.
+    pub fn poll_reap_at(
+        &mut self,
+        child_process_id: &SupervisedChildId,
+        now: MonotonicTick,
+    ) -> Result<Option<SupervisionReceipt>, SupervisionError> {
+        self.child_mut(child_process_id)?.try_reap(now)
     }
 
     /// Waits/reaps the direct child and returns all partial pipe evidence even
@@ -1294,9 +1504,11 @@ struct ManagedPiChild {
     host_process_id: HostProcessId,
     process_group_id: OwnedProcessGroupId,
     stdin: Option<ChildStdin>,
-    stdout: BufReader<ChildStdout>,
+    stdout: Option<BufReader<ChildStdout>>,
     stderr_capture: Option<StderrCaptureTask>,
-    peer: BoundaryPeer,
+    /// Constructed only after `SpawnedChildFacts` has been durably recorded.
+    /// A setup-contained child therefore has no fabricated protocol phase.
+    peer: Option<BoundaryPeer>,
     lifecycle: ChildLifecycle,
     next_inbound_sequence: u64,
     stdin_capture: StreamCapture,
@@ -1304,6 +1516,9 @@ struct ManagedPiChild {
     stdout_capture: StreamCapture,
     stdout_partial_record: Vec<u8>,
     pending_control: Option<PendingControlWrite>,
+    #[cfg(feature = "test-support")]
+    force_next_control_write_pending_for_test: bool,
+    pending_direct_reap: Option<PendingDirectChildReap>,
     physically_delivered_inbound_frame_count: u64,
     cancellation: Option<CancellationProgress>,
     deliveries: Vec<SignalReceipt>,
@@ -1323,6 +1538,15 @@ struct PendingControlWrite {
     next_byte_offset: usize,
     deadline: ControlWriteDeadline,
     command: PendingControlCommand,
+}
+
+/// Owns the actual `ExitStatus` after `wait(2)` until the daemon has made the
+/// direct-child receipt durable and either observed no lingering group or
+/// issued its distinct policy cleanup action.
+struct PendingDirectChildReap {
+    status: ExitStatus,
+    group_liveness_after_direct_child_reap: ProcessGroupLiveness,
+    prior_signal_receipts: Vec<SignalReceipt>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1395,6 +1619,117 @@ impl CancellationProgress {
 }
 
 impl ManagedPiChild {
+    /// Advances only the deadline-driven TERM/KILL portion of cancellation.
+    /// It deliberately does not wait for the direct child or touch lingering
+    /// process-group cleanup: M5 first makes the direct-child wait durable,
+    /// then applies the separately authorized lingering-group policy.
+    fn advance_cancellation_without_reap(
+        &mut self,
+        now: MonotonicTick,
+    ) -> Result<(), SupervisionError> {
+        let Some(progress) = self.cancellation.as_ref() else {
+            return Err(SupervisionError::InvalidLifecycle);
+        };
+        if matches!(progress.mode, CancellationMode::Quiesce) {
+            return Ok(());
+        }
+        let send_term = !progress.term_sent && now >= progress.abort_deadline;
+        if send_term {
+            let outcome = self.signal_group(libc::SIGTERM)?;
+            let delivered = outcome.was_delivered();
+            self.deliveries.push(signal_receipt(
+                outcome,
+                SignalAction::Terminate,
+                SignalDelivery::TermSent,
+                now,
+            ));
+            let progress = self
+                .cancellation
+                .as_mut()
+                .ok_or(SupervisionError::InvalidLifecycle)?;
+            progress.term_sent = true;
+            progress.term_delivered = delivered;
+            self.lifecycle = ChildLifecycle::AwaitingTermination;
+        }
+        let send_kill = self.cancellation.as_ref().is_some_and(|progress| {
+            progress.term_sent && !progress.kill_sent && now >= progress.kill_deadline
+        });
+        if send_kill {
+            let outcome = self.signal_group(libc::SIGKILL)?;
+            let delivered = outcome.was_delivered();
+            self.deliveries.push(signal_receipt(
+                outcome,
+                SignalAction::Kill,
+                SignalDelivery::KillSent,
+                now,
+            ));
+            let progress = self
+                .cancellation
+                .as_mut()
+                .ok_or(SupervisionError::InvalidLifecycle)?;
+            progress.kill_sent = true;
+            progress.kill_delivered = delivered;
+            self.lifecycle = ChildLifecycle::AwaitingKill;
+        }
+        Ok(())
+    }
+
+    fn finish_inert_setup(&mut self) -> Result<(), PostSpawnSetupFailure> {
+        // `QualifiedHostExecution::verify_before_spawn` has already asserted
+        // the runtime's closed v1 identity.  Construction is still fallible
+        // by the peer API, so it belongs after durable native registration.
+        let peer = BoundaryPeer::new(
+            self.request.session_identity.clone(),
+            self.host_process_id,
+            self.request.spawn_nonce.clone(),
+            self.request.host_execution.runtime.clone(),
+        )
+        .map_err(|_| PostSpawnSetupFailure::BoundaryPeer)?;
+        let stdin = self
+            .stdin
+            .as_ref()
+            .ok_or(PostSpawnSetupFailure::MissingStdinPipe)?;
+        set_nonblocking_stdin(stdin).map_err(|_| PostSpawnSetupFailure::StdinNonblocking)?;
+        let stdout = self
+            .stdout
+            .as_ref()
+            .ok_or(PostSpawnSetupFailure::MissingStdoutPipe)?;
+        set_nonblocking_stdout(stdout.get_ref())
+            .map_err(|_| PostSpawnSetupFailure::StdoutNonblocking)?;
+        self.peer = Some(peer);
+        Ok(())
+    }
+
+    fn peer(&self) -> Result<&BoundaryPeer, SupervisionError> {
+        self.peer.as_ref().ok_or(SupervisionError::InvalidLifecycle)
+    }
+
+    fn peer_mut(&mut self) -> Result<&mut BoundaryPeer, SupervisionError> {
+        self.peer.as_mut().ok_or(SupervisionError::InvalidLifecycle)
+    }
+
+    fn peer_receipt_state(&self) -> PiPeerReceiptState {
+        self.peer
+            .as_ref()
+            .map_or(PiPeerReceiptState::NotInitialized, |peer| {
+                PiPeerReceiptState::Observed(peer.phase())
+            })
+    }
+
+    fn spawned_facts(&self) -> SpawnedChildFacts {
+        SpawnedChildFacts {
+            child_process_id: self.request.child_process_id.clone(),
+            session_identity: self.request.session_identity.clone(),
+            spawn_nonce: self.request.spawn_nonce.clone(),
+            host_process_id: self.host_process_id,
+            process_group_id: self.process_group_id,
+            workspace_identity: self.request.workspace.identity().clone(),
+            workspace_directory: self.request.workspace.directory().clone(),
+            runtime: self.request.host_execution.runtime.clone(),
+            environment: self.request.environment,
+        }
+    }
+
     fn inert_facts(&self) -> InertChildFacts {
         InertChildFacts {
             child_process_id: self.request.child_process_id.clone(),
@@ -1437,7 +1772,8 @@ impl ManagedPiChild {
         deadline: ControlWriteDeadline,
     ) -> Result<ControlWriteProgress, SupervisionError> {
         let line = encode_inbound_jsonl(&frame)?;
-        self.peer.admit_inbound_jsonl_bytes(line.as_bytes())?;
+        self.peer_mut()?
+            .admit_inbound_jsonl_bytes(line.as_bytes())?;
         // Peer admission is a logical fact. It stays separate from native
         // pipe evidence: a partial write/cancellation must not make physical
         // stdin bytes appear to contain a complete frame.
@@ -1465,6 +1801,11 @@ impl ManagedPiChild {
             .deadline;
         if now >= deadline.expires_at() {
             return Err(SupervisionError::ControlWriteDeadlineExpired);
+        }
+        #[cfg(feature = "test-support")]
+        if self.force_next_control_write_pending_for_test {
+            self.force_next_control_write_pending_for_test = false;
+            return Ok(ControlWriteProgress::Pending);
         }
         loop {
             let (next_byte_offset, byte_count) = {
@@ -1544,6 +1885,7 @@ impl ManagedPiChild {
             .ok_or(SupervisionError::InvalidLifecycle)?;
         cancellation.abort_control_written = true;
         self.deliveries.push(SignalReceipt {
+            action: SignalAction::AbortControl,
             delivery: SignalDelivery::AbortControlWritten,
             observed_at: now,
             group_liveness_after_attempt: liveness,
@@ -1552,20 +1894,24 @@ impl ManagedPiChild {
     }
 
     fn read_one_outbound(&mut self) -> Result<OutboundRead, SupervisionError> {
+        let stdout = self
+            .stdout
+            .as_mut()
+            .ok_or(SupervisionError::InvalidLifecycle)?;
         let record = read_bounded_record(
-            &mut self.stdout,
+            stdout,
             &mut self.stdout_capture,
             &mut self.stdout_partial_record,
         )?;
         let record = match record {
             StreamRead::NotReady => return Ok(OutboundRead::NotReady),
             StreamRead::Eof => {
-                let _ = self.peer.observe_stdout_eof();
+                let _ = self.peer_mut()?.observe_stdout_eof();
                 return Err(SupervisionError::OutputLost);
             }
             StreamRead::Frame(record) => record,
         };
-        match self.peer.observe_outbound_jsonl_bytes(&record) {
+        match self.peer_mut()?.observe_outbound_jsonl_bytes(&record) {
             Ok(observation) => Ok(OutboundRead::Observation(observation)),
             Err(error) => Err(error.into()),
         }
@@ -1660,10 +2006,99 @@ impl ManagedPiChild {
         })
     }
 
+    fn poll_direct_child_reap(&mut self) -> Result<Option<DirectChildReapFacts>, SupervisionError> {
+        if let Some(pending) = &self.pending_direct_reap {
+            return Ok(Some(DirectChildReapFacts {
+                child_process_id: self.request.child_process_id.clone(),
+                host_process_id: self.host_process_id,
+                process_group_id: self.process_group_id,
+                status: reap_status(pending.status),
+                group_liveness_after_direct_child_reap: pending
+                    .group_liveness_after_direct_child_reap,
+                prior_signal_receipts: pending.prior_signal_receipts.clone(),
+            }));
+        }
+        if self.completed_receipt.is_some() {
+            return Err(SupervisionError::InvalidLifecycle);
+        }
+        let Some(status) = self.child.try_wait()? else {
+            return Ok(None);
+        };
+        let group_liveness_after_direct_child_reap = self.group_liveness()?;
+        self.pending_direct_reap = Some(PendingDirectChildReap {
+            status,
+            group_liveness_after_direct_child_reap,
+            prior_signal_receipts: self.deliveries.clone(),
+        });
+        Ok(Some(DirectChildReapFacts {
+            child_process_id: self.request.child_process_id.clone(),
+            host_process_id: self.host_process_id,
+            process_group_id: self.process_group_id,
+            status: reap_status(status),
+            group_liveness_after_direct_child_reap,
+            prior_signal_receipts: self.deliveries.clone(),
+        }))
+    }
+
+    fn issue_lingering_group_cleanup(
+        &mut self,
+        now: MonotonicTick,
+    ) -> Result<Option<SignalReceipt>, SupervisionError> {
+        let pending = self
+            .pending_direct_reap
+            .as_ref()
+            .ok_or(SupervisionError::InvalidLifecycle)?;
+        if pending.group_liveness_after_direct_child_reap == ProcessGroupLiveness::Absent {
+            return Ok(None);
+        }
+        // A duplicate invocation would create a second semantically identical
+        // cleanup attempt. The caller persists the returned receipt before it
+        // polls/finishes, so exactly one action is permitted for this wait.
+        if self
+            .deliveries
+            .iter()
+            .any(|receipt| receipt.action == SignalAction::LingeringGroupKill)
+        {
+            return Err(SupervisionError::InvalidLifecycle);
+        }
+        let outcome = self.signal_group(libc::SIGKILL)?;
+        let receipt = signal_receipt(
+            outcome,
+            SignalAction::LingeringGroupKill,
+            SignalDelivery::LingeringGroupKillSent,
+            now,
+        );
+        self.deliveries.push(receipt.clone());
+        Ok(Some(receipt))
+    }
+
+    fn complete_deferred_reap(&mut self) -> Result<SupervisionReceipt, SupervisionError> {
+        if let Some(receipt) = self.completed_receipt.clone() {
+            return Ok(receipt);
+        }
+        let pending = self
+            .pending_direct_reap
+            .take()
+            .ok_or(SupervisionError::InvalidLifecycle)?;
+        let group_liveness_after_reap = self.group_liveness()?;
+        if group_liveness_after_reap != ProcessGroupLiveness::Absent {
+            self.pending_direct_reap = Some(pending);
+            return Err(SupervisionError::ContainmentAwaitingDrive);
+        }
+        self.complete_reap_after_group_absent(
+            pending.status,
+            pending.group_liveness_after_direct_child_reap,
+            group_liveness_after_reap,
+        )
+    }
+
     fn try_reap(
         &mut self,
         now: MonotonicTick,
     ) -> Result<Option<SupervisionReceipt>, SupervisionError> {
+        if let Some(receipt) = self.completed_receipt.clone() {
+            return Ok(Some(receipt));
+        }
         let Some(status) = self.child.try_wait()? else {
             return Ok(None);
         };
@@ -1706,18 +2141,44 @@ impl ManagedPiChild {
             let outcome = self.signal_group(libc::SIGKILL)?;
             self.deliveries.push(signal_receipt(
                 outcome,
+                SignalAction::LingeringGroupKill,
                 SignalDelivery::LingeringGroupKillSent,
                 now,
             ));
         }
         let group_liveness_after_reap = self.group_liveness()?;
+        self.complete_reap_after_group_absent(
+            status,
+            group_liveness_before_cleanup,
+            group_liveness_after_reap,
+        )
+    }
+
+    fn complete_reap_after_group_absent(
+        &mut self,
+        status: ExitStatus,
+        group_liveness_before_cleanup: ProcessGroupLiveness,
+        group_liveness_after_reap: ProcessGroupLiveness,
+    ) -> Result<SupervisionReceipt, SupervisionError> {
+        if let Some(receipt) = self.completed_receipt.clone() {
+            return Ok(receipt);
+        }
         let stdout_contained = self.drain_stdout_after_exit()?;
         // Closing stdin after a stale pre-Create recheck is the one expected
         // inert EOF: no Pi session existed, so it cannot produce Disposed.
-        let expected_inert_control_eof = self.peer.phase() == PeerPhase::Inert
-            && self.lifecycle == ChildLifecycle::Quiescing
-            && self.cancellation.is_none();
-        let eof_contained = !expected_inert_control_eof && self.peer.observe_stdout_eof().is_err();
+        let (eof_contained, peer_fatal) = if let Some(peer) = self.peer.as_mut() {
+            let expected_inert_control_eof = peer.phase() == PeerPhase::Inert
+                && self.lifecycle == ChildLifecycle::Quiescing
+                && self.cancellation.is_none();
+            (
+                !expected_inert_control_eof && peer.observe_stdout_eof().is_err(),
+                peer.phase() == PeerPhase::Fatal,
+            )
+        } else {
+            // A post-spawn setup failure has no adapter-peer evidence. Its
+            // automatic containment is recorded separately below.
+            (false, false)
+        };
         let stderr = self.take_stderr_snapshot_after_reap()?;
         let inexact_transient_count = self.stdin_capture.count_overflowed
             || self.stdout_capture.count_overflowed
@@ -1734,7 +2195,7 @@ impl ManagedPiChild {
             || inexact_transient_count
             || group_liveness_after_reap != ProcessGroupLiveness::Absent
             || (eof_contained && !forced_cancellation)
-            || (self.peer.phase() == PeerPhase::Fatal && !forced_cancellation)
+            || (peer_fatal && !forced_cancellation)
         {
             ChildTerminalDisposition::ContainmentFailed
         } else {
@@ -1768,21 +2229,27 @@ impl ManagedPiChild {
                 .cancellation
                 .as_ref()
                 .map_or_else(Vec::new, |cancellation| cancellation.mode_revisions.clone()),
-            canonical_session_file: self
-                .peer
-                .configuration()
-                .map(|configuration| configuration.session_file.clone()),
+            canonical_session_file: self.peer.as_ref().and_then(|peer| {
+                peer.configuration()
+                    .map(|configuration| configuration.session_file.clone())
+            }),
             transient_evidence: TransientExecutionEvidence {
                 admitted_control: self.admitted_control_capture.transient_capture(),
                 stdin: self.stdin_capture.transient_capture(),
                 stdout: self.stdout_capture.transient_capture(),
                 stderr: stderr.transient_capture(),
-                logically_admitted_inbound_frame_count: self.peer.inbound_seals().len() as u64,
+                logically_admitted_inbound_frame_count: self
+                    .peer
+                    .as_ref()
+                    .map_or(0, |peer| peer.inbound_seals().len() as u64),
                 physically_delivered_inbound_frame_count: self
                     .physically_delivered_inbound_frame_count,
-                outbound_frame_count: self.peer.outbound_seals().len() as u64,
+                outbound_frame_count: self
+                    .peer
+                    .as_ref()
+                    .map_or(0, |peer| peer.outbound_seals().len() as u64),
             },
-            peer_phase: self.peer.phase(),
+            peer_state: self.peer_receipt_state(),
         };
         self.lifecycle = if terminal_disposition == ChildTerminalDisposition::ContainmentFailed {
             ChildLifecycle::Contained
@@ -1797,15 +2264,29 @@ impl ManagedPiChild {
     /// malformed raw record merely because the direct child has already
     /// exited: the raw capture and peer phase remain evidence for the kernel.
     fn drain_stdout_after_exit(&mut self) -> Result<bool, SupervisionError> {
+        let stdout = self
+            .stdout
+            .as_mut()
+            .ok_or(SupervisionError::InvalidLifecycle)?;
+        // A peerless child did not complete the normal nonblocking pipe
+        // setup. Convert the owned descriptor before draining so an escaped
+        // descendant cannot block this post-containment cleanup.
+        if self.peer.is_none() {
+            set_nonblocking_stdout(stdout.get_ref())?;
+        }
         let mut contained = false;
         loop {
             match read_bounded_record(
-                &mut self.stdout,
+                stdout,
                 &mut self.stdout_capture,
                 &mut self.stdout_partial_record,
             ) {
                 Ok(StreamRead::Frame(record)) => {
-                    if self.peer.observe_outbound_jsonl_bytes(&record).is_err() {
+                    if self
+                        .peer
+                        .as_mut()
+                        .is_none_or(|peer| peer.observe_outbound_jsonl_bytes(&record).is_err())
+                    {
                         contained = true;
                     }
                 }
@@ -2199,6 +2680,7 @@ fn terminal_disposition(
 
 fn signal_receipt(
     outcome: SignalGroupOutcome,
+    action: SignalAction,
     delivered: SignalDelivery,
     observed_at: MonotonicTick,
 ) -> SignalReceipt {
@@ -2221,6 +2703,7 @@ fn signal_receipt(
         } => (delivered, group_liveness_after_delivery),
     };
     SignalReceipt {
+        action,
         delivery,
         observed_at,
         group_liveness_after_attempt,
@@ -2333,6 +2816,7 @@ mod tests {
             SignalGroupOutcome::Delivered {
                 group_liveness_after_delivery: ProcessGroupLiveness::Absent,
             },
+            SignalAction::Terminate,
             SignalDelivery::TermSent,
             MonotonicTick::ZERO,
         );
@@ -2344,6 +2828,7 @@ mod tests {
 
         let absent = signal_receipt(
             SignalGroupOutcome::AbsentBeforeSignal,
+            SignalAction::Terminate,
             SignalDelivery::TermSent,
             MonotonicTick::ZERO,
         );
@@ -2351,6 +2836,7 @@ mod tests {
 
         let inaccessible = signal_receipt(
             SignalGroupOutcome::InaccessibleDuringSignal,
+            SignalAction::Kill,
             SignalDelivery::KillSent,
             MonotonicTick::ZERO,
         );

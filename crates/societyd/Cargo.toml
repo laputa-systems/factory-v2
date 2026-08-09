@@ -4,6 +4,13 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+# Narrow, compile-time-only process fault seams. This feature is never enabled
+# by the daemon binary or public control protocol; provider-free integration
+# tests opt in to prove post-spawn containment without ambient environment
+# switches.
+test-support = []
+
 [dependencies]
 libc.workspace = true
 society-kernel = { path = "../society-kernel" }
