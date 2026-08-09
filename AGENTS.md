@@ -50,11 +50,11 @@ DEPENDENCIES.md            exact trusted dependency and vendoring contract
 rust-toolchain.toml        exact Rust toolchain for trusted physics
 
 Cargo.toml                 Rust workspace manifest
-crates/society-kernel/     implemented bootstrap, coordination, and bounded
-                           actor/work/attempt execution foundations;
+crates/society-kernel/     implemented bootstrap, coordination, bounded
+                           execution, and deterministic evidence foundations;
                            remaining Milestone-1 domains grow here
 migrations/                normalized monotonic SQLite migrations; migrations
-                           1 through 3 own the current kernel foundation schema
+                           1 through 4 own the current kernel foundation schema
 
 packages/society-pi-host/  implemented and provider-free-audited Pi SDK host;
                            durable Rust authority remains outside this boundary
@@ -68,7 +68,7 @@ crates/society-pi/         implemented provider-free-audited typed Rust peer;
 crates/society-content/    implemented isolated physical byte-seal store; it
                            confers no evidence or provenance meaning
 crates/society-circuit/    implemented isolated closed VS-001 observation
-                           adapters; durable evaluator/evidence admission remains
+                           adapters; daemon/evaluator admission remains
 crates/society-product/    implemented isolated guarded local Git
                            materialization; durable authorization remains
 crates/societyd/           implemented bounded resident SQLite authority,

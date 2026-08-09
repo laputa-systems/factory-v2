@@ -148,9 +148,18 @@ office contract inherited by a society run. This term is preferred over
 
 ### Content object
 
-Immutable bytes sealed under a digest with a media or schema contract,
-retention class, and capture provenance. Content objects are forensic material;
-they do not become graph knowledge merely because they exist.
+A global identity for immutable bytes whose physical content-store seal has
+been attested to the kernel. It carries no producer, media/schema use contract,
+retention class, evidence meaning, or graph meaning. Those contextual facts
+belong to evaluator/input revisions, forensic-manifest membership, and evidence
+admission, so two runs may reuse identical bytes without sharing provenance.
+
+### Content seal receipt
+
+A narrow kernel-service attestation that the physical content boundary already
+sealed one SHA-256 identity. The current kernel command receives only the
+digest: it does not ingest bytes, execute an evaluator, assign provenance, or
+admit evidence. Physical-store and daemon integration must supply that fact.
 
 ### Coordination pulse
 
@@ -244,6 +253,14 @@ makes the SDK-host session protocol-failed and unavailable for further spend.
 Sealed source material preserved so a later judge can support, defeat, or
 reinterpret a claim. It remains available through controlled escalation even
 when no curator selects it.
+
+### Forensic manifest
+
+An occurrence-scoped inventory binding one producing Attempt or deterministic
+Experiment to closed content roles, media/schema use contracts, capture policy,
+and retention/access class. It may refer to a globally shared Content Object;
+that reuse never merges the two production occurrences. A manifest preserves
+forensic provenance but does not itself admit evidence or establish truth.
 
 ### Grand Architect
 
