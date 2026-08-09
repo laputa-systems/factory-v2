@@ -151,7 +151,7 @@ fn founded_cycle(
         Capability::SetR0HardCeiling,
         ExpectedGeneration::NotApplicable,
         CommandBody::SetR0HardCeiling {
-            ceiling: UsdMicros::FOUNDING_SOCIETY_HARD_CEILING,
+            ceiling: UsdMicros::new(1_030_000).unwrap(),
         },
     );
     accepted(
@@ -168,7 +168,10 @@ fn founded_cycle(
         bootstrap,
         Capability::ProposeOperatingCycle,
         ExpectedGeneration::NotApplicable,
-        CommandBody::ProposeOperatingCycle { treatment },
+        CommandBody::ProposeOperatingCycle {
+            treatment,
+            budget_ceiling: UsdMicros::new(1_000_000).unwrap(),
+        },
     );
     let cycle_id = OperatingCycleId::new(1).unwrap();
     accepted(

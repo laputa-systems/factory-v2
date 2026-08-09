@@ -2633,14 +2633,15 @@ mod tests {
     use sha2::{Digest, Sha256};
     use society_content::{ContentSealLimit, ContentStoreRoot};
     use society_kernel::{
-        AdmissionGeneration, BudgetReservationId, CancellationMode, CancellationPropagationId,
-        CancellationRequestId, Capability, CommandBody, CommandDisposition, CommandId,
-        CommandRequest, ExpectedGeneration, GrandArchitectOfficeSessionId, KernelStore,
+        AdmissionGeneration, BudgetReservationId, Capability, CommandBody, CommandDisposition,
+        CommandId, CommandRequest, ExpectedGeneration, GrandArchitectOfficeSessionId, KernelStore,
         OfficeTurnId, OfficeTurnPurpose, OperatingCycleId, OperatingCycleTreatment,
         PiProtocolSequence, PrincipalDisplayName, PrincipalId, Rejection,
         Sha256Digest as KernelDigest, SocietyName, SupervisorEpochId, SupervisorEpochIdentity,
         UsdMicros,
     };
+    #[cfg(feature = "test-support")]
+    use society_kernel::{CancellationMode, CancellationPropagationId, CancellationRequestId};
     use society_pi::{
         AbsolutePath, ActorModelPolicyV1, AdapterVersion, CacheWritePerMillionRateV1,
         CanonicalModelSlug, CompactionMode, CompactionPolicyV1, CorrelationIdentity,
@@ -4480,7 +4481,7 @@ mod tests {
             Capability::SetR0HardCeiling,
             ExpectedGeneration::NotApplicable,
             CommandBody::SetR0HardCeiling {
-                ceiling: UsdMicros::FOUNDING_SOCIETY_HARD_CEILING,
+                ceiling: UsdMicros::new(1_030_000).unwrap(),
             },
         );
         accepted(
@@ -4499,6 +4500,7 @@ mod tests {
             ExpectedGeneration::NotApplicable,
             CommandBody::ProposeOperatingCycle {
                 treatment: OperatingCycleTreatment::DeterministicPiHostFixtureV1,
+                budget_ceiling: UsdMicros::new(1_000_000).unwrap(),
             },
         );
         let cycle_id = OperatingCycleId::new(1).unwrap();

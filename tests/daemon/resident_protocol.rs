@@ -226,7 +226,7 @@ fn founding_commands(client: &mut SupervisorClient, start_correlation: u64) {
             Capability::SetR0HardCeiling,
             ExpectedGeneration::NotApplicable,
             ClientCommandBody::SetR0HardCeiling {
-                ceiling: UsdMicros::FOUNDING_SOCIETY_HARD_CEILING,
+                ceiling: UsdMicros::new(1_030_000).unwrap(),
             },
         )
         .unwrap(),
@@ -249,6 +249,7 @@ fn admit_and_close_empty_cycle(
     client: &mut SupervisorClient,
     correlation_start: u64,
     treatment: OperatingCycleTreatment,
+    budget_ceiling: UsdMicros,
     cycle_id: OperatingCycleId,
 ) {
     accepted(
@@ -259,7 +260,10 @@ fn admit_and_close_empty_cycle(
             GRAND_ARCHITECT,
             Capability::ProposeOperatingCycle,
             ExpectedGeneration::NotApplicable,
-            ClientCommandBody::ProposeOperatingCycle { treatment },
+            ClientCommandBody::ProposeOperatingCycle {
+                treatment,
+                budget_ceiling,
+            },
         )
         .unwrap(),
     );
@@ -741,6 +745,7 @@ fn reconnect_is_idempotent_qualification_is_closed_and_empty_deterministic_then_
         ExpectedGeneration::NotApplicable,
         ClientCommandBody::ProposeOperatingCycle {
             treatment: OperatingCycleTreatment::PiSdkQualificationV1,
+            budget_ceiling: UsdMicros::new(10_000).unwrap(),
         },
     )
     .unwrap();
@@ -756,12 +761,14 @@ fn reconnect_is_idempotent_qualification_is_closed_and_empty_deterministic_then_
         &mut supervisor,
         40,
         OperatingCycleTreatment::DeterministicPiHostFixtureV1,
+        UsdMicros::new(10_000).unwrap(),
         OperatingCycleId::new(1).unwrap(),
     );
     admit_and_close_empty_cycle(
         &mut supervisor,
         50,
         OperatingCycleTreatment::PinnedPiSdkLiveV1,
+        UsdMicros::new(10_000).unwrap(),
         OperatingCycleId::new(2).unwrap(),
     );
     stop(shutdown, join);

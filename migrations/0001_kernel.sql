@@ -41,7 +41,7 @@ CREATE TABLE society_bootstraps (
     universe_seed_id INTEGER NOT NULL REFERENCES universe_seeds(universe_seed_id),
     office_id INTEGER NOT NULL REFERENCES office_contracts(office_id),
     office_occupancy_id INTEGER NOT NULL REFERENCES office_occupancies(office_occupancy_id),
-    hard_ceiling_micros INTEGER NOT NULL CHECK (hard_ceiling_micros >= 0),
+    hard_ceiling_micros INTEGER NOT NULL CHECK (hard_ceiling_micros > 0),
     bootstrapped_by_command_id INTEGER NOT NULL
 );
 CREATE TABLE operating_cycle_admissions (
@@ -186,7 +186,7 @@ CREATE TABLE event_society_identity_created (event_id INTEGER PRIMARY KEY REFERE
 CREATE TABLE event_grand_architect_office_installed (event_id INTEGER PRIMARY KEY REFERENCES events(event_id), office_id INTEGER NOT NULL REFERENCES office_contracts(office_id));
 CREATE TABLE event_founding_universe_seed_installed (event_id INTEGER PRIMARY KEY REFERENCES events(event_id), universe_seed_id INTEGER NOT NULL REFERENCES universe_seeds(universe_seed_id));
 CREATE TABLE event_grand_architect_appointed (event_id INTEGER PRIMARY KEY REFERENCES events(event_id), office_occupancy_id INTEGER NOT NULL REFERENCES office_occupancies(office_occupancy_id), principal_id INTEGER NOT NULL REFERENCES principals(principal_id));
-CREATE TABLE event_r0_hard_ceiling_set (event_id INTEGER PRIMARY KEY REFERENCES events(event_id), society_id INTEGER NOT NULL REFERENCES societies(society_id), ceiling_micros INTEGER NOT NULL CHECK (ceiling_micros >= 0));
+CREATE TABLE event_r0_hard_ceiling_set (event_id INTEGER PRIMARY KEY REFERENCES events(event_id), society_id INTEGER NOT NULL REFERENCES societies(society_id), ceiling_micros INTEGER NOT NULL CHECK (ceiling_micros > 0));
 CREATE TABLE event_society_bootstrapped (event_id INTEGER PRIMARY KEY REFERENCES events(event_id), society_id INTEGER NOT NULL REFERENCES societies(society_id));
 CREATE TABLE event_operating_cycle_state_changed (event_id INTEGER PRIMARY KEY REFERENCES events(event_id), operating_cycle_id INTEGER NOT NULL REFERENCES operating_cycles(operating_cycle_id), lifecycle_state INTEGER NOT NULL CHECK (lifecycle_state BETWEEN 1 AND 11), admission_generation INTEGER NOT NULL CHECK (admission_generation >= 0));
 CREATE TABLE event_grand_architect_office_session_started (event_id INTEGER PRIMARY KEY REFERENCES events(event_id), grand_architect_office_session_id INTEGER NOT NULL REFERENCES grand_architect_office_sessions(grand_architect_office_session_id), operating_cycle_id INTEGER NOT NULL REFERENCES operating_cycles(operating_cycle_id));
@@ -451,6 +451,7 @@ CREATE TABLE operating_cycles (
     universe_seed_id INTEGER NOT NULL REFERENCES universe_seeds(universe_seed_id),
     office_occupancy_id INTEGER NOT NULL REFERENCES office_occupancies(office_occupancy_id),
     treatment INTEGER NOT NULL CHECK (treatment IN (1, 2, 3)),
+    budget_ceiling_micros INTEGER NOT NULL CHECK (budget_ceiling_micros > 0),
     lifecycle_state INTEGER NOT NULL CHECK (lifecycle_state BETWEEN 1 AND 11),
     admission_generation INTEGER NOT NULL CHECK (admission_generation >= 0),
     proposed_by_command_id INTEGER NOT NULL,
@@ -458,13 +459,15 @@ CREATE TABLE operating_cycles (
 );
 CREATE TABLE command_propose_operating_cycle (
     command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id),
-    treatment INTEGER NOT NULL CHECK (treatment IN (1, 2, 3))
+    treatment INTEGER NOT NULL CHECK (treatment IN (1, 2, 3)),
+    budget_ceiling_micros INTEGER NOT NULL CHECK (budget_ceiling_micros >= 0)
 );
 CREATE TABLE event_operating_cycle_proposed (
     event_id INTEGER PRIMARY KEY REFERENCES events(event_id),
     operating_cycle_id INTEGER NOT NULL REFERENCES operating_cycles(operating_cycle_id),
     admission_generation INTEGER NOT NULL CHECK (admission_generation >= 0),
-    treatment INTEGER NOT NULL CHECK (treatment IN (1, 2, 3))
+    treatment INTEGER NOT NULL CHECK (treatment IN (1, 2, 3)),
+    budget_ceiling_micros INTEGER NOT NULL CHECK (budget_ceiling_micros > 0)
 );
 CREATE TABLE execution_profiles (
     execution_profile_id INTEGER PRIMARY KEY,
@@ -1651,6 +1654,6 @@ INSERT INTO capability_grants VALUES(45,2,88,NULL,NULL,1,3,NULL,NULL);
 INSERT INTO capability_grants VALUES(46,2,89,NULL,NULL,1,3,NULL,NULL);
 INSERT INTO capability_grants VALUES(47,2,90,NULL,NULL,1,3,NULL,NULL);
 INSERT INTO capability_grants VALUES(48,2,91,NULL,NULL,1,3,NULL,NULL);
-PRAGMA user_version = 6;
+PRAGMA user_version = 7;
 COMMIT;
 PRAGMA foreign_keys = ON;

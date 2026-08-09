@@ -142,7 +142,7 @@ fn found_cycle(store: &mut KernelStore) -> (PrincipalId, OperatingCycleId) {
         Capability::SetR0HardCeiling,
         ExpectedGeneration::NotApplicable,
         CommandBody::SetR0HardCeiling {
-            ceiling: UsdMicros::FOUNDING_SOCIETY_HARD_CEILING,
+            ceiling: UsdMicros::new(1_030_000).unwrap(),
         },
     );
     accepted(
@@ -161,6 +161,7 @@ fn found_cycle(store: &mut KernelStore) -> (PrincipalId, OperatingCycleId) {
         ExpectedGeneration::NotApplicable,
         CommandBody::ProposeOperatingCycle {
             treatment: OperatingCycleTreatment::DeterministicPiHostFixtureV1,
+            budget_ceiling: UsdMicros::new(1_000_000).unwrap(),
         },
     );
     let cycle_id = OperatingCycleId::new(1).unwrap();
@@ -866,7 +867,7 @@ fn current_schema_reopens_after_atomic_fresh_bootstrap() {
         connection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        6
+        7
     );
     drop(connection);
     drop(KernelStore::open(&path).unwrap());
@@ -875,7 +876,7 @@ fn current_schema_reopens_after_atomic_fresh_bootstrap() {
         reopened
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        6
+        7
     );
     assert_eq!(
         reopened
@@ -898,9 +899,9 @@ fn current_schema_reopens_after_atomic_fresh_bootstrap() {
 }
 
 #[test]
-fn historical_schema_one_is_rejected_without_current_schema_mutation() {
+fn previous_schema_six_is_rejected_without_current_schema_mutation() {
     let path = std::env::temp_dir().join(format!(
-        "society-historical-schema-one-{}-{}.sqlite",
+        "society-previous-schema-six-{}-{}.sqlite",
         std::process::id(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -908,33 +909,33 @@ fn historical_schema_one_is_rejected_without_current_schema_mutation() {
             .as_nanos()
     ));
     let historical = Connection::open(&path).unwrap();
-    // A schema-1 identity is sufficient to prove the fail-closed boundary:
-    // current kernels must never reinterpret an old ledger as canonical just
+    // The immediately preceding canonical schema must remain fail-closed:
+    // current kernels never reinterpret an old ledger as canonical merely
     // because both happen to be SQLite databases.
     historical
         .execute_batch(
-            "CREATE TABLE historical_v1_ledger_marker (entry_id INTEGER PRIMARY KEY);
-             INSERT INTO historical_v1_ledger_marker VALUES (1);
-             PRAGMA user_version = 1;",
+            "CREATE TABLE previous_v6_ledger_marker (entry_id INTEGER PRIMARY KEY);
+             INSERT INTO previous_v6_ledger_marker VALUES (1);
+             PRAGMA user_version = 6;",
         )
         .unwrap();
     drop(historical);
 
     assert!(matches!(
         KernelStore::open(&path),
-        Err(StoreError::UnsupportedSchemaVersion(1))
+        Err(StoreError::UnsupportedSchemaVersion(6))
     ));
     let inspection = Connection::open(&path).unwrap();
     assert_eq!(
         inspection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        1
+        6
     );
     assert_eq!(
         inspection
             .query_row(
-                "SELECT COUNT(*) FROM historical_v1_ledger_marker",
+                "SELECT COUNT(*) FROM previous_v6_ledger_marker",
                 [],
                 |row| { row.get::<_, i64>(0) }
             )
@@ -956,144 +957,251 @@ fn rejection_wire_codes_have_one_closed_round_trip_authority() {
 }
 
 #[test]
-fn founding_policy_uses_closed_exact_cycle_treatments() {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let path =
-        std::env::temp_dir().join(format!("society-qualification-treatment-{unique}.sqlite3"));
-    let mut store = KernelStore::open(&path).unwrap();
-    let bootstrap = PrincipalId::BOOTSTRAP;
-    accepted(
-        &mut store,
-        "policy-create-society",
-        bootstrap,
-        Capability::CreateSocietyIdentity,
-        ExpectedGeneration::NotApplicable,
-        CommandBody::CreateSocietyIdentity {
-            name: SocietyName::parse("Founding Society policy test").unwrap(),
-        },
-    );
-    accepted(
-        &mut store,
-        "policy-install-seed",
-        bootstrap,
-        Capability::InstallFoundingUniverseSeed,
-        ExpectedGeneration::NotApplicable,
-        CommandBody::InstallFoundingUniverseSeed {
-            rendering_digest: Sha256Digest::of_bytes(b"policy seed"),
-        },
-    );
-    accepted(
-        &mut store,
-        "policy-install-office",
-        bootstrap,
-        Capability::InstallGrandArchitectOffice,
-        ExpectedGeneration::NotApplicable,
-        CommandBody::InstallGrandArchitectOffice,
-    );
-    accepted(
-        &mut store,
-        "policy-appoint-ga",
-        bootstrap,
-        Capability::AppointInitialGrandArchitect,
-        ExpectedGeneration::NotApplicable,
-        CommandBody::AppointInitialGrandArchitect {
-            actor_display_name: PrincipalDisplayName::parse("policy GA").unwrap(),
-        },
-    );
-    rejected(
-        &mut store,
-        "policy-reject-wrong-r0-ceiling",
-        bootstrap,
-        Capability::SetR0HardCeiling,
-        ExpectedGeneration::NotApplicable,
-        CommandBody::SetR0HardCeiling {
-            ceiling: UsdMicros::PINNED_PI_SDK_CYCLE_CEILING,
-        },
-        Rejection::BudgetPolicyViolation,
-    );
-    accepted(
-        &mut store,
-        "policy-set-r0-ceiling",
-        bootstrap,
-        Capability::SetR0HardCeiling,
-        ExpectedGeneration::NotApplicable,
-        CommandBody::SetR0HardCeiling {
-            ceiling: UsdMicros::FOUNDING_SOCIETY_HARD_CEILING,
-        },
-    );
-    accepted(
-        &mut store,
-        "policy-bootstrap",
-        bootstrap,
-        Capability::BootstrapSociety,
-        ExpectedGeneration::NotApplicable,
-        CommandBody::BootstrapSociety,
-    );
-    accepted(
-        &mut store,
-        "policy-propose-qualification-treatment",
-        bootstrap,
-        Capability::ProposeOperatingCycle,
-        ExpectedGeneration::NotApplicable,
-        CommandBody::ProposeOperatingCycle {
-            treatment: OperatingCycleTreatment::PiSdkQualificationV1,
-        },
-    );
-    accepted(
-        &mut store,
-        "policy-admit-qualification-treatment",
-        bootstrap,
-        Capability::AdmitOperatingCycle,
-        ExpectedGeneration::Exact(AdmissionGeneration::INITIAL),
-        CommandBody::AdmitOperatingCycle {
-            cycle_id: OperatingCycleId::new(1).unwrap(),
-        },
-    );
-    assert_eq!(
-        OperatingCycleTreatment::PiSdkQualificationV1.budget_ceiling(),
-        UsdMicros::PI_SDK_QUALIFICATION_CEILING
-    );
-    assert_eq!(
-        OperatingCycleTreatment::PinnedPiSdkLiveV1.budget_ceiling(),
-        UsdMicros::PINNED_PI_SDK_CYCLE_CEILING
-    );
-    assert_eq!(
-        OperatingCycleTreatment::DeterministicPiHostFixtureV1.budget_ceiling(),
-        UsdMicros::PINNED_PI_SDK_CYCLE_CEILING
-    );
-    assert!(store.replay_ledger().unwrap().iter().any(|event| matches!(
-        event.body,
-        EventBody::OperatingCycleProposed {
-            treatment: OperatingCycleTreatment::PiSdkQualificationV1,
-            ..
-        }
-    )));
-    let inspection = rusqlite::Connection::open(&path).unwrap();
-    let (treatment, ceiling): (i64, i64) = inspection
-        .query_row(
-            "SELECT c.treatment, e.ceiling_micros
-             FROM operating_cycles c
-             JOIN budget_envelope_constraints b
-               ON b.operating_cycle_id = c.operating_cycle_id
-             JOIN budget_envelopes e ON e.budget_envelope_id = b.budget_envelope_id
-             WHERE c.operating_cycle_id = 1",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .unwrap();
-    assert_eq!(
-        (treatment, ceiling),
+fn founding_budget_policy_is_explicit_per_closed_treatment() {
+    let society_hard_ceiling = UsdMicros::new(42_000).unwrap();
+    let cases = [
         (
-            OperatingCycleTreatment::PiSdkQualificationV1 as i64,
-            UsdMicros::PI_SDK_QUALIFICATION_CEILING.value(),
-        )
-    );
-    drop(inspection);
-    drop(store);
-    fs::remove_file(path).unwrap();
+            "qualification",
+            OperatingCycleTreatment::PiSdkQualificationV1,
+            UsdMicros::new(7_000).unwrap(),
+        ),
+        (
+            "live",
+            OperatingCycleTreatment::PinnedPiSdkLiveV1,
+            UsdMicros::new(19_000).unwrap(),
+        ),
+        (
+            "deterministic",
+            OperatingCycleTreatment::DeterministicPiHostFixtureV1,
+            UsdMicros::new(31_000).unwrap(),
+        ),
+    ];
+
+    for (case, treatment, budget_ceiling) in cases {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "society-generic-budget-policy-{case}-{unique}.sqlite3"
+        ));
+        let mut store = KernelStore::open(&path).unwrap();
+        let bootstrap = PrincipalId::BOOTSTRAP;
+        accepted(
+            &mut store,
+            "policy-create-society",
+            bootstrap,
+            Capability::CreateSocietyIdentity,
+            ExpectedGeneration::NotApplicable,
+            CommandBody::CreateSocietyIdentity {
+                name: SocietyName::parse("Synthetic budget society").unwrap(),
+            },
+        );
+        accepted(
+            &mut store,
+            "policy-install-seed",
+            bootstrap,
+            Capability::InstallFoundingUniverseSeed,
+            ExpectedGeneration::NotApplicable,
+            CommandBody::InstallFoundingUniverseSeed {
+                rendering_digest: Sha256Digest::of_bytes(b"synthetic budget seed"),
+            },
+        );
+        accepted(
+            &mut store,
+            "policy-install-office",
+            bootstrap,
+            Capability::InstallGrandArchitectOffice,
+            ExpectedGeneration::NotApplicable,
+            CommandBody::InstallGrandArchitectOffice,
+        );
+        accepted(
+            &mut store,
+            "policy-appoint-ga",
+            bootstrap,
+            Capability::AppointInitialGrandArchitect,
+            ExpectedGeneration::NotApplicable,
+            CommandBody::AppointInitialGrandArchitect {
+                actor_display_name: PrincipalDisplayName::parse("synthetic architect").unwrap(),
+            },
+        );
+        rejected(
+            &mut store,
+            "policy-reject-zero-r0-ceiling",
+            bootstrap,
+            Capability::SetR0HardCeiling,
+            ExpectedGeneration::NotApplicable,
+            CommandBody::SetR0HardCeiling {
+                ceiling: UsdMicros::ZERO,
+            },
+            Rejection::BudgetPolicyViolation,
+        );
+        accepted(
+            &mut store,
+            "policy-set-r0-ceiling",
+            bootstrap,
+            Capability::SetR0HardCeiling,
+            ExpectedGeneration::NotApplicable,
+            CommandBody::SetR0HardCeiling {
+                ceiling: society_hard_ceiling,
+            },
+        );
+        assert_eq!(
+            store
+                .active_capability_grant(bootstrap, Capability::SetR0HardCeiling)
+                .unwrap(),
+            None,
+            "the accepted founding ceiling consumes its one-shot capability"
+        );
+        accepted(
+            &mut store,
+            "policy-bootstrap",
+            bootstrap,
+            Capability::BootstrapSociety,
+            ExpectedGeneration::NotApplicable,
+            CommandBody::BootstrapSociety,
+        );
+        rejected(
+            &mut store,
+            "policy-reject-over-society-cycle-ceiling",
+            bootstrap,
+            Capability::ProposeOperatingCycle,
+            ExpectedGeneration::NotApplicable,
+            CommandBody::ProposeOperatingCycle {
+                treatment,
+                budget_ceiling: UsdMicros::new(42_001).unwrap(),
+            },
+            Rejection::BudgetPolicyViolation,
+        );
+        accepted(
+            &mut store,
+            "policy-propose-explicit-cycle-ceiling",
+            bootstrap,
+            Capability::ProposeOperatingCycle,
+            ExpectedGeneration::NotApplicable,
+            CommandBody::ProposeOperatingCycle {
+                treatment,
+                budget_ceiling,
+            },
+        );
+
+        let cycle_id = OperatingCycleId::new(1).unwrap();
+        assert!(store.replay_ledger().unwrap().iter().any(|event| matches!(
+            event.body,
+            EventBody::OperatingCycleProposed {
+                cycle_id: event_cycle_id,
+                treatment: event_treatment,
+                budget_ceiling: event_budget_ceiling,
+                ..
+            } if event_cycle_id == cycle_id
+                && event_treatment == treatment
+                && event_budget_ceiling == budget_ceiling
+        )));
+        assert!(store.validate_replayed_materialized_state().is_ok());
+        drop(store);
+
+        let inspection = Connection::open(&path).unwrap();
+        let material: (i64, i64, i64) = inspection
+            .query_row(
+                "SELECT c.treatment, c.budget_ceiling_micros, e.ceiling_micros
+                 FROM operating_cycles c
+                 JOIN budget_envelope_constraints b
+                   ON b.operating_cycle_id = c.operating_cycle_id
+                 JOIN budget_envelopes e ON e.budget_envelope_id = b.budget_envelope_id
+                 WHERE c.operating_cycle_id = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        let command: (i64, i64) = inspection
+            .query_row(
+                "SELECT proposal.treatment, proposal.budget_ceiling_micros
+                 FROM command_propose_operating_cycle proposal
+                 JOIN commands command
+                   ON command.command_row_id = proposal.command_row_id
+                 WHERE command.command_id = 'policy-propose-explicit-cycle-ceiling'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        let event: (i64, i64) = inspection
+            .query_row(
+                "SELECT treatment, budget_ceiling_micros
+                 FROM event_operating_cycle_proposed",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        let expected = (treatment as i64, budget_ceiling.value());
+        assert_eq!(material, (expected.0, expected.1, expected.1));
+        assert_eq!(command, expected);
+        assert_eq!(event, expected);
+
+        inspection
+            .execute(
+                "UPDATE command_propose_operating_cycle
+                 SET budget_ceiling_micros = ?1
+                 WHERE command_row_id = (
+                    SELECT command_row_id FROM commands
+                    WHERE command_id = 'policy-propose-explicit-cycle-ceiling'
+                 )",
+                [budget_ceiling.value() + 1],
+            )
+            .unwrap();
+        drop(inspection);
+        assert!(matches!(
+            KernelStore::open(&path).unwrap().replay_ledger(),
+            Err(StoreError::LedgerCorruption(_))
+        ));
+
+        let inspection = Connection::open(&path).unwrap();
+        inspection
+            .execute(
+                "UPDATE command_propose_operating_cycle
+                 SET budget_ceiling_micros = ?1
+                 WHERE command_row_id = (
+                    SELECT command_row_id FROM commands
+                    WHERE command_id = 'policy-propose-explicit-cycle-ceiling'
+                 )",
+                [budget_ceiling.value()],
+            )
+            .unwrap();
+        inspection
+            .execute(
+                "UPDATE event_operating_cycle_proposed
+                 SET budget_ceiling_micros = ?1",
+                [budget_ceiling.value() + 1],
+            )
+            .unwrap();
+        drop(inspection);
+        assert!(matches!(
+            KernelStore::open(&path).unwrap().replay_ledger(),
+            Err(StoreError::LedgerCorruption(_))
+        ));
+
+        let inspection = Connection::open(&path).unwrap();
+        inspection
+            .execute(
+                "UPDATE event_operating_cycle_proposed
+                 SET budget_ceiling_micros = ?1",
+                [budget_ceiling.value()],
+            )
+            .unwrap();
+        inspection
+            .execute(
+                "UPDATE operating_cycles SET budget_ceiling_micros = ?1",
+                [budget_ceiling.value() + 1],
+            )
+            .unwrap();
+        drop(inspection);
+        assert!(matches!(
+            KernelStore::open(&path)
+                .unwrap()
+                .validate_replayed_materialized_state(),
+            Err(StoreError::LedgerCorruption(_))
+        ));
+        fs::remove_file(path).unwrap();
+    }
 }
 
 #[test]
@@ -3042,23 +3150,24 @@ fn on_disk_reopen_preserves_treatment_and_detects_materialized_tampering() {
     }
 
     let tamper = rusqlite::Connection::open(&path).unwrap();
-    let (treatment, ceiling): (i64, i64) = tamper
+    let (treatment, material_ceiling, envelope_ceiling): (i64, i64, i64) = tamper
         .query_row(
-            "SELECT c.treatment, e.ceiling_micros
+            "SELECT c.treatment, c.budget_ceiling_micros, e.ceiling_micros
              FROM operating_cycles c
              JOIN budget_envelope_constraints b
                ON b.operating_cycle_id = c.operating_cycle_id
              JOIN budget_envelopes e ON e.budget_envelope_id = b.budget_envelope_id
              WHERE c.operating_cycle_id = 1",
             [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .unwrap();
     assert_eq!(
-        (treatment, ceiling),
+        (treatment, material_ceiling, envelope_ceiling),
         (
             OperatingCycleTreatment::DeterministicPiHostFixtureV1 as i64,
-            UsdMicros::PINNED_PI_SDK_CYCLE_CEILING.value(),
+            1_000_000,
+            1_000_000,
         )
     );
     tamper
@@ -3199,7 +3308,7 @@ fn rejected_missing_subject_and_tampered_extra_body_are_detected() {
     tamper
         .execute(
             "UPDATE event_r0_hard_ceiling_set SET ceiling_micros = ?1 WHERE event_id = 5",
-            [UsdMicros::FOUNDING_SOCIETY_HARD_CEILING.value()],
+            [1_030_000_i64],
         )
         .unwrap();
     assert!(store.replay_ledger().is_ok());

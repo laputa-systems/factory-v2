@@ -52,10 +52,10 @@ use crate::{
 };
 
 const CURRENT_SCHEMA: &str = include_str!("../../../migrations/0001_kernel.sql");
-// Historical prototype schemas used versions one through five. The collapsed
+// Historical prototype schemas used versions one through six. The collapsed
 // fresh schema deliberately occupies a noncolliding identity, so an old
 // ledger cannot be mistaken for current trusted physics.
-const CURRENT_SCHEMA_VERSION: i64 = 6;
+const CURRENT_SCHEMA_VERSION: i64 = 7;
 
 struct PiChildSpawnAdmissionInput<'a> {
     operating_cycle_id: OperatingCycleId,
@@ -823,7 +823,8 @@ fn qualification_treatment_fences_request(
     if matches!(
         body,
         CommandBody::ProposeOperatingCycle {
-            treatment: OperatingCycleTreatment::PiSdkQualificationV1
+            treatment: OperatingCycleTreatment::PiSdkQualificationV1,
+            ..
         }
     ) {
         return Ok(principal_id != PrincipalId::BOOTSTRAP);
@@ -1247,9 +1248,10 @@ fn apply_command(
             set_r0_hard_ceiling(transaction, command_row_id, *ceiling)
         }
         CommandBody::BootstrapSociety => bootstrap_society(transaction, command_row_id),
-        CommandBody::ProposeOperatingCycle { treatment } => {
-            propose_operating_cycle(transaction, command_row_id, *treatment)
-        }
+        CommandBody::ProposeOperatingCycle {
+            treatment,
+            budget_ceiling,
+        } => propose_operating_cycle(transaction, command_row_id, *treatment, *budget_ceiling),
         CommandBody::AdmitOperatingCycle { cycle_id } => admit_operating_cycle(
             transaction,
             command_row_id,
@@ -2338,7 +2340,7 @@ fn set_r0_hard_ceiling(
     if exists(transaction, "SELECT 1 FROM society_bootstraps LIMIT 1")? {
         return Err(Rejection::FoundingInvariant);
     }
-    if ceiling != UsdMicros::FOUNDING_SOCIETY_HARD_CEILING {
+    if ceiling == UsdMicros::ZERO {
         return Err(Rejection::BudgetPolicyViolation);
     }
     Ok(EventBody::R0HardCeilingSet {
@@ -2386,8 +2388,13 @@ fn propose_operating_cycle(
     transaction: &Transaction<'_>,
     command_row_id: i64,
     treatment: OperatingCycleTreatment,
+    budget_ceiling: UsdMicros,
 ) -> Result<EventBody, Rejection> {
-    let (society_id, seed_id, occupancy_id) = bootstrapped_constitution(transaction)?;
+    let (society_id, seed_id, occupancy_id, society_hard_ceiling) =
+        bootstrapped_constitution(transaction)?;
+    if budget_ceiling == UsdMicros::ZERO || budget_ceiling > society_hard_ceiling {
+        return Err(Rejection::BudgetPolicyViolation);
+    }
     if exists(
         transaction,
         "SELECT 1 FROM operating_cycles WHERE lifecycle_state NOT IN (7, 10, 11)",
@@ -2396,15 +2403,14 @@ fn propose_operating_cycle(
     }
     transaction.execute(
         "INSERT INTO operating_cycles(society_id, universe_seed_id, office_occupancy_id, treatment,
-                                      lifecycle_state, admission_generation, proposed_by_command_id,
-                                      last_transition_command_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6, ?6)",
+                                      budget_ceiling_micros, lifecycle_state, admission_generation,
+                                      proposed_by_command_id, last_transition_command_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7, ?7)",
         params![society_id.value(), seed_id.value(), occupancy_id.value(), treatment as i64,
-                OperatingCycleState::Proposed as i64, command_row_id],
+                budget_ceiling.value(), OperatingCycleState::Proposed as i64, command_row_id],
     ).map_err(|_| Rejection::ActiveCycleAlreadyExists)?;
     let cycle_id = id_from_last_insert::<OperatingCycleId>(transaction)?;
-    let budget_envelope_id =
-        create_budget_envelope(transaction, command_row_id, treatment.budget_ceiling())?;
+    let budget_envelope_id = create_budget_envelope(transaction, command_row_id, budget_ceiling)?;
     transaction.execute(
         "INSERT INTO budget_envelope_constraints(budget_envelope_id, society_id, operating_cycle_id)
          VALUES (?1, NULL, ?2)",
@@ -2414,6 +2420,7 @@ fn propose_operating_cycle(
         cycle_id,
         generation: AdmissionGeneration::INITIAL,
         treatment,
+        budget_ceiling,
     })
 }
 
@@ -8222,15 +8229,29 @@ fn hard_ceiling_from_event_body(transaction: &Transaction<'_>) -> Result<UsdMicr
 
 fn bootstrapped_constitution(
     transaction: &Transaction<'_>,
-) -> Result<(SocietyId, UniverseSeedId, OfficeOccupancyId), Rejection> {
-    let row = transaction.query_row(
-        "SELECT society_id, universe_seed_id, office_occupancy_id FROM society_bootstraps LIMIT 1",
-        [], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?)),
-    ).optional().map_err(|_| Rejection::SubjectNotFound)?.ok_or(Rejection::FoundingInvariant)?;
+) -> Result<(SocietyId, UniverseSeedId, OfficeOccupancyId, UsdMicros), Rejection> {
+    let row = transaction
+        .query_row(
+            "SELECT society_id, universe_seed_id, office_occupancy_id, hard_ceiling_micros
+         FROM society_bootstraps LIMIT 1",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|_| Rejection::SubjectNotFound)?
+        .ok_or(Rejection::FoundingInvariant)?;
     Ok((
         SocietyId::try_from(row.0).map_err(|_| Rejection::FoundingInvariant)?,
         UniverseSeedId::try_from(row.1).map_err(|_| Rejection::FoundingInvariant)?,
         OfficeOccupancyId::try_from(row.2).map_err(|_| Rejection::FoundingInvariant)?,
+        UsdMicros::try_from(row.3).map_err(|_| Rejection::FoundingInvariant)?,
     ))
 }
 
@@ -8591,7 +8612,13 @@ fn request_fingerprint(request: &CommandRequest) -> Sha256Digest {
             put_bytes(&mut bytes, actor_display_name.as_str().as_bytes())
         }
         CommandBody::SetR0HardCeiling { ceiling } => put_i64(&mut bytes, ceiling.value()),
-        CommandBody::ProposeOperatingCycle { treatment } => put_i64(&mut bytes, *treatment as i64),
+        CommandBody::ProposeOperatingCycle {
+            treatment,
+            budget_ceiling,
+        } => {
+            put_i64(&mut bytes, *treatment as i64);
+            put_i64(&mut bytes, budget_ceiling.value());
+        }
         CommandBody::AdmitOperatingCycle { cycle_id }
         | CommandBody::StartGrandArchitectOfficeSession { cycle_id }
         | CommandBody::QuiesceOperatingCycle { cycle_id }
@@ -9372,10 +9399,12 @@ fn event_fingerprint(event_id: EventId, command_id: &CommandId, body: &EventBody
             cycle_id,
             generation,
             treatment,
+            budget_ceiling,
         } => {
             put_i64(&mut bytes, cycle_id.value());
             put_i64(&mut bytes, generation.value());
             put_i64(&mut bytes, *treatment as i64);
+            put_i64(&mut bytes, budget_ceiling.value());
         }
         EventBody::OperatingCycleStateChanged {
             cycle_id,
@@ -10074,8 +10103,11 @@ fn insert_command_body(
                 [command_row_id],
             )?;
         }
-        CommandBody::ProposeOperatingCycle { treatment } => {
-            transaction.execute("INSERT INTO command_propose_operating_cycle(command_row_id, treatment) VALUES (?1, ?2)", params![command_row_id, *treatment as i64])?;
+        CommandBody::ProposeOperatingCycle {
+            treatment,
+            budget_ceiling,
+        } => {
+            transaction.execute("INSERT INTO command_propose_operating_cycle(command_row_id, treatment, budget_ceiling_micros) VALUES (?1, ?2, ?3)", params![command_row_id, *treatment as i64, budget_ceiling.value()])?;
         }
         CommandBody::AdmitOperatingCycle { cycle_id } => {
             transaction.execute("INSERT INTO command_admit_operating_cycle(command_row_id, operating_cycle_id) VALUES (?1, ?2)", params![command_row_id, cycle_id.value()])?;
@@ -11189,8 +11221,9 @@ fn insert_event_body(
             cycle_id,
             generation,
             treatment,
+            budget_ceiling,
         } => {
-            transaction.execute("INSERT INTO event_operating_cycle_proposed(event_id, operating_cycle_id, admission_generation, treatment) VALUES (?1, ?2, ?3, ?4)", params![event_id.value(), cycle_id.value(), generation.value(), *treatment as i64])?;
+            transaction.execute("INSERT INTO event_operating_cycle_proposed(event_id, operating_cycle_id, admission_generation, treatment, budget_ceiling_micros) VALUES (?1, ?2, ?3, ?4, ?5)", params![event_id.value(), cycle_id.value(), generation.value(), *treatment as i64, budget_ceiling.value()])?;
         }
         EventBody::OperatingCycleStateChanged {
             cycle_id,
@@ -12128,13 +12161,15 @@ fn decode_event_body(
             )?,
         },
         EventKind::OperatingCycleProposed => {
-            let (cycle, generation, treatment) = connection.query_row("SELECT operating_cycle_id, admission_generation, treatment FROM event_operating_cycle_proposed WHERE event_id = ?1", [event_id], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing cycle proposal event body"))?;
+            let (cycle, generation, treatment, budget_ceiling) = connection.query_row("SELECT operating_cycle_id, admission_generation, treatment, budget_ceiling_micros FROM event_operating_cycle_proposed WHERE event_id = ?1", [event_id], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing cycle proposal event body"))?;
             EventBody::OperatingCycleProposed {
                 cycle_id: OperatingCycleId::try_from(cycle)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
                 generation: AdmissionGeneration::try_from(generation)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
                 treatment: operating_cycle_treatment_from_i64(treatment)?,
+                budget_ceiling: UsdMicros::try_from(budget_ceiling)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
             }
         }
         EventKind::OperatingCycleStateChanged => {
@@ -13332,6 +13367,13 @@ fn decode_command_body(
                 "treatment",
                 command_row_id,
             )?)?,
+            budget_ceiling: UsdMicros::try_from(query_command_value::<i64>(
+                connection,
+                "command_propose_operating_cycle",
+                "budget_ceiling_micros",
+                command_row_id,
+            )?)
+            .map_err(|_| StoreError::InvalidStoredValue)?,
         },
         CommandKind::AdmitOperatingCycle => CommandBody::AdmitOperatingCycle {
             cycle_id: query_command_id(

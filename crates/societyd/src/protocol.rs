@@ -16,7 +16,7 @@ use society_kernel::{
 };
 use thiserror::Error;
 
-pub const PROTOCOL_VERSION: u16 = 1;
+pub const PROTOCOL_VERSION: u16 = 2;
 pub const MAX_FRAME_BYTES: usize = 64 * 1024;
 
 // Request discriminants are intentionally partitioned by transport. A raw
@@ -63,6 +63,7 @@ pub enum ClientCommandBody {
     BootstrapSociety,
     ProposeOperatingCycle {
         treatment: OperatingCycleTreatment,
+        budget_ceiling: UsdMicros,
     },
     AdmitOperatingCycle {
         cycle_id: OperatingCycleId,
@@ -135,9 +136,13 @@ impl ClientCommandBody {
             }
             Self::SetR0HardCeiling { ceiling } => CommandBody::SetR0HardCeiling { ceiling },
             Self::BootstrapSociety => CommandBody::BootstrapSociety,
-            Self::ProposeOperatingCycle { treatment } => {
-                CommandBody::ProposeOperatingCycle { treatment }
-            }
+            Self::ProposeOperatingCycle {
+                treatment,
+                budget_ceiling,
+            } => CommandBody::ProposeOperatingCycle {
+                treatment,
+                budget_ceiling,
+            },
             Self::AdmitOperatingCycle { cycle_id } => CommandBody::AdmitOperatingCycle { cycle_id },
             Self::StartGrandArchitectOfficeSession { cycle_id } => {
                 CommandBody::StartGrandArchitectOfficeSession { cycle_id }
@@ -671,7 +676,13 @@ fn encode_command_request(
             put_string(bytes, actor_display_name.as_str());
         }
         ClientCommandBody::SetR0HardCeiling { ceiling } => put_i64(bytes, ceiling.value()),
-        ClientCommandBody::ProposeOperatingCycle { treatment } => put_u8(bytes, *treatment as u8),
+        ClientCommandBody::ProposeOperatingCycle {
+            treatment,
+            budget_ceiling,
+        } => {
+            put_u8(bytes, *treatment as u8);
+            put_i64(bytes, budget_ceiling.value());
+        }
         ClientCommandBody::AdmitOperatingCycle { cycle_id }
         | ClientCommandBody::StartGrandArchitectOfficeSession { cycle_id }
         | ClientCommandBody::QuiesceOperatingCycle { cycle_id }
@@ -745,6 +756,8 @@ fn decode_client_command_body(
         6 => Ok(ClientCommandBody::BootstrapSociety),
         7 => Ok(ClientCommandBody::ProposeOperatingCycle {
             treatment: operating_cycle_treatment_from_u8(cursor.u8()?)?,
+            budget_ceiling: UsdMicros::try_from(cursor.i64()?)
+                .map_err(|_| WireError::InvalidValue)?,
         }),
         8 => Ok(ClientCommandBody::AdmitOperatingCycle {
             cycle_id: OperatingCycleId::try_from(cursor.i64()?)
@@ -1090,5 +1103,34 @@ mod tests {
                 response
             );
         }
+    }
+
+    #[test]
+    fn supervisor_cycle_proposal_round_trips_exact_budget_micros() {
+        let request = SupervisorRequest::Execute {
+            correlation: CorrelationId::new(1).expect("the fixed nonzero correlation is valid"),
+            command: ClientCommandRequest {
+                command_id: CommandId::parse("wire-cycle-budget-001")
+                    .expect("the fixed command identity is valid"),
+                principal_id: PrincipalId::new(3).expect("the fixed nonzero principal is valid"),
+                capability_grant_id: CapabilityGrantId::new(1)
+                    .expect("the fixed nonzero capability grant is valid"),
+                capability: Capability::ProposeOperatingCycle,
+                expected_generation: ExpectedGeneration::NotApplicable,
+                body: ClientCommandBody::ProposeOperatingCycle {
+                    treatment: OperatingCycleTreatment::PinnedPiSdkLiveV1,
+                    budget_ceiling: UsdMicros::new(42_000)
+                        .expect("the fixed positive budget ceiling is valid"),
+                },
+            },
+        };
+        let mut encoded = Vec::new();
+        write_supervisor_request(&mut encoded, &request)
+            .expect("the closed supervisor request must encode");
+        assert_eq!(
+            read_supervisor_request(&mut encoded.as_slice())
+                .expect("the closed supervisor request must decode"),
+            request
+        );
     }
 }
