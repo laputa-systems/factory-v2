@@ -131,6 +131,15 @@ that `owned_waited` proves daemon process-group reaping. Parsing the set is not
 evidence admission; its TSV, evaluator, inputs, and every referenced digest
 must first bind to separately sealed content under kernel authority.
 
+### VS-001 observation adapters
+
+The parsing-only `society-circuit` boundary for the behavior and documentation
+matrices, fluency probe, C1 curation relations, checked-uptake observation, and
+W1 disclosure-frontier matrix. Each adapter enforces one exact producer,
+schema, row set, order, digest encoding, and closed value vocabulary. Successful
+decoding does not establish evaluator execution, actor identity, process
+reaping, disclosure authority, curation acceptance, or evidence admission.
+
 ### Constitutional inheritance
 
 The exact `UniverseSeed` revision, constitutional rules, and Grand Architect

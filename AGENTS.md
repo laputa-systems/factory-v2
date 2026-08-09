@@ -67,8 +67,8 @@ crates/society-pi/         implemented provider-free-audited typed Rust peer;
                            in the planned resident authority
 crates/society-content/    implemented isolated physical byte-seal store; it
                            confers no evidence or provenance meaning
-crates/society-circuit/    implemented isolated closed B01-B11 observation
-                           parser; durable evaluator/evidence admission remains
+crates/society-circuit/    implemented isolated closed VS-001 observation
+                           adapters; durable evaluator/evidence admission remains
 crates/societyd/           implemented bounded resident SQLite authority,
                            monitor, and native Pi child/process-group physics;
                            durable Pi/content/recovery integration remains
