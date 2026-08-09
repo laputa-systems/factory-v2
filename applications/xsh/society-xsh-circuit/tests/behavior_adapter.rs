@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used)]
 
-use society_circuit::{
+use society_xsh_circuit::{
     BehaviorCaseId, BehaviorObservationSetV1, BehaviorParseError, ExitOrErrorShape,
 };
 

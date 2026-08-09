@@ -152,7 +152,7 @@ contract, not the sole ontology of the work it processes.
 ### Behavior observation set
 
 The exact eleven-row B01-B11 deterministic spawn/stderr measurement decoded by
-`society-circuit` into closed Rust types. It preserves parent-stream versus
+`applications/xsh/society-xsh-circuit` into closed Rust types. It preserves parent-stream versus
 redirected-artifact evidence and evaluator-observed lifecycle without claiming
 that `owned_waited` proves daemon process-group reaping. Parsing the set is not
 evidence admission; its TSV, evaluator, inputs, and every referenced digest
@@ -160,7 +160,7 @@ must first bind to separately sealed content under kernel authority.
 
 ### VS-001 observation adapters
 
-The parsing-only `society-circuit` boundary for the behavior and documentation
+The parsing-only `society-xsh-circuit` application boundary for the behavior and documentation
 matrices, fluency probe, C1 curation relations, checked-uptake observation, and
 W1 disclosure-frontier matrix. Each adapter enforces one exact producer,
 schema, row set, order, digest encoding, and closed value vocabulary. Successful

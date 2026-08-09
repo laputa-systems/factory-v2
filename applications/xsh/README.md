@@ -1,0 +1,28 @@
+# XSH application boundary
+
+This workspace owns the XSH-specific VS-001 process circuit and its closed
+observation adapter. The application boundary keeps XSH APIs, source claims,
+fixtures, and evaluator contracts out of generic society crates.
+
+```text
+applications/xsh/
+├── Cargo.toml                         isolated XSH Rust workspace
+├── society-xsh-circuit/               parsing-only XSH VS-001 adapter
+└── circuits/vs-001-spawn-stderr/      deterministic XSH fixtures and judges
+```
+
+`society-xsh-circuit` may use the generic `society-content` byte-seal type by
+path. It does not make an observation authoritative: it cannot admit evidence,
+write a ledger, schedule, settle, or disclose. The circuit judges likewise
+produce deterministic observations beneath their caller-selected `--out`
+directory; the durable authority remains outside this application workspace.
+
+Run the adapter from this workspace:
+
+```text
+cargo test -p society-xsh-circuit
+cargo clippy -p society-xsh-circuit --all-targets -- -D warnings
+```
+
+The application-owned evaluator invocation and its provider-free contracts are
+documented in `circuits/vs-001-spawn-stderr/README.md`.

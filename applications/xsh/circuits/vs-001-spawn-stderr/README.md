@@ -1,18 +1,19 @@
-# VS-001 spawn stderr deterministic circuit
+# XSH VS-001 spawn stderr deterministic circuit
 
-This package is the provider-free experiment for the VS-001 process-contract
-question. It creates all ephemeral data under the caller-selected output
-directory and never writes to the XSH checkout. It is deliberately not a
-workflow manifest: its executable cases are named fixtures and the durable
-V2 implementation must represent their inputs and observations with closed
-Rust types and normalized SQLite rows.
+This XSH application package is the provider-free experiment for the VS-001
+process-contract question. It creates all ephemeral data under the
+caller-selected output directory and never writes to the XSH checkout. It is
+deliberately not a workflow manifest: its executable cases are named fixtures
+and the application adapter represents their inputs and observations with
+closed Rust types. It has no authority to admit evidence, mutate durable
+state, schedule work, settle an outcome, or disclose material.
 
 ## Scope and invocation
 
 Run the behavior matrix against a previously built XSH binary:
 
 ```text
-circuits/vs-001-spawn-stderr/judges/run-behavior-matrix.sh \
+applications/xsh/circuits/vs-001-spawn-stderr/judges/run-behavior-matrix.sh \
   --xsh /absolute/path/to/xsh \
   --xsht /absolute/path/to/xsht \
   --xsh-root /absolute/path/to/xsh-source \
@@ -23,7 +24,7 @@ The documentation and discovery matrix needs the matching XSH source tree and
 `xsht` binary:
 
 ```text
-circuits/vs-001-spawn-stderr/judges/run-documentation-matrix.sh \
+applications/xsh/circuits/vs-001-spawn-stderr/judges/run-documentation-matrix.sh \
   --xsh-root /absolute/path/to/xsh \
   --xsht /absolute/path/to/xsht \
   --mode baseline-conflict \
@@ -226,13 +227,13 @@ Run a single opaque arm with its sealed candidate `supervise.xsh` and the
 closed deterministic stand-ins for its submission and tool-event summary:
 
 ```text
-circuits/vs-001-spawn-stderr/judges/run-fluency-task-evaluator.sh \
+applications/xsh/circuits/vs-001-spawn-stderr/judges/run-fluency-task-evaluator.sh \
   --xsh /absolute/path/to/xsh \
   --xsht /absolute/path/to/xsht \
   --xsh-root /absolute/path/to/xsh-source \
-  --solution circuits/vs-001-spawn-stderr/fixtures/fluency/positive/supervise.xsh \
-  --submission circuits/vs-001-spawn-stderr/fixtures/fluency/positive/submission.v1.tsv \
-  --tool-events circuits/vs-001-spawn-stderr/fixtures/fluency/positive/tool-events.v1.tsv \
+  --solution applications/xsh/circuits/vs-001-spawn-stderr/fixtures/fluency/positive/supervise.xsh \
+  --submission applications/xsh/circuits/vs-001-spawn-stderr/fixtures/fluency/positive/submission.v1.tsv \
+  --tool-events applications/xsh/circuits/vs-001-spawn-stderr/fixtures/fluency/positive/tool-events.v1.tsv \
   --workspace-label q7f3a \
   --out /absolute/empty/output-directory
 ```
@@ -283,9 +284,9 @@ candidate cannot pass.
 ### C1 curation contract judge
 
 ```text
-circuits/vs-001-spawn-stderr/judges/run-curation-contract-judge.sh \
-  --account-dir circuits/vs-001-spawn-stderr/fixtures/curation/c1-valid \
-  --frontier-members circuits/vs-001-spawn-stderr/fixtures/curation/frontier-c1-members.v1.tsv \
+applications/xsh/circuits/vs-001-spawn-stderr/judges/run-curation-contract-judge.sh \
+  --account-dir applications/xsh/circuits/vs-001-spawn-stderr/fixtures/curation/c1-valid \
+  --frontier-members applications/xsh/circuits/vs-001-spawn-stderr/fixtures/curation/frontier-c1-members.v1.tsv \
   --out /absolute/empty/output-directory
 ```
 
@@ -305,9 +306,9 @@ relation is empty.
 The named-escalation fixture exercises the nonempty path:
 
 ```text
-circuits/vs-001-spawn-stderr/judges/run-curation-contract-judge.sh \
-  --account-dir circuits/vs-001-spawn-stderr/fixtures/curation/c1-valid-named-escalation \
-  --frontier-members circuits/vs-001-spawn-stderr/fixtures/curation/frontier-c1-members.v1.tsv \
+applications/xsh/circuits/vs-001-spawn-stderr/judges/run-curation-contract-judge.sh \
+  --account-dir applications/xsh/circuits/vs-001-spawn-stderr/fixtures/curation/c1-valid-named-escalation \
+  --frontier-members applications/xsh/circuits/vs-001-spawn-stderr/fixtures/curation/frontier-c1-members.v1.tsv \
   --out /absolute/empty/output-directory
 ```
 
@@ -319,11 +320,11 @@ Architect acceptance; this package does not emulate any of them.
 ### Checked-propagation uptake judge
 
 ```text
-circuits/vs-001-spawn-stderr/judges/run-uptake-application-judge.sh \
-  --context circuits/vs-001-spawn-stderr/fixtures/uptake/positive/delivery-context.v1.tsv \
-  --persisted-input circuits/vs-001-spawn-stderr/fixtures/uptake/positive/persisted-input.v1.tsv \
-  --submission circuits/vs-001-spawn-stderr/fixtures/uptake/positive/investigator-submission.v1.tsv \
-  --accesses circuits/vs-001-spawn-stderr/fixtures/uptake/positive/accesses.v1.tsv \
+applications/xsh/circuits/vs-001-spawn-stderr/judges/run-uptake-application-judge.sh \
+  --context applications/xsh/circuits/vs-001-spawn-stderr/fixtures/uptake/positive/delivery-context.v1.tsv \
+  --persisted-input applications/xsh/circuits/vs-001-spawn-stderr/fixtures/uptake/positive/persisted-input.v1.tsv \
+  --submission applications/xsh/circuits/vs-001-spawn-stderr/fixtures/uptake/positive/investigator-submission.v1.tsv \
+  --accesses applications/xsh/circuits/vs-001-spawn-stderr/fixtures/uptake/positive/accesses.v1.tsv \
   --out /absolute/empty/output-directory
 ```
 
@@ -341,8 +342,8 @@ arm cannot establish `causally_supported`.
 ### W1 disclosure-frontier leakage controls
 
 ```text
-circuits/vs-001-spawn-stderr/judges/run-frontier-leakage-controls.sh \
-  --frontier-dir circuits/vs-001-spawn-stderr/fixtures/frontier/w1-valid \
+applications/xsh/circuits/vs-001-spawn-stderr/judges/run-frontier-leakage-controls.sh \
+  --frontier-dir applications/xsh/circuits/vs-001-spawn-stderr/fixtures/frontier/w1-valid \
   --out /absolute/empty/output-directory
 ```
 
@@ -360,7 +361,7 @@ graph, projector, and actor requests rather than trusting this fixture judge.
 ### New rejection controls
 
 ```text
-circuits/vs-001-spawn-stderr/judges/run-society-negative-controls.sh \
+applications/xsh/circuits/vs-001-spawn-stderr/judges/run-society-negative-controls.sh \
   --xsh /absolute/path/to/xsh \
   --xsht /absolute/path/to/xsht \
   --xsh-root /absolute/path/to/xsh-source \

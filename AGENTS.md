@@ -1,4 +1,4 @@
-# XSH Society V2 engineering guide
+# Society engineering guide
 
 ## Working contract
 
@@ -60,9 +60,9 @@ migrations/                one atomic canonical fresh-schema bootstrap;
 
 packages/society-pi-host/  implemented and provider-free-audited Pi SDK host;
                            durable Rust authority remains outside this boundary
-circuits/vs-001-spawn-stderr/
-                           implemented deterministic fixture/evaluator tranche;
-                           process ownership and authority remain outside it
+applications/xsh/          application-owned XSH mission boundary; its isolated
+                           workspace contains the VS-001 observation adapter,
+                           fixtures, and deterministic judges
 
 crates/society-pi/         implemented provider-free-audited typed Rust peer;
                            daemon-private pre-Prompt driver integration landed;
@@ -70,8 +70,6 @@ crates/society-pi/         implemented provider-free-audited typed Rust peer;
                            scheduler, and restart integration remain
 crates/society-content/    implemented root-workspace physical byte-seal store;
                            it confers no evidence or provenance meaning
-crates/society-circuit/    implemented root-workspace closed VS-001 observation
-                           adapters; daemon/evaluator admission remains
 crates/society-product/    implemented isolated guarded local Git
                            materialization; durable authorization remains
 crates/societyd/           implemented bounded resident SQLite authority,
@@ -98,7 +96,7 @@ cargo test -p society-kernel --test <contract>
 cargo test -p society-pi --lib
 npm test --prefix packages/society-pi-host
 cargo test -p society-content
-cargo test -p society-circuit
+cargo test --manifest-path applications/xsh/Cargo.toml -p society-xsh-circuit
 cargo test --manifest-path crates/society-product/Cargo.toml
 cargo test -p societyd --test supervision -- --test-threads=1
 

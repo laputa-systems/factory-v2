@@ -1,11 +1,11 @@
 [package]
-name = "society-circuit"
+name = "society-xsh-circuit"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-society-content = { path = "../society-content" }
+society-content = { path = "../../../crates/society-content" }
 thiserror.workspace = true
 
 [lints.rust]

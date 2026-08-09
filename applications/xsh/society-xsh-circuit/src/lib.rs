@@ -1,9 +1,10 @@
-//! Closed adapters for deterministic VS-001 circuit observations.
+//! Closed XSH adapters for deterministic VS-001 circuit observations.
 //!
-//! TSV is accepted only as a sealed evaluator boundary. Parsing returns
-//! exhaustive Rust values; neither the TSV nor an opaque row is durable state.
-//! A parsed observation still is not admitted evidence until a later kernel
-//! command binds its evaluator and separately sealed artifact identities.
+//! This application-owned crate accepts TSV only at a sealed evaluator
+//! boundary. Parsing returns exhaustive Rust values; neither the TSV nor an
+//! opaque row is durable state. A parsed observation still is not admitted
+//! evidence until a later authority binds its evaluator and separately sealed
+//! artifact identities.
 
 use society_content::ContentDigest;
 use thiserror::Error;

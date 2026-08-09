@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used)]
 
-use society_circuit::{
+use society_xsh_circuit::{
     CuratedAccountV1, CurationContractObservationV1, CurationContractOutputsV1, CurationFrontierV1,
     CurationRawEvidenceEscalationObservationSetV1, DisclosureFrontierV1,
     DocumentationConflictSetV1, DocumentationObservationSetV1, FluencyExecutionEnvelopeV1,
@@ -12,63 +12,61 @@ use society_circuit::{
 };
 
 const CURATION_FRONTIER: &[u8] = include_bytes!(
-    "../../../circuits/vs-001-spawn-stderr/fixtures/curation/frontier-c1-members.v1.tsv"
+    "../../circuits/vs-001-spawn-stderr/fixtures/curation/frontier-c1-members.v1.tsv"
 );
-const CURATION_ACCOUNT: &[u8] = include_bytes!(
-    "../../../circuits/vs-001-spawn-stderr/fixtures/curation/c1-valid/account.v1.tsv"
-);
+const CURATION_ACCOUNT: &[u8] =
+    include_bytes!("../../circuits/vs-001-spawn-stderr/fixtures/curation/c1-valid/account.v1.tsv");
 const CURATION_SELECTED: &[u8] = include_bytes!(
-    "../../../circuits/vs-001-spawn-stderr/fixtures/curation/c1-valid/selected-items.v1.tsv"
+    "../../circuits/vs-001-spawn-stderr/fixtures/curation/c1-valid/selected-items.v1.tsv"
 );
 const CURATION_CONFLICTS: &[u8] = include_bytes!(
-    "../../../circuits/vs-001-spawn-stderr/fixtures/curation/c1-valid/preserved-conflicts.v1.tsv"
+    "../../circuits/vs-001-spawn-stderr/fixtures/curation/c1-valid/preserved-conflicts.v1.tsv"
 );
 const CURATION_UNKNOWNS: &[u8] = include_bytes!(
-    "../../../circuits/vs-001-spawn-stderr/fixtures/curation/c1-valid/decision-relevant-unknowns.v1.tsv"
+    "../../circuits/vs-001-spawn-stderr/fixtures/curation/c1-valid/decision-relevant-unknowns.v1.tsv"
 );
 const CURATION_EXCLUSIONS: &[u8] = include_bytes!(
-    "../../../circuits/vs-001-spawn-stderr/fixtures/curation/c1-valid/exclusions.v1.tsv"
+    "../../circuits/vs-001-spawn-stderr/fixtures/curation/c1-valid/exclusions.v1.tsv"
 );
 const CURATION_ESCALATIONS: &[u8] = include_bytes!(
-    "../../../circuits/vs-001-spawn-stderr/fixtures/curation/c1-valid/raw-evidence-escalations.v1.tsv"
+    "../../circuits/vs-001-spawn-stderr/fixtures/curation/c1-valid/raw-evidence-escalations.v1.tsv"
 );
 const CURATION_NAMED_ESCALATIONS: &[u8] = include_bytes!(
-    "../../../circuits/vs-001-spawn-stderr/fixtures/curation/c1-valid-named-escalation/raw-evidence-escalations.v1.tsv"
+    "../../circuits/vs-001-spawn-stderr/fixtures/curation/c1-valid-named-escalation/raw-evidence-escalations.v1.tsv"
 );
 
 const UPTAKE_CONTEXT: &[u8] = include_bytes!(
-    "../../../circuits/vs-001-spawn-stderr/fixtures/uptake/positive/delivery-context.v1.tsv"
+    "../../circuits/vs-001-spawn-stderr/fixtures/uptake/positive/delivery-context.v1.tsv"
 );
 const UPTAKE_PERSISTED: &[u8] = include_bytes!(
-    "../../../circuits/vs-001-spawn-stderr/fixtures/uptake/positive/persisted-input.v1.tsv"
+    "../../circuits/vs-001-spawn-stderr/fixtures/uptake/positive/persisted-input.v1.tsv"
 );
 const UPTAKE_SUBMISSION: &[u8] = include_bytes!(
-    "../../../circuits/vs-001-spawn-stderr/fixtures/uptake/positive/investigator-submission.v1.tsv"
+    "../../circuits/vs-001-spawn-stderr/fixtures/uptake/positive/investigator-submission.v1.tsv"
 );
-const UPTAKE_EMPTY_ACCESSES: &[u8] = include_bytes!(
-    "../../../circuits/vs-001-spawn-stderr/fixtures/uptake/positive/accesses.v1.tsv"
-);
+const UPTAKE_EMPTY_ACCESSES: &[u8] =
+    include_bytes!("../../circuits/vs-001-spawn-stderr/fixtures/uptake/positive/accesses.v1.tsv");
 const UPTAKE_BAD_SUBMISSION: &[u8] = include_bytes!(
-    "../../../circuits/vs-001-spawn-stderr/fixtures/uptake/negative/investigator-submission-missing-call-sites.v1.tsv"
+    "../../circuits/vs-001-spawn-stderr/fixtures/uptake/negative/investigator-submission-missing-call-sites.v1.tsv"
 );
 const UPTAKE_FORBIDDEN_ACCESSES: &[u8] = include_bytes!(
-    "../../../circuits/vs-001-spawn-stderr/fixtures/uptake/negative/accesses-forbidden-session.v1.tsv"
+    "../../circuits/vs-001-spawn-stderr/fixtures/uptake/negative/accesses-forbidden-session.v1.tsv"
 );
 
 const W1_MEMBERS: &[u8] = include_bytes!(
-    "../../../circuits/vs-001-spawn-stderr/fixtures/frontier/w1-valid/frontier-members.v1.tsv"
+    "../../circuits/vs-001-spawn-stderr/fixtures/frontier/w1-valid/frontier-members.v1.tsv"
 );
 const W1_SEQUESTERED: &[u8] = include_bytes!(
-    "../../../circuits/vs-001-spawn-stderr/fixtures/frontier/w1-valid/sequestered.v1.tsv"
+    "../../circuits/vs-001-spawn-stderr/fixtures/frontier/w1-valid/sequestered.v1.tsv"
 );
 const W1_MISSING_MEMBER: &[u8] = include_bytes!(
-    "../../../circuits/vs-001-spawn-stderr/fixtures/frontier/w1-missing-positive/frontier-members.v1.tsv"
+    "../../circuits/vs-001-spawn-stderr/fixtures/frontier/w1-missing-positive/frontier-members.v1.tsv"
 );
 const W1_DUPLICATE_CLASS: &[u8] = include_bytes!(
-    "../../../circuits/vs-001-spawn-stderr/fixtures/frontier/w1-duplicate-class/sequestered.v1.tsv"
+    "../../circuits/vs-001-spawn-stderr/fixtures/frontier/w1-duplicate-class/sequestered.v1.tsv"
 );
 const NEGATIVE_CONTROLS: &[u8] = include_bytes!(
-    "../../../circuits/vs-001-spawn-stderr/fixtures/negative-controls/positive/negative-controls.v1.tsv"
+    "../../circuits/vs-001-spawn-stderr/fixtures/negative-controls/positive/negative-controls.v1.tsv"
 );
 
 fn replace_once(source: &[u8], from: &str, to: &str) -> Vec<u8> {
@@ -395,7 +393,7 @@ fn curation_parses_real_relations_and_named_escalation_without_admission_claims(
     .unwrap();
     assert!(named.raw_evidence_escalation().is_some());
     let duplicate_selected = include_bytes!(
-        "../../../circuits/vs-001-spawn-stderr/fixtures/curation/negative-selected-items-duplicate-source.v1.tsv"
+        "../../circuits/vs-001-spawn-stderr/fixtures/curation/negative-selected-items-duplicate-source.v1.tsv"
     );
     assert!(
         CuratedAccountV1::parse(
