@@ -13,6 +13,7 @@ const MAX_VS001_TABLE_BYTES: usize = 128 * 1024;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Vs001Schema {
     InputDigestManifest,
+    NegativeControlObservation,
     DocumentationObservation,
     DocumentationConflict,
     FluencyProbeObservation,
@@ -191,6 +192,248 @@ fn exact_rows(
         });
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Negative-control observations
+
+// This report is the bounded proof that the behavior/documentation evaluators
+// reject their named counterexamples. It is evaluator output only: parsing it
+// does not establish evaluator execution, process ownership, evidence
+// admission, or product correctness.
+
+const MAX_NEGATIVE_CONTROL_OBSERVATION_BYTES: usize = 4 * 1024;
+const NEGATIVE_CONTROL_SCHEMA: &str = "# schema: NegativeControlObservationV1/tsv-v1";
+const NEGATIVE_CONTROL_HEADER: &str = "control_id\tdisposition\trejection_reason";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NegativeControlId {
+    C01,
+    C02,
+    C03,
+    C04,
+    C05,
+}
+
+impl NegativeControlId {
+    const ORDERED: [Self; 5] = [Self::C01, Self::C02, Self::C03, Self::C04, Self::C05];
+
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "C01" => Some(Self::C01),
+            "C02" => Some(Self::C02),
+            "C03" => Some(Self::C03),
+            "C04" => Some(Self::C04),
+            "C05" => Some(Self::C05),
+            _ => None,
+        }
+    }
+
+    const fn expected_rejection(self) -> NegativeControlRejectionReason {
+        match self {
+            Self::C01 => NegativeControlRejectionReason::OmittedStderrFieldLeaksChildStderrToParent,
+            Self::C02 => NegativeControlRejectionReason::ShellStringBoundary,
+            Self::C03 => NegativeControlRejectionReason::FluencyEvaluatorRejectsMissingOwnedLifecycleAndVariedPayloadMismatches,
+            Self::C04 => {
+                NegativeControlRejectionReason::CandidateReconciledEvaluatorRejectsStaleLang
+            }
+            Self::C05 => NegativeControlRejectionReason::PatchedRuntimeBreaksImmutableInheritedStderr,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NegativeControlDisposition {
+    Rejected,
+}
+
+impl NegativeControlDisposition {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "rejected" => Some(Self::Rejected),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NegativeControlRejectionReason {
+    OmittedStderrFieldLeaksChildStderrToParent,
+    ShellStringBoundary,
+    FluencyEvaluatorRejectsMissingOwnedLifecycleAndVariedPayloadMismatches,
+    CandidateReconciledEvaluatorRejectsStaleLang,
+    PatchedRuntimeBreaksImmutableInheritedStderr,
+}
+
+impl NegativeControlRejectionReason {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "omitted_stderr_field_leaks_child_stderr_to_parent" => {
+                Some(Self::OmittedStderrFieldLeaksChildStderrToParent)
+            }
+            "shell_string_boundary" => Some(Self::ShellStringBoundary),
+            "fluency_evaluator_rejects_missing_owned_lifecycle_and_varied_payload_mismatches" => {
+                Some(Self::FluencyEvaluatorRejectsMissingOwnedLifecycleAndVariedPayloadMismatches)
+            }
+            "candidate_reconciled_evaluator_rejects_stale_lang" => {
+                Some(Self::CandidateReconciledEvaluatorRejectsStaleLang)
+            }
+            "patched_runtime_breaks_immutable_inherited_stderr" => {
+                Some(Self::PatchedRuntimeBreaksImmutableInheritedStderr)
+            }
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NegativeControlObservationV1 {
+    pub control_id: NegativeControlId,
+    pub disposition: NegativeControlDisposition,
+    pub rejection_reason: NegativeControlRejectionReason,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NegativeControlObservationSetV1 {
+    observations: [NegativeControlObservationV1; 5],
+}
+
+impl NegativeControlObservationSetV1 {
+    pub fn parse(bytes: &[u8]) -> Result<Self, NegativeControlParseError> {
+        if bytes.len() > MAX_NEGATIVE_CONTROL_OBSERVATION_BYTES {
+            return Err(NegativeControlParseError::FrameTooLarge);
+        }
+        let text =
+            std::str::from_utf8(bytes).map_err(|_| NegativeControlParseError::InvalidUtf8)?;
+        if text.contains('\r') {
+            return Err(NegativeControlParseError::NonCanonicalLineEnding);
+        }
+        let Some(canonical_text) = text.strip_suffix('\n') else {
+            return Err(NegativeControlParseError::MissingTerminalLf);
+        };
+        let mut lines = canonical_text.split('\n');
+        if lines.next() != Some(NEGATIVE_CONTROL_SCHEMA) {
+            return Err(NegativeControlParseError::WrongSchema);
+        }
+        if lines.next() != Some(NEGATIVE_CONTROL_HEADER) {
+            return Err(NegativeControlParseError::WrongHeader);
+        }
+
+        let mut parsed = Vec::with_capacity(NegativeControlId::ORDERED.len());
+        for (index, expected_control) in NegativeControlId::ORDERED.into_iter().enumerate() {
+            let line_number = index + 3;
+            let line = lines
+                .next()
+                .ok_or(NegativeControlParseError::MissingControl {
+                    control: expected_control,
+                })?;
+            let observation = parse_negative_control_row(line, line_number)?;
+            if observation.control_id != expected_control {
+                if NegativeControlId::ORDERED[..index].contains(&observation.control_id) {
+                    return Err(NegativeControlParseError::DuplicateControl {
+                        line: line_number,
+                        control: observation.control_id,
+                    });
+                }
+                return Err(NegativeControlParseError::ControlOutOfOrder {
+                    line: line_number,
+                    expected: expected_control,
+                    observed: observation.control_id,
+                });
+            }
+            if observation.rejection_reason != expected_control.expected_rejection() {
+                return Err(NegativeControlParseError::ControlManifestMismatch {
+                    line: line_number,
+                });
+            }
+            parsed.push(observation);
+        }
+        if lines.next().is_some() {
+            return Err(NegativeControlParseError::ExtraRow);
+        }
+        let observations = parsed
+            .try_into()
+            .map_err(|_| NegativeControlParseError::InternalCardinality)?;
+        Ok(Self { observations })
+    }
+
+    pub const fn observations(&self) -> &[NegativeControlObservationV1; 5] {
+        &self.observations
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NegativeControlColumn {
+    ControlId,
+    Disposition,
+    RejectionReason,
+}
+
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
+pub enum NegativeControlParseError {
+    #[error("negative-control report exceeds its fixed byte bound")]
+    FrameTooLarge,
+    #[error("negative-control report is not UTF-8")]
+    InvalidUtf8,
+    #[error("negative-control report must use LF line endings")]
+    NonCanonicalLineEnding,
+    #[error("negative-control report must end in exactly one LF-terminated record")]
+    MissingTerminalLf,
+    #[error("negative-control report schema line is not exact")]
+    WrongSchema,
+    #[error("negative-control report header line is not exact")]
+    WrongHeader,
+    #[error("negative-control observation {control:?} is missing")]
+    MissingControl { control: NegativeControlId },
+    #[error("negative-control row {line} has {observed} fields instead of 3")]
+    WrongFieldCount { line: usize, observed: usize },
+    #[error("negative-control row {line} has an unknown value in {column:?}")]
+    UnknownClosedValue {
+        line: usize,
+        column: NegativeControlColumn,
+    },
+    #[error("negative-control row {line} duplicates {control:?}")]
+    DuplicateControl {
+        line: usize,
+        control: NegativeControlId,
+    },
+    #[error("negative-control row {line} is out of order: expected {expected:?}, got {observed:?}")]
+    ControlOutOfOrder {
+        line: usize,
+        expected: NegativeControlId,
+        observed: NegativeControlId,
+    },
+    #[error("negative-control row {line} recombines fields from distinct closed controls")]
+    ControlManifestMismatch { line: usize },
+    #[error("negative-control report has an extra row")]
+    ExtraRow,
+    #[error("closed negative-control cardinality could not be constructed")]
+    InternalCardinality,
+}
+
+fn parse_negative_control_row(
+    line: &str,
+    line_number: usize,
+) -> Result<NegativeControlObservationV1, NegativeControlParseError> {
+    let fields: Vec<_> = line.split('\t').collect();
+    if fields.len() != 3 {
+        return Err(NegativeControlParseError::WrongFieldCount {
+            line: line_number,
+            observed: fields.len(),
+        });
+    }
+    let unknown = |column| NegativeControlParseError::UnknownClosedValue {
+        line: line_number,
+        column,
+    };
+    Ok(NegativeControlObservationV1 {
+        control_id: NegativeControlId::parse(fields[0])
+            .ok_or_else(|| unknown(NegativeControlColumn::ControlId))?,
+        disposition: NegativeControlDisposition::parse(fields[1])
+            .ok_or_else(|| unknown(NegativeControlColumn::Disposition))?,
+        rejection_reason: NegativeControlRejectionReason::parse(fields[2])
+            .ok_or_else(|| unknown(NegativeControlColumn::RejectionReason))?,
+    })
 }
 
 // ---------------------------------------------------------------------------

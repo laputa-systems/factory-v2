@@ -1,0 +1,7 @@
+# schema: NegativeControlObservationV1/tsv-v1
+control_id	disposition	rejection_reason
+C01	rejected	omitted_stderr_field_leaks_child_stderr_to_parent
+C02	rejected	shell_string_boundary
+C03	rejected	fluency_evaluator_rejects_missing_owned_lifecycle_and_varied_payload_mismatches
+C04	rejected	candidate_reconciled_evaluator_rejects_stale_lang
+C05	rejected	patched_runtime_breaks_immutable_inherited_stderr

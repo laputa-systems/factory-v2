@@ -1,0 +1,12 @@
+diff --git a/src/runtime/process.rs b/src/runtime/process.rs
+--- a/src/runtime/process.rs
++++ b/src/runtime/process.rs
+@@ -422,7 +422,7 @@ impl SpawnManagedOptions {
+         Self {
+             stdin: ManagedStdio::Inherit,
+             stdout: ManagedStdio::Inherit,
+-            stderr: ManagedStdio::Inherit,
++            stderr: ManagedStdio::Null,
+             apply_redirections: true,
+             group: ProcessGroupConfig::NewRoot,
+             reset_signals: true,

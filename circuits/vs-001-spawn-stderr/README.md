@@ -40,7 +40,7 @@ does not by itself prove how a local binary was built. The scripts write no
 product checkout file.
 
 The host profile is Unix-like: POSIX `sh`, `/dev/null`, an executable XSH/Xsht
-pair, and `awk`, `cmp`, `cp`, `cut`, `env`, `find`, `git`, `mkdir`, `od`, `rg`, `sed`,
+pair, cached offline `cargo`, and `awk`, `cmp`, `cp`, `cut`, `env`, `find`, `git`, `mkdir`, `od`, `rg`, `sed`,
 `sort`, plus either
 `sha256sum` or `shasum` must be available. These are evaluator prerequisites,
 not XSH product dependencies.
@@ -188,13 +188,23 @@ The negative suite proves the judge has a rejection path for each VS-001 rule:
 | --- | --- |
 | `negative/no-stderr-plan.xsh` | omitting the stderr field cannot satisfy a redirect expectation |
 | `negative/shell-wrapper.xsh` | an `sh -c` wrapper violates the typed-command boundary even if bytes redirect |
-| `negative/fake-log.xsh` | writing the expected log cannot pass a varying-payload/lifecycle test |
+| `fluency/negative/supervise-no-owned-lifecycle.xsh` | the task evaluator rejects its missing owned spawn lifecycle; direct execution proves the assigned marker child never ran and its fabricated stderr and parent stdout mismatch that child’s varied payload |
 | current clean baseline checkout in `candidate-reconciled` mode | the actual evaluator rejects its stale proposal claim |
-| default-inheritance counterfactual | the behavior evaluator runs with `--default-stderr suppressed` and rejects the actual inherited stderr bytes |
+| detached C05 runtime patch | an exact patch changes `SpawnManagedOptions::inherited_process_group` to discard stderr; the circuit builds that candidate in a detached worktree and rejects it against immutable inherited-stderr bytes |
 
 The shell-wrapper fixture is inspected, never executed. The circuit refuses to
 make a shell boundary part of the experiment merely to prove that shell syntax
 can redirect a file descriptor.
+
+C05 never changes the behavior evaluator's expected default. It first proves
+the assigned clean XSH binary inherits stderr through the dedicated
+`process.run` fixture, then applies
+`negative/c05-inherited-process-group-null-stderr.patch` only in a detached
+worktree beneath the selected output directory. Its Cargo target is likewise
+under that directory, and successful cleanup removes the detached worktree
+before the judge emits C05. The assigned checkout is rechecked clean. This is
+provider-free but requires a cached offline Rust build; it is not a product
+mutation or delivery test.
 
 ## Milestone-7 provider-free extensions
 

@@ -6,7 +6,8 @@ use society_circuit::{
     DocumentationConflictSetV1, DocumentationObservationSetV1, FluencyExecutionEnvelopeV1,
     FluencyProbeExecutionSurfaceV1, FluencyProbeObservationSetV1, FrontierAccessObservationSetV1,
     InputDigestManifestV1, InputDigestProducer, InvestigatorAccessClass, InvestigatorAccessSetV1,
-    InvestigatorSubmissionV1, PropagationObservationV1, UptakeDeliveryContextV1,
+    InvestigatorSubmissionV1, NegativeControlId, NegativeControlObservationSetV1,
+    NegativeControlParseError, PropagationObservationV1, UptakeDeliveryContextV1,
     UptakePersistedInputV1, Vs001ParseError,
 };
 
@@ -65,6 +66,9 @@ const W1_MISSING_MEMBER: &[u8] = include_bytes!(
 );
 const W1_DUPLICATE_CLASS: &[u8] = include_bytes!(
     "../../../circuits/vs-001-spawn-stderr/fixtures/frontier/w1-duplicate-class/sequestered.v1.tsv"
+);
+const NEGATIVE_CONTROLS: &[u8] = include_bytes!(
+    "../../../circuits/vs-001-spawn-stderr/fixtures/negative-controls/positive/negative-controls.v1.tsv"
 );
 
 fn replace_once(source: &[u8], from: &str, to: &str) -> Vec<u8> {
@@ -208,6 +212,115 @@ fn documentation_observations_and_conflicts_are_exact_closed_rows() {
             .len(),
         3
     );
+}
+
+#[test]
+fn real_negative_control_report_is_one_exact_closed_rejection_set() {
+    let parsed = NegativeControlObservationSetV1::parse(NEGATIVE_CONTROLS).unwrap();
+    assert_eq!(parsed.observations().len(), 5);
+    assert_eq!(parsed.observations()[0].control_id, NegativeControlId::C01);
+    assert_eq!(parsed.observations()[4].control_id, NegativeControlId::C05);
+
+    let duplicate = replace_once(NEGATIVE_CONTROLS, "C02\trejected", "C01\trejected");
+    assert!(matches!(
+        NegativeControlObservationSetV1::parse(&duplicate),
+        Err(NegativeControlParseError::DuplicateControl {
+            line: 4,
+            control: NegativeControlId::C01
+        })
+    ));
+    let reordered = replace_once(NEGATIVE_CONTROLS, "C02\trejected", "C03\trejected");
+    assert!(matches!(
+        NegativeControlObservationSetV1::parse(&reordered),
+        Err(NegativeControlParseError::ControlOutOfOrder {
+            line: 4,
+            expected: NegativeControlId::C02,
+            observed: NegativeControlId::C03,
+        })
+    ));
+    let missing = replace_once(
+        NEGATIVE_CONTROLS,
+        "C05\trejected\tpatched_runtime_breaks_immutable_inherited_stderr\n",
+        "",
+    );
+    assert!(matches!(
+        NegativeControlObservationSetV1::parse(&missing),
+        Err(NegativeControlParseError::MissingControl {
+            control: NegativeControlId::C05
+        })
+    ));
+    let extra = format!(
+        "{}C06\trejected\tunknown\n",
+        String::from_utf8(NEGATIVE_CONTROLS.to_vec()).unwrap()
+    );
+    assert!(matches!(
+        NegativeControlObservationSetV1::parse(extra.as_bytes()),
+        Err(NegativeControlParseError::ExtraRow)
+    ));
+    assert!(matches!(
+        NegativeControlObservationSetV1::parse(
+            replace_once(
+                NEGATIVE_CONTROLS,
+                "C02\trejected\tshell_string_boundary",
+                "C02\trejected\tomitted_stderr_field_leaks_child_stderr_to_parent",
+            )
+            .as_slice()
+        ),
+        Err(NegativeControlParseError::ControlManifestMismatch { line: 4 })
+    ));
+    assert!(matches!(
+        NegativeControlObservationSetV1::parse(
+            replace_once(NEGATIVE_CONTROLS, "rejected", "accepted").as_slice()
+        ),
+        Err(NegativeControlParseError::UnknownClosedValue { line: 3, .. })
+    ));
+    assert!(matches!(
+        NegativeControlObservationSetV1::parse(
+            replace_once(NEGATIVE_CONTROLS, "shell_string_boundary", "unknown_reason").as_slice()
+        ),
+        Err(NegativeControlParseError::UnknownClosedValue { line: 4, .. })
+    ));
+    assert!(matches!(
+        NegativeControlObservationSetV1::parse(
+            replace_once(NEGATIVE_CONTROLS, "\n", "\r\n").as_slice()
+        ),
+        Err(NegativeControlParseError::NonCanonicalLineEnding)
+    ));
+    assert!(matches!(
+        NegativeControlObservationSetV1::parse(&NEGATIVE_CONTROLS[..NEGATIVE_CONTROLS.len() - 1]),
+        Err(NegativeControlParseError::MissingTerminalLf)
+    ));
+    assert!(matches!(
+        NegativeControlObservationSetV1::parse(
+            replace_once(NEGATIVE_CONTROLS, "# schema:", "# unknown:").as_slice()
+        ),
+        Err(NegativeControlParseError::WrongSchema)
+    ));
+    assert!(matches!(
+        NegativeControlObservationSetV1::parse(
+            replace_once(NEGATIVE_CONTROLS, "control_id\t", "control\t").as_slice()
+        ),
+        Err(NegativeControlParseError::WrongHeader)
+    ));
+    assert!(matches!(
+        NegativeControlObservationSetV1::parse(
+            replace_once(NEGATIVE_CONTROLS, "C01\trejected", "C01\textra\trejected").as_slice()
+        ),
+        Err(NegativeControlParseError::WrongFieldCount {
+            line: 3,
+            observed: 4
+        })
+    ));
+    let mut invalid_utf8 = NEGATIVE_CONTROLS.to_vec();
+    invalid_utf8[0] = 0xff;
+    assert!(matches!(
+        NegativeControlObservationSetV1::parse(&invalid_utf8),
+        Err(NegativeControlParseError::InvalidUtf8)
+    ));
+    assert!(matches!(
+        NegativeControlObservationSetV1::parse(&vec![b'x'; 4 * 1024 + 1]),
+        Err(NegativeControlParseError::FrameTooLarge)
+    ));
 }
 
 #[test]

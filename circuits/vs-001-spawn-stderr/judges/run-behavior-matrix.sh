@@ -11,7 +11,7 @@ circuit_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
 fixtures_dir="$circuit_dir/fixtures"
 
 usage() {
-  printf '%s\n' "usage: $0 --xsh ABSOLUTE_XSH --xsht ABSOLUTE_XSHT --xsh-root ABSOLUTE_XSH_SOURCE --out EMPTY_OUTPUT_DIRECTORY [--default-stderr inherit|suppressed]" >&2
+  printf '%s\n' "usage: $0 --xsh ABSOLUTE_XSH --xsht ABSOLUTE_XSHT --xsh-root ABSOLUTE_XSH_SOURCE --out EMPTY_OUTPUT_DIRECTORY" >&2
   exit 64
 }
 
@@ -19,7 +19,6 @@ xsh=''
 xsht=''
 xsh_root=''
 out=''
-default_stderr='inherit'
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --xsh)
@@ -42,11 +41,6 @@ while [ "$#" -gt 0 ]; do
       out=$2
       shift 2
       ;;
-    --default-stderr)
-      [ "$#" -ge 2 ] || usage
-      default_stderr=$2
-      shift 2
-      ;;
     *) usage ;;
   esac
 done
@@ -64,13 +58,6 @@ done
   printf 'not an XSH checkout: %s\n' "$xsh_root" >&2
   exit 66
 }
-case "$default_stderr" in
-  inherit|suppressed) ;;
-  *)
-    printf 'unsupported default stderr contract: %s\n' "$default_stderr" >&2
-    exit 64
-    ;;
-esac
 for required_tool in awk cmp find git od rg sed; do
   command -v "$required_tool" >/dev/null 2>&1 || {
     printf 'missing required host tool: %s\n' "$required_tool" >&2
@@ -272,19 +259,15 @@ assert_exact 'stderr-sentinel
 assert_exact 'complete:b04' "$b04_marker"
 record B04 process_spawn detached_command_path_redirection spec_process_spawn_detached not_applicable detached_started "$artifacts/B04.parent.stdout" "$artifacts/B04.parent.stderr" redirection_ignored "$(sha256 "$b04_stdout")" redirection_ignored "$(sha256 "$b04_stderr")" detached_record_no_wait
 
-# B05: absent stderr policy inherits child stderr to the parent.
+# B05: absent stderr policy always inherits child stderr to the parent.
 b05_marker="$artifacts/B05.marker"
 run_fixture B05 "$fixtures_dir/probe-owned-default.xsh" "$xsh" "$child" b05 "$b05_marker"
 assert_exact 'stdout:b05
 owned-default:waited
 ' "$artifacts/B05.parent.stdout"
 assert_exact 'complete:b05' "$b05_marker"
-if [ "$default_stderr" = inherit ]; then
-  assert_exact 'stderr:b05
+assert_exact 'stderr:b05
 ' "$artifacts/B05.parent.stderr"
-else
-  assert_exact '' "$artifacts/B05.parent.stderr"
-fi
 record B05 spawn_command owned_command_default_stdio spec_spawn_default_inherit pass exited_0 "$artifacts/B05.parent.stdout" "$artifacts/B05.parent.stderr" inherited_parent_stdout - inherited_parent_stderr - default_inherit_waited
 
 # B06 and B07 distinguish truncate from append without changing stdout policy.
