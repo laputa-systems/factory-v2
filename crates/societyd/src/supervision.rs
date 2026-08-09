@@ -24,9 +24,9 @@ use sha2::{Digest, Sha256};
 use society_pi::{
     AbortPayload, AbortReason, AbsolutePath, BoundaryPeer, BoundarySequence, CorrelationIdentity,
     CreateSessionPayload, DisposePayload, DisposeReason, HostProcessId, InboundCommand,
-    InboundFrame, MAX_JSONL_FRAME_BYTES, ModelId, PeerError, PeerObservation, PeerPhase, Provider,
-    RuntimeIdentity, SessionIdentity, Sha256Digest, SpawnNonce, ThinkingLevel,
-    encode_inbound_jsonl,
+    InboundFrame, MAX_JSONL_FRAME_BYTES, ModelId, OutboundFrame, PeerError, PeerObservation,
+    PeerPhase, PromptPayload, Provider, RuntimeIdentity, SessionIdentity, Sha256Digest, SpawnNonce,
+    ThinkingLevel, decode_outbound_jsonl, encode_inbound_jsonl,
 };
 use thiserror::Error;
 
@@ -247,6 +247,55 @@ impl ControlWriteDeadline {
 pub enum ControlWriteProgress {
     Delivered,
     Pending,
+}
+
+/// One exact host stdout frame which the [`BoundaryPeer`] has already sealed
+/// and which the supervisor has strictly schema-decoded. The raw frame is
+/// retained here because the resident M6 bridge must attest the host's actual
+/// sequence and correlation to the kernel; [`PeerObservation`] alone
+/// intentionally omits those transport coordinates. Semantic peer validation
+/// remains an explicit closed outcome rather than an implication of this type
+/// name. This is still transient process evidence, never a new wire protocol
+/// or a durable fact by itself.
+#[derive(Clone, Debug)]
+pub struct SealedDecodedPeerFrame {
+    frame: OutboundFrame,
+    observation: Option<PeerObservation>,
+    validation: PeerFrameValidation,
+    /// The exact frame was valid and sealed, but its semantic effect fenced
+    /// the peer (for example a typed unavailable-usage observation). The
+    /// supervisor has already begun bounded containment; callers may still
+    /// persist the frame's named durable consequence before reconciling the
+    /// owned process group.
+    peer_became_fatal: bool,
+}
+
+impl SealedDecodedPeerFrame {
+    pub const fn frame(&self) -> &OutboundFrame {
+        &self.frame
+    }
+
+    pub const fn observation(&self) -> Option<&PeerObservation> {
+        self.observation.as_ref()
+    }
+
+    pub const fn validation(&self) -> &PeerFrameValidation {
+        &self.validation
+    }
+
+    pub const fn peer_became_fatal(&self) -> bool {
+        self.peer_became_fatal
+    }
+}
+
+/// The raw stdout frame had a closed schema and was sealed by `BoundaryPeer`.
+/// A semantic rejection is distinct from malformed transport: it lets the
+/// daemon preserve a named accounting-failure consequence when the M6 kernel
+/// permits one, while remaining terminally fenced at the peer.
+#[derive(Clone, Debug)]
+pub enum PeerFrameValidation {
+    Accepted,
+    Rejected(PeerError),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1175,6 +1224,58 @@ impl PiSupervisor {
         Err(SupervisionError::InvalidLifecycle)
     }
 
+    /// Stages one already-authorized Office Prompt on the same nonblocking
+    /// control path as CreateSession and Dispose.  This function has no
+    /// kernel authority: its caller must first persist the M6 prompt
+    /// authorization, then record delivery only after `Delivered`.
+    pub fn send_prompt(
+        &mut self,
+        child_process_id: &SupervisedChildId,
+        correlation_identity: CorrelationIdentity,
+        payload: PromptPayload,
+        now: MonotonicTick,
+        deadline: ControlWriteDeadline,
+    ) -> Result<ControlWriteProgress, SupervisionError> {
+        let child = self.child_mut(child_process_id)?;
+        if child.lifecycle != ChildLifecycle::SessionReady {
+            return Err(SupervisionError::InvalidLifecycle);
+        }
+        let frame = child.next_frame(correlation_identity, InboundCommand::Prompt(payload))?;
+        match child.stage_inbound(frame, PendingControlCommand::Prompt, now, deadline) {
+            Ok(progress) => Ok(progress),
+            Err(error) => {
+                child.start_automatic_boundary_containment(now)?;
+                Err(error)
+            }
+        }
+    }
+
+    /// Stages an observation-only GetState control while a session is live.
+    /// It carries no kernel authority and exists so the resident control loop
+    /// can observe a host without pretending its resulting usage snapshot is
+    /// the active Prompt's final accounting proof.
+    #[cfg(test)]
+    pub(crate) fn send_get_state(
+        &mut self,
+        child_process_id: &SupervisedChildId,
+        correlation_identity: CorrelationIdentity,
+        now: MonotonicTick,
+        deadline: ControlWriteDeadline,
+    ) -> Result<ControlWriteProgress, SupervisionError> {
+        let child = self.child_mut(child_process_id)?;
+        if child.lifecycle != ChildLifecycle::SessionReady {
+            return Err(SupervisionError::InvalidLifecycle);
+        }
+        let frame = child.next_frame(correlation_identity, InboundCommand::GetState)?;
+        match child.stage_inbound(frame, PendingControlCommand::GetState, now, deadline) {
+            Ok(progress) => Ok(progress),
+            Err(error) => {
+                child.start_automatic_boundary_containment(now)?;
+                Err(error)
+            }
+        }
+    }
+
     pub fn send_dispose(
         &mut self,
         child_process_id: &SupervisedChildId,
@@ -1252,16 +1353,15 @@ impl PiSupervisor {
         &mut self,
         child_process_id: &SupervisedChildId,
         now: MonotonicTick,
-    ) -> Result<Option<PeerObservation>, SupervisionError> {
+    ) -> Result<Option<SealedDecodedPeerFrame>, SupervisionError> {
         let child = self.child_mut(child_process_id)?;
         match child.read_one_outbound() {
             Ok(OutboundRead::NotReady) => Ok(None),
             Ok(OutboundRead::Observation(observation)) => {
-                if child.peer()?.phase() == PeerPhase::Fatal {
+                if observation.peer_became_fatal() {
                     child.start_automatic_boundary_containment(now)?;
-                    return Err(SupervisionError::Peer(PeerError::Fatal));
                 }
-                Ok(observation)
+                Ok(Some(*observation))
             }
             Err(error) => {
                 child.start_automatic_boundary_containment(now)?;
@@ -1527,7 +1627,10 @@ struct ManagedPiChild {
 
 enum OutboundRead {
     NotReady,
-    Observation(Option<PeerObservation>),
+    /// The exceptional M6 path needs the full schema-decoded frame, which can
+    /// contain raw JSON evidence. Heap-own it so the normal polling enum stays
+    /// small and does not retain that payload on every `NotReady` result.
+    Observation(Box<SealedDecodedPeerFrame>),
 }
 
 /// The Rust peer has admitted these exact bytes, but the native pipe has not
@@ -1552,6 +1655,9 @@ struct PendingDirectChildReap {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PendingControlCommand {
     CreateSession,
+    Prompt,
+    #[cfg(test)]
+    GetState,
     Abort,
     Dispose,
 }
@@ -1911,10 +2017,31 @@ impl ManagedPiChild {
             }
             StreamRead::Frame(record) => record,
         };
-        match self.peer_mut()?.observe_outbound_jsonl_bytes(&record) {
-            Ok(observation) => Ok(OutboundRead::Observation(observation)),
-            Err(error) => Err(error.into()),
-        }
+        // `BoundaryPeer` seals and validates the exact bytes *before* the
+        // paired decode below. In particular, invalid UTF-8 must still be
+        // sealed and terminally fenced by the peer rather than escaping
+        // through a lossy or pre-validation parser path.
+        let observation = self.peer_mut()?.observe_outbound_jsonl_bytes(&record);
+        // This second strict decode exposes the same already-validated frame
+        // to the daemon so M6 can attest exact sequence, correlation, full
+        // cumulative totals, and raw binary64 cost. It never replaces the
+        // peer's raw sealing/validation authority above.
+        let record_text = std::str::from_utf8(&record)
+            .map_err(|_| PeerError::Protocol(society_pi::ProtocolError::InvalidUtf8))?;
+        let frame = decode_outbound_jsonl(record_text)?;
+        let peer_became_fatal = self.peer()?.phase() == PeerPhase::Fatal;
+        let (observation, validation) = match observation {
+            Ok(observation) => (observation, PeerFrameValidation::Accepted),
+            Err(error) => (None, PeerFrameValidation::Rejected(error)),
+        };
+        Ok(OutboundRead::Observation(Box::new(
+            SealedDecodedPeerFrame {
+                frame,
+                observation,
+                validation,
+                peer_became_fatal,
+            },
+        )))
     }
 
     fn start_automatic_boundary_containment(

@@ -355,8 +355,9 @@ mod tests {
         fs,
         io::Cursor,
         os::unix::fs::{PermissionsExt, symlink},
-        path::PathBuf,
-        time::{SystemTime, UNIX_EPOCH},
+        path::{Path, PathBuf},
+        thread,
+        time::{Duration, SystemTime, UNIX_EPOCH},
     };
 
     use society_content::{ContentObjectStore, ContentSealLimit, ContentStoreRoot};
@@ -382,6 +383,24 @@ mod tests {
 
     fn limit() -> ContentSealLimit {
         ContentSealLimit::new(1024 * 1024).unwrap()
+    }
+
+    fn bind_after_parallel_exec_window(parent: &Path) -> crate::Daemon {
+        // Other native-supervision tests fork in this same test process. A
+        // child between fork and exec briefly carries every close-on-exec
+        // descriptor, including this just-released flock. Bound the retry so
+        // a real leaked lock still fails rather than weakening the ownership
+        // assertion this recovery test relies on.
+        for attempt in 0..100 {
+            match crate::Daemon::bind(crate::DaemonConfig::new(parent)) {
+                Ok(daemon) => return daemon,
+                Err(crate::DaemonError::AlreadyRunning) if attempt < 99 => {
+                    thread::sleep(Duration::from_millis(1));
+                }
+                Err(error) => panic!("resident rebind failed after bounded retry: {error}"),
+            }
+        }
+        unreachable!("the bounded retry loop either returns or panics")
     }
 
     fn harness(
@@ -475,7 +494,7 @@ mod tests {
 
         let second_bytes = b"must not cross restart recovery fence";
         let second_operation = operation("recovery-second", second_bytes);
-        let mut restarted = crate::Daemon::bind(crate::DaemonConfig::new(&parent)).unwrap();
+        let mut restarted = bind_after_parallel_exec_window(&parent);
         assert_eq!(restarted.startup_mode(), crate::StartupMode::RecoveryFenced);
         assert!(matches!(
             restarted.seal_content_object(&second_operation, second_bytes),

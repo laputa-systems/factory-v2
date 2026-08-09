@@ -32,6 +32,19 @@ if (sessionIdentity.includes("m5-never-session-ready-ignore-term")) {
 	const keepAlive = setInterval(() => {}, 60_000);
 	process.once("exit", () => clearInterval(keepAlive));
 }
+if (sessionIdentity.includes("m6-usage-unavailable-pre-agent-settled-ignore-term")) {
+	// The paired M6 regression needs an owned live process through both
+	// automatic-containment deadlines. EOF must not turn it into an
+	// absence-versus-signal race before the supervisor can record/reap it.
+	const keepAlive = setInterval(() => {}, 60_000);
+	process.once("exit", () => clearInterval(keepAlive));
+}
+if (sessionIdentity.includes("m6-protocol-failed-final-known-ignore-term")) {
+	// Keep this protocol-failed terminal fixture alive long enough to prove the
+	// driver contains and reaps it, rather than receiving a voluntary EOF exit.
+	const keepAlive = setInterval(() => {}, 60_000);
+	process.once("exit", () => clearInterval(keepAlive));
+}
 if (sessionIdentity.includes("never-adapter")) {
 	const keepAlive = setInterval(() => {}, 60_000);
 	process.once("exit", () => clearInterval(keepAlive));
@@ -41,6 +54,8 @@ if (sessionIdentity.includes("never-adapter")) {
 let outboundSequence = 1;
 let createPayload;
 let disposed = false;
+let promptCount = 0;
+let pendingPromptTerminal;
 
 emit({ event: "AdapterReady", pid: process.pid, spawnNonce, runtime });
 if (sessionIdentity.includes("never-read-stdin")) {
@@ -186,6 +201,120 @@ function accept(frame) {
 		case "Abort":
 			accepted("Abort", frame.correlationIdentity);
 			return;
+		case "GetState":
+			accepted("GetState", frame.correlationIdentity);
+			if (pendingPromptTerminal) {
+				emit({
+					event: "UsageSnapshot",
+					correlationIdentity: frame.correlationIdentity,
+					usage: knownUsage(0),
+				});
+				const pendingTerminal = pendingPromptTerminal;
+				pendingPromptTerminal = undefined;
+				pendingTerminal();
+			}
+			return;
+		case "Prompt": {
+			if (frame.payload.purpose !== "OfficeTurn") {
+				throw new Error("provider-free M6 fixture accepts OfficeTurn Prompt only");
+			}
+			accepted("Prompt", frame.correlationIdentity);
+			promptCount += 1;
+			if (sessionIdentity.includes("m6-exit-after-prompt-accepted")) {
+				setImmediate(() => process.exit(0));
+				return;
+			}
+			if (sessionIdentity.includes("m6-usage-unavailable-pre-agent-settled")) {
+				// Pi may fail to produce cumulative accounting before it has an
+				// assistant lifecycle outcome. This remains an exact Prompt-correlated
+				// host fact, not a reason to synthesize `agent_settled` or `Settled`.
+				emit({
+					event: "UsageSnapshot",
+					correlationIdentity: frame.correlationIdentity,
+					usage: { kind: "Unavailable", reason: "invalid_sdk_usage" },
+				});
+				return;
+			}
+			const stopReason = sessionIdentity.includes("m6-prompt-error") ? "error" : "stop";
+			emit({
+				event: "AgentEvent",
+				correlationIdentity: frame.correlationIdentity,
+				agentEvent: { type: "agent_start" },
+			});
+			emit({
+				event: "AgentEvent",
+				correlationIdentity: frame.correlationIdentity,
+				agentEvent: {
+					type: "agent_end",
+					messages: [{ role: "assistant", stopReason }],
+					willRetry: false,
+				},
+			});
+			if (sessionIdentity.includes("m6-known-before-and-final-same")) {
+				// The first cumulative snapshot is useful observability but cannot
+				// certify the turn. Pi then forces the exact same totals after
+				// AgentSettled, which the kernel must retain as final evidence.
+				emit({
+					event: "UsageSnapshot",
+					correlationIdentity: frame.correlationIdentity,
+					usage: knownUsage(promptCount),
+				});
+			}
+			emit({
+				event: "AgentEvent",
+				correlationIdentity: frame.correlationIdentity,
+				agentEvent: { type: "agent_settled" },
+			});
+			if (sessionIdentity.includes("m6-usage-unavailable")) {
+				emit({
+					event: "UsageSnapshot",
+					correlationIdentity: frame.correlationIdentity,
+					usage: { kind: "Unavailable", reason: "invalid_sdk_usage" },
+				});
+				return;
+			}
+			if (sessionIdentity.includes("m6-missing-final-usage")) {
+				// This exact frame is schema-valid but deliberately violates the
+				// peer's final-accounting invariant. The Rust driver must preserve
+				// this observed Settled sequence as Unknown, not invent Usage.
+				emit({
+					event: "Settled",
+					correlationIdentity: frame.correlationIdentity,
+					classification: stopReason === "stop" ? "completed" : "error",
+					finalAssistantOutcome: {
+						kind: "Observed",
+						stopReason,
+					},
+				});
+				return;
+			}
+			const emitPromptTerminal = () => {
+				emit({
+					event: "UsageSnapshot",
+					correlationIdentity: frame.correlationIdentity,
+					usage: knownUsage(promptCount),
+				});
+				const protocolFailed = sessionIdentity.includes("m6-protocol-failed-final-known");
+				emit({
+					event: "Settled",
+					correlationIdentity: frame.correlationIdentity,
+					classification: protocolFailed
+						? "protocol_failed"
+						: stopReason === "stop"
+							? "completed"
+							: "error",
+					finalAssistantOutcome: protocolFailed
+						? { kind: "Unavailable", reason: "missing_final_assistant_outcome" }
+						: { kind: "Observed", stopReason },
+				});
+			};
+			if (sessionIdentity.includes("m6-control-interleave")) {
+				pendingPromptTerminal = emitPromptTerminal;
+			} else {
+				emitPromptTerminal();
+			}
+			return;
+		}
 		case "Dispose":
 			accepted("Dispose", frame.correlationIdentity);
 			emit({
@@ -223,6 +352,30 @@ function accept(frame) {
 		default:
 			throw new Error(`unexpected provider-free command ${frame.command}`);
 	}
+}
+
+function knownUsage(turn) {
+	// The first cumulative snapshot ceilings to 4 micro-USD; the second uses
+	// 8.5 micro-USD, whose exact binary64 ceiling is 9. This proves a 5-micro
+	// delta without any provider call or a JS decimal-display round trip.
+	const cost = turn === 0 ? 0 : turn === 1 ? 0.000004 : 0.0000085;
+	const bytes = Buffer.alloc(8);
+	bytes.writeDoubleBE(cost);
+	return {
+		kind: "Known",
+		totals: {
+			inputTokens: turn,
+			outputTokens: turn,
+			cacheReadTokens: turn,
+			cacheWriteTokens: turn,
+			totalTokens: 4 * turn,
+			providerCost: {
+				encoding: "ieee754_binary64_be_hex_v1",
+				binary64BigEndianHex: bytes.toString("hex"),
+				rounding: "ceil_to_micro_usd",
+			},
+		},
+	};
 }
 
 function toolsForProfile(profile) {

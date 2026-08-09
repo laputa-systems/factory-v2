@@ -11,17 +11,23 @@
 use society_kernel::{
     AdmissionGeneration, BudgetReservationId, CanonicalWorkspacePath, Capability, ChildProcessId,
     ChildStreamKind, ChildStreamSealCompleteness, CommandBody, CommandDisposition, CommandId,
-    CommandRequest, DirectChildWaitStatus, EventBody, ExecutionProfileId, ExpectedGeneration,
-    GrandArchitectOfficeSessionId, KernelStore, NativeChildPid,
-    NativeWorkspaceId as KernelWorkspaceId, OwnedProcessGroupId as KernelProcessGroupId,
-    PiBoundarySessionIdentity, PiChildOwner, PiChildSpawnAdmissionId, PiCorrelationIdentity,
-    PrincipalId, ProcessExitCode, ProcessGroupLiveness as KernelLiveness, ProcessSignalNumber,
+    CommandRequest, ContentObjectId, DirectChildWaitStatus, EventBody, EventId, ExecutionProfileId,
+    ExpectedGeneration, GrandArchitectOfficeSessionId, KernelStore, NativeChildPid,
+    NativeWorkspaceId as KernelWorkspaceId, OfficeTurnId,
+    OwnedProcessGroupId as KernelProcessGroupId, PiBoundarySessionIdentity, PiChildOwner,
+    PiChildSpawnAdmissionId, PiCorrelationIdentity, PiCumulativeUsage,
+    PiOfficeTurnAssistantOutcome, PiOfficeTurnDisposition, PiOfficeTurnTranscriptDisposition,
+    PiOfficeTurnUsageFailure, PiOfficeTurnUsageUnavailableReason, PiOfficeTurnUsageUnknownReason,
+    PiProtocolSequence, PiTokenCount, PrincipalId, ProcessExitCode,
+    ProcessGroupLiveness as KernelLiveness, ProcessSignalNumber, ProviderCostBinary64,
     Sha256Digest as KernelDigest, SpawnNonce as KernelSpawnNonce, SupervisedChildIdentity,
     SupervisorEpochId, SupervisorEpochIdentity,
 };
 use society_pi::{
-    BoundarySequence, CorrelationIdentity, InboundCommand, InboundFrame, SessionIdentity,
-    SessionKind,
+    AssistantStopReason, BoundarySequence, CommandName, CommandResult, CorrelationIdentity,
+    FinalAssistantOutcome, InboundCommand, InboundFrame, OutboundEvent, ProjectedAgentEvent,
+    PromptPayload, PromptPurpose, SessionIdentity, SessionKind, SettledClassification,
+    TurnDisposition, UsageObservation, UsageUnavailableReason,
 };
 use thiserror::Error;
 
@@ -29,13 +35,15 @@ use crate::{
     content::{ContentSealOperationId, ContentSealingAuthority, ContentSealingError},
     supervision::{
         ControlWriteDeadline, ControlWriteProgress, HandshakeDeadline, InertChildFacts,
-        MonotonicTick, PiSpawnRequest, PiSupervisor, PostSpawnSetupFailure, PreCreateAdmissionGate,
-        ReapStatus, SignalAction, SignalDelivery, SupervisedChildId, SupervisionError,
-        SupervisionReceipt, TransientByteCount, TransientRetention, TransientStreamCapture,
+        MonotonicTick, PeerFrameValidation, PiSpawnRequest, PiSupervisor, PostSpawnSetupFailure,
+        PreCreateAdmissionGate, ReapStatus, SealedDecodedPeerFrame, SignalAction, SignalDelivery,
+        SupervisedChildId, SupervisionError, SupervisionReceipt, TransientByteCount,
+        TransientRetention, TransientStreamCapture,
     },
 };
 
 const COMMAND_PREFIX: &str = "pi-execution-v1/";
+const OFFICE_TURN_COMMAND_PREFIX: &str = "pi-office-turn-v1/";
 const MAX_OPERATION_LABEL_BYTES: usize = 36;
 
 #[cfg(feature = "test-support")]
@@ -131,6 +139,60 @@ impl std::fmt::Display for PiExecutionCommand {
     }
 }
 
+/// Retry-stable command slots for one already-opened Office turn.  A session
+/// lifecycle operation and an Office turn are intentionally distinct command
+/// domains: a second turn cannot reuse an M5 child-receipt command identity.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PiOfficeTurnCommand {
+    AuthorizePrompt,
+    RecordPromptDelivery,
+    RecordPromptAccepted,
+    RecordKnownUsage { sequence: PiProtocolSequence },
+    RecordUsageFailure { sequence: PiProtocolSequence },
+    RecordTerminal,
+    Settle,
+}
+
+impl std::fmt::Display for PiOfficeTurnCommand {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AuthorizePrompt => formatter.write_str("authorize-prompt"),
+            Self::RecordPromptDelivery => formatter.write_str("record-prompt-delivery"),
+            Self::RecordPromptAccepted => formatter.write_str("record-prompt-accepted"),
+            Self::RecordKnownUsage { sequence } => {
+                write!(formatter, "record-known-usage-{}", sequence.value())
+            }
+            Self::RecordUsageFailure { sequence } => {
+                write!(formatter, "record-usage-failure-{}", sequence.value())
+            }
+            Self::RecordTerminal => formatter.write_str("record-terminal"),
+            Self::Settle => formatter.write_str("settle"),
+        }
+    }
+}
+
+/// Opaque daemon-internal identity for the M6 facts of one Office turn. It
+/// derives every KERNEL-service command identity itself, so a caller cannot
+/// splice a prompt authorization from one turn into another turn's terminal
+/// or settlement command.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct PiOfficeTurnOperationId(String);
+
+impl PiOfficeTurnOperationId {
+    pub(crate) fn parse(value: impl Into<String>) -> Result<Self, PiExecutionError> {
+        let value = value.into();
+        // Keep exactly the established daemon operation spelling rather than
+        // introducing a second ad-hoc identifier grammar.
+        let _ = PiExecutionOperationId::parse(value.clone())?;
+        Ok(Self(value))
+    }
+
+    fn command_id(&self, command: PiOfficeTurnCommand) -> Result<CommandId, PiExecutionError> {
+        CommandId::parse(format!("{OFFICE_TURN_COMMAND_PREFIX}{}/{command}", self.0))
+            .map_err(|_| PiExecutionError::InvalidOperationIdentity)
+    }
+}
+
 const fn stream_label(stream: ChildStreamKind) -> &'static str {
     match stream {
         ChildStreamKind::AdmittedControl => "admitted-control",
@@ -181,6 +243,16 @@ enum OfficePiExecutionPhase {
     CreateDelivered,
     SessionReadyRecorded,
     OfficeReadyRecorded,
+    /// M6 prompt authorization exists, but its exact JSONL frame has not yet
+    /// completed a physical pipe write. No other control may overtake it.
+    OfficeTurnPromptDeliveryPending,
+    /// The physical Prompt was delivered and the peer may now produce the
+    /// accepted-result, usage, and terminal evidence chain.
+    OfficeTurnPromptActive,
+    /// A peer-valid non-ready outcome or accounting freeze leaves the Office
+    /// turn durable and blocks further narrative mutation until a later
+    /// dedicated closure/recovery transition exists.
+    OfficeTurnTerminalBlocked,
     DisposeDeliveryPending,
     DisposeRequested,
     Disposed,
@@ -208,6 +280,75 @@ pub(crate) struct OfficePiExecutionChild {
     create_correlation: PiCorrelationIdentity,
     create_request_digest: KernelDigest,
     phase: OfficePiExecutionPhase,
+}
+
+/// Exact byte-bearing Office prompt which was already physically sealed and
+/// registered as a global `ContentObject`. The rendering is still supplied to
+/// the host, but its digest cannot drift from the kernel authorization.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct SealedOfficePrompt {
+    text: String,
+    digest: KernelDigest,
+}
+
+impl SealedOfficePrompt {
+    pub(crate) fn new(text: String, digest: KernelDigest) -> Result<Self, PiExecutionError> {
+        if text.is_empty() || KernelDigest::of_bytes(text.as_bytes()) != digest {
+            return Err(PiExecutionError::PromptContentDigestMismatch);
+        }
+        Ok(Self { text, digest })
+    }
+}
+
+/// Inputs already selected by trusted Office scheduling. `societyd` does not
+/// discover prompt bytes, frontier, correlation, or content identity; it
+/// binds this exact pre-sealed prompt to the live session's M6 authority.
+#[derive(Clone, Debug)]
+pub(crate) struct OfficePiTurnStart {
+    pub(crate) operation: PiOfficeTurnOperationId,
+    pub(crate) office_turn_id: OfficeTurnId,
+    pub(crate) correlation_identity: PiCorrelationIdentity,
+    pub(crate) prompt_content_object_id: ContentObjectId,
+    pub(crate) prompt: SealedOfficePrompt,
+    pub(crate) frontier_event_id: EventId,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OfficePiTurnPhase {
+    PromptDeliveryPending,
+    AwaitingPromptAcceptance,
+    AwaitingTerminalEvidence,
+    UsageFrozen,
+    TerminalRecorded,
+    Settled,
+}
+
+/// Daemon-private custody for exactly one M6 Office Prompt. It records only
+/// host facts which the `BoundaryPeer` accepted from raw stdout; it does not
+/// turn narrative output into a semantic submission.
+#[derive(Clone, Debug)]
+pub(crate) struct OfficePiTurn {
+    operation: PiOfficeTurnOperationId,
+    office_turn_id: OfficeTurnId,
+    correlation_identity: PiCorrelationIdentity,
+    prompt_digest: KernelDigest,
+    phase: OfficePiTurnPhase,
+    accepted_sequence: Option<PiProtocolSequence>,
+    agent_settled_sequence: Option<PiProtocolSequence>,
+    final_accounting_sequence: Option<PiProtocolSequence>,
+}
+
+/// The one-frame-at-a-time resident result of projecting peer evidence. It is
+/// intentionally not a semantic submission or generic event log; its arms
+/// correspond only to the M6 kernel facts this bridge may durably attest.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum OfficePiTurnOutput {
+    ControlInterleaving,
+    PromptAccepted,
+    KnownUsageRecorded,
+    UsageFrozen,
+    TerminalRecordedNonReady,
+    SettledReady,
 }
 
 /// A native child exists, but the kernel rejected (or could not persist) its
@@ -285,6 +426,11 @@ impl OfficePiExecutionChild {
             OfficePiExecutionPhase::CreateDelivered => "create_delivered",
             OfficePiExecutionPhase::SessionReadyRecorded => "session_ready_recorded",
             OfficePiExecutionPhase::OfficeReadyRecorded => "office_ready_recorded",
+            OfficePiExecutionPhase::OfficeTurnPromptDeliveryPending => {
+                "office_turn_prompt_delivery_pending"
+            }
+            OfficePiExecutionPhase::OfficeTurnPromptActive => "office_turn_prompt_active",
+            OfficePiExecutionPhase::OfficeTurnTerminalBlocked => "office_turn_terminal_blocked",
             OfficePiExecutionPhase::DisposeDeliveryPending => "dispose_delivery_pending",
             OfficePiExecutionPhase::DisposeRequested => "dispose_requested",
             OfficePiExecutionPhase::Disposed => "disposed",
@@ -371,6 +517,19 @@ impl PiExecutionDriver {
     ) -> Result<(), SupervisionError> {
         self.supervisor
             .force_next_control_write_pending_for_test(&child.supervised_child_id)
+    }
+
+    #[cfg(test)]
+    fn send_get_state_for_test(
+        &mut self,
+        child: &OfficePiExecutionChild,
+        correlation: CorrelationIdentity,
+        now: MonotonicTick,
+        deadline: ControlWriteDeadline,
+    ) -> Result<ControlWriteProgress, PiExecutionError> {
+        self.supervisor
+            .send_get_state(&child.supervised_child_id, correlation, now, deadline)
+            .map_err(PiExecutionError::Supervision)
     }
 
     #[cfg(feature = "test-support")]
@@ -856,8 +1015,160 @@ impl PiExecutionDriver {
         Ok(true)
     }
 
-    /// This bounded bridge performs no Prompt.  It disposes the provider-free
-    /// session and then leaves reaping/sealing to the caller's nonblocking
+    /// Persists the exact M6 prompt authorization before the first Prompt
+    /// byte can enter the host pipe. The content object/digest relation is
+    /// checked by the kernel and the rendering/digest relation is checked
+    /// again locally, so a caller cannot recombine registered bytes with a
+    /// different native JSONL prompt.
+    pub(crate) fn authorize_and_begin_office_turn_prompt(
+        &mut self,
+        store: &mut KernelStore,
+        child: &mut OfficePiExecutionChild,
+        start: OfficePiTurnStart,
+        now: MonotonicTick,
+        deadline: ControlWriteDeadline,
+    ) -> Result<(OfficePiTurn, ControlWriteProgress), PiExecutionError> {
+        if child.phase != OfficePiExecutionPhase::OfficeReadyRecorded {
+            return Err(PiExecutionError::InvalidLifecycle);
+        }
+        if start.prompt.digest != KernelDigest::of_bytes(start.prompt.text.as_bytes()) {
+            return Err(PiExecutionError::PromptContentDigestMismatch);
+        }
+        let boundary_correlation = CorrelationIdentity::parse(start.correlation_identity.as_str())
+            .map_err(|_| PiExecutionError::IdentityConversion)?;
+        let authorized = execute_office_turn_command(
+            store,
+            &start.operation,
+            PiOfficeTurnCommand::AuthorizePrompt,
+            Capability::AuthorizePiOfficeTurnPrompt,
+            ExpectedGeneration::Exact(child.expected_generation),
+            CommandBody::AuthorizePiOfficeTurnPrompt {
+                office_turn_id: start.office_turn_id,
+                correlation_identity: start.correlation_identity.clone(),
+                prompt_content_object_id: start.prompt_content_object_id,
+                prompt_digest: start.prompt.digest,
+                frontier_event_id: start.frontier_event_id,
+            },
+        )?;
+        match authorized {
+            EventBody::PiOfficeTurnPromptAuthorized {
+                office_turn_id,
+                child_process_id,
+                correlation_identity,
+                ..
+            } if office_turn_id == start.office_turn_id
+                && child_process_id == child.child_process_id
+                && correlation_identity == start.correlation_identity => {}
+            _ => {
+                self.begin_registered_boundary_containment(child, now);
+                return Err(PiExecutionError::UnexpectedKernelEvent);
+            }
+        }
+        let mut turn = OfficePiTurn {
+            operation: start.operation,
+            office_turn_id: start.office_turn_id,
+            correlation_identity: start.correlation_identity,
+            prompt_digest: start.prompt.digest,
+            phase: OfficePiTurnPhase::PromptDeliveryPending,
+            accepted_sequence: None,
+            agent_settled_sequence: None,
+            final_accounting_sequence: None,
+        };
+        let progress = match self.supervisor.send_prompt(
+            &child.supervised_child_id,
+            boundary_correlation,
+            PromptPayload {
+                purpose: PromptPurpose::OfficeTurn,
+                text: start.prompt.text,
+            },
+            now,
+            deadline,
+        ) {
+            Ok(progress) => progress,
+            Err(error) => {
+                self.begin_registered_boundary_containment(child, now);
+                return Err(PiExecutionError::Supervision(error));
+            }
+        };
+        child.phase = match progress {
+            ControlWriteProgress::Pending => {
+                OfficePiExecutionPhase::OfficeTurnPromptDeliveryPending
+            }
+            ControlWriteProgress::Delivered => OfficePiExecutionPhase::OfficeTurnPromptActive,
+        };
+        if progress == ControlWriteProgress::Delivered {
+            self.record_office_turn_prompt_delivery(store, child, &mut turn, now)?;
+        }
+        Ok((turn, progress))
+    }
+
+    /// Drives a Prompt which was logically admitted and authorized but whose
+    /// exact JSONL suffix has not yet drained to the host. No later control
+    /// can overtake this frame in `PiSupervisor`.
+    pub(crate) fn drive_office_turn_prompt_delivery(
+        &mut self,
+        store: &mut KernelStore,
+        child: &mut OfficePiExecutionChild,
+        turn: &mut OfficePiTurn,
+        now: MonotonicTick,
+    ) -> Result<ControlWriteProgress, PiExecutionError> {
+        if child.phase != OfficePiExecutionPhase::OfficeTurnPromptDeliveryPending
+            || turn.phase != OfficePiTurnPhase::PromptDeliveryPending
+        {
+            return Err(PiExecutionError::InvalidLifecycle);
+        }
+        let progress = match self
+            .supervisor
+            .drive_control_write(&child.supervised_child_id, now)
+        {
+            Ok(progress) => progress,
+            Err(error) => {
+                self.begin_registered_boundary_containment(child, now);
+                return Err(PiExecutionError::Supervision(error));
+            }
+        };
+        if progress == ControlWriteProgress::Delivered {
+            child.phase = OfficePiExecutionPhase::OfficeTurnPromptActive;
+            self.record_office_turn_prompt_delivery(store, child, turn, now)?;
+        }
+        Ok(progress)
+    }
+
+    /// Projects exactly one peer-sealed, schema-decoded stdout frame into the
+    /// closed M6 receipt chain. Raw stdout remains transient sealed evidence
+    /// in the supervisor; this method names only accepted Prompt, cumulative
+    /// usage, typed accounting inability, and final terminal facts.
+    pub(crate) fn observe_office_turn_output(
+        &mut self,
+        store: &mut KernelStore,
+        child: &mut OfficePiExecutionChild,
+        turn: &mut OfficePiTurn,
+        now: MonotonicTick,
+    ) -> Result<Option<OfficePiTurnOutput>, PiExecutionError> {
+        if !matches!(
+            child.phase,
+            OfficePiExecutionPhase::OfficeTurnPromptActive
+                | OfficePiExecutionPhase::OfficeTurnTerminalBlocked
+        ) {
+            return Err(PiExecutionError::InvalidLifecycle);
+        }
+        let output = match self
+            .supervisor
+            .observe_live_output_at(&child.supervised_child_id, now)
+        {
+            Ok(None) => return Ok(None),
+            Ok(Some(output)) => output,
+            Err(error) => {
+                self.begin_registered_boundary_containment(child, now);
+                return Err(PiExecutionError::Supervision(error));
+            }
+        };
+        self.project_office_turn_output(store, child, turn, output, now)
+            .map(Some)
+    }
+
+    /// This bounded bridge disposes only a session with no active M6 Office
+    /// turn, then leaves reaping/sealing to the caller's nonblocking
     /// control-loop ticks.
     pub(crate) fn begin_dispose(
         &mut self,
@@ -1053,6 +1364,473 @@ impl PiExecutionDriver {
             .ok_or(PiExecutionError::ReapReceiptLost)?;
         child.phase = OfficePiExecutionPhase::Reconciled;
         Ok(true)
+    }
+
+    fn record_office_turn_prompt_delivery(
+        &mut self,
+        store: &mut KernelStore,
+        child: &mut OfficePiExecutionChild,
+        turn: &mut OfficePiTurn,
+        now: MonotonicTick,
+    ) -> Result<(), PiExecutionError> {
+        let event = execute_office_turn_command(
+            store,
+            &turn.operation,
+            PiOfficeTurnCommand::RecordPromptDelivery,
+            Capability::RecordPiOfficeTurnPromptDelivery,
+            ExpectedGeneration::Exact(child.expected_generation),
+            CommandBody::RecordPiOfficeTurnPromptDelivery {
+                office_turn_id: turn.office_turn_id,
+                correlation_identity: turn.correlation_identity.clone(),
+                prompt_digest: turn.prompt_digest,
+            },
+        );
+        match event {
+            Ok(EventBody::PiOfficeTurnPromptDelivered {
+                office_turn_id,
+                correlation_identity,
+            }) if office_turn_id == turn.office_turn_id
+                && correlation_identity == turn.correlation_identity =>
+            {
+                turn.phase = OfficePiTurnPhase::AwaitingPromptAcceptance;
+                Ok(())
+            }
+            Ok(_) => {
+                self.begin_registered_boundary_containment(child, now);
+                Err(PiExecutionError::UnexpectedKernelEvent)
+            }
+            Err(error) => {
+                self.begin_registered_boundary_containment(child, now);
+                Err(error)
+            }
+        }
+    }
+
+    fn project_office_turn_output(
+        &mut self,
+        store: &mut KernelStore,
+        child: &mut OfficePiExecutionChild,
+        turn: &mut OfficePiTurn,
+        output: SealedDecodedPeerFrame,
+        now: MonotonicTick,
+    ) -> Result<OfficePiTurnOutput, PiExecutionError> {
+        let sequence = kernel_protocol_sequence(output.frame().sequence)?;
+        let expected_correlation = CorrelationIdentity::parse(turn.correlation_identity.as_str())
+            .map_err(|_| PiExecutionError::IdentityConversion)?;
+        if output.frame().correlation_identity.as_ref() != Some(&expected_correlation) {
+            // A peer-valid control result/snapshot may interleave after
+            // `agent_settled`. It remains sealed raw stream evidence but it
+            // cannot replace this Prompt's final accounting fact.
+            if output.peer_became_fatal() {
+                self.begin_registered_boundary_containment(child, now);
+            }
+            return Ok(OfficePiTurnOutput::ControlInterleaving);
+        }
+
+        if let PeerFrameValidation::Rejected(error) = output.validation() {
+            // A schema-valid `Settled` frame with no persisted final usage is
+            // still an exact host sequence. Preserve the closed Unknown
+            // accounting outcome at that observed frame rather than inventing
+            // an unobserved successor sequence or treating cost as zero. A
+            // peer-rejected terminal after an existing final Known snapshot
+            // instead remains a protocol containment fact; it cannot be
+            // rewritten as an accounting failure.
+            if matches!(
+                (&output.frame().event, error),
+                (
+                    OutboundEvent::Settled { .. },
+                    society_pi::PeerError::MissingTerminalEvidence
+                )
+            ) && turn.final_accounting_sequence.is_none()
+            {
+                return self.record_office_turn_usage_failure(
+                    store,
+                    child,
+                    turn,
+                    sequence,
+                    PiOfficeTurnUsageFailure::Unknown(
+                        PiOfficeTurnUsageUnknownReason::MissingFinalUsageSnapshot,
+                    ),
+                    now,
+                );
+            }
+            self.begin_registered_boundary_containment(child, now);
+            return Err(PiExecutionError::PeerFatalWithoutAccountingFact);
+        }
+
+        match (&output.frame().event, output.observation()) {
+            (
+                OutboundEvent::CommandResult(CommandResult::Accepted {
+                    command: CommandName::Prompt,
+                    ..
+                }),
+                None,
+            ) => {
+                if turn.phase != OfficePiTurnPhase::AwaitingPromptAcceptance {
+                    self.begin_registered_boundary_containment(child, now);
+                    return Err(PiExecutionError::PromptEvidenceOrder);
+                }
+                let event = execute_office_turn_command(
+                    store,
+                    &turn.operation,
+                    PiOfficeTurnCommand::RecordPromptAccepted,
+                    Capability::RecordPiOfficeTurnPromptAccepted,
+                    ExpectedGeneration::Exact(child.expected_generation),
+                    CommandBody::RecordPiOfficeTurnPromptAccepted {
+                        office_turn_id: turn.office_turn_id,
+                        correlation_identity: turn.correlation_identity.clone(),
+                        command_result_sequence: sequence,
+                    },
+                );
+                match event {
+                    Ok(EventBody::PiOfficeTurnPromptAccepted {
+                        office_turn_id,
+                        correlation_identity,
+                        command_result_sequence,
+                    }) if office_turn_id == turn.office_turn_id
+                        && correlation_identity == turn.correlation_identity
+                        && command_result_sequence == sequence =>
+                    {
+                        turn.accepted_sequence = Some(sequence);
+                        turn.phase = OfficePiTurnPhase::AwaitingTerminalEvidence;
+                        Ok(OfficePiTurnOutput::PromptAccepted)
+                    }
+                    Ok(_) => {
+                        self.begin_registered_boundary_containment(child, now);
+                        Err(PiExecutionError::UnexpectedKernelEvent)
+                    }
+                    Err(error) => {
+                        self.begin_registered_boundary_containment(child, now);
+                        Err(error)
+                    }
+                }
+            }
+            (
+                OutboundEvent::CommandResult(CommandResult::Rejected {
+                    command: CommandName::Prompt,
+                    ..
+                }),
+                None,
+            ) => {
+                self.begin_registered_boundary_containment(child, now);
+                Err(PiExecutionError::PromptRejectedByHost)
+            }
+            (
+                OutboundEvent::AgentEvent {
+                    agent_event: ProjectedAgentEvent::AgentSettled,
+                },
+                None,
+            ) => {
+                if turn.phase != OfficePiTurnPhase::AwaitingTerminalEvidence
+                    || turn
+                        .accepted_sequence
+                        .is_none_or(|accepted| sequence <= accepted)
+                {
+                    self.begin_registered_boundary_containment(child, now);
+                    return Err(PiExecutionError::PromptEvidenceOrder);
+                }
+                turn.agent_settled_sequence = Some(sequence);
+                Ok(OfficePiTurnOutput::ControlInterleaving)
+            }
+            (
+                OutboundEvent::UsageSnapshot {
+                    usage: UsageObservation::Known(totals),
+                },
+                // A known cumulative snapshot remains exact Prompt evidence
+                // even when the peer has no newly normalized delta to emit.
+                // The M6 kernel owns the independent nondecreasing cumulative
+                // check and needs the forced post-AgentSettled snapshot to
+                // prove this turn's final accounting sequence.
+                _,
+            ) => {
+                if turn
+                    .accepted_sequence
+                    .is_none_or(|accepted| sequence <= accepted)
+                {
+                    self.begin_registered_boundary_containment(child, now);
+                    return Err(PiExecutionError::PromptEvidenceOrder);
+                }
+                let usage = kernel_cumulative_usage(totals)?;
+                let event = execute_office_turn_command(
+                    store,
+                    &turn.operation,
+                    PiOfficeTurnCommand::RecordKnownUsage { sequence },
+                    Capability::RecordPiOfficeTurnUsage,
+                    ExpectedGeneration::Exact(child.expected_generation),
+                    CommandBody::RecordPiOfficeTurnUsage {
+                        office_turn_id: turn.office_turn_id,
+                        correlation_identity: turn.correlation_identity.clone(),
+                        protocol_sequence: sequence,
+                        usage,
+                    },
+                );
+                match event {
+                    Ok(EventBody::PiOfficeTurnUsageRecorded {
+                        office_turn_id,
+                        protocol_sequence,
+                        ..
+                    }) if office_turn_id == turn.office_turn_id
+                        && protocol_sequence == sequence =>
+                    {
+                        if turn
+                            .agent_settled_sequence
+                            .is_some_and(|settled| sequence > settled)
+                        {
+                            turn.final_accounting_sequence = Some(sequence);
+                        }
+                        Ok(OfficePiTurnOutput::KnownUsageRecorded)
+                    }
+                    Ok(_) => {
+                        self.begin_registered_boundary_containment(child, now);
+                        Err(PiExecutionError::UnexpectedKernelEvent)
+                    }
+                    Err(error) => {
+                        self.begin_registered_boundary_containment(child, now);
+                        Err(error)
+                    }
+                }
+            }
+            (
+                OutboundEvent::UsageSnapshot {
+                    usage: UsageObservation::Unavailable(reason),
+                },
+                Some(society_pi::PeerObservation::UsageUnavailable { reason: observed }),
+            ) if reason == observed => {
+                if turn
+                    .accepted_sequence
+                    .is_none_or(|accepted| sequence <= accepted)
+                {
+                    self.begin_registered_boundary_containment(child, now);
+                    return Err(PiExecutionError::PromptEvidenceOrder);
+                }
+                self.record_office_turn_usage_failure(
+                    store,
+                    child,
+                    turn,
+                    sequence,
+                    kernel_usage_failure(*reason),
+                    now,
+                )
+            }
+            (
+                OutboundEvent::Settled {
+                    classification,
+                    final_assistant_outcome,
+                },
+                Some(society_pi::PeerObservation::TurnSettled(receipt)),
+            ) => self.record_office_turn_terminal(
+                store,
+                child,
+                turn,
+                sequence,
+                *classification,
+                final_assistant_outcome,
+                receipt,
+                now,
+            ),
+            (OutboundEvent::Fatal { .. }, _) => {
+                self.begin_registered_boundary_containment(child, now);
+                Err(PiExecutionError::PeerFatalWithoutAccountingFact)
+            }
+            _ => {
+                // The peer admits normal lifecycle/tool frames, but M6 has
+                // no durable generic-event table. They remain raw sealed
+                // evidence and cannot stand in for a named accounting fact.
+                if output.peer_became_fatal() {
+                    self.begin_registered_boundary_containment(child, now);
+                    return Err(PiExecutionError::PeerFatalWithoutAccountingFact);
+                }
+                Ok(OfficePiTurnOutput::ControlInterleaving)
+            }
+        }
+    }
+
+    /// Records a named inability to account for an admitted Prompt at the
+    /// exact host sequence that exposed it. This deliberately never invents a
+    /// successor Usage frame: a peer-rejected but schema-valid `Settled`, for
+    /// example, is the only available sequence for the closed Unknown fact.
+    fn record_office_turn_usage_failure(
+        &mut self,
+        store: &mut KernelStore,
+        child: &mut OfficePiExecutionChild,
+        turn: &mut OfficePiTurn,
+        protocol_sequence: PiProtocolSequence,
+        failure: PiOfficeTurnUsageFailure,
+        now: MonotonicTick,
+    ) -> Result<OfficePiTurnOutput, PiExecutionError> {
+        // Pi may report a typed Unavailable snapshot immediately after the
+        // accepted Prompt and before it can project `agent_settled`. That
+        // snapshot is already the named reason to freeze; requiring invented
+        // later terminal evidence would lose its durable accounting fact.
+        // Conversely, the schema-valid Settled -> Unknown path is meaningful
+        // only after the final agent lifecycle event it says lacks accounting.
+        let missing_final_usage = matches!(
+            failure,
+            PiOfficeTurnUsageFailure::Unknown(
+                PiOfficeTurnUsageUnknownReason::MissingFinalUsageSnapshot
+            )
+        );
+        if turn.phase != OfficePiTurnPhase::AwaitingTerminalEvidence
+            || turn
+                .accepted_sequence
+                .is_none_or(|accepted| protocol_sequence <= accepted)
+            || (missing_final_usage
+                && turn
+                    .agent_settled_sequence
+                    .is_none_or(|settled| protocol_sequence <= settled))
+        {
+            self.begin_registered_boundary_containment(child, now);
+            return Err(PiExecutionError::PromptEvidenceOrder);
+        }
+        let event = execute_office_turn_command(
+            store,
+            &turn.operation,
+            PiOfficeTurnCommand::RecordUsageFailure {
+                sequence: protocol_sequence,
+            },
+            Capability::RecordPiOfficeTurnUsageFailure,
+            ExpectedGeneration::Exact(child.expected_generation),
+            CommandBody::RecordPiOfficeTurnUsageFailure {
+                office_turn_id: turn.office_turn_id,
+                correlation_identity: turn.correlation_identity.clone(),
+                protocol_sequence,
+                failure,
+            },
+        );
+        match event {
+            Ok(EventBody::PiOfficeTurnUsageFrozen {
+                office_turn_id,
+                failure: observed_failure,
+                ..
+            }) if office_turn_id == turn.office_turn_id && observed_failure == failure => {
+                turn.final_accounting_sequence = Some(protocol_sequence);
+                turn.phase = OfficePiTurnPhase::UsageFrozen;
+                self.begin_registered_boundary_containment(child, now);
+                Ok(OfficePiTurnOutput::UsageFrozen)
+            }
+            Ok(_) => {
+                self.begin_registered_boundary_containment(child, now);
+                Err(PiExecutionError::UnexpectedKernelEvent)
+            }
+            Err(error) => {
+                self.begin_registered_boundary_containment(child, now);
+                Err(error)
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn record_office_turn_terminal(
+        &mut self,
+        store: &mut KernelStore,
+        child: &mut OfficePiExecutionChild,
+        turn: &mut OfficePiTurn,
+        settled_sequence: PiProtocolSequence,
+        classification: SettledClassification,
+        final_assistant_outcome: &FinalAssistantOutcome,
+        receipt: &society_pi::TurnReceipt,
+        now: MonotonicTick,
+    ) -> Result<OfficePiTurnOutput, PiExecutionError> {
+        if turn.phase != OfficePiTurnPhase::AwaitingTerminalEvidence
+            || receipt.correlation_identity.as_str() != turn.correlation_identity.as_str()
+            || kernel_turn_disposition(receipt.disposition)?
+                != kernel_turn_disposition_from_settled(classification, final_assistant_outcome)?
+            || kernel_assistant_outcome(&receipt.final_assistant_outcome)?
+                != kernel_assistant_outcome(final_assistant_outcome)?
+        {
+            self.begin_registered_boundary_containment(child, now);
+            return Err(PiExecutionError::PromptEvidenceOrder);
+        }
+        let agent_settled_sequence = turn
+            .agent_settled_sequence
+            .ok_or(PiExecutionError::PromptTerminalEvidenceMissing)?;
+        let final_usage_sequence = turn
+            .final_accounting_sequence
+            .ok_or(PiExecutionError::PromptTerminalEvidenceMissing)?;
+        if agent_settled_sequence >= final_usage_sequence
+            || final_usage_sequence.value().checked_add(1) != Some(settled_sequence.value())
+        {
+            self.begin_registered_boundary_containment(child, now);
+            return Err(PiExecutionError::PromptEvidenceOrder);
+        }
+        let disposition = kernel_turn_disposition(receipt.disposition)?;
+        let assistant_outcome = kernel_assistant_outcome(&receipt.final_assistant_outcome)?;
+        let terminal = execute_office_turn_command(
+            store,
+            &turn.operation,
+            PiOfficeTurnCommand::RecordTerminal,
+            Capability::RecordPiOfficeTurnTerminal,
+            ExpectedGeneration::Exact(child.expected_generation),
+            CommandBody::RecordPiOfficeTurnTerminal {
+                office_turn_id: turn.office_turn_id,
+                correlation_identity: turn.correlation_identity.clone(),
+                agent_settled_sequence,
+                final_usage_sequence,
+                settled_sequence,
+                disposition,
+                assistant_outcome,
+                transcript_disposition:
+                    PiOfficeTurnTranscriptDisposition::DeferredUntilOfficeSessionDispose,
+            },
+        );
+        let terminal_receipt_id = match terminal {
+            Ok(EventBody::PiOfficeTurnTerminalRecorded {
+                pi_office_turn_terminal_receipt_id,
+                office_turn_id,
+                disposition: observed_disposition,
+                assistant_outcome: observed_outcome,
+            }) if office_turn_id == turn.office_turn_id
+                && observed_disposition == disposition
+                && observed_outcome == assistant_outcome =>
+            {
+                pi_office_turn_terminal_receipt_id
+            }
+            Ok(_) => {
+                self.begin_registered_boundary_containment(child, now);
+                return Err(PiExecutionError::UnexpectedKernelEvent);
+            }
+            Err(error) => {
+                self.begin_registered_boundary_containment(child, now);
+                return Err(error);
+            }
+        };
+        turn.phase = OfficePiTurnPhase::TerminalRecorded;
+        if disposition != PiOfficeTurnDisposition::Completed
+            || assistant_outcome != PiOfficeTurnAssistantOutcome::ObservedStop
+        {
+            child.phase = OfficePiExecutionPhase::OfficeTurnTerminalBlocked;
+            return Ok(OfficePiTurnOutput::TerminalRecordedNonReady);
+        }
+        let settled = execute_office_turn_command(
+            store,
+            &turn.operation,
+            PiOfficeTurnCommand::Settle,
+            Capability::SettleOfficeTurn,
+            ExpectedGeneration::NotApplicable,
+            CommandBody::SettleOfficeTurn {
+                turn_id: turn.office_turn_id,
+                terminal_receipt_id,
+            },
+        );
+        match settled {
+            Ok(EventBody::OfficeTurnSettled {
+                turn_id,
+                session_id,
+                ..
+            }) if turn_id == turn.office_turn_id && session_id == child.office_session_id => {
+                turn.phase = OfficePiTurnPhase::Settled;
+                child.phase = OfficePiExecutionPhase::OfficeReadyRecorded;
+                Ok(OfficePiTurnOutput::SettledReady)
+            }
+            Ok(_) => {
+                self.begin_registered_boundary_containment(child, now);
+                Err(PiExecutionError::UnexpectedKernelEvent)
+            }
+            Err(error) => {
+                self.begin_registered_boundary_containment(child, now);
+                Err(error)
+            }
+        }
     }
 
     fn record_create_delivery(
@@ -1424,6 +2202,176 @@ fn execute_kernel_command(
     Ok(store.ledger_event(event_id)?.body)
 }
 
+fn execute_office_turn_command(
+    store: &mut KernelStore,
+    operation: &PiOfficeTurnOperationId,
+    command: PiOfficeTurnCommand,
+    capability: Capability,
+    expected_generation: ExpectedGeneration,
+    body: CommandBody,
+) -> Result<EventBody, PiExecutionError> {
+    let capability_grant_id = store
+        .active_capability_grant(PrincipalId::KERNEL, capability)?
+        .ok_or(PiExecutionError::KernelServiceCapabilityMissing { capability })?;
+    let receipt = store.execute(CommandRequest {
+        command_id: operation.command_id(command)?,
+        principal_id: PrincipalId::KERNEL,
+        capability_grant_id,
+        capability,
+        expected_generation,
+        body,
+    })?;
+    let event_id = match receipt.disposition {
+        CommandDisposition::Accepted(event_id) => event_id,
+        CommandDisposition::Rejected(rejection) => {
+            return Err(PiExecutionError::KernelCommandRejected {
+                capability,
+                rejection,
+            });
+        }
+    };
+    Ok(store.ledger_event(event_id)?.body)
+}
+
+fn kernel_protocol_sequence(
+    value: BoundarySequence,
+) -> Result<PiProtocolSequence, PiExecutionError> {
+    i64::try_from(value.value())
+        .ok()
+        .and_then(|sequence| PiProtocolSequence::try_from(sequence).ok())
+        .ok_or(PiExecutionError::IdentityConversion)
+}
+
+fn kernel_cumulative_usage(
+    totals: &society_pi::UsageTotals,
+) -> Result<PiCumulativeUsage, PiExecutionError> {
+    let token = |value: u64| {
+        i64::try_from(value)
+            .ok()
+            .and_then(|value| PiTokenCount::try_from(value).ok())
+            .ok_or(PiExecutionError::UsageConversion)
+    };
+    let raw_cost = u64::from_str_radix(totals.provider_cost.binary64_big_endian_hex.as_str(), 16)
+        .map_err(|_| PiExecutionError::UsageConversion)?;
+    let provider_cost = ProviderCostBinary64::from_big_endian(raw_cost.to_be_bytes())
+        .map_err(|_| PiExecutionError::UsageConversion)?;
+    let ceiling_micro_usd = provider_cost
+        .ceil_micro_usd()
+        .map_err(|_| PiExecutionError::UsageConversion)?;
+    let usage = PiCumulativeUsage {
+        input_tokens: token(totals.input_tokens.value())?,
+        output_tokens: token(totals.output_tokens.value())?,
+        cache_read_tokens: token(totals.cache_read_tokens.value())?,
+        cache_write_tokens: token(totals.cache_write_tokens.value())?,
+        total_tokens: token(totals.total_tokens.value())?,
+        provider_cost,
+        ceiling_micro_usd,
+    };
+    if !usage.is_internally_consistent() {
+        return Err(PiExecutionError::UsageConversion);
+    }
+    Ok(usage)
+}
+
+const fn kernel_usage_failure(reason: UsageUnavailableReason) -> PiOfficeTurnUsageFailure {
+    let reason = match reason {
+        UsageUnavailableReason::InvalidSdkUsage => {
+            PiOfficeTurnUsageUnavailableReason::InvalidSdkUsage
+        }
+        UsageUnavailableReason::UsageRegressed => {
+            PiOfficeTurnUsageUnavailableReason::UsageRegressed
+        }
+        UsageUnavailableReason::UsageInconsistent => {
+            PiOfficeTurnUsageUnavailableReason::UsageInconsistent
+        }
+    };
+    PiOfficeTurnUsageFailure::Unavailable(reason)
+}
+
+fn kernel_turn_disposition(
+    value: TurnDisposition,
+) -> Result<PiOfficeTurnDisposition, PiExecutionError> {
+    match value {
+        TurnDisposition::Pending => Err(PiExecutionError::PromptEvidenceOrder),
+        TurnDisposition::Completed => Ok(PiOfficeTurnDisposition::Completed),
+        TurnDisposition::Length => Ok(PiOfficeTurnDisposition::Length),
+        TurnDisposition::Error => Ok(PiOfficeTurnDisposition::Error),
+        TurnDisposition::Aborted => Ok(PiOfficeTurnDisposition::Aborted),
+        TurnDisposition::Failed => Ok(PiOfficeTurnDisposition::Failed),
+        TurnDisposition::ProtocolFailed => Ok(PiOfficeTurnDisposition::ProtocolFailed),
+    }
+}
+
+fn kernel_turn_disposition_from_settled(
+    classification: SettledClassification,
+    outcome: &FinalAssistantOutcome,
+) -> Result<PiOfficeTurnDisposition, PiExecutionError> {
+    match (classification, outcome) {
+        (
+            SettledClassification::Completed,
+            FinalAssistantOutcome::Observed {
+                stop_reason: AssistantStopReason::Stop,
+            },
+        ) => Ok(PiOfficeTurnDisposition::Completed),
+        (
+            SettledClassification::Length,
+            FinalAssistantOutcome::Observed {
+                stop_reason: AssistantStopReason::Length,
+            },
+        ) => Ok(PiOfficeTurnDisposition::Length),
+        (
+            SettledClassification::Error,
+            FinalAssistantOutcome::Observed {
+                stop_reason: AssistantStopReason::Error,
+            },
+        ) => Ok(PiOfficeTurnDisposition::Error),
+        (
+            SettledClassification::Aborted,
+            FinalAssistantOutcome::Observed {
+                stop_reason: AssistantStopReason::Aborted | AssistantStopReason::Stop,
+            },
+        ) => Ok(PiOfficeTurnDisposition::Aborted),
+        (
+            SettledClassification::Failed,
+            FinalAssistantOutcome::Unavailable {
+                reason: society_pi::FinalAssistantUnavailableReason::SdkPromiseRejected,
+            },
+        ) => Ok(PiOfficeTurnDisposition::Failed),
+        (
+            SettledClassification::ProtocolFailed,
+            FinalAssistantOutcome::Unavailable {
+                reason: society_pi::FinalAssistantUnavailableReason::MissingFinalAssistantOutcome,
+            },
+        ) => Ok(PiOfficeTurnDisposition::ProtocolFailed),
+        _ => Err(PiExecutionError::PromptEvidenceOrder),
+    }
+}
+
+fn kernel_assistant_outcome(
+    value: &FinalAssistantOutcome,
+) -> Result<PiOfficeTurnAssistantOutcome, PiExecutionError> {
+    match value {
+        FinalAssistantOutcome::Observed {
+            stop_reason: AssistantStopReason::Stop,
+        } => Ok(PiOfficeTurnAssistantOutcome::ObservedStop),
+        FinalAssistantOutcome::Observed {
+            stop_reason: AssistantStopReason::Length,
+        } => Ok(PiOfficeTurnAssistantOutcome::ObservedLength),
+        FinalAssistantOutcome::Observed {
+            stop_reason: AssistantStopReason::Error,
+        } => Ok(PiOfficeTurnAssistantOutcome::ObservedError),
+        FinalAssistantOutcome::Observed {
+            stop_reason: AssistantStopReason::Aborted,
+        } => Ok(PiOfficeTurnAssistantOutcome::ObservedAborted),
+        FinalAssistantOutcome::Unavailable {
+            reason: society_pi::FinalAssistantUnavailableReason::SdkPromiseRejected,
+        } => Ok(PiOfficeTurnAssistantOutcome::SdkPromiseRejected),
+        FinalAssistantOutcome::Unavailable {
+            reason: society_pi::FinalAssistantUnavailableReason::MissingFinalAssistantOutcome,
+        } => Ok(PiOfficeTurnAssistantOutcome::MissingFinalAssistantOutcome),
+    }
+}
+
 fn canonical_create_request_digest(
     request: &PiSpawnRequest,
 ) -> Result<KernelDigest, PiExecutionError> {
@@ -1618,6 +2566,18 @@ pub(crate) enum PiExecutionError {
     InvalidLifecycle,
     #[error("an Office Pi child requires the exact GrandArchitectOffice session kind")]
     OfficeSessionKindRequired,
+    #[error("the supplied Office prompt text is empty or differs from its sealed digest")]
+    PromptContentDigestMismatch,
+    #[error("validated Pi usage could not be represented by the exact kernel accounting types")]
+    UsageConversion,
+    #[error("Pi Prompt evidence arrived outside the closed M6 order")]
+    PromptEvidenceOrder,
+    #[error("the final Prompt terminal lacks AgentSettled or final accounting evidence")]
+    PromptTerminalEvidenceMissing,
+    #[error("the Pi host rejected an already delivered Office Prompt")]
+    PromptRejectedByHost,
+    #[error("the Pi host became fatal without an exact M6 accounting-failure frame")]
+    PeerFatalWithoutAccountingFact,
     #[error("Pi Create authorization gate was not called by the supervisor")]
     CreateGateNotInvoked,
     #[error("AdapterReady facts did not match the durable child identity")]
@@ -1676,9 +2636,10 @@ mod tests {
         AdmissionGeneration, BudgetReservationId, CancellationMode, CancellationPropagationId,
         CancellationRequestId, Capability, CommandBody, CommandDisposition, CommandId,
         CommandRequest, ExpectedGeneration, GrandArchitectOfficeSessionId, KernelStore,
-        OfficeTurnPurpose, OperatingCycleId, OperatingCycleTreatment, PrincipalDisplayName,
-        PrincipalId, Rejection, Sha256Digest as KernelDigest, SocietyName, SupervisorEpochId,
-        SupervisorEpochIdentity, UsdMicros,
+        OfficeTurnId, OfficeTurnPurpose, OperatingCycleId, OperatingCycleTreatment,
+        PiProtocolSequence, PrincipalDisplayName, PrincipalId, Rejection,
+        Sha256Digest as KernelDigest, SocietyName, SupervisorEpochId, SupervisorEpochIdentity,
+        UsdMicros,
     };
     use society_pi::{
         AbsolutePath, ActorModelPolicyV1, AdapterVersion, CacheWritePerMillionRateV1,
@@ -1691,11 +2652,12 @@ mod tests {
     };
 
     use super::{
-        OfficePiExecutionStart, OfficePiSpawnRegistration, PiExecutionDriver,
-        PiExecutionOperationId,
+        OfficePiExecutionStart, OfficePiSpawnRegistration, OfficePiTurnOutput, OfficePiTurnStart,
+        PiExecutionDriver, PiExecutionOperationId, PiOfficeTurnCommand, PiOfficeTurnOperationId,
+        SealedOfficePrompt,
     };
     use crate::{
-        content::ContentSealingAuthority,
+        content::{ContentSealOperationId, ContentSealingAuthority},
         supervision::{
             ControlWriteDeadline, HandshakeDeadline, MonotonicTick, NativeHostEnvironment,
             NativeWorkspace, NativeWorkspaceId, NativeWorkspaceRoot, PiSpawnRequest,
@@ -1852,6 +2814,911 @@ mod tests {
         assert!(reconciled, "direct child must be reaped and sealed");
         assert_eq!(child.phase(), "reconciled");
         rejected_open_office_turn(&mut store, office.session_id, "after-child-finalization");
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn provider_free_m6_prompt_projects_full_cumulative_usage_and_settles_only_stop() {
+        let fixture = NativeFixture::new("m6-turn-stop");
+        let mut store = KernelStore::open_in_memory().unwrap();
+        let office = found_office_start(&mut store, "m6-turn-stop");
+        let mut driver = PiExecutionDriver::new();
+        let mut child = ready_office_child(&mut driver, &mut store, &fixture, &office, "m6-child");
+
+        let prompt_text = "sealed Office prompt one";
+        let registered =
+            seal_prompt_content(&mut store, &fixture, "m6-prompt-content", prompt_text);
+        let (turn_one, frontier_one) =
+            open_office_turn(&mut store, office.session_id, "m6-open-one");
+        let start_one = office_turn_start(
+            "m6-turn-one",
+            turn_one,
+            "m6-prompt-one",
+            registered.content_object_id,
+            registered.digest,
+            prompt_text,
+            frontier_one,
+        );
+        let (mut active_one, first_write) = driver
+            .authorize_and_begin_office_turn_prompt(
+                &mut store,
+                &mut child,
+                start_one,
+                MonotonicTick::from_milliseconds(100),
+                ControlWriteDeadline::at(MonotonicTick::from_milliseconds(1_000)),
+            )
+            .unwrap();
+        if first_write == crate::supervision::ControlWriteProgress::Pending {
+            drive_prompt_until_delivered(
+                &mut driver,
+                &mut store,
+                &mut child,
+                &mut active_one,
+                101,
+                1_000,
+            );
+        }
+        let first_outputs = drive_turn_until_terminal(
+            &mut driver,
+            &mut store,
+            &mut child,
+            &mut active_one,
+            101,
+            2_000,
+        );
+        assert!(first_outputs.contains(&OfficePiTurnOutput::PromptAccepted));
+        assert!(first_outputs.contains(&OfficePiTurnOutput::KnownUsageRecorded));
+        assert_eq!(
+            first_outputs.last(),
+            Some(&OfficePiTurnOutput::SettledReady)
+        );
+        assert_eq!(child.phase(), "office_ready_recorded");
+
+        let (turn_two, frontier_two) =
+            open_office_turn(&mut store, office.session_id, "m6-open-two");
+        let start_two = office_turn_start(
+            "m6-turn-two",
+            turn_two,
+            "m6-prompt-two",
+            registered.content_object_id,
+            registered.digest,
+            prompt_text,
+            frontier_two,
+        );
+        let (mut active_two, second_write) = driver
+            .authorize_and_begin_office_turn_prompt(
+                &mut store,
+                &mut child,
+                start_two,
+                MonotonicTick::from_milliseconds(2_001),
+                ControlWriteDeadline::at(MonotonicTick::from_milliseconds(3_000)),
+            )
+            .unwrap();
+        if second_write == crate::supervision::ControlWriteProgress::Pending {
+            drive_prompt_until_delivered(
+                &mut driver,
+                &mut store,
+                &mut child,
+                &mut active_two,
+                2_002,
+                3_000,
+            );
+        }
+        let second_outputs = drive_turn_until_terminal(
+            &mut driver,
+            &mut store,
+            &mut child,
+            &mut active_two,
+            2_002,
+            4_000,
+        );
+        assert_eq!(
+            second_outputs.last(),
+            Some(&OfficePiTurnOutput::SettledReady)
+        );
+        let charged_deltas: Vec<_> = store
+            .replay_ledger()
+            .unwrap()
+            .into_iter()
+            .filter_map(|event| match event.body {
+                society_kernel::EventBody::OfficeTurnSettled { charged_delta, .. } => {
+                    Some(charged_delta)
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            charged_deltas,
+            [UsdMicros::new(4).unwrap(), UsdMicros::new(5).unwrap()]
+        );
+        drop(active_two);
+        drop(active_one);
+        drop(child);
+        drop(driver);
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn provider_free_m6_same_total_final_known_usage_is_terminal_evidence_not_a_second_charge() {
+        let fixture = NativeFixture::new("m6-known-before-and-final-same");
+        let mut store = KernelStore::open_in_memory().unwrap();
+        let office = found_office_start(&mut store, "m6-known-before-and-final-same");
+        let mut driver = PiExecutionDriver::new();
+        let mut child = ready_office_child(
+            &mut driver,
+            &mut store,
+            &fixture,
+            &office,
+            "m6-same-known-child",
+        );
+        let prompt_text = "sealed Office prompt with same final cumulative usage";
+        let registered =
+            seal_prompt_content(&mut store, &fixture, "m6-same-known-content", prompt_text);
+        let (turn_id, frontier) =
+            open_office_turn(&mut store, office.session_id, "m6-same-known-open");
+        let (mut turn, _) = driver
+            .authorize_and_begin_office_turn_prompt(
+                &mut store,
+                &mut child,
+                office_turn_start(
+                    "m6-same-known-turn",
+                    turn_id,
+                    "m6-same-known-prompt",
+                    registered.content_object_id,
+                    registered.digest,
+                    prompt_text,
+                    frontier,
+                ),
+                MonotonicTick::from_milliseconds(100),
+                ControlWriteDeadline::at(MonotonicTick::from_milliseconds(1_000)),
+            )
+            .unwrap();
+        let outputs =
+            drive_turn_until_terminal(&mut driver, &mut store, &mut child, &mut turn, 101, 2_000);
+        assert_eq!(
+            outputs
+                .iter()
+                .filter(|output| **output == OfficePiTurnOutput::KnownUsageRecorded)
+                .count(),
+            2,
+            "both the pre-terminal and forced same-total snapshots are durable cumulative facts"
+        );
+        assert_eq!(outputs.last(), Some(&OfficePiTurnOutput::SettledReady));
+        let known_sequences: Vec<_> = store
+            .replay_ledger()
+            .unwrap()
+            .into_iter()
+            .filter_map(|event| match event.body {
+                society_kernel::EventBody::PiOfficeTurnUsageRecorded {
+                    office_turn_id,
+                    protocol_sequence,
+                    ..
+                } if office_turn_id == turn_id => Some(protocol_sequence.value()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(known_sequences, [7, 9]);
+        let charged: Vec<_> = store
+            .replay_ledger()
+            .unwrap()
+            .into_iter()
+            .filter_map(|event| match event.body {
+                society_kernel::EventBody::OfficeTurnSettled {
+                    turn_id: observed,
+                    charged_delta,
+                    ..
+                } if observed == turn_id => Some(charged_delta),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(charged, [UsdMicros::new(4).unwrap()]);
+        drop(turn);
+        drop(child);
+        drop(driver);
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn provider_free_m6_known_error_records_terminal_but_never_returns_office_ready() {
+        let fixture = NativeFixture::new("m6-prompt-error");
+        let mut store = KernelStore::open_in_memory().unwrap();
+        let office = found_office_start(&mut store, "m6-prompt-error");
+        let mut driver = PiExecutionDriver::new();
+        let mut child =
+            ready_office_child(&mut driver, &mut store, &fixture, &office, "m6-error-child");
+        let prompt_text = "sealed Office error prompt";
+        let registered = seal_prompt_content(&mut store, &fixture, "m6-error-content", prompt_text);
+        let (turn_id, frontier) = open_office_turn(&mut store, office.session_id, "m6-error-open");
+        let (mut turn, _) = driver
+            .authorize_and_begin_office_turn_prompt(
+                &mut store,
+                &mut child,
+                office_turn_start(
+                    "m6-error-turn",
+                    turn_id,
+                    "m6-error-correlation",
+                    registered.content_object_id,
+                    registered.digest,
+                    prompt_text,
+                    frontier,
+                ),
+                MonotonicTick::from_milliseconds(100),
+                ControlWriteDeadline::at(MonotonicTick::from_milliseconds(1_000)),
+            )
+            .unwrap();
+        let outputs =
+            drive_turn_until_terminal(&mut driver, &mut store, &mut child, &mut turn, 101, 2_000);
+        assert_eq!(
+            outputs.last(),
+            Some(&OfficePiTurnOutput::TerminalRecordedNonReady)
+        );
+        assert_eq!(child.phase(), "office_turn_terminal_blocked");
+        drop(turn);
+        drop(child);
+        drop(driver);
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn provider_free_m6_control_usage_after_agent_settled_cannot_replace_final_prompt_usage() {
+        let fixture = NativeFixture::new("m6-control-interleave");
+        let mut store = KernelStore::open_in_memory().unwrap();
+        let office = found_office_start(&mut store, "m6-control-interleave");
+        let mut driver = PiExecutionDriver::new();
+        let mut child = ready_office_child(
+            &mut driver,
+            &mut store,
+            &fixture,
+            &office,
+            "m6-control-child",
+        );
+        let prompt_text = "sealed Office interleaving prompt";
+        let registered =
+            seal_prompt_content(&mut store, &fixture, "m6-control-content", prompt_text);
+        let (turn_id, frontier) =
+            open_office_turn(&mut store, office.session_id, "m6-control-open");
+        let (mut turn, _) = driver
+            .authorize_and_begin_office_turn_prompt(
+                &mut store,
+                &mut child,
+                office_turn_start(
+                    "m6-control-turn",
+                    turn_id,
+                    "m6-control-prompt",
+                    registered.content_object_id,
+                    registered.digest,
+                    prompt_text,
+                    frontier,
+                ),
+                MonotonicTick::from_milliseconds(100),
+                ControlWriteDeadline::at(MonotonicTick::from_milliseconds(1_000)),
+            )
+            .unwrap();
+        let mut observed_frames = 0;
+        for tick in 101..1_000 {
+            if driver
+                .observe_office_turn_output(
+                    &mut store,
+                    &mut child,
+                    &mut turn,
+                    MonotonicTick::from_milliseconds(tick),
+                )
+                .unwrap()
+                .is_some()
+            {
+                observed_frames += 1;
+                if observed_frames == 4 {
+                    break;
+                }
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(
+            observed_frames, 4,
+            "accepted plus terminal agent evidence must arrive"
+        );
+        assert_eq!(child.phase(), "office_turn_prompt_active");
+        assert_eq!(
+            driver
+                .send_get_state_for_test(
+                    &child,
+                    CorrelationIdentity::parse("m6-control-get-state").unwrap(),
+                    MonotonicTick::from_milliseconds(1_001),
+                    ControlWriteDeadline::at(MonotonicTick::from_milliseconds(2_000)),
+                )
+                .unwrap(),
+            crate::supervision::ControlWriteProgress::Delivered
+        );
+        let outputs =
+            drive_turn_until_terminal(&mut driver, &mut store, &mut child, &mut turn, 1_002, 3_000);
+        assert!(outputs.contains(&OfficePiTurnOutput::ControlInterleaving));
+        assert_eq!(outputs.last(), Some(&OfficePiTurnOutput::SettledReady));
+        drop(turn);
+        drop(child);
+        drop(driver);
+        fixture.cleanup();
+    }
+
+    #[cfg(feature = "test-support")]
+    #[test]
+    fn pending_m6_prompt_cannot_be_observed_or_delivered_until_its_full_pipe_write() {
+        let fixture = NativeFixture::new("m6-turn-stop");
+        let mut store = KernelStore::open_in_memory().unwrap();
+        let office = found_office_start(&mut store, "m6-prompt-pending");
+        let mut driver = PiExecutionDriver::new();
+        let mut child = ready_office_child(
+            &mut driver,
+            &mut store,
+            &fixture,
+            &office,
+            "m6-pending-child",
+        );
+        let prompt_text = "sealed pending Office prompt";
+        let registered =
+            seal_prompt_content(&mut store, &fixture, "m6-pending-content", prompt_text);
+        let (turn_id, frontier) =
+            open_office_turn(&mut store, office.session_id, "m6-pending-open");
+        driver
+            .force_next_control_write_pending_for_test(&child)
+            .unwrap();
+        let (mut turn, progress) = driver
+            .authorize_and_begin_office_turn_prompt(
+                &mut store,
+                &mut child,
+                office_turn_start(
+                    "m6-pending-turn",
+                    turn_id,
+                    "m6-pending-prompt",
+                    registered.content_object_id,
+                    registered.digest,
+                    prompt_text,
+                    frontier,
+                ),
+                MonotonicTick::from_milliseconds(100),
+                ControlWriteDeadline::at(MonotonicTick::from_milliseconds(1_000)),
+            )
+            .unwrap();
+        assert_eq!(progress, crate::supervision::ControlWriteProgress::Pending);
+        assert_eq!(child.phase(), "office_turn_prompt_delivery_pending");
+        assert!(matches!(
+            driver.observe_office_turn_output(
+                &mut store,
+                &mut child,
+                &mut turn,
+                MonotonicTick::from_milliseconds(101),
+            ),
+            Err(super::PiExecutionError::InvalidLifecycle)
+        ));
+        drive_prompt_until_delivered(&mut driver, &mut store, &mut child, &mut turn, 102, 1_000);
+        assert_eq!(child.phase(), "office_turn_prompt_active");
+        assert_eq!(
+            drive_turn_until_terminal(&mut driver, &mut store, &mut child, &mut turn, 103, 2_000,)
+                .last(),
+            Some(&OfficePiTurnOutput::SettledReady)
+        );
+        drop(turn);
+        drop(child);
+        drop(driver);
+        fixture.cleanup();
+    }
+
+    #[cfg(feature = "test-support")]
+    #[test]
+    fn cancellation_after_m6_authorization_fences_late_physical_delivery_without_office_ready() {
+        let fixture = NativeFixture::new("m6-turn-stop");
+        let mut store = KernelStore::open_in_memory().unwrap();
+        let office = found_office_start(&mut store, "m6-cancel-after-auth");
+        let mut driver = PiExecutionDriver::new();
+        let mut child = ready_office_child(
+            &mut driver,
+            &mut store,
+            &fixture,
+            &office,
+            "m6-cancel-child",
+        );
+        let prompt_text = "sealed cancellation-race Office prompt";
+        let registered =
+            seal_prompt_content(&mut store, &fixture, "m6-cancel-content", prompt_text);
+        let (turn_id, frontier) = open_office_turn(&mut store, office.session_id, "m6-cancel-open");
+        driver
+            .force_next_control_write_pending_for_test(&child)
+            .unwrap();
+        let (mut turn, progress) = driver
+            .authorize_and_begin_office_turn_prompt(
+                &mut store,
+                &mut child,
+                office_turn_start(
+                    "m6-cancel-turn",
+                    turn_id,
+                    "m6-cancel-prompt",
+                    registered.content_object_id,
+                    registered.digest,
+                    prompt_text,
+                    frontier,
+                ),
+                MonotonicTick::from_milliseconds(100),
+                ControlWriteDeadline::at(MonotonicTick::from_milliseconds(1_000)),
+            )
+            .unwrap();
+        assert_eq!(progress, crate::supervision::ControlWriteProgress::Pending);
+        let cancellation_capability = Capability::RequestCancellation;
+        let cancellation = store
+            .execute(CommandRequest {
+                command_id: CommandId::parse("m6-cancel-request").unwrap(),
+                principal_id: PrincipalId::new(3).unwrap(),
+                capability_grant_id: store
+                    .active_capability_grant(PrincipalId::new(3).unwrap(), cancellation_capability)
+                    .unwrap()
+                    .unwrap(),
+                capability: cancellation_capability,
+                expected_generation: ExpectedGeneration::Exact(AdmissionGeneration::INITIAL),
+                body: CommandBody::RequestCancellation {
+                    cycle_id: office.cycle_id,
+                    mode: CancellationMode::GracefulCancel,
+                },
+            })
+            .unwrap();
+        assert!(matches!(
+            cancellation.disposition,
+            CommandDisposition::Accepted(_)
+        ));
+        accepted(
+            &mut store,
+            "m6-cancel-begin-propagation",
+            PrincipalId::KERNEL,
+            Capability::BeginCancellationPropagation,
+            ExpectedGeneration::Exact(AdmissionGeneration::INITIAL.increment().unwrap()),
+            CommandBody::BeginCancellationPropagation {
+                cancellation_request_id: CancellationRequestId::new(1).unwrap(),
+            },
+        );
+        let mut delivered = false;
+        for tick in 101..1_000 {
+            match driver.drive_office_turn_prompt_delivery(
+                &mut store,
+                &mut child,
+                &mut turn,
+                MonotonicTick::from_milliseconds(tick),
+            ) {
+                Ok(crate::supervision::ControlWriteProgress::Pending) => {
+                    thread::sleep(Duration::from_millis(1));
+                }
+                Ok(crate::supervision::ControlWriteProgress::Delivered) => {
+                    delivered = true;
+                    break;
+                }
+                Err(error) => panic!("late physical Prompt delivery failed unexpectedly: {error}"),
+            }
+        }
+        assert!(
+            delivered,
+            "the already authorized physical frame may race cancellation"
+        );
+        let mut late_settlement_error = None;
+        for tick in 1_001..2_000 {
+            match driver.observe_office_turn_output(
+                &mut store,
+                &mut child,
+                &mut turn,
+                MonotonicTick::from_milliseconds(tick),
+            ) {
+                Ok(_) => {}
+                Err(error) => {
+                    late_settlement_error = Some(error);
+                    break;
+                }
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert!(matches!(
+            late_settlement_error,
+            Some(super::PiExecutionError::KernelCommandRejected {
+                capability: Capability::SettleOfficeTurn,
+                rejection: Rejection::PiOfficeTurnNotReconciled,
+            })
+        ));
+        assert_eq!(child.phase(), "boundary_containment_required");
+        assert!(matches!(
+            driver.observe_office_turn_output(
+                &mut store,
+                &mut child,
+                &mut turn,
+                MonotonicTick::from_milliseconds(102),
+            ),
+            Err(super::PiExecutionError::InvalidLifecycle)
+        ));
+        drop(turn);
+        drop(child);
+        drop(driver);
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn output_loss_after_m6_prompt_acceptance_is_contained_without_fabricating_usage_or_ready() {
+        let fixture = NativeFixture::new("m6-exit-after-prompt-accepted");
+        let mut store = KernelStore::open_in_memory().unwrap();
+        let office = found_office_start(&mut store, "m6-output-loss");
+        let mut driver = PiExecutionDriver::new();
+        let mut child =
+            ready_office_child(&mut driver, &mut store, &fixture, &office, "m6-loss-child");
+        let prompt_text = "sealed output-loss Office prompt";
+        let registered = seal_prompt_content(&mut store, &fixture, "m6-loss-content", prompt_text);
+        let (turn_id, frontier) = open_office_turn(&mut store, office.session_id, "m6-loss-open");
+        let (mut turn, _) = driver
+            .authorize_and_begin_office_turn_prompt(
+                &mut store,
+                &mut child,
+                office_turn_start(
+                    "m6-loss-turn",
+                    turn_id,
+                    "m6-loss-prompt",
+                    registered.content_object_id,
+                    registered.digest,
+                    prompt_text,
+                    frontier,
+                ),
+                MonotonicTick::from_milliseconds(100),
+                ControlWriteDeadline::at(MonotonicTick::from_milliseconds(1_000)),
+            )
+            .unwrap();
+        let mut accepted = false;
+        let mut output_lost = false;
+        for tick in 101..2_000 {
+            match driver.observe_office_turn_output(
+                &mut store,
+                &mut child,
+                &mut turn,
+                MonotonicTick::from_milliseconds(tick),
+            ) {
+                Ok(Some(OfficePiTurnOutput::PromptAccepted)) => accepted = true,
+                Ok(_) => {}
+                Err(super::PiExecutionError::Supervision(
+                    crate::supervision::SupervisionError::OutputLost,
+                )) => {
+                    output_lost = true;
+                    break;
+                }
+                Err(error) => panic!("unexpected output-loss projection error: {error}"),
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert!(accepted, "the exact host acceptance remains a durable fact");
+        assert!(
+            output_lost,
+            "missing final usage must trigger containment, not a synthetic sequence"
+        );
+        assert_eq!(child.phase(), "boundary_containment_required");
+        assert!(!store.replay_ledger().unwrap().iter().any(|event| matches!(
+            event.body,
+            society_kernel::EventBody::OfficeTurnSettled { turn_id: observed, .. }
+                if observed == turn_id
+        )));
+        assert!(!store.replay_ledger().unwrap().iter().any(|event| matches!(
+            event.body,
+            society_kernel::EventBody::PiOfficeTurnUsageFrozen {
+                office_turn_id: observed,
+                ..
+            } if observed == turn_id
+        )));
+        drop(turn);
+        drop(child);
+        drop(driver);
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn provider_free_m6_unavailable_usage_is_recorded_then_frozen_before_containment() {
+        let fixture = NativeFixture::new("m6-usage-unavailable-ignore-term");
+        let mut store = KernelStore::open_in_memory().unwrap();
+        let office = found_office_start(&mut store, "m6-usage-unavailable-ignore-term");
+        let mut driver = PiExecutionDriver::new();
+        let mut child = ready_office_child(
+            &mut driver,
+            &mut store,
+            &fixture,
+            &office,
+            "m6-frozen-child",
+        );
+        let prompt_text = "sealed Office unavailable prompt";
+        let registered =
+            seal_prompt_content(&mut store, &fixture, "m6-frozen-content", prompt_text);
+        let (turn_id, frontier) = open_office_turn(&mut store, office.session_id, "m6-frozen-open");
+        let (mut turn, _) = driver
+            .authorize_and_begin_office_turn_prompt(
+                &mut store,
+                &mut child,
+                office_turn_start(
+                    "m6-frozen-turn",
+                    turn_id,
+                    "m6-frozen-correlation",
+                    registered.content_object_id,
+                    registered.digest,
+                    prompt_text,
+                    frontier,
+                ),
+                MonotonicTick::from_milliseconds(100),
+                ControlWriteDeadline::at(MonotonicTick::from_milliseconds(1_000)),
+            )
+            .unwrap();
+        let mut frozen = false;
+        for tick in 101..2_000 {
+            if matches!(
+                driver
+                    .observe_office_turn_output(
+                        &mut store,
+                        &mut child,
+                        &mut turn,
+                        MonotonicTick::from_milliseconds(tick),
+                    )
+                    .unwrap(),
+                Some(OfficePiTurnOutput::UsageFrozen)
+            ) {
+                frozen = true;
+                break;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert!(
+            frozen,
+            "typed unavailable usage must reach the kernel before containment"
+        );
+        assert_eq!(child.phase(), "boundary_containment_required");
+        assert!(store.replay_ledger().unwrap().iter().any(|event| matches!(
+            event.body,
+            society_kernel::EventBody::PiOfficeTurnUsageFrozen {
+                office_turn_id,
+                failure: society_kernel::PiOfficeTurnUsageFailure::Unavailable(
+                    society_kernel::PiOfficeTurnUsageUnavailableReason::InvalidSdkUsage
+                ),
+                ..
+            } if office_turn_id == turn_id
+        )));
+        drop(turn);
+        drop(child);
+        drop(driver);
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn provider_free_m6_pre_agent_settled_unavailable_freezes_the_observed_snapshot_then_reaps() {
+        let fixture = NativeFixture::new("m6-usage-unavailable-pre-agent-settled-ignore-term");
+        let mut store = KernelStore::open_in_memory().unwrap();
+        let office = found_office_start(&mut store, "m6-pre-agent-unavailable");
+        let mut driver = PiExecutionDriver::new();
+        let mut child = ready_office_child(
+            &mut driver,
+            &mut store,
+            &fixture,
+            &office,
+            "m6-pre-agent-unavailable-child",
+        );
+        let prompt_text = "sealed Office prompt with unavailable pre-terminal usage";
+        let registered = seal_prompt_content(
+            &mut store,
+            &fixture,
+            "m6-pre-agent-unavailable-content",
+            prompt_text,
+        );
+        let (turn_id, frontier) = open_office_turn(
+            &mut store,
+            office.session_id,
+            "m6-pre-agent-unavailable-open",
+        );
+        let (mut turn, _) = driver
+            .authorize_and_begin_office_turn_prompt(
+                &mut store,
+                &mut child,
+                office_turn_start(
+                    "m6-pre-agent-unavailable-turn",
+                    turn_id,
+                    "m6-pre-agent-unavailable-prompt",
+                    registered.content_object_id,
+                    registered.digest,
+                    prompt_text,
+                    frontier,
+                ),
+                MonotonicTick::from_milliseconds(100),
+                ControlWriteDeadline::at(MonotonicTick::from_milliseconds(1_000)),
+            )
+            .unwrap();
+
+        let mut accepted = false;
+        let mut frozen = false;
+        for tick in 101..2_000 {
+            match driver
+                .observe_office_turn_output(
+                    &mut store,
+                    &mut child,
+                    &mut turn,
+                    MonotonicTick::from_milliseconds(tick),
+                )
+                .unwrap()
+            {
+                Some(OfficePiTurnOutput::PromptAccepted) => accepted = true,
+                Some(OfficePiTurnOutput::UsageFrozen) => {
+                    frozen = true;
+                    break;
+                }
+                Some(OfficePiTurnOutput::ControlInterleaving) | None => {
+                    thread::sleep(Duration::from_millis(1));
+                }
+                Some(other) => panic!("unexpected pre-terminal output: {other:?}"),
+            }
+        }
+        assert!(
+            accepted,
+            "the Prompt result must precede the frozen accounting fact"
+        );
+        assert!(
+            frozen,
+            "the pre-agent-settled Unavailable snapshot must be preserved"
+        );
+        assert_eq!(child.phase(), "boundary_containment_required");
+
+        let unavailable_sequence = PiProtocolSequence::try_from(5).unwrap();
+        let failure_command = turn
+            .operation
+            .command_id(PiOfficeTurnCommand::RecordUsageFailure {
+                sequence: unavailable_sequence,
+            })
+            .unwrap();
+        assert!(matches!(
+            store.command_receipt(&failure_command).unwrap(),
+            Some(society_kernel::CommandReceipt {
+                disposition: CommandDisposition::Accepted(_),
+                ..
+            })
+        ));
+        assert!(store.replay_ledger().unwrap().iter().any(|event| matches!(
+            event.body,
+            society_kernel::EventBody::PiOfficeTurnUsageFrozen {
+                office_turn_id,
+                failure: society_kernel::PiOfficeTurnUsageFailure::Unavailable(
+                    society_kernel::PiOfficeTurnUsageUnavailableReason::InvalidSdkUsage
+                ),
+                ..
+            } if office_turn_id == turn_id
+        )));
+        assert!(!store.replay_ledger().unwrap().iter().any(|event| matches!(
+            event.body,
+            society_kernel::EventBody::PiOfficeTurnTerminalRecorded {
+                office_turn_id: observed,
+                ..
+            } if observed == turn_id
+        )));
+        assert!(!store.replay_ledger().unwrap().iter().any(|event| matches!(
+            event.body,
+            society_kernel::EventBody::OfficeTurnSettled {
+                turn_id: observed,
+                ..
+            } if observed == turn_id
+        )));
+
+        driver
+            .drive_boundary_containment(&child, MonotonicTick::from_milliseconds(1_200))
+            .unwrap();
+        driver
+            .drive_boundary_containment(&child, MonotonicTick::from_milliseconds(3_200))
+            .unwrap();
+        reconcile_child(&mut driver, &mut store, &fixture, &mut child, 3_201);
+        for (ordinal, action) in [
+            (0, society_kernel::ProcessSignalAction::Terminate),
+            (1, society_kernel::ProcessSignalAction::Kill),
+        ] {
+            let command = child
+                .operation
+                .command_id(super::PiExecutionCommand::RecordSignal { ordinal })
+                .unwrap();
+            let receipt = store.command_receipt(&command).unwrap().unwrap();
+            let CommandDisposition::Accepted(event_id) = receipt.disposition else {
+                panic!("automatic containment signal must be durably accepted")
+            };
+            assert!(matches!(
+                store.ledger_event(event_id).unwrap().body,
+                society_kernel::EventBody::ProcessSignalReceiptRecorded {
+                    action: observed,
+                    ..
+                } if observed == action
+            ));
+        }
+        drop(turn);
+        drop(child);
+        drop(driver);
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn provider_free_m6_missing_final_usage_freezes_at_the_observed_settled_sequence() {
+        let fixture = NativeFixture::new("m6-missing-final-usage");
+        let mut store = KernelStore::open_in_memory().unwrap();
+        let office = found_office_start(&mut store, "m6-missing-final-usage");
+        let mut driver = PiExecutionDriver::new();
+        let mut child = ready_office_child(
+            &mut driver,
+            &mut store,
+            &fixture,
+            &office,
+            "m6-missing-usage-child",
+        );
+        let prompt_text = "sealed Office prompt missing final usage";
+        let registered = seal_prompt_content(
+            &mut store,
+            &fixture,
+            "m6-missing-usage-content",
+            prompt_text,
+        );
+        let (turn_id, frontier) =
+            open_office_turn(&mut store, office.session_id, "m6-missing-usage-open");
+        let (mut turn, _) = driver
+            .authorize_and_begin_office_turn_prompt(
+                &mut store,
+                &mut child,
+                office_turn_start(
+                    "m6-missing-usage-turn",
+                    turn_id,
+                    "m6-missing-usage-prompt",
+                    registered.content_object_id,
+                    registered.digest,
+                    prompt_text,
+                    frontier,
+                ),
+                MonotonicTick::from_milliseconds(100),
+                ControlWriteDeadline::at(MonotonicTick::from_milliseconds(1_000)),
+            )
+            .unwrap();
+        let mut frozen = false;
+        for tick in 101..2_000 {
+            match driver
+                .observe_office_turn_output(
+                    &mut store,
+                    &mut child,
+                    &mut turn,
+                    MonotonicTick::from_milliseconds(tick),
+                )
+                .unwrap()
+            {
+                Some(OfficePiTurnOutput::UsageFrozen) => {
+                    frozen = true;
+                    break;
+                }
+                Some(_) | None => thread::sleep(Duration::from_millis(1)),
+            }
+        }
+        assert!(
+            frozen,
+            "the schema-valid Settled must become a named Unknown"
+        );
+        assert_eq!(child.phase(), "boundary_containment_required");
+        let frozen_events: Vec<_> = store
+            .replay_ledger()
+            .unwrap()
+            .into_iter()
+            .filter_map(|event| match event.body {
+                society_kernel::EventBody::PiOfficeTurnUsageFrozen {
+                    office_turn_id,
+                    failure,
+                    ..
+                } if office_turn_id == turn_id => Some(failure),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(frozen_events.len(), 1);
+        assert_eq!(
+            frozen_events[0],
+            society_kernel::PiOfficeTurnUsageFailure::Unknown(
+                society_kernel::PiOfficeTurnUsageUnknownReason::MissingFinalUsageSnapshot
+            )
+        );
+        assert!(!store.replay_ledger().unwrap().iter().any(|event| matches!(
+            event.body,
+            society_kernel::EventBody::PiOfficeTurnTerminalRecorded {
+                office_turn_id: observed,
+                ..
+            } if observed == turn_id
+        )));
+        drop(turn);
+        drop(child);
+        drop(driver);
         fixture.cleanup();
     }
 
@@ -2767,6 +4634,187 @@ mod tests {
             receipt.disposition,
             CommandDisposition::Rejected(Rejection::InvalidLifecycleTransition)
         );
+    }
+
+    fn ready_office_child(
+        driver: &mut PiExecutionDriver,
+        store: &mut KernelStore,
+        fixture: &NativeFixture,
+        office: &OfficeStart,
+        operation_label: &str,
+    ) -> super::OfficePiExecutionChild {
+        let start = OfficePiExecutionStart {
+            operation: PiExecutionOperationId::parse(operation_label).unwrap(),
+            operating_cycle_id: office.cycle_id,
+            office_session_id: office.session_id,
+            budget_reservation_id: BudgetReservationId::new(1).unwrap(),
+            execution_profile_id:
+                society_kernel::ExecutionProfileId::DETERMINISTIC_PI_HOST_DOUBLE_V1,
+            expected_generation: AdmissionGeneration::INITIAL,
+            supervisor_epoch_id: SupervisorEpochId::new(1).unwrap(),
+            supervisor_epoch_identity: office.epoch_identity.clone(),
+            spawn_request: fixture.spawn_request(),
+        };
+        let mut child = match driver.admit_spawn_and_register(store, start).unwrap() {
+            OfficePiSpawnRegistration::Ready(child) => child,
+            other => panic!("M6 fixture must start a registered child: {other:?}"),
+        };
+        wait_for_adapter_ready(driver, store, &mut child);
+        let progress = driver
+            .authorize_and_begin_create(
+                store,
+                &mut child,
+                MonotonicTick::from_milliseconds(1),
+                ControlWriteDeadline::at(MonotonicTick::from_milliseconds(1_000)),
+            )
+            .unwrap();
+        if progress == crate::supervision::ControlWriteProgress::Pending {
+            drive_create_until_delivered(driver, store, &mut child, 2, 1_000);
+        }
+        for tick in 2..1_000 {
+            if driver
+                .observe_session_ready(
+                    store,
+                    &mut child,
+                    MonotonicTick::from_milliseconds(tick),
+                    HandshakeDeadline::at(MonotonicTick::from_milliseconds(1_000)),
+                )
+                .unwrap()
+            {
+                assert_eq!(child.phase(), "office_ready_recorded");
+                return child;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        panic!("provider-free fixture did not become Office ready")
+    }
+
+    fn seal_prompt_content(
+        store: &mut KernelStore,
+        fixture: &NativeFixture,
+        operation_label: &str,
+        text: &str,
+    ) -> crate::content::ContentObjectRegistration {
+        let authority = ContentSealingAuthority::open(
+            ContentStoreRoot::parse(fixture.root.join("m6-prompt-content")).unwrap(),
+            ContentSealLimit::new(4 * 1024 * 1024).unwrap(),
+        )
+        .unwrap();
+        let digest = KernelDigest::of_bytes(text.as_bytes());
+        let operation = ContentSealOperationId::parse(operation_label, digest).unwrap();
+        authority
+            .seal_and_register(store, &operation, text.as_bytes())
+            .unwrap()
+    }
+
+    fn open_office_turn(
+        store: &mut KernelStore,
+        session_id: GrandArchitectOfficeSessionId,
+        command_id: &str,
+    ) -> (OfficeTurnId, society_kernel::EventId) {
+        let capability = Capability::OpenOfficeTurn;
+        let receipt = store
+            .execute(CommandRequest {
+                command_id: CommandId::parse(command_id).unwrap(),
+                principal_id: PrincipalId::new(3).unwrap(),
+                capability_grant_id: store
+                    .active_capability_grant(PrincipalId::new(3).unwrap(), capability)
+                    .unwrap()
+                    .unwrap(),
+                capability,
+                expected_generation: ExpectedGeneration::Exact(AdmissionGeneration::INITIAL),
+                body: CommandBody::OpenOfficeTurn {
+                    session_id,
+                    purpose: OfficeTurnPurpose::OrdinaryWork,
+                },
+            })
+            .unwrap();
+        let CommandDisposition::Accepted(event_id) = receipt.disposition else {
+            panic!("M6 Office turn must open: {receipt:?}")
+        };
+        let turn_id = match store.ledger_event(event_id).unwrap().body {
+            society_kernel::EventBody::OfficeTurnOpened { turn_id, .. } => turn_id,
+            other => panic!("M6 open returned unexpected event: {other:?}"),
+        };
+        (turn_id, event_id)
+    }
+
+    fn office_turn_start(
+        operation: &str,
+        office_turn_id: OfficeTurnId,
+        correlation: &str,
+        prompt_content_object_id: society_kernel::ContentObjectId,
+        digest: KernelDigest,
+        text: &str,
+        frontier_event_id: society_kernel::EventId,
+    ) -> OfficePiTurnStart {
+        OfficePiTurnStart {
+            operation: PiOfficeTurnOperationId::parse(operation).unwrap(),
+            office_turn_id,
+            correlation_identity: society_kernel::PiCorrelationIdentity::parse(correlation)
+                .unwrap(),
+            prompt_content_object_id,
+            prompt: SealedOfficePrompt::new(text.to_owned(), digest).unwrap(),
+            frontier_event_id,
+        }
+    }
+
+    fn drive_prompt_until_delivered(
+        driver: &mut PiExecutionDriver,
+        store: &mut KernelStore,
+        child: &mut super::OfficePiExecutionChild,
+        turn: &mut super::OfficePiTurn,
+        start_tick: u64,
+        deadline_tick: u64,
+    ) {
+        for tick in start_tick..deadline_tick {
+            if driver
+                .drive_office_turn_prompt_delivery(
+                    store,
+                    child,
+                    turn,
+                    MonotonicTick::from_milliseconds(tick),
+                )
+                .unwrap()
+                == crate::supervision::ControlWriteProgress::Delivered
+            {
+                return;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        panic!("M6 Prompt did not reach a complete physical write")
+    }
+
+    fn drive_turn_until_terminal(
+        driver: &mut PiExecutionDriver,
+        store: &mut KernelStore,
+        child: &mut super::OfficePiExecutionChild,
+        turn: &mut super::OfficePiTurn,
+        start_tick: u64,
+        deadline_tick: u64,
+    ) -> Vec<OfficePiTurnOutput> {
+        let mut observed = Vec::new();
+        for tick in start_tick..deadline_tick {
+            if let Some(output) = driver
+                .observe_office_turn_output(
+                    store,
+                    child,
+                    turn,
+                    MonotonicTick::from_milliseconds(tick),
+                )
+                .unwrap()
+            {
+                observed.push(output);
+                if matches!(
+                    output,
+                    OfficePiTurnOutput::SettledReady | OfficePiTurnOutput::TerminalRecordedNonReady
+                ) {
+                    return observed;
+                }
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        panic!("M6 host did not emit a terminal peer chain")
     }
 
     struct NativeFixture {
