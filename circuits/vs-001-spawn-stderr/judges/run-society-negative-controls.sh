@@ -163,4 +163,12 @@ expect_rejected C19 'duplicate sequestered reference_class' duplicate_sequestere
   "$script_dir/run-frontier-leakage-controls.sh" \
   --frontier-dir "$fixtures/frontier/w1-duplicate-class" --out "$out/C19-work"
 
+overlong_workspace_label='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+expect_rejected C20 'workspace label is not opaque-safe' overlong_opaque_workspace_label \
+  "$script_dir/run-fluency-task-evaluator.sh" \
+  --xsh "$xsh" --xsht "$xsht" --xsh-root "$xsh_root" \
+  --solution "$fixtures/fluency/positive/supervise.xsh" \
+  --submission "$positive_submission" --tool-events "$positive_events" \
+  --workspace-label "$overlong_workspace_label" --out "$out/C20-work"
+
 printf 'society negative controls passed; results: %s\n' "$results"

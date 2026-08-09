@@ -78,6 +78,18 @@ fn stream_kind_and_digest_are_one_closed_union() {
 
 #[test]
 fn framing_header_arity_utf8_and_size_fail_before_a_partial_parse() {
+    let without_terminal_lf = &FIXTURE[..FIXTURE.len() - 1];
+    assert_eq!(
+        BehaviorObservationSetV1::parse(without_terminal_lf),
+        Err(BehaviorParseError::MissingTerminalLf)
+    );
+    let mut double_terminal_lf = FIXTURE.to_vec();
+    double_terminal_lf.push(b'\n');
+    assert_eq!(
+        BehaviorObservationSetV1::parse(&double_terminal_lf),
+        Err(BehaviorParseError::ExtraRow)
+    );
+
     let changed = replace_once(FIXTURE, "# schema:", "# unknown:");
     assert_eq!(
         BehaviorObservationSetV1::parse(&changed),

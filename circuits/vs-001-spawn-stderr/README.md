@@ -365,7 +365,8 @@ session access as contamination; `C13` rejects a frontier whose member overlaps
 sequestered aftermath material; `C14`–`C16` reject duplicate source/exclusion
 identities and an extra curation row; `C17` rejects inherited host cwd/env
 dependence; and `C18`–`C19` reject a missing required positive member and a
-duplicated sequestered aftermath class.
+duplicated sequestered aftermath class. `C20` rejects an otherwise-valid opaque
+workspace label longer than the closed 64-byte path-component bound.
 
 ## Current XSH ownership map
 

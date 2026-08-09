@@ -54,6 +54,13 @@ case "$workspace_label" in
     exit 64
     ;;
 esac
+# The label becomes one native path component. Its alphabet is ASCII, so the
+# shell character count is also the exact byte count consumed by the Rust
+# `OpaqueWorkspaceLabel` boundary.
+if [ "${#workspace_label}" -gt 64 ]; then
+  printf 'fluency evaluator: workspace label is not opaque-safe: %s\n' "$workspace_label" >&2
+  exit 64
+fi
 case "$out" in
   /*) ;;
   *) printf '%s\n' 'fluency evaluator: --out must be absolute' >&2; exit 64 ;;

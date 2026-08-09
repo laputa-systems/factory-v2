@@ -8,6 +8,10 @@
 use society_content::ContentDigest;
 use thiserror::Error;
 
+mod vs001;
+
+pub use vs001::*;
+
 const MAX_BEHAVIOR_OBSERVATION_BYTES: usize = 64 * 1024;
 const BEHAVIOR_SCHEMA: &str = "# schema: BehaviorObservationV1/tsv-v1";
 const BEHAVIOR_HEADER: &str = "case_id\tconsumer\tinput_manifest\texpected_contract_source\tdisposition\texit_shape\tparent_stdout_sha256\tparent_stderr_sha256\tstdout_evidence_kind\tstdout_evidence_sha256\tstderr_evidence_kind\tstderr_evidence_sha256\tlifecycle";
@@ -343,7 +347,10 @@ impl BehaviorObservationSetV1 {
         if text.contains('\r') {
             return Err(BehaviorParseError::NonCanonicalLineEnding);
         }
-        let mut lines = text.lines();
+        let Some(canonical_text) = text.strip_suffix('\n') else {
+            return Err(BehaviorParseError::MissingTerminalLf);
+        };
+        let mut lines = canonical_text.split('\n');
         if lines.next() != Some(BEHAVIOR_SCHEMA) {
             return Err(BehaviorParseError::WrongSchema);
         }
@@ -404,6 +411,8 @@ pub enum BehaviorParseError {
     InvalidUtf8,
     #[error("behavior observation file must use LF line endings")]
     NonCanonicalLineEnding,
+    #[error("behavior observation file must end in exactly one LF-terminated record")]
+    MissingTerminalLf,
     #[error("behavior observation schema line is not exact")]
     WrongSchema,
     #[error("behavior observation header is not exact")]
