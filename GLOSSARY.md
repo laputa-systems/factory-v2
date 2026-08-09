@@ -437,6 +437,16 @@ processes and persistent Pi SDK Office sessions. It starts each
 then permits `CreateSession`. It is trusted physics, not an actor, Office, or
 XSH program.
 
+The landed native process-physics boundary currently implements only owned
+workspace allocation, artifact verification, inert spawn, nonblocking control
+delivery, bounded handshake observation, process-group cancellation/reaping,
+and transient typed receipts. Its `admitted_control` capture is the logical
+JSONL frame accepted by the Rust peer; its `stdin` capture is only the exact
+byte prefix successfully written to the OS pipe. Neither capture is a sealed
+`ContentObject`. Durable child registration, budget/cost reconciliation,
+content sealing, evidence admission, restart recovery, and execution-profile
+qualification remain separate kernel/daemon transitions.
+
 ### Portfolio
 
 The Grand-Architect-governed set of stewardship, frontier, measurement,

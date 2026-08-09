@@ -69,10 +69,12 @@ crates/society-content/    implemented isolated physical byte-seal store; it
                            confers no evidence or provenance meaning
 crates/society-circuit/    implemented isolated closed B01-B11 observation
                            parser; durable evaluator/evidence admission remains
-crates/societyd/           implemented bounded resident SQLite authority and
-                           monitor; Pi/content/recovery supervision remains
+crates/societyd/           implemented bounded resident SQLite authority,
+                           monitor, and native Pi child/process-group physics;
+                           durable Pi/content/recovery integration remains
 crates/societyctl/         implemented public query and supervisor-stream client
 tests/daemon/              implemented resident-protocol integration fixtures
+tests/supervision/         provider-free native Pi-host process/race fixture
 tests/                     remaining cross-crate and end-to-end fixtures grow here
 var/                       ignored runtime database, objects, sessions, workspaces
 ```
@@ -90,12 +92,19 @@ cargo test -p society-pi --lib
 npm test --prefix packages/society-pi-host
 cargo test --manifest-path crates/society-content/Cargo.toml
 cargo test --manifest-path crates/society-circuit/Cargo.toml
+cargo test -p societyd --test supervision -- --test-threads=1
 
 pi_host_entry="$PWD/packages/society-pi-host/dist/src/main.js"
 pi_host_digest="$(shasum -a 256 "$pi_host_entry" | awk '{print $1}')"
 SOCIETY_PI_HOST_ENTRYPOINT="$pi_host_entry" \
 SOCIETY_PI_HOST_BUILD_SHA256="$pi_host_digest" \
 cargo test --workspace
+
+SOCIETY_PI_HOST_ENTRYPOINT="$pi_host_entry" \
+SOCIETY_PI_HOST_PACKAGE_ROOT="$PWD/packages/society-pi-host" \
+cargo test -p societyd --test supervision \
+  explicit_pinned_host_create_dispose_never_prompts_a_provider \
+  -- --ignored --exact --test-threads=1
 
 cargo clippy --workspace --all-targets -- -D warnings
 git diff --check

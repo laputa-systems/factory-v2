@@ -3051,6 +3051,7 @@ An enclosing milestone remains open until its exit judge passes.
 | `b5cc365` | isolated single-writer physical content store with canonical SHA-256 paths, atomic non-overwriting seals, file/directory sync ordering, verified idempotent reuse, strict stale-ingest recovery, cross-process locking, and tamper/symlink/limit controls across nine tests | root/daemon ownership, typed `SealContentObject`, durable database reference after its receipt, forensic manifests, evidence admission, retention/access policy, and any provenance or graph meaning |
 | `5058188` | isolated closed parser for the exact B01-B11 behavior matrix, including static case-manifest binding, typed stream-evidence/digest union, canonical status/framing, fixed cardinality/order, and adversarial parsing controls | sealed evaluator/input/TSV/artifact binding, input-digest and documentation adapters, durable behavior-observation bodies, evidence admission, process reaping, and the Milestone-7 end-to-end judge |
 | `ebfaa81` | third provider-free deterministic treatment, explicitly unqualified native profile, closed actor configuration/instance/context, Work Item/lease/Attempt reservation and retry lineage, terminal/pause/treatment fences, exact independent-review binding and resolution, outcome closure blockers, typed capability-grant origins, and migration/replay/tamper controls across 28 integration tests | Pi/process/submission/evaluator receipts; native qualification; Project, Office-session, and exact per-Attempt accounting; configuration mutation/retirement; full Attempt lifecycle; content/evidence/delivery/notices/recovery; and Milestone 1 as a whole |
+| `748fec0` | provider-free native Pi-host process physics: private fresh workspaces, verified artifacts, inert process-group spawn, nonblocking and deadline-bounded control/handshake streams, pending-create cancellation fences, honest logical-versus-physical transient byte receipts, typed TERM/KILL race outcomes, escalation, direct-child reap, and Drop containment across 20 process tests, five library tests, and one exact built-host `CreateSession` to `Dispose` smoke | resident daemon ownership and durable child/session/signal/reap rows; content sealing; budget reservation, charge, and cancellation transactions; restart recovery; package import/qualification proof; detached-descendant containment; and Milestone 4 as a whole |
 
 The current coordination and M3 execution kernel is still a bounded foundation,
 not Milestone-1 completion. It can provision a non-Grand-Architect actor, bind
@@ -3063,6 +3064,15 @@ the Society and Operating Cycle envelopes; Project, Office-session, and exact
 per-Attempt constraints remain part of durable accounting integration. Content,
 evidence/curation, delivery, notices/outbox, process receipt binding, native
 qualification, recovery, and the full graph vocabulary are still open.
+
+The current M4 supervisor is likewise a bounded native process-physics
+boundary, not durable supervision. `PiSupervisor` is exported by `societyd`,
+but the resident control loop does not yet reserve or register its child,
+persist stream or signal receipts, seal their bytes, reconcile cost, or recover
+the process after daemon restart. A supplied host artifact and package-set
+digest are verified bytes; this provider-free tranche does not prove that an
+arbitrary adapter dynamically imports the claimed Pi package set and does not
+qualify the native execution profile.
 
 ### Milestone 1: contracts in executable form
 
