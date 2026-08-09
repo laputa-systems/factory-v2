@@ -96,6 +96,14 @@ The mission supplies purpose; north-star alignment supplies a repeatable way
 to interrogate proposed action. They are stored in the same revision and may
 only diverge through a rejected or incomplete constitutional amendment.
 
+`society-xsh-contract` owns the exact revision-1 rendering and constructs the
+generic `ApplicationMissionInput` and `ProjectNorthStarAlignment` values. It is
+an application input factory, not an authority: it cannot install the mission,
+resolve the kernel-issued `ApplicationRevisionId`, seal content, or create a
+Project. A future trusted composition root submits those values through the
+generic supervisor boundary without linking XSH into `societyd` or
+`societyctl`.
+
 ### `UniverseSeed` contract
 
 The durable contract is relational and strongly typed. Collections below are

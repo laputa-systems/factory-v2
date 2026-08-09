@@ -1170,7 +1170,7 @@ impl Fixture {
                 catalog_policy.catalog_blake3 = digest_utf8(&catalog);
                 catalog_policy
             },
-            tool_profile: ToolProfile::ReadSourceV1,
+            tool_profile: ToolProfile::ReadExecuteV1,
             settings: admitted_settings(),
         };
         if large_control_frame {

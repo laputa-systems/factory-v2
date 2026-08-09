@@ -8,6 +8,7 @@ fixtures, and evaluator contracts out of generic society crates.
 applications/xsh/
 ├── Cargo.toml                         isolated XSH Rust workspace
 ├── society-xsh-circuit/               parsing-only XSH VS-001 adapter
+├── society-xsh-contract/              typed mission/alignment input factory
 └── circuits/vs-001-spawn-stderr/      deterministic XSH fixtures and judges
 ```
 
@@ -32,6 +33,7 @@ application architecture, canonical vocabulary, executable VS-001 contract,
 and dependency boundary are [`ARCHITECTURE.md`](ARCHITECTURE.md),
 [`GLOSSARY.md`](GLOSSARY.md), [`VERTICAL-SLICE.md`](VERTICAL-SLICE.md), and
 [`DEPENDENCIES.md`](DEPENDENCIES.md). The root documents define only the
-generic authority, including the typed mission/alignment foundation. This XSH
-workspace has not yet admitted its mission through that port, and sealed
-mission-source and authorized product-output bindings remain open.
+generic authority. `society-xsh-contract` now owns the concrete XSH mission and
+alignment inputs, but this workspace cannot admit them or assign their durable
+revision identity. Sealed mission-source and authorized product-output
+bindings remain open.

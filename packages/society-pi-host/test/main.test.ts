@@ -47,7 +47,7 @@ test("main: deeply nested sub-megabyte input terminates in a typed fatal, not a 
 });
 
 test("main: invalid UTF-8 in an otherwise-shaped Prompt is contained before command admission", async () => {
-	const prefix = Buffer.from('{"protocolVersion":"society-pi-host/v2","sequence":1,"sessionIdentity":"pipe-session-001","correlationIdentity":"prompt-001","command":"Prompt","payload":{"purpose":"TaskAssignment","text":"', "utf8");
+	const prefix = Buffer.from('{"protocolVersion":"society-pi-host/v3","sequence":1,"sessionIdentity":"pipe-session-001","correlationIdentity":"prompt-001","command":"Prompt","payload":{"purpose":"TaskAssignment","text":"', "utf8");
 	const suffix = Buffer.from('"}}', "utf8");
 	const result = await runHostBytes([prefix, Buffer.from([0xff]), suffix], true);
 	assert.equal(result.stderr, "");
@@ -91,7 +91,7 @@ test("main: real-pipe CreateSession then Dispose flushes before EOF without a pr
 		systemPrompt: prompt, systemPromptDigest: blake3Hex(prompt),
 		model: { provider: "openrouter", modelId: "deepseek/deepseek-v4-flash-0731", thinkingLevel: "high" },
 		modelCatalog: { catalogBlake3: blake3Hex(catalog), effectiveModel: admittedDescriptor() },
-		toolProfile: "read_source_v1",
+		toolProfile: "read_execute_v1",
 		settings: admittedSettings(),
 	};
 	const result = await runHost([
@@ -129,7 +129,7 @@ test("main: a broken stdout after SessionReady fences a later Prompt before it c
 		systemPrompt, systemPromptDigest: blake3Hex(systemPrompt),
 		model: { provider: "openrouter", modelId: "deepseek/deepseek-v4-flash-0731", thinkingLevel: "high" },
 		modelCatalog: { catalogBlake3: blake3Hex(catalog), effectiveModel: admittedDescriptor() },
-		toolProfile: "read_source_v1", settings: admittedSettings(),
+		toolProfile: "read_execute_v1", settings: admittedSettings(),
 	});
 	// GetState forces an outbound write after the parent closes the pipe. The
 	// following Prompt is intentionally sequenced only after that fault trigger;
@@ -142,7 +142,7 @@ test("main: a broken stdout after SessionReady fences a later Prompt before it c
 });
 
 function envelope(sequence: number, command: string, payload: unknown) {
-	return { protocolVersion: "society-pi-host/v2", sequence, sessionIdentity: "pipe-session-001", correlationIdentity: `pipe-command-${sequence}`, command, payload };
+	return { protocolVersion: "society-pi-host/v3", sequence, sessionIdentity: "pipe-session-001", correlationIdentity: `pipe-command-${sequence}`, command, payload };
 }
 
 async function* oneChunk(chunk: Uint8Array): AsyncIterable<Uint8Array> {

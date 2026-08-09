@@ -1,5 +1,5 @@
 [workspace]
-members = ["society-xsh-circuit"]
+members = ["society-xsh-circuit", "society-xsh-contract"]
 resolver = "3"
 
 [workspace.package]

@@ -56,10 +56,10 @@ test("protocol: rejects noncanonical paths, model drift, and nonempty GetState p
 
 test("protocol: rejects every lexical JSON negative-zero form before integer admission", () => {
 	for (const spelling of ["-0", "-0.0", "-0e0", "-0E+10"]) {
-		const line = `{"protocolVersion":"society-pi-host/v2","sequence":1,"sessionIdentity":"pi-session-test-001","correlationIdentity":"command-1","command":"FollowUp","payload":{"noticeDeliveryIdentity":"notice-001","ledgerFrontier":${spelling},"text":"notice"}}`;
+		const line = `{"protocolVersion":"society-pi-host/v3","sequence":1,"sessionIdentity":"pi-session-test-001","correlationIdentity":"command-1","command":"FollowUp","payload":{"noticeDeliveryIdentity":"notice-001","ledgerFrontier":${spelling},"text":"notice"}}`;
 		assert.throws(() => decodeInboundJsonl(line), ProtocolDecodeError, spelling);
 	}
-	const nonzero = '{"protocolVersion":"society-pi-host/v2","sequence":1,"sessionIdentity":"pi-session-test-001","correlationIdentity":"command-1","command":"FollowUp","payload":{"noticeDeliveryIdentity":"notice-001","ledgerFrontier":1,"text":"notice"}}';
+	const nonzero = '{"protocolVersion":"society-pi-host/v3","sequence":1,"sessionIdentity":"pi-session-test-001","correlationIdentity":"command-1","command":"FollowUp","payload":{"noticeDeliveryIdentity":"notice-001","ledgerFrontier":1,"text":"notice"}}';
 	assert.equal(decodeInboundJsonl(nonzero).command, "FollowUp");
 });
 
@@ -84,13 +84,13 @@ test("protocol: preserves provider binary64 cost observations for Rust to round 
 	assert.throws(() => nodeRuntimeVersion("v22.18.0"), ProtocolDecodeError);
 	assert.equal(nodeRuntimeVersion("v22.19.0"), "v22.19.0");
 
-	const malformed = JSON.stringify({ protocolVersion: "society-pi-host/v2" });
+	const malformed = JSON.stringify({ protocolVersion: "society-pi-host/v3" });
 	assert.throws(() => decodeInboundJsonl(malformed), ProtocolDecodeError);
 });
 
 test("protocol: rejects duplicate object keys before JSON.parse can select the last value", () => {
 	const frame = JSON.stringify({
-		protocolVersion: "society-pi-host/v2", sequence: 1, sessionIdentity: "pi-session-test-001",
+		protocolVersion: "society-pi-host/v3", sequence: 1, sessionIdentity: "pi-session-test-001",
 		correlationIdentity: "command-1", command: "GetState", payload: {},
 	});
 	const duplicateTopLevel = frame.replace('"sequence":1', '"sequence":1,"sequence":2');

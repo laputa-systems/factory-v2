@@ -7,7 +7,7 @@
 
 import { isAbsolute, normalize } from "node:path";
 
-export const ADAPTER_PROTOCOL_VERSION = "society-pi-host/v2" as const;
+export const ADAPTER_PROTOCOL_VERSION = "society-pi-host/v3" as const;
 export const ADAPTER_VERSION = "1" as const;
 export const PINNED_PI_SDK_VERSION = "0.83.0" as const;
 export const PINNED_PROVIDER = "openrouter" as const;
@@ -161,7 +161,7 @@ export function nodeRuntimeVersion(value: string): NodeRuntimeVersion {
 }
 
 export type SessionKind = "TaskAttempt" | "GrandArchitectOffice";
-export type ToolProfile = "read_source_v1" | "curator_v1" | "product_builder_v1" | "task_actor_v1";
+export type ToolProfile = "read_execute_v1" | "read_write_v1" | "workspace_mutation_v1";
 export type PiToolName = "read" | "bash" | "edit" | "write" | "grep" | "find" | "ls";
 export type QueueMode = "all" | "one-at-a-time";
 export type CompactionMode = "enabled" | "disabled";
@@ -171,10 +171,9 @@ export type AbortReason = "GracefulCancellation" | "EmergencyStop" | "BudgetGuar
 export type DisposeReason = "CycleReconciliation" | "ProcessRecovery" | "ProtocolFailure";
 
 const TOOL_PROFILE_TOOLS: Readonly<Record<ToolProfile, readonly PiToolName[]>> = {
-	read_source_v1: ["read", "bash", "grep", "find", "ls"],
-	curator_v1: ["read", "write"],
-	product_builder_v1: ["read", "bash", "edit", "write", "grep", "find", "ls"],
-	task_actor_v1: ["read", "bash", "edit", "write", "grep", "find", "ls"],
+	read_execute_v1: ["read", "bash", "grep", "find", "ls"],
+	read_write_v1: ["read", "write"],
+	workspace_mutation_v1: ["read", "bash", "edit", "write", "grep", "find", "ls"],
 };
 
 export function toolsForProfile(profile: ToolProfile): readonly PiToolName[] {
@@ -796,10 +795,9 @@ function decodeCreateSessionPayload(value: Record<string, unknown>): CreateSessi
 		},
 		modelCatalog: assertPinnedModelCatalogPolicy(decodeModelCatalogPolicy(modelCatalog)),
 		toolProfile: requiredOneOf(value, "toolProfile", [
-			"read_source_v1",
-			"curator_v1",
-			"product_builder_v1",
-			"task_actor_v1",
+			"read_execute_v1",
+			"read_write_v1",
+			"workspace_mutation_v1",
 		] as const),
 		settings: assertPinnedActorModelPolicy(decodeSettings(settings)),
 	};

@@ -1,4 +1,4 @@
-//! The complete closed `society-pi-host/v2` wire schema.
+//! The complete closed `society-pi-host/v3` wire schema.
 //!
 //! `serde_json::Value` is used only after [`reject_duplicate_object_keys`] has
 //! ruled out JSON's last-key-wins ambiguity.  The subsequent decoder checks
@@ -11,7 +11,7 @@ use std::{collections::BTreeSet, fmt, path::Path};
 use serde_json::{Map, Value};
 use thiserror::Error;
 
-pub const ADAPTER_PROTOCOL_VERSION: &str = "society-pi-host/v2";
+pub const ADAPTER_PROTOCOL_VERSION: &str = "society-pi-host/v3";
 pub const ADAPTER_VERSION: &str = "1";
 pub const PINNED_PI_SDK_VERSION: &str = "0.83.0";
 pub const PINNED_PROVIDER: &str = "openrouter";
@@ -283,10 +283,9 @@ pub enum SessionKind {
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ToolProfile {
-    ReadSourceV1,
-    CuratorV1,
-    ProductBuilderV1,
-    TaskActorV1,
+    ReadExecuteV1,
+    ReadWriteV1,
+    WorkspaceMutationV1,
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PiToolName {
@@ -383,15 +382,15 @@ pub enum PiSdkVersion {
 impl ToolProfile {
     pub const fn tools(self) -> &'static [PiToolName] {
         match self {
-            Self::ReadSourceV1 => &[
+            Self::ReadExecuteV1 => &[
                 PiToolName::Read,
                 PiToolName::Bash,
                 PiToolName::Grep,
                 PiToolName::Find,
                 PiToolName::Ls,
             ],
-            Self::CuratorV1 => &[PiToolName::Read, PiToolName::Write],
-            Self::ProductBuilderV1 | Self::TaskActorV1 => &[
+            Self::ReadWriteV1 => &[PiToolName::Read, PiToolName::Write],
+            Self::WorkspaceMutationV1 => &[
                 PiToolName::Read,
                 PiToolName::Bash,
                 PiToolName::Edit,
@@ -1058,7 +1057,7 @@ fn encode_settings(value: &ActorModelPolicyV1) -> Value {
 
 macro_rules! wire { ($name:ident, $enum:ident, {$($variant:ident => $text:literal),+ $(,)?}) => { fn $name(value: $enum) -> &'static str { match value { $($enum::$variant => $text),+ } } }; }
 wire!(session_kind_wire, SessionKind, { TaskAttempt => "TaskAttempt", GrandArchitectOffice => "GrandArchitectOffice" });
-wire!(tool_profile_wire, ToolProfile, { ReadSourceV1 => "read_source_v1", CuratorV1 => "curator_v1", ProductBuilderV1 => "product_builder_v1", TaskActorV1 => "task_actor_v1" });
+wire!(tool_profile_wire, ToolProfile, { ReadExecuteV1 => "read_execute_v1", ReadWriteV1 => "read_write_v1", WorkspaceMutationV1 => "workspace_mutation_v1" });
 wire!(queue_mode_wire, QueueMode, { All => "all", OneAtATime => "one-at-a-time" });
 wire!(compaction_mode_wire, CompactionMode, { Enabled => "enabled", Disabled => "disabled" });
 wire!(prompt_purpose_wire, PromptPurpose, { TaskAssignment => "TaskAssignment", OfficeTurn => "OfficeTurn" });
@@ -2096,7 +2095,7 @@ fn literal(object: &Map<String, Value>, key: &str, expected: &str) -> Result<(),
 
 macro_rules! closed_enum { ($function:ident, $enum:ident, {$($text:literal => $variant:ident),+ $(,)?}) => { fn $function(value:&str)->Result<$enum,ProtocolError>{match value{$($text=>Ok($enum::$variant),)+_=>Err(ProtocolError::InvalidFrame(stringify!($enum)))}} }; }
 closed_enum!(session_kind,SessionKind,{"TaskAttempt"=>TaskAttempt,"GrandArchitectOffice"=>GrandArchitectOffice});
-closed_enum!(tool_profile,ToolProfile,{"read_source_v1"=>ReadSourceV1,"curator_v1"=>CuratorV1,"product_builder_v1"=>ProductBuilderV1,"task_actor_v1"=>TaskActorV1});
+closed_enum!(tool_profile,ToolProfile,{"read_execute_v1"=>ReadExecuteV1,"read_write_v1"=>ReadWriteV1,"workspace_mutation_v1"=>WorkspaceMutationV1});
 closed_enum!(pi_tool_name,PiToolName,{"read"=>Read,"bash"=>Bash,"edit"=>Edit,"write"=>Write,"grep"=>Grep,"find"=>Find,"ls"=>Ls});
 closed_enum!(queue_mode,QueueMode,{"all"=>All,"one-at-a-time"=>OneAtATime});
 closed_enum!(compaction_mode,CompactionMode,{"enabled"=>Enabled,"disabled"=>Disabled});
@@ -2323,13 +2322,13 @@ mod protocol_tests {
     fn rejects_duplicate_nested_keys_and_negative_zero() {
         assert_eq!(
             decode_inbound_jsonl(
-                r#"{"protocolVersion":"society-pi-host/v2","sequence":1,"sequence":2,"sessionIdentity":"session-1","correlationIdentity":"correlation-1","command":"GetState","payload":{}}"#
+                r#"{"protocolVersion":"society-pi-host/v3","sequence":1,"sequence":2,"sessionIdentity":"session-1","correlationIdentity":"correlation-1","command":"GetState","payload":{}}"#
             ),
             Err(ProtocolError::DuplicateObjectKey)
         );
         assert_eq!(
             decode_inbound_jsonl(
-                r#"{"protocolVersion":"society-pi-host/v2","sequence":-0,"sessionIdentity":"session-1","correlationIdentity":"correlation-1","command":"GetState","payload":{}}"#
+                r#"{"protocolVersion":"society-pi-host/v3","sequence":-0,"sessionIdentity":"session-1","correlationIdentity":"correlation-1","command":"GetState","payload":{}}"#
             ),
             Err(ProtocolError::NegativeZero)
         );
@@ -2351,7 +2350,7 @@ mod protocol_tests {
     fn rejects_every_json_negative_zero_spelling_in_opaque_agent_evidence() {
         for spelling in ["-0", "-0.0", "-0e0", "-0E+10"] {
             let line = format!(
-                r#"{{"protocolVersion":"society-pi-host/v2","sequence":1,"sessionIdentity":"session-001","event":"AgentEvent","agentEvent":{{"type":"message_end","message":{{"value":{spelling}}}}}}}"#
+                r#"{{"protocolVersion":"society-pi-host/v3","sequence":1,"sessionIdentity":"session-001","event":"AgentEvent","agentEvent":{{"type":"message_end","message":{{"value":{spelling}}}}}}}"#
             );
             assert_eq!(
                 decode_outbound_jsonl(&line),
@@ -2359,13 +2358,13 @@ mod protocol_tests {
                 "{spelling}"
             );
         }
-        let nonzero = r#"{"protocolVersion":"society-pi-host/v2","sequence":1,"sessionIdentity":"session-001","event":"AgentEvent","agentEvent":{"type":"message_end","message":{"value":-1}}}"#;
+        let nonzero = r#"{"protocolVersion":"society-pi-host/v3","sequence":1,"sessionIdentity":"session-001","event":"AgentEvent","agentEvent":{"type":"message_end","message":{"value":-1}}}"#;
         assert!(decode_outbound_jsonl(nonzero).is_ok());
     }
 
     #[test]
     fn strict_get_state_and_path() {
-        assert!(decode_inbound_jsonl(r#"{"protocolVersion":"society-pi-host/v2","sequence":1,"sessionIdentity":"session-1","correlationIdentity":"correlation-1","command":"GetState","payload":{"x":1}}"#).is_err());
+        assert!(decode_inbound_jsonl(r#"{"protocolVersion":"society-pi-host/v3","sequence":1,"sessionIdentity":"session-1","correlationIdentity":"correlation-1","command":"GetState","payload":{"x":1}}"#).is_err());
         assert!(AbsolutePath::parse("/tmp/../secret").is_err());
         assert!(AbsolutePath::parse("/tmp//secret").is_err());
     }

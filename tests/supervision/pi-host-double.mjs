@@ -138,7 +138,7 @@ function requireArgument(flag) {
 
 function emit(event) {
 	process.stdout.write(`${JSON.stringify({
-		protocolVersion: "society-pi-host/v2",
+		protocolVersion: "society-pi-host/v3",
 		sequence: outboundSequence++,
 		sessionIdentity,
 		...event,
@@ -379,7 +379,7 @@ function knownUsage(turn) {
 }
 
 function toolsForProfile(profile) {
-	if (profile === "read_source_v1") return ["read", "bash", "grep", "find", "ls"];
-	if (profile === "curator_v1") return ["read", "write"];
+	if (profile === "read_execute_v1") return ["read", "bash", "grep", "find", "ls"];
+	if (profile === "read_write_v1") return ["read", "write"];
 	return ["read", "bash", "edit", "write", "grep", "find", "ls"];
 }

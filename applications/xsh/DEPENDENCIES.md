@@ -1,9 +1,10 @@
 # XSH application dependency boundary
 
-The XSH application adds no direct Rust or JavaScript dependency to the generic
-trusted workspace. Its parsing-only adapter uses the public
-`society-content` byte-identity type through the path recorded in its isolated
-workspace manifest.
+The XSH application adds no dependency from the generic trusted workspace back
+into application code. In the permitted inward direction, its parsing-only
+adapter uses the public `society-content` byte-identity type and its mission
+factory uses the public `society-kernel` mission types. Both paths are recorded
+in the isolated application workspace; neither grants resident authority.
 
 The application’s executable slice may require an assigned product binary,
 source checkout, and ordinary host evaluator tools. Those are sealed or

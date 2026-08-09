@@ -1224,7 +1224,7 @@ mod peer_tests {
             system_prompt_digest: digest(b"seed"),
             model: model(),
             model_catalog: catalog(),
-            tool_profile: ToolProfile::ReadSourceV1,
+            tool_profile: ToolProfile::ReadExecuteV1,
             settings: policy(),
         }
     }
@@ -1381,7 +1381,7 @@ mod peer_tests {
         assert_eq!(inbound.admit_inbound(prompt_frame()), Err(PeerError::Fatal));
 
         let mut outbound = setup_ready();
-        let duplicate = r#"{"protocolVersion":"society-pi-host/v2","sequence":4,"sequence":4,"sessionIdentity":"peer-session-001","event":"Fatal","failureCode":"protocol_decode_failed"}"#;
+        let duplicate = r#"{"protocolVersion":"society-pi-host/v3","sequence":4,"sequence":4,"sessionIdentity":"peer-session-001","event":"Fatal","failureCode":"protocol_decode_failed"}"#;
         assert_eq!(
             outbound.observe_outbound_jsonl(duplicate),
             Err(PeerError::Protocol(ProtocolError::DuplicateObjectKey))

@@ -753,14 +753,16 @@ review evidence without changing the C1 account.
 
 ### Tool profiles
 
-VS-001 uses four explicit profiles:
+VS-001 uses four application-owned actor configurations over three generic Pi
+tool profiles. Application configuration names remain in XSH submissions and
+policy; only the capability-shaped generic profile crosses the Pi boundary:
 
-| Profile | Pi tools | Intended use |
-| --- | --- | --- |
-| `read_source_v1` | `read,bash,grep,find,ls` | Source and contract inquiry in a detached worktree |
-| `curator_v1` | `read,write` | Select a decision account from declared admitted evidence |
-| `product_builder_v1` | `read,bash,edit,write,grep,find,ls` | One authorized XSH branch worktree |
-| `task_actor_v1` | `read,bash,edit,write,grep,find,ls` | Produce an XSH script or an uptake-probe submission in a fixture workspace |
+| Application configuration | Generic Pi profile | Pi tools | Intended use |
+| --- | --- | --- | --- |
+| `read_source_v1` | `read_execute_v1` | `read,bash,grep,find,ls` | Source and contract inquiry in a detached worktree |
+| `curator_v1` | `read_write_v1` | `read,write` | Select a decision account from declared admitted evidence |
+| `product_builder_v1` | `workspace_mutation_v1` | `read,bash,edit,write,grep,find,ls` | One authorized XSH branch worktree |
+| `task_actor_v1` | `workspace_mutation_v1` | `read,bash,edit,write,grep,find,ls` | Produce an XSH script or an uptake-probe submission in a fixture workspace |
 
 `bash` makes three profiles broad at the OS level; `read` and `write` are also
 not an OS confinement boundary. The profile is an
@@ -1053,6 +1055,7 @@ repository root/
 ├── migrations/                # generic atomic fresh-schema bootstrap
 └── applications/xsh/
     ├── society-xsh-circuit/   # parsing-only XSH observation adapter
+    ├── society-xsh-contract/  # mission/alignment input factory, no authority
     └── circuits/vs-001-spawn-stderr/
         ├── fixtures/
         └── judges/
@@ -2229,7 +2232,7 @@ replications.
 
 - attractor bias: `explore + remember + synthesize`;
 - responds to: `unresolved_contract_conflict`;
-- profile: `read_source_v1`;
+- application configuration: `read_source_v1`; generic Pi profile: `read_execute_v1`;
 - workspace: detached XSH read worktree;
 - sees: question, hypotheses, pinned source/doc paths, no other actor output;
 - must: map every stdio field from syntax and registry through lowering to each
@@ -2240,7 +2243,7 @@ replications.
 
 - attractor bias: `challenge + measure` with low implementation authority;
 - responds to: `missing_behavioral_evidence` and high-confidence contradiction;
-- profile: `read_source_v1`;
+- application configuration: `read_source_v1`; generic Pi profile: `read_execute_v1`;
 - workspace: independent detached XSH read worktree;
 - sees: the same question and hard constraints, but not the cartographer's
   contribution;
@@ -2253,7 +2256,7 @@ replications.
 - attractor bias: `synthesize + remember`, with explicit dissent preservation;
 - responds to: admitted evidence ready for decision and unresolved curation
   exclusions;
-- profile: `curator_v1`;
+- application configuration: `curator_v1`; generic Pi profile: `read_write_v1`;
 - workspace: fixture directory containing admitted evidence and contribution
   projections, not an XSH checkout;
 - sees: pre-agent hypotheses, deterministic observations, validated inquiry
@@ -2267,7 +2270,7 @@ replications.
 ### 4. Prototype builder
 
 - attractor bias: `build + integrate` under a narrow authorized contract;
-- profile: `product_builder_v1`;
+- application configuration: `product_builder_v1`; generic Pi profile: `workspace_mutation_v1`;
 - workspace: XSH product worktree at the pinned base;
 - sees: a Grand-Architect-authorized C1 prototype decision packet, the admitted evidence,
   preserved conflict, exact expected contract, and required XSH gates;
@@ -2279,7 +2282,7 @@ replications.
 
 - attractor bias: matched `build + explore`; neither configuration is selected
   or reproduced from this one comparison;
-- profile: `task_actor_v1`;
+- application configuration: `task_actor_v1`; generic Pi profile: `workspace_mutation_v1`;
 - workspace: independent fixture directories, one per opaque treatment;
 - sees: only the task and its treatment's declared reference/binary inputs; and
 - must: produce `supervise.xsh` plus a valid submission.
@@ -2287,7 +2290,7 @@ replications.
 ### 7. Product adversary
 
 - attractor bias: `challenge + integrate + measure`;
-- profile: `read_source_v1`;
+- application configuration: `read_source_v1`; generic Pi profile: `read_execute_v1`;
 - workspace: fresh read worktree materialized with the candidate patch;
 - sees: question, decision dimensions, evidence matrix, candidate diff, tests,
   paired-trial results, accepted curation, and stated exclusions;
@@ -2302,7 +2305,7 @@ replications.
   independently registered inquiry configuration with no session inheritance
   from actors 1 or 2;
 - responds to: the explicitly targeted L1 lesson and a new process-API question;
-- profile: `read_source_v1`;
+- application configuration: `read_source_v1`; generic Pi profile: `read_execute_v1`;
 - workspace: fresh read worktree at delivered XSH `HEAD`;
 - sees: a new question about whether supervised stdout capture requires a new
   XSH API, the exact promoted L1 lesson revision, and ordinary declared source

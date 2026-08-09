@@ -13,9 +13,10 @@ and the evidence around it be what survives.
   and SQLite schema must not gain generic payloads, metadata maps, EAV tables,
   or stringly typed discriminants.
 - Application purpose crosses the generic boundary only through the typed
-  mission and north-star records defined in `VERTICAL-SLICE.md`; that target is
-  not implemented yet. A sealed rendering is not a substitute for the typed
-  boundary.
+  mission and north-star records defined in `VERTICAL-SLICE.md`. Those records
+  are implemented; sealed mission-source content and kernel-issued product
+  authorization are not. A declared rendering digest is not a substitute for
+  a physical content seal.
 - Test observable transitions and cross-boundary invariants. Favor
   integration, replay, migration, fault-injection, and process tests over
   trivial units.
@@ -85,7 +86,9 @@ cargo test -p societyd --test supervision -- --test-threads=1
 tests/generic-boundary/run-no-application-knowledge.sh
 
 pi_host_entry="$PWD/packages/society-pi-host/dist/src/main.js"
-pi_host_digest="$(b3sum --no-names "$pi_host_entry")"
+pi_host_digest="$(cd packages/society-pi-host && node --input-type=module -e \
+  'import { readFileSync } from "node:fs"; import { blake3Hex } from "./dist/src/digest.js"; console.log(blake3Hex(readFileSync(process.argv[1])))' \
+  "$pi_host_entry")"
 SOCIETY_PI_HOST_ENTRYPOINT="$pi_host_entry" \
 SOCIETY_PI_HOST_BUILD_BLAKE3="$pi_host_digest" \
 cargo test --workspace

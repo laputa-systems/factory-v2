@@ -15,11 +15,13 @@ which this application may consume but may not modify through application code.
   typed mission/alignment and eventually product authorization. It must not
   write SQLite, own the resident control channel, supervise Pi, reap children,
   assign capabilities, settle budgets, or move a delivery ref.
-- The generic kernel now has a typed mission/alignment foundation, but the XSH
-  mission has not been admitted through it and its source rendering is not yet
-  content-sealed. Durable authorized product-change output also remains
-  unimplemented. The XSH VS-001 contract records its intended end-to-end gates;
-  it does not claim that the present foundation has completed them.
+- `society-xsh-contract` owns the XSH mission rendering and constructs the
+  generic typed mission/alignment inputs. It does not admit them, assign their
+  durable identifiers, or receive daemon authority. The source rendering is
+  not yet content-sealed. Durable authorized product-change output also
+  remains unimplemented. The XSH VS-001 contract records its intended
+  end-to-end gates; it does not claim that the present foundation completed
+  them.
 - No application JSON, metadata map, EAV relation, or stringly discriminator
   may be introduced as a shortcut around a typed evaluator or generic boundary.
 
@@ -32,6 +34,7 @@ GLOSSARY.md                       XSH canonical vocabulary
 VERTICAL-SLICE.md                 exact XSH VS-001 executable contract
 README.md                         isolated workspace entry point
 society-xsh-circuit/              closed parsing-only XSH observation adapter
+society-xsh-contract/             XSH mission and north-star input factory
 circuits/vs-001-spawn-stderr/     XSH fixtures and deterministic judges
 ```
 
@@ -46,6 +49,9 @@ itself.
 ```text
 cargo test -p society-xsh-circuit
 cargo clippy -p society-xsh-circuit --all-targets -- -D warnings
+cargo test -p society-xsh-contract
+cargo clippy -p society-xsh-contract --all-targets -- -D warnings
+tests/run-boundary.sh
 ```
 
 The application circuit README names its provider-free evaluator invocation

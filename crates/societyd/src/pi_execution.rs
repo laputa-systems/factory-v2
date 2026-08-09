@@ -4936,7 +4936,7 @@ mod tests {
                     catalog.catalog_blake3 = digest_bytes(catalog_json.as_bytes());
                     catalog
                 },
-                tool_profile: ToolProfile::ReadSourceV1,
+                tool_profile: ToolProfile::ReadExecuteV1,
                 settings: settings(),
             };
             Self {

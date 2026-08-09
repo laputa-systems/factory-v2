@@ -29,7 +29,7 @@ export const TEST_RUNTIME_EVIDENCE = {
 export function decodeCommand(sequence: number, command: string, payload: Record<string, unknown>): InboundFrame {
 	return decodeInboundJsonl(
 		JSON.stringify({
-			protocolVersion: "society-pi-host/v2",
+			protocolVersion: "society-pi-host/v3",
 			sequence,
 			sessionIdentity: TEST_SESSION_IDENTITY,
 			correlationIdentity: `command-${sequence}`,
@@ -72,7 +72,7 @@ export function createSessionPayload(sessionKind: "TaskAttempt" | "GrandArchitec
 				cacheWriteUsdPerMillion: { kind: "Absent" },
 			},
 		},
-		toolProfile: "read_source_v1",
+		toolProfile: "read_execute_v1",
 		settings: {
 			retry: {
 				maxRetries: 2,

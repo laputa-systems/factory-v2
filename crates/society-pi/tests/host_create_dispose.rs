@@ -55,7 +55,7 @@ fn committed_host_create_then_dispose_is_sealed_without_a_provider_call() {
             "systemPromptDigest": blake3(system_prompt),
             "model": { "provider": "openrouter", "modelId": "deepseek/deepseek-v4-flash-0731", "thinkingLevel": "high" },
             "modelCatalog": { "catalogBlake3": catalog_blake3, "effectiveModel": admitted_effective_model() },
-            "toolProfile": "read_source_v1",
+            "toolProfile": "read_execute_v1",
             "settings": admitted_settings(),
         }),
     );
@@ -167,7 +167,7 @@ fn committed_host_create_then_dispose_is_sealed_without_a_provider_call() {
 }
 
 fn envelope(sequence: u64, correlation: &str, command: &str, payload: serde_json::Value) -> String {
-    json!({ "protocolVersion":"society-pi-host/v2", "sequence":sequence, "sessionIdentity":SESSION, "correlationIdentity":correlation, "command":command, "payload":payload }).to_string()
+    json!({ "protocolVersion":"society-pi-host/v3", "sequence":sequence, "sessionIdentity":SESSION, "correlationIdentity":correlation, "command":command, "payload":payload }).to_string()
 }
 fn admitted_catalog() -> String {
     json!({ "providers": { "openrouter": { "baseUrl":"https://openrouter.ai/api/v1", "api":"openai-completions", "models":[{ "id":"deepseek/deepseek-v4-flash-0731", "name":"admitted", "reasoning":true, "input":["text"], "contextWindow":1_048_576, "maxTokens":384_000, "cost":{"input":0.00000009,"output":0.00000018,"cacheRead":0.000000018,"cacheWrite":0} }] } } }).to_string()
