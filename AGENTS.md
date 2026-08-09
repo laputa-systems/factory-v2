@@ -50,10 +50,11 @@ DEPENDENCIES.md            exact trusted dependency and vendoring contract
 rust-toolchain.toml        exact Rust toolchain for trusted physics
 
 Cargo.toml                 Rust workspace manifest
-crates/society-kernel/     implemented bootstrap/cycle/ledger foundation;
+crates/society-kernel/     implemented bootstrap, coordination, and bounded
+                           actor/work/attempt execution foundations;
                            remaining Milestone-1 domains grow here
 migrations/                normalized monotonic SQLite migrations; migrations
-                           1 and 2 own the current kernel foundation schema
+                           1 through 3 own the current kernel foundation schema
 
 packages/society-pi-host/  implemented and provider-free-audited Pi SDK host;
                            durable Rust authority remains outside this boundary

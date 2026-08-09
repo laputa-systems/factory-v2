@@ -33,6 +33,16 @@ A principal admitted from one exact actor configuration for a bounded scope and
 lifetime. An actor instance receives authority only through explicit capability
 grants or through an office it is authorized to occupy.
 
+### Execution profile
+
+A closed, revisioned description of the trusted runtime boundary eligible to
+execute an actor attempt. Runtime identity and readiness are separate: the
+provider-free deterministic Pi-host double is eligible only in
+`Vs001DeterministicV1`, while the pinned native Pi SDK profile remains
+`Unqualified` until the bootstrap qualification institution records its typed
+result. An execution profile is not a caller-supplied executable path or a
+claim inferred from a successful prompt.
+
 ### Admission generation
 
 A monotonically increasing fence on an admission scope. A spawn reservation
@@ -337,9 +347,27 @@ quota or one fixed workflow.
 ### Operating Cycle treatment
 
 A closed admission policy selecting the purpose and exact hard ceiling of one
-Operating Cycle. VS-001 initially admits only `PiSdkQualificationV1` at
-`UsdMicros(30_000)` or `Vs001LiveV1` at `UsdMicros(1_000_000)`. A treatment is
-durable authority, not a caller-provided label or an arbitrary budget value.
+Operating Cycle. VS-001 has three non-interchangeable treatments:
+`PiSdkQualificationV1` is the bootstrap/kernel-only native laboratory at
+`UsdMicros(30_000)`; `Vs001DeterministicV1` is the provider-denied process-
+double circuit at `UsdMicros(1_000_000)`; and `Vs001LiveV1` is the qualified
+native run at `UsdMicros(1_000_000)`. Neither a deterministic success nor a
+live-cycle label can create native qualification. A treatment is durable
+authority, not a caller-provided label or arbitrary budget value.
+
+### Work item
+
+A typed assignment binding one Ticket, actor instance, context pack, work kind,
+and—when applicable—the exact Adversarial Review. It may be claimed only by its
+named active actor. A retry preserves the failed Attempt and reopens the same
+assignment under explicit lineage.
+
+### Work lease
+
+The exclusive, revocable claim connecting one actor instance to one ready Work
+Item. Expiry before an Attempt returns the Work Item to readiness; a live
+Attempt requires separate cancellation and terminal reconciliation rather than
+silently expiring its lease.
 
 ### Operational audit
 

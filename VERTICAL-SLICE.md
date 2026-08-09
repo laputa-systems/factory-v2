@@ -387,6 +387,16 @@ two Office turns/300 active seconds. It cannot borrow from the live slice or be
 reported as VS-001 discovery work. If either boundary cannot qualify inside its
 reservation, qualification stops rather than reallocating product budget.
 
+Provider-free end-to-end execution uses a third closed treatment,
+`Vs001DeterministicV1`. It has the same `$1.00` logical envelope needed to
+exercise VS-001's reservations, fault injection, and closure rules, but model
+network access is denied and only the deterministic Pi-host process-double
+profile is eligible. It cannot emit `PiSdkQualificationV1`, cannot admit the
+native profile, and cannot be relabeled or resumed as `Vs001LiveV1`. The paid
+`PiSdkQualificationV1` laboratory remains bootstrap/kernel-only: its minimal
+Office-shaped SDK session has no Grand Architect Office capability or ordinary
+society-command surface.
+
 Cost is stored as integer micro-US-dollars. The Pi supervisor normalizes each
 cumulative provider cost idempotently and atomically charges all applicable
 constraints. Task-attempt and Office-session events are observed from their Pi
@@ -3040,14 +3050,19 @@ An enclosing milestone remains open until its exit judge passes.
 | `1c12b84` | typed Project/Ticket planning, Observation/Hypothesis revision bodies in named one-to-one tables, finite edge matrix, Episode, conservative review/Postmortem blockers, exact authority/provenance, migration-step fencing, and semantic replay/tamper detection across 20 integration tests | independent Actor provisioning, WorkItem/Attempt and Ticket execution, review execution/resolution, evidence/delivery, content/outbox, supervision, recovery, and remaining Milestone-1 domains |
 | `b5cc365` | isolated single-writer physical content store with canonical SHA-256 paths, atomic non-overwriting seals, file/directory sync ordering, verified idempotent reuse, strict stale-ingest recovery, cross-process locking, and tamper/symlink/limit controls across nine tests | root/daemon ownership, typed `SealContentObject`, durable database reference after its receipt, forensic manifests, evidence admission, retention/access policy, and any provenance or graph meaning |
 | `5058188` | isolated closed parser for the exact B01-B11 behavior matrix, including static case-manifest binding, typed stream-evidence/digest union, canonical status/framing, fixed cardinality/order, and adversarial parsing controls | sealed evaluator/input/TSV/artifact binding, input-digest and documentation adapters, durable behavior-observation bodies, evidence admission, process reaping, and the Milestone-7 end-to-end judge |
+| `ebfaa81` | third provider-free deterministic treatment, explicitly unqualified native profile, closed actor configuration/instance/context, Work Item/lease/Attempt reservation and retry lineage, terminal/pause/treatment fences, exact independent-review binding and resolution, outcome closure blockers, typed capability-grant origins, and migration/replay/tamper controls across 28 integration tests | Pi/process/submission/evaluator receipts; native qualification; Project, Office-session, and exact per-Attempt accounting; configuration mutation/retirement; full Attempt lifecycle; content/evidence/delivery/notices/recovery; and Milestone 1 as a whole |
 
-The current M2 coordination kernel is a typed planning and closure-blocker
-foundation only. `Challenged` is a closed Project planning gate, not evidence
-that an independent Adversarial Review occurred. The kernel cannot yet
-provision a non-Grand-Architect actor, so reviewer assignment intentionally
-rejects the only actor and the unresolved review conservatively blocks Project
-closure. Actor/WorkItem/Attempt, review execution, evidence, delivery,
-content/outbox, process supervision, and recovery are still open.
+The current coordination and M3 execution kernel is still a bounded foundation,
+not Milestone-1 completion. It can provision a non-Grand-Architect actor, bind
+an exact Work Item/lease/Attempt and deterministic execution profile, preserve
+retry lineage, and execute the complete typed review-response/closure blocker
+chain. Its terminal and validation commands are receipt-free trusted-kernel
+fixture attestations: they do not prove Pi settlement, process exit, sealed
+submission/evaluator evidence, or judgment. M3 Attempt reservations debit only
+the Society and Operating Cycle envelopes; Project, Office-session, and exact
+per-Attempt constraints remain part of durable accounting integration. Content,
+evidence/curation, delivery, notices/outbox, process receipt binding, native
+qualification, recovery, and the full graph vocabulary are still open.
 
 ### Milestone 1: contracts in executable form
 
