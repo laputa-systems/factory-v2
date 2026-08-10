@@ -276,9 +276,10 @@ experimental forks, and materialized-state integrity replay. The
 correction-latency application owns the synthetic world, analysis-only
 evaluator, deterministic actor doubles, and paired report.
 
-Not implemented are a daemon-owned live study scheduler, Forum-obligation
-binding to actual resident Pi/native-child custody, knowledge promotion, or
-general institution-policy runtime. The Pi host has a separately admitted
+Not implemented are a daemon-owned live study scheduler and paired live
+episode runner. The daemon now owns the lower-level Forum-obligation bridge
+and durable binding to actual resident Pi/native-child custody; knowledge
+promotion and general institution-policy runtime remain out of scope. The Pi host has a separately admitted
 closed Forum custom-tool transport and a reduced direct qualification smoke;
 that adapter path does not establish daemon custody or canonical study
 evidence. Product-delivery mechanics remain dormant and outside the present

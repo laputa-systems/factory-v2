@@ -14,29 +14,33 @@ use society_kernel::{
     ApplicationName, ApplicationRevisionId, ApplicationRevisionOrdinal, Blake3Digest,
     BudgetFreezeReason, BudgetReservationId, CancellationRequestId,
     CanonicalPiSessionTranscriptPath, CanonicalWorkspacePath, Capability, CausalEpisodeId,
-    CommandBody, CommandDisposition, CommandId, CommandReceipt, CommandRequest, CostObservation,
-    CostPostmortemResolution, CostUnavailableReason, CostUnknownReason, EpisodeState, EventBody,
-    ExpectedGeneration, GraphEdgeKind, GraphRevisionBody, GraphRevisionId, HypothesisRevisionText,
-    InstallFoundingMissionPreflight, KernelStore, MissionPrinciple, MissionPrincipleKind,
-    MissionPrincipleText, MissionPrinciples, MissionSourceRendering, MissionStatement,
-    NativeChildId, NativeChildPid, NativeChildSpawnAdmissionId, NativeWorkspaceId,
-    NorthStarBoundaryCommitmentQuestion, NorthStarChangeQuestion,
-    NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet, NorthStarRevisitQuestion,
-    ObservationRevisionText, OfficeSessionTerminalState, OfficeTurnId, OfficeTurnPurpose,
-    OperatingCycleId, OperatingCycleState, OperatingCycleTreatment, OwnedProcessGroupId,
-    PiBoundarySessionIdentity, PiChildOwner, PiCorrelationIdentity, PiCumulativeUsage,
-    PiOfficeSessionTranscriptReceipt, PiOfficeTurnAssistantOutcome, PiOfficeTurnDisposition,
-    PiOfficeTurnTerminalEvidence, PiOfficeTurnTerminalReceiptId, PiOfficeTurnTranscriptDisposition,
-    PiOfficeTurnUsageFailure, PiOfficeTurnUsageUnavailableReason, PiProtocolSequence, PiTokenCount,
-    PostmortemActionKind, PostmortemActionProposalText, PostmortemCausalClaimKind,
-    PostmortemCausalClaimText, PostmortemId, PrincipalDisplayName, PrincipalId, ProjectId,
-    ProjectMilestoneName, ProjectName, ProjectNorthStarAlignment,
+    ChildStreamKind, ChildStreamSealCompleteness, CommandBody, CommandDisposition, CommandId,
+    CommandReceipt, CommandRequest, CostObservation, CostPostmortemResolution,
+    CostUnavailableReason, CostUnknownReason, DirectChildWaitStatus, EpisodeState, EventBody,
+    ExpectedGeneration, ForumPostBudget, ForumReadBudget, ForumThreadTitle, GraphEdgeKind,
+    GraphRevisionBody, GraphRevisionId, HypothesisRevisionText, InstallFoundingMissionPreflight,
+    KernelStore, MissionPrinciple, MissionPrincipleKind, MissionPrincipleText, MissionPrinciples,
+    MissionSourceRendering, MissionStatement, NativeChildId, NativeChildPid,
+    NativeChildSpawnAdmissionId, NativeWorkspaceId, NorthStarBoundaryCommitmentQuestion,
+    NorthStarChangeQuestion, NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet,
+    NorthStarRevisitQuestion, ObservationRevisionText, OfficeSessionTerminalState, OfficeTurnId,
+    OfficeTurnPurpose, OperatingCycleId, OperatingCycleState, OperatingCycleTreatment,
+    OwnedProcessGroupId, PiBoundarySessionIdentity, PiChildOwner, PiCorrelationIdentity,
+    PiCumulativeUsage, PiOfficeSessionTranscriptReceipt, PiOfficeTurnAssistantOutcome,
+    PiOfficeTurnDisposition, PiOfficeTurnTerminalEvidence, PiOfficeTurnTerminalReceiptId,
+    PiOfficeTurnTranscriptDisposition, PiOfficeTurnUsageFailure,
+    PiOfficeTurnUsageUnavailableReason, PiProtocolSequence, PiTokenCount, PostmortemActionKind,
+    PostmortemActionProposalText, PostmortemCausalClaimKind, PostmortemCausalClaimText,
+    PostmortemId, PrincipalDisplayName, PrincipalId, ProcessExitCode, ProcessGroupLiveness,
+    ProjectId, ProjectMilestoneName, ProjectName, ProjectNorthStarAlignment,
     ProjectNorthStarBoundaryCommitmentAnswer, ProjectNorthStarChangeAnswer,
     ProjectNorthStarImprovementEvidenceAnswer, ProjectNorthStarRevisitAnswer, ProjectObjectiveText,
     ProjectState, ProjectStopConditionText, ProviderCostBinary64, Rejection,
     ReviewChallengeSeverity, ReviewFailureHypothesis, RootAuthorityOfficeSessionId, SocietyName,
-    SpawnNonce, StoreError, SupervisedChildIdentity, SupervisorEpochId, SupervisorEpochIdentity,
-    UsdMicros,
+    SpawnNonce, StoreError, StudyBudgetUnits, StudyCommand, StudyEvent, StudyPopulationPhase,
+    StudyRoleOrdinal, StudyTransitionDisposition, StudyTreatment, SupervisedChildIdentity,
+    SupervisorEpochId, SupervisorEpochIdentity, UsdMicros, forum_f0_awareness_digest,
+    forum_f0_tool_contract_digest,
 };
 
 fn example_application_mission() -> ApplicationMissionInput {
@@ -505,6 +509,317 @@ fn replay_rejects_recombined_persisted_mission_source_objects() {
         Err(StoreError::LedgerCorruption(_))
     ));
     fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn study_actor_runtime_binding_waits_for_native_child_finalization() {
+    let mut store = KernelStore::open_in_memory().unwrap();
+    let (root_authority, cycle_id) = found_cycle(&mut store);
+    let mut study_command_number = 1_u32;
+    fn submit_study(
+        store: &mut KernelStore,
+        number: &mut u32,
+        command: StudyCommand,
+    ) -> StudyEvent {
+        let command_id = CommandId::parse(format!("runtime-study-{number}")).unwrap();
+        *number += 1;
+        match store
+            .execute_study_transition(command_id, command)
+            .unwrap()
+            .disposition
+        {
+            StudyTransitionDisposition::Accepted(event) => event,
+            StudyTransitionDisposition::Rejected(rejection) => {
+                panic!("study transition unexpectedly rejected: {rejection:?}")
+            }
+        }
+    }
+    let prompt_digest = forum_f0_awareness_digest();
+    let tool_digest = forum_f0_tool_contract_digest();
+    let protocol = match submit_study(
+        &mut store,
+        &mut study_command_number,
+        StudyCommand::AdmitProtocolRevision {
+            application_revision_id: ApplicationRevisionId::new(1).unwrap(),
+            protocol_digest: Blake3Digest::of_bytes(b"runtime-binding-protocol"),
+            actor_policy_digest: Blake3Digest::of_bytes(b"runtime-binding-policy"),
+            forum_prompt_digest: prompt_digest,
+            forum_tool_digest: tool_digest,
+            evidence_digest: Blake3Digest::of_bytes(b"runtime-binding-evidence"),
+            ground_truth_commitment_digest: Blake3Digest::of_bytes(b"runtime-binding-truth"),
+            correction_digest: Blake3Digest::of_bytes(b"runtime-binding-correction"),
+            topology_digest: Blake3Digest::of_bytes(b"runtime-binding-topology"),
+            episode_budget: StudyBudgetUnits::new(10).unwrap(),
+        },
+    ) {
+        StudyEvent::ProtocolRevisionAdmitted {
+            protocol_revision_id,
+        } => protocol_revision_id,
+        other => panic!("unexpected protocol event: {other:?}"),
+    };
+    let world = match submit_study(
+        &mut store,
+        &mut study_command_number,
+        StudyCommand::AdmitWorldRevision {
+            protocol_revision_id: protocol,
+            world_digest: Blake3Digest::of_bytes(b"runtime-binding-world"),
+        },
+    ) {
+        StudyEvent::WorldRevisionAdmitted { world_revision_id } => world_revision_id,
+        other => panic!("unexpected world event: {other:?}"),
+    };
+    let measurement = match submit_study(
+        &mut store,
+        &mut study_command_number,
+        StudyCommand::AdmitMeasurementRevision {
+            protocol_revision_id: protocol,
+            analysis_digest: Blake3Digest::of_bytes(b"runtime-binding-analysis"),
+        },
+    ) {
+        StudyEvent::MeasurementRevisionAdmitted {
+            measurement_revision_id,
+        } => measurement_revision_id,
+        other => panic!("unexpected measurement event: {other:?}"),
+    };
+    let institution = match submit_study(
+        &mut store,
+        &mut study_command_number,
+        StudyCommand::AdmitInstitutionRevision {
+            protocol_revision_id: protocol,
+            institution_digest: Blake3Digest::of_bytes(b"runtime-binding-institution"),
+        },
+    ) {
+        StudyEvent::InstitutionRevisionAdmitted {
+            institution_revision_id,
+        } => institution_revision_id,
+        other => panic!("unexpected institution event: {other:?}"),
+    };
+    let population = match submit_study(
+        &mut store,
+        &mut study_command_number,
+        StudyCommand::AdmitPopulationSnapshot {
+            protocol_revision_id: protocol,
+            population_digest: Blake3Digest::of_bytes(b"runtime-binding-population"),
+            population_size: 1,
+        },
+    ) {
+        StudyEvent::PopulationSnapshotAdmitted {
+            population_snapshot_id,
+        } => population_snapshot_id,
+        other => panic!("unexpected population event: {other:?}"),
+    };
+    let episode = match submit_study(
+        &mut store,
+        &mut study_command_number,
+        StudyCommand::AdmitEpisode {
+            protocol_revision_id: protocol,
+            world_revision_id: world,
+            measurement_revision_id: measurement,
+            institution_revision_id: institution,
+            population_snapshot_id: population,
+            randomization_digest: Blake3Digest::of_bytes(b"runtime-binding-randomization"),
+        },
+    ) {
+        StudyEvent::EpisodeAdmitted { episode_id } => episode_id,
+        other => panic!("unexpected episode event: {other:?}"),
+    };
+    submit_study(
+        &mut store,
+        &mut study_command_number,
+        StudyCommand::AssignTreatment {
+            episode_id: episode,
+            treatment: StudyTreatment::Retained,
+        },
+    );
+    let forum_id = match submit_study(
+        &mut store,
+        &mut study_command_number,
+        StudyCommand::CreateEpisodeForum {
+            episode_id: episode,
+            charter_digest: Blake3Digest::of_bytes(b"runtime-binding-charter"),
+        },
+    ) {
+        StudyEvent::EpisodeForumCreated { forum_id, .. } => forum_id,
+        other => panic!("unexpected Forum event: {other:?}"),
+    };
+    submit_study(
+        &mut store,
+        &mut study_command_number,
+        StudyCommand::OpenForumThread {
+            forum_id,
+            title: ForumThreadTitle::parse("Runtime binding test thread").unwrap(),
+        },
+    );
+    let obligation_id = match submit_study(
+        &mut store,
+        &mut study_command_number,
+        StudyCommand::AdmitActorObligation {
+            episode_id: episode,
+            phase: StudyPopulationPhase::Source,
+            role: StudyRoleOrdinal::new(1).unwrap(),
+            private_view_digest: Blake3Digest::of_bytes(b"runtime-binding-view"),
+            prompt_digest,
+            tool_digest,
+            budget: StudyBudgetUnits::new(3).unwrap(),
+            read_budget: ForumReadBudget::new(1).unwrap(),
+            post_budget: ForumPostBudget::new(1).unwrap(),
+        },
+    ) {
+        StudyEvent::ActorObligationAdmitted { obligation_id, .. } => obligation_id,
+        other => panic!("unexpected obligation event: {other:?}"),
+    };
+    submit_study(
+        &mut store,
+        &mut study_command_number,
+        StudyCommand::AdmitForumExposure {
+            obligation_id,
+            forum_id,
+            visible_from_message_ordinal: 1,
+        },
+    );
+
+    let session_id = RootAuthorityOfficeSessionId::new(1).unwrap();
+    accepted(
+        &mut store,
+        "runtime-binding-start-office",
+        root_authority,
+        Capability::StartRootAuthorityOfficeSession,
+        ExpectedGeneration::Exact(AdmissionGeneration::INITIAL),
+        CommandBody::StartRootAuthorityOfficeSession { cycle_id },
+    );
+    ready_supervised_office_session(
+        &mut store,
+        root_authority,
+        cycle_id,
+        session_id,
+        "runtime-binding",
+        UsdMicros::new(100).unwrap(),
+    );
+
+    let bind = submit_study(
+        &mut store,
+        &mut study_command_number,
+        StudyCommand::BindActorRuntime {
+            obligation_id,
+            office_session_id: session_id,
+            native_child_id: NativeChildId::new(1).unwrap(),
+            native_child_spawn_admission_id: NativeChildSpawnAdmissionId::new(1).unwrap(),
+        },
+    );
+    assert!(matches!(bind, StudyEvent::ActorRuntimeBound { .. }));
+    let completion = store
+        .execute_study_transition(
+            CommandId::parse("runtime-binding-complete-too-early").unwrap(),
+            StudyCommand::CompleteActorObligation {
+                obligation_id,
+                charged_budget: StudyBudgetUnits::new(1).unwrap(),
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        completion.disposition,
+        StudyTransitionDisposition::Rejected(Rejection::InvalidLifecycleTransition)
+    );
+
+    accepted(
+        &mut store,
+        "runtime-binding-direct-reap",
+        PrincipalId::KERNEL,
+        Capability::RecordDirectChildReap,
+        ExpectedGeneration::Exact(AdmissionGeneration::INITIAL),
+        CommandBody::RecordDirectChildReap {
+            native_child_id: NativeChildId::new(1).unwrap(),
+            wait_status: DirectChildWaitStatus::Exited {
+                exit_code: ProcessExitCode::try_from(0).unwrap(),
+            },
+            group_liveness_before_cleanup: ProcessGroupLiveness::Absent,
+            group_liveness_after_cleanup: ProcessGroupLiveness::Absent,
+        },
+    );
+    for (index, stream_kind) in [
+        ChildStreamKind::AdmittedControl,
+        ChildStreamKind::PhysicalStdin,
+        ChildStreamKind::Stdout,
+        ChildStreamKind::Stderr,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let digest = Blake3Digest::of_bytes(format!("runtime-binding-stream-{index}").as_bytes());
+        accepted(
+            &mut store,
+            &format!("runtime-binding-seal-{index}"),
+            PrincipalId::KERNEL,
+            Capability::RecordContentSealReceipt,
+            ExpectedGeneration::NotApplicable,
+            CommandBody::RecordContentSealReceipt { digest },
+        );
+        accepted(
+            &mut store,
+            &format!("runtime-binding-register-{index}"),
+            PrincipalId::KERNEL,
+            Capability::RegisterContentObject,
+            ExpectedGeneration::NotApplicable,
+            CommandBody::RegisterContentObject {
+                content_seal_receipt_id: society_kernel::ContentSealReceiptId::new(
+                    i64::try_from(index + 2).unwrap(),
+                )
+                .unwrap(),
+            },
+        );
+        accepted(
+            &mut store,
+            &format!("runtime-binding-stream-{index}"),
+            PrincipalId::KERNEL,
+            Capability::RecordChildStreamSeal,
+            ExpectedGeneration::Exact(AdmissionGeneration::INITIAL),
+            CommandBody::RecordChildStreamSeal {
+                native_child_id: NativeChildId::new(1).unwrap(),
+                stream_kind,
+                full_observed_digest: digest,
+                retained_content_object_id: society_kernel::ContentObjectId::new(
+                    i64::try_from(index + 2).unwrap(),
+                )
+                .unwrap(),
+                completeness: ChildStreamSealCompleteness::Complete,
+            },
+        );
+    }
+    accepted(
+        &mut store,
+        "runtime-binding-finalize-child",
+        PrincipalId::KERNEL,
+        Capability::FinalizeChildProcess,
+        ExpectedGeneration::Exact(AdmissionGeneration::INITIAL),
+        CommandBody::FinalizeChildProcess {
+            native_child_id: NativeChildId::new(1).unwrap(),
+        },
+    );
+    let reconciled = submit_study(
+        &mut store,
+        &mut study_command_number,
+        StudyCommand::ReconcileActorRuntime {
+            obligation_id,
+            native_child_id: NativeChildId::new(1).unwrap(),
+        },
+    );
+    assert!(matches!(
+        reconciled,
+        StudyEvent::ActorRuntimeReconciled { .. }
+    ));
+    let completed = submit_study(
+        &mut store,
+        &mut study_command_number,
+        StudyCommand::CompleteActorObligation {
+            obligation_id,
+            charged_budget: StudyBudgetUnits::new(1).unwrap(),
+        },
+    );
+    assert!(matches!(
+        completed,
+        StudyEvent::ActorObligationCompleted { .. }
+    ));
+    assert!(store.replay_ledger().is_ok());
 }
 
 #[test]

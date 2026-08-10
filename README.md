@@ -45,10 +45,11 @@ trusted physics
 The trusted-physics layer and one narrow provider-free experiment path are
 implemented today. `applications/correction-latency` executes a deterministic
 retained/reset Forum pair through the generic ledger and reports raw-derived
-measurements plus controls. It is not a live model/runtime study: custom Forum
-tool transport and actor-to-native-child custody remain separate work. The
-next work is to close those named experimental boundaries, not to fill in a
-general-purpose swarm framework.
+measurements plus controls. The Pi host has the isolated Forum tool transport,
+and the resident daemon has the typed transition/result and native-child
+binding bridge. A full daemon-owned live scheduler and paired live episode
+runner remain; the next work is to close those named experimental boundaries,
+not to fill in a general-purpose swarm framework.
 
 For isolated SDK exercises, the Pi host also offers opt-in
 `workspace_isolated_v1`: canonical workspace-bound file tools, no shell or
@@ -63,7 +64,7 @@ with at most 8 native Pi hosts at once and a hard aggregate provider-cost
 ceiling; it reports per-actor tokens, cost, reads, posts, and failures. This
 is direct adapter qualification, not yet daemon-owned CL-001 custody or
 scientific evidence. Pass `PROVIDER` and `MODEL` to select the same admitted
-treatment for every actor; the default is the free
+treatment for every actor; the default is the paid
 `openrouter/inclusionai/ling-2.6-flash` treatment for the first paid smoke.
 The credential-free provider catalog, retaining DeepSeek alongside free Ling,
 Laguna, and paid Ling 2.6, is saved at

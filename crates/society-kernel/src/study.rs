@@ -9,7 +9,10 @@
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use thiserror::Error;
 
-use crate::{ApplicationRevisionId, Blake3Digest, Rejection, StoreError};
+use crate::{
+    ApplicationRevisionId, Blake3Digest, ChildProcessState, ExecutionProfileId, NativeChildId,
+    NativeChildSpawnAdmissionId, Rejection, RootAuthorityOfficeSessionId, StoreError,
+};
 
 // The SQLite decoder deliberately keeps each exact row shape named.  These
 // are fixed closed-table projections, not generic record payloads.
@@ -559,6 +562,22 @@ pub enum StudyCommand {
         obligation_id: StudyActorObligationId,
         reason_digest: Blake3Digest,
     },
+    /// Binds one admitted study obligation to the exact resident-owned Pi
+    /// child which will carry its actor session. The native child admission
+    /// and office-session relations are rechecked transactionally.
+    BindActorRuntime {
+        obligation_id: StudyActorObligationId,
+        office_session_id: RootAuthorityOfficeSessionId,
+        native_child_id: NativeChildId,
+        native_child_spawn_admission_id: NativeChildSpawnAdmissionId,
+    },
+    /// Closes a live runtime binding only after the native child has reached
+    /// its durable finalized state. Provider-free doubles have no binding and
+    /// retain their existing completion path.
+    ReconcileActorRuntime {
+        obligation_id: StudyActorObligationId,
+        native_child_id: NativeChildId,
+    },
     FreezeForumHead {
         episode_id: StudyEpisodeId,
         thread_id: ForumThreadId,
@@ -658,6 +677,8 @@ pub enum StudyCommandKind {
     RetractForumMessage = 23,
     FailActorObligation = 24,
     RevealGroundTruth = 25,
+    BindActorRuntime = 26,
+    ReconcileActorRuntime = 27,
 }
 
 impl StudyCommand {
@@ -676,6 +697,8 @@ impl StudyCommand {
             Self::AdmitActorObligation { .. } => StudyCommandKind::AdmitActorObligation,
             Self::CompleteActorObligation { .. } => StudyCommandKind::CompleteActorObligation,
             Self::FailActorObligation { .. } => StudyCommandKind::FailActorObligation,
+            Self::BindActorRuntime { .. } => StudyCommandKind::BindActorRuntime,
+            Self::ReconcileActorRuntime { .. } => StudyCommandKind::ReconcileActorRuntime,
             Self::RevealGroundTruth { .. } => StudyCommandKind::RevealGroundTruth,
             Self::FreezeForumHead { .. } => StudyCommandKind::FreezeForumHead,
             Self::ReplacePopulation { .. } => StudyCommandKind::ReplacePopulation,
@@ -741,6 +764,17 @@ pub enum StudyEvent {
     ActorObligationFailed {
         obligation_id: StudyActorObligationId,
         reason_digest: Blake3Digest,
+    },
+    ActorRuntimeBound {
+        obligation_id: StudyActorObligationId,
+        office_session_id: RootAuthorityOfficeSessionId,
+        native_child_id: NativeChildId,
+        native_child_spawn_admission_id: NativeChildSpawnAdmissionId,
+        execution_profile_id: ExecutionProfileId,
+    },
+    ActorRuntimeReconciled {
+        obligation_id: StudyActorObligationId,
+        native_child_id: NativeChildId,
     },
     GroundTruthRevealed {
         episode_id: StudyEpisodeId,
@@ -856,6 +890,8 @@ pub enum StudyEventKind {
     ForumMessageRetracted = 23,
     ActorObligationFailed = 24,
     GroundTruthRevealed = 25,
+    ActorRuntimeBound = 26,
+    ActorRuntimeReconciled = 27,
 }
 
 impl StudyEvent {
@@ -874,6 +910,8 @@ impl StudyEvent {
             Self::ActorObligationAdmitted { .. } => StudyEventKind::ActorObligationAdmitted,
             Self::ActorObligationCompleted { .. } => StudyEventKind::ActorObligationCompleted,
             Self::ActorObligationFailed { .. } => StudyEventKind::ActorObligationFailed,
+            Self::ActorRuntimeBound { .. } => StudyEventKind::ActorRuntimeBound,
+            Self::ActorRuntimeReconciled { .. } => StudyEventKind::ActorRuntimeReconciled,
             Self::GroundTruthRevealed { .. } => StudyEventKind::GroundTruthRevealed,
             Self::ForumHeadFrozen { .. } => StudyEventKind::ForumHeadFrozen,
             Self::PopulationReplaced { .. } => StudyEventKind::PopulationReplaced,
@@ -1066,6 +1104,24 @@ pub(crate) fn append_command_fingerprint(bytes: &mut Vec<u8>, command: &StudyCom
             put_i64(bytes, obligation_id.value());
             put_digest(bytes, *reason_digest);
         }
+        StudyCommand::BindActorRuntime {
+            obligation_id,
+            office_session_id,
+            native_child_id,
+            native_child_spawn_admission_id,
+        } => {
+            put_i64(bytes, obligation_id.value());
+            put_i64(bytes, office_session_id.value());
+            put_i64(bytes, native_child_id.value());
+            put_i64(bytes, native_child_spawn_admission_id.value());
+        }
+        StudyCommand::ReconcileActorRuntime {
+            obligation_id,
+            native_child_id,
+        } => {
+            put_i64(bytes, obligation_id.value());
+            put_i64(bytes, native_child_id.value());
+        }
         StudyCommand::FreezeForumHead {
             episode_id,
             thread_id,
@@ -1192,6 +1248,8 @@ pub(crate) fn insert_command_body(
         StudyCommand::AdmitActorObligation { episode_id, phase, role, private_view_digest, prompt_digest, tool_digest, budget, read_budget, post_budget } => transaction.execute("INSERT INTO command_study_transition(command_row_id, study_command_kind, study_episode_id, population_phase, role_ordinal, private_view_digest, forum_prompt_digest, forum_tool_digest, budget_units, read_budget, post_budget) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)", params![command_row_id, kind, episode_id.value(), *phase as i64, i64::from(role.value()), private_view_digest.as_bytes().as_slice(), prompt_digest.as_bytes().as_slice(), tool_digest.as_bytes().as_slice(), budget.value(), read_budget.value(), post_budget.value()])?,
         StudyCommand::CompleteActorObligation { obligation_id, charged_budget } => transaction.execute("INSERT INTO command_study_transition(command_row_id, study_command_kind, obligation_id, charged_budget_units) VALUES (?1, ?2, ?3, ?4)", params![command_row_id, kind, obligation_id.value(), charged_budget.value()])?,
         StudyCommand::FailActorObligation { obligation_id, reason_digest } => transaction.execute("INSERT INTO command_study_transition(command_row_id, study_command_kind, obligation_id, reason_digest) VALUES (?1, ?2, ?3, ?4)", params![command_row_id, kind, obligation_id.value(), reason_digest.as_bytes().as_slice()])?,
+        StudyCommand::BindActorRuntime { obligation_id, office_session_id, native_child_id, native_child_spawn_admission_id } => transaction.execute("INSERT INTO command_study_transition(command_row_id, study_command_kind, obligation_id, root_authority_office_session_id, native_child_id, native_child_spawn_admission_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![command_row_id, kind, obligation_id.value(), office_session_id.value(), native_child_id.value(), native_child_spawn_admission_id.value()])?,
+        StudyCommand::ReconcileActorRuntime { obligation_id, native_child_id } => transaction.execute("INSERT INTO command_study_transition(command_row_id, study_command_kind, obligation_id, native_child_id) VALUES (?1, ?2, ?3, ?4)", params![command_row_id, kind, obligation_id.value(), native_child_id.value()])?,
         StudyCommand::FreezeForumHead { episode_id, thread_id } => transaction.execute("INSERT INTO command_study_transition(command_row_id, study_command_kind, study_episode_id, thread_id) VALUES (?1, ?2, ?3, ?4)", params![command_row_id, kind, episode_id.value(), thread_id.value()])?,
         StudyCommand::ReplacePopulation {
             episode_id,
@@ -1624,6 +1682,18 @@ pub(crate) fn apply(
             if state != 1 || charged_budget.value() > budget || charged != 0 {
                 return Err(Rejection::BudgetPolicyViolation);
             }
+            let runtime_state: Option<i64> = transaction
+                .query_row(
+                    "SELECT lifecycle_state FROM study_actor_runtime_bindings
+                     WHERE study_actor_obligation_id = ?1",
+                    [obligation_id.value()],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|_| Rejection::SubjectNotFound)?;
+            if runtime_state.is_some_and(|state| state != 2) {
+                return Err(Rejection::InvalidLifecycleTransition);
+            }
             transaction.execute("UPDATE study_actor_obligations SET lifecycle_state = 2, charged_budget_units = ?1, completed_by_command_id = ?2 WHERE study_actor_obligation_id = ?3", params![charged_budget.value(), command_row_id, obligation_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
             Ok(StudyEvent::ActorObligationCompleted {
                 obligation_id: *obligation_id,
@@ -1644,10 +1714,159 @@ pub(crate) fn apply(
             if state != Some(1) {
                 return Err(Rejection::CapabilityNoLongerActive);
             }
+            let runtime_state: Option<i64> = transaction
+                .query_row(
+                    "SELECT lifecycle_state FROM study_actor_runtime_bindings
+                     WHERE study_actor_obligation_id = ?1",
+                    [obligation_id.value()],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|_| Rejection::SubjectNotFound)?;
+            if runtime_state.is_some_and(|state| state != 2) {
+                return Err(Rejection::InvalidLifecycleTransition);
+            }
             transaction.execute("UPDATE study_actor_obligations SET lifecycle_state = 3, failed_by_command_id = ?1, failure_reason_digest = ?2 WHERE study_actor_obligation_id = ?3", params![command_row_id, reason_digest.as_bytes().as_slice(), obligation_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
             Ok(StudyEvent::ActorObligationFailed {
                 obligation_id: *obligation_id,
                 reason_digest: *reason_digest,
+            })
+        }
+        StudyCommand::BindActorRuntime {
+            obligation_id,
+            office_session_id,
+            native_child_id,
+            native_child_spawn_admission_id,
+        } => {
+            let obligation: Option<(i64, i64)> = transaction
+                .query_row(
+                    "SELECT lifecycle_state, study_episode_id FROM study_actor_obligations
+                     WHERE study_actor_obligation_id = ?1",
+                    [obligation_id.value()],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()
+                .map_err(|_| Rejection::SubjectNotFound)?;
+            let Some((lifecycle_state, _episode_id)) = obligation else {
+                return Err(Rejection::SubjectNotFound);
+            };
+            if lifecycle_state != 1
+                || exists(
+                    transaction,
+                    "SELECT study_actor_obligation_id FROM study_actor_runtime_bindings
+                     WHERE study_actor_obligation_id = ?1",
+                    obligation_id.value(),
+                )?
+            {
+                return Err(Rejection::InvalidLifecycleTransition);
+            }
+            let child: Option<(i64, i64)> = transaction
+                .query_row(
+                    "SELECT native_child_spawn_admission_id, lifecycle_state
+                     FROM native_children WHERE native_child_id = ?1",
+                    [native_child_id.value()],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()
+                .map_err(|_| Rejection::SubjectNotFound)?;
+            let Some((child_spawn_admission_id, child_lifecycle_state)) = child else {
+                return Err(Rejection::SubjectNotFound);
+            };
+            if child_spawn_admission_id != native_child_spawn_admission_id.value()
+                || child_lifecycle_state == ChildProcessState::Finalized as i64
+            {
+                return Err(Rejection::InvalidLifecycleTransition);
+            }
+            let admission: Option<(Option<i64>, Option<i64>, i64)> = transaction
+                .query_row(
+                    "SELECT root_authority_office_session_id, execution_profile_id,
+                            operating_cycle_id
+                     FROM native_child_spawn_admissions
+                     WHERE native_child_spawn_admission_id = ?1",
+                    [native_child_spawn_admission_id.value()],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .optional()
+                .map_err(|_| Rejection::SubjectNotFound)?;
+            let Some((admission_office_session_id, execution_profile_id, _cycle_id)) = admission
+            else {
+                return Err(Rejection::SubjectNotFound);
+            };
+            if admission_office_session_id != Some(office_session_id.value())
+                || execution_profile_id.is_none()
+            {
+                return Err(Rejection::InvalidLifecycleTransition);
+            }
+            transaction
+                .execute(
+                    "INSERT INTO study_actor_runtime_bindings(
+                        study_actor_obligation_id, root_authority_office_session_id,
+                        native_child_id, native_child_spawn_admission_id,
+                        execution_profile_id, lifecycle_state, bound_by_command_id)
+                     VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6)",
+                    params![
+                        obligation_id.value(),
+                        office_session_id.value(),
+                        native_child_id.value(),
+                        native_child_spawn_admission_id.value(),
+                        execution_profile_id,
+                        command_row_id
+                    ],
+                )
+                .map_err(|_| Rejection::InvalidLifecycleTransition)?;
+            Ok(StudyEvent::ActorRuntimeBound {
+                obligation_id: *obligation_id,
+                office_session_id: *office_session_id,
+                native_child_id: *native_child_id,
+                native_child_spawn_admission_id: *native_child_spawn_admission_id,
+                execution_profile_id: ExecutionProfileId::try_from(
+                    execution_profile_id.ok_or(Rejection::InvalidLifecycleTransition)?,
+                )
+                .map_err(|_| Rejection::InvalidLifecycleTransition)?,
+            })
+        }
+        StudyCommand::ReconcileActorRuntime {
+            obligation_id,
+            native_child_id,
+        } => {
+            let binding: Option<(i64, i64)> = transaction
+                .query_row(
+                    "SELECT native_child_id, lifecycle_state
+                     FROM study_actor_runtime_bindings
+                     WHERE study_actor_obligation_id = ?1",
+                    [obligation_id.value()],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()
+                .map_err(|_| Rejection::SubjectNotFound)?;
+            let Some((bound_child_id, lifecycle_state)) = binding else {
+                return Err(Rejection::SubjectNotFound);
+            };
+            let child_state: Option<i64> = transaction
+                .query_row(
+                    "SELECT lifecycle_state FROM native_children WHERE native_child_id = ?1",
+                    [native_child_id.value()],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|_| Rejection::SubjectNotFound)?;
+            if bound_child_id != native_child_id.value()
+                || lifecycle_state != 1
+                || child_state != Some(ChildProcessState::Finalized as i64)
+            {
+                return Err(Rejection::ChildLifecycleReceiptMissing);
+            }
+            transaction
+                .execute(
+                    "UPDATE study_actor_runtime_bindings
+                     SET lifecycle_state = 2, reconciled_by_command_id = ?1
+                     WHERE study_actor_obligation_id = ?2",
+                    params![command_row_id, obligation_id.value()],
+                )
+                .map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+            Ok(StudyEvent::ActorRuntimeReconciled {
+                obligation_id: *obligation_id,
+                native_child_id: *native_child_id,
             })
         }
         StudyCommand::FreezeForumHead {
@@ -2612,6 +2831,26 @@ pub(crate) fn append_event_fingerprint(bytes: &mut Vec<u8>, event: &StudyEvent) 
             put_i64(bytes, obligation_id.value());
             put_digest(bytes, *reason_digest);
         }
+        StudyEvent::ActorRuntimeBound {
+            obligation_id,
+            office_session_id,
+            native_child_id,
+            native_child_spawn_admission_id,
+            execution_profile_id,
+        } => {
+            put_i64(bytes, obligation_id.value());
+            put_i64(bytes, office_session_id.value());
+            put_i64(bytes, native_child_id.value());
+            put_i64(bytes, native_child_spawn_admission_id.value());
+            put_i64(bytes, execution_profile_id.value());
+        }
+        StudyEvent::ActorRuntimeReconciled {
+            obligation_id,
+            native_child_id,
+        } => {
+            put_i64(bytes, obligation_id.value());
+            put_i64(bytes, native_child_id.value());
+        }
         StudyEvent::GroundTruthRevealed {
             episode_id,
             reveal_digest,
@@ -2731,6 +2970,8 @@ pub(crate) fn insert_event_body(
         StudyEvent::ActorObligationAdmitted { obligation_id, actor_occurrence_id, episode_id, population_snapshot_id, phase } => transaction.execute("INSERT INTO event_study_transition(event_id, study_event_kind, primary_id, obligation_id, actor_occurrence_id, study_episode_id, population_phase) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)", params![event_id, kind, population_snapshot_id.value(), obligation_id.value(), actor_occurrence_id.value(), episode_id.value(), *phase as i64])?,
         StudyEvent::ActorObligationCompleted { obligation_id } | StudyEvent::DecisionRecorded { obligation_id } => transaction.execute("INSERT INTO event_study_transition(event_id, study_event_kind, obligation_id) VALUES (?1, ?2, ?3)", params![event_id, kind, obligation_id.value()])?,
         StudyEvent::ActorObligationFailed { obligation_id, reason_digest } => transaction.execute("INSERT INTO event_study_transition(event_id, study_event_kind, obligation_id, body_digest) VALUES (?1, ?2, ?3, ?4)", params![event_id, kind, obligation_id.value(), reason_digest.as_bytes().as_slice()])?,
+        StudyEvent::ActorRuntimeBound { obligation_id, office_session_id, native_child_id, native_child_spawn_admission_id, .. } => transaction.execute("INSERT INTO event_study_transition(event_id, study_event_kind, obligation_id, primary_id, secondary_id, tertiary_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![event_id, kind, obligation_id.value(), native_child_id.value(), native_child_spawn_admission_id.value(), office_session_id.value()])?,
+        StudyEvent::ActorRuntimeReconciled { obligation_id, native_child_id } => transaction.execute("INSERT INTO event_study_transition(event_id, study_event_kind, obligation_id, primary_id) VALUES (?1, ?2, ?3, ?4)", params![event_id, kind, obligation_id.value(), native_child_id.value()])?,
         StudyEvent::GroundTruthRevealed { episode_id, reveal_digest } => transaction.execute("INSERT INTO event_study_transition(event_id, study_event_kind, study_episode_id, body_digest) VALUES (?1, ?2, ?3, ?4)", params![event_id, kind, episode_id.value(), reveal_digest.as_bytes().as_slice()])?,
         StudyEvent::ForumHeadFrozen { episode_id, thread_id, head_message_ordinal } => transaction.execute("INSERT INTO event_study_transition(event_id, study_event_kind, study_episode_id, thread_id, through_ordinal) VALUES (?1, ?2, ?3, ?4, ?5)", params![event_id, kind, episode_id.value(), thread_id.value(), head_message_ordinal])?,
         StudyEvent::ForumExposureAdmitted { exposure_id, obligation_id, visible_from_message_ordinal, visible_through_message_ordinal } => transaction.execute("INSERT INTO event_study_transition(event_id, study_event_kind, primary_id, obligation_id, first_ordinal, through_ordinal) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![event_id, kind, exposure_id.value(), obligation_id.value(), visible_from_message_ordinal, visible_through_message_ordinal])?,
@@ -2783,6 +3024,8 @@ fn study_command_kind_from_i64(value: i64) -> Result<StudyCommandKind, StoreErro
         23 => Ok(StudyCommandKind::RetractForumMessage),
         24 => Ok(StudyCommandKind::FailActorObligation),
         25 => Ok(StudyCommandKind::RevealGroundTruth),
+        26 => Ok(StudyCommandKind::BindActorRuntime),
+        27 => Ok(StudyCommandKind::ReconcileActorRuntime),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }
@@ -2814,6 +3057,8 @@ fn study_event_kind_from_i64(value: i64) -> Result<StudyEventKind, StoreError> {
         23 => Ok(StudyEventKind::ForumMessageRetracted),
         24 => Ok(StudyEventKind::ActorObligationFailed),
         25 => Ok(StudyEventKind::GroundTruthRevealed),
+        26 => Ok(StudyEventKind::ActorRuntimeBound),
+        27 => Ok(StudyEventKind::ActorRuntimeReconciled),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }
@@ -2998,6 +3243,33 @@ pub(crate) fn decode_command_body(
             Ok(StudyCommand::FailActorObligation {
                 obligation_id: stored(row.0)?,
                 reason_digest: stored_digest(row.1)?,
+            })
+        }
+        StudyCommandKind::BindActorRuntime => {
+            let row: (Option<i64>, Option<i64>, Option<i64>, Option<i64>) = connection.query_row(
+                "SELECT obligation_id, native_child_id, native_child_spawn_admission_id,
+                        root_authority_office_session_id
+                 FROM command_study_transition WHERE command_row_id = ?1",
+                [command_row_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )?;
+            Ok(StudyCommand::BindActorRuntime {
+                obligation_id: stored(row.0)?,
+                native_child_id: stored(row.1)?,
+                native_child_spawn_admission_id: stored(row.2)?,
+                office_session_id: stored(row.3)?,
+            })
+        }
+        StudyCommandKind::ReconcileActorRuntime => {
+            let row: (Option<i64>, Option<i64>) = connection.query_row(
+                "SELECT obligation_id, native_child_id
+                 FROM command_study_transition WHERE command_row_id = ?1",
+                [command_row_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?;
+            Ok(StudyCommand::ReconcileActorRuntime {
+                obligation_id: stored(row.0)?,
+                native_child_id: stored(row.1)?,
             })
         }
         StudyCommandKind::FreezeForumHead => {
@@ -3207,6 +3479,26 @@ pub(crate) fn decode_event_body(
         StudyEventKind::ActorObligationFailed => Ok(StudyEvent::ActorObligationFailed {
             obligation_id: stored(row.7)?,
             reason_digest: stored_digest(row.14)?,
+        }),
+        StudyEventKind::ActorRuntimeBound => {
+            let native_child_spawn_admission_id: NativeChildSpawnAdmissionId = stored(row.2)?;
+            let execution_profile_id: ExecutionProfileId = stored(connection.query_row(
+                "SELECT execution_profile_id FROM native_child_spawn_admissions
+                     WHERE native_child_spawn_admission_id = ?1",
+                [native_child_spawn_admission_id.value()],
+                |r| r.get(0),
+            )?)?;
+            Ok(StudyEvent::ActorRuntimeBound {
+                obligation_id: stored(row.7)?,
+                native_child_id: stored(row.1)?,
+                native_child_spawn_admission_id,
+                office_session_id: stored(row.3)?,
+                execution_profile_id,
+            })
+        }
+        StudyEventKind::ActorRuntimeReconciled => Ok(StudyEvent::ActorRuntimeReconciled {
+            obligation_id: stored(row.7)?,
+            native_child_id: stored(row.1)?,
         }),
         StudyEventKind::GroundTruthRevealed => Ok(StudyEvent::GroundTruthRevealed {
             episode_id: stored(row.4)?,

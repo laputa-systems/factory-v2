@@ -26,7 +26,8 @@ use society_pi::{
     CorrelationIdentity, CreateSessionPayload, DisposePayload, DisposeReason, HostProcessId,
     InboundCommand, InboundFrame, MAX_JSONL_FRAME_BYTES, OutboundFrame, PeerError, PeerObservation,
     PeerPhase, PromptPayload, Provider, RuntimeIdentity, SessionIdentity, SpawnNonce,
-    decode_outbound_jsonl, encode_inbound_jsonl, model_thinking_level_is_admitted,
+    ToolCallIdentity, decode_outbound_jsonl, encode_inbound_jsonl,
+    model_thinking_level_is_admitted,
 };
 use thiserror::Error;
 
@@ -1259,6 +1260,41 @@ impl PiSupervisor {
         }
     }
 
+    /// Returns one durable-result-bearing Forum call to the host. The caller
+    /// must first commit the corresponding typed study transition; this
+    /// method only owns ordered native pipe delivery and peer validation.
+    #[allow(clippy::too_many_arguments)]
+    pub fn send_forum_tool_result(
+        &mut self,
+        child_process_id: &SupervisedChildId,
+        correlation_identity: CorrelationIdentity,
+        tool_call_identity: ToolCallIdentity,
+        result: society_pi::SdkJsonValue,
+        is_error: bool,
+        now: MonotonicTick,
+        deadline: ControlWriteDeadline,
+    ) -> Result<ControlWriteProgress, SupervisionError> {
+        let child = self.child_mut(child_process_id)?;
+        if child.lifecycle != ChildLifecycle::SessionReady {
+            return Err(SupervisionError::InvalidLifecycle);
+        }
+        let frame = child.next_frame(
+            correlation_identity,
+            InboundCommand::ForumToolResult(society_pi::ForumToolResultPayload {
+                tool_call_identity,
+                result,
+                is_error,
+            }),
+        )?;
+        match child.stage_inbound(frame, PendingControlCommand::ForumToolResult, now, deadline) {
+            Ok(progress) => Ok(progress),
+            Err(error) => {
+                child.start_automatic_boundary_containment(now)?;
+                Err(error)
+            }
+        }
+    }
+
     /// Stages an observation-only GetState control while a session is live.
     /// It carries no kernel authority and exists so the resident control loop
     /// can observe a host without pretending its resulting usage snapshot is
@@ -1681,6 +1717,7 @@ struct PendingDirectChildReap {
 enum PendingControlCommand {
     CreateSession,
     Prompt,
+    ForumToolResult,
     #[cfg(test)]
     GetState,
     Abort,

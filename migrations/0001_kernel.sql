@@ -2250,6 +2250,21 @@ CREATE TABLE study_actor_occurrences (
     study_actor_obligation_id INTEGER NOT NULL UNIQUE REFERENCES study_actor_obligations(study_actor_obligation_id),
     created_by_command_id INTEGER NOT NULL
 );
+-- A live actor may be backed by a resident Pi/native child. This optional
+-- binding is absent for deterministic actor doubles, but once present it
+-- must reach Reconciled before the study obligation can complete or fail.
+CREATE TABLE study_actor_runtime_bindings (
+    study_actor_obligation_id INTEGER PRIMARY KEY REFERENCES study_actor_obligations(study_actor_obligation_id),
+    root_authority_office_session_id INTEGER NOT NULL REFERENCES root_authority_office_sessions(root_authority_office_session_id),
+    native_child_id INTEGER NOT NULL UNIQUE REFERENCES native_children(native_child_id),
+    native_child_spawn_admission_id INTEGER NOT NULL UNIQUE REFERENCES native_child_spawn_admissions(native_child_spawn_admission_id),
+    execution_profile_id INTEGER NOT NULL REFERENCES execution_profiles(execution_profile_id),
+    lifecycle_state INTEGER NOT NULL CHECK (lifecycle_state IN (1, 2)),
+    bound_by_command_id INTEGER NOT NULL REFERENCES commands(command_row_id),
+    reconciled_by_command_id INTEGER REFERENCES commands(command_row_id),
+    CHECK ((lifecycle_state = 1 AND reconciled_by_command_id IS NULL)
+        OR (lifecycle_state = 2 AND reconciled_by_command_id IS NOT NULL))
+);
 CREATE TABLE study_frozen_forum_heads (
     study_episode_id INTEGER PRIMARY KEY REFERENCES study_episodes(study_episode_id),
     forum_thread_id INTEGER NOT NULL REFERENCES study_forum_threads(forum_thread_id),
@@ -2339,7 +2354,7 @@ CREATE TABLE study_experimental_forks (
 -- ledger.  The fixed columns are intentionally not a generic payload bucket.
 CREATE TABLE command_study_transition (
     command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id),
-    study_command_kind INTEGER NOT NULL CHECK (study_command_kind BETWEEN 1 AND 25),
+    study_command_kind INTEGER NOT NULL CHECK (study_command_kind BETWEEN 1 AND 27),
     application_revision_id INTEGER,
     protocol_revision_id INTEGER,
     world_revision_id INTEGER,
@@ -2354,6 +2369,9 @@ CREATE TABLE command_study_transition (
     related_thread_id INTEGER,
     obligation_id INTEGER,
     related_obligation_id INTEGER,
+    root_authority_office_session_id INTEGER,
+    native_child_id INTEGER,
+    native_child_spawn_admission_id INTEGER,
     message_id INTEGER,
     related_message_id INTEGER,
     study_treatment INTEGER,
@@ -2393,7 +2411,7 @@ CREATE TABLE command_study_transition (
 );
 CREATE TABLE event_study_transition (
     event_id INTEGER PRIMARY KEY REFERENCES events(event_id),
-    study_event_kind INTEGER NOT NULL CHECK (study_event_kind BETWEEN 1 AND 25),
+    study_event_kind INTEGER NOT NULL CHECK (study_event_kind BETWEEN 1 AND 27),
     primary_id INTEGER,
     secondary_id INTEGER,
     tertiary_id INTEGER,

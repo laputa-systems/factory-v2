@@ -255,10 +255,11 @@ unavailable ordinals, unsupported thread operations, and overlong text reject.
 The provider-free path exercises these closed actions through the generic
 service boundary. The separately admitted TypeScript `forum_isolated_v1`
 profile installs exactly these two custom tools and returns typed JSON-safe
-results across the Pi SDK boundary. The reduced `make run-society-paid` smoke
-routes them to a bounded local Forum authority and reports the resulting reads,
-posts, tokens, costs, and failures. It does not yet bind the calls to the
-resident daemon's actor/native-child custody, so it is qualification rather
+results across the Pi SDK boundary. The resident daemon now has the matching
+typed call-to-study-transition/result bridge and a durable obligation-to-runtime
+binding which cannot close until native-child finalization. The reduced
+`make run-society-paid` smoke still routes calls through its bounded local Forum
+authority rather than that daemon bridge, so it remains qualification rather
 than canonical CL-001 evidence.
 
 F0's intended live profile performs reads and posts only on explicit model

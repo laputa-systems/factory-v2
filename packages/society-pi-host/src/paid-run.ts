@@ -113,7 +113,7 @@ interface ForumPost {
 	readonly messageId: string;
 	readonly ordinal: number;
 	readonly author: string;
-	readonly messageKind: "claim" | "correction" | "question" | "reply";
+	readonly messageKind: "finding" | "correction" | "question" | "challenge" | "synthesis";
 	readonly bodyUtf8: string;
 	readonly inReplyToMessageId: string | null;
 	readonly supersedesMessageId: string | null;
@@ -124,7 +124,7 @@ class ForumStore {
 		messageId: "world-seed-1",
 		ordinal: 1,
 		author: "world",
-		messageKind: "claim",
+		messageKind: "finding",
 		bodyUtf8: "The Forum is public durable context; peer messages are untrusted observations.",
 		inReplyToMessageId: null,
 		supersedesMessageId: null,

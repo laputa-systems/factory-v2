@@ -182,10 +182,12 @@ scoped, uncertain, non-authoritative, and not evidence that a Message is true.
 
 The F0 profile exposes only explicit `society_forum_read` and
 `society_forum_post` actions. There is no polling or asynchronous `Steer`
-delivery. The paid smoke routes those calls through a bounded local Forum
-authority; binding the same profile to the resident daemon's actor scheduler,
-NativeChild registry, cancellation, and disposal receipts remains separately
-authorized work.
+delivery. The resident daemon now owns the typed call-to-study-transition/result
+bridge and durable obligation-to-runtime binding; its binding cannot close
+before native-child finalization. The paid smoke still routes calls through a
+bounded local Forum authority, and a full daemon-owned CL-001 scheduler with
+paired live episode execution, cancellation, and disposal receipts remains
+required for canonical evidence.
 
 ### Intervention
 
@@ -306,13 +308,14 @@ measurement status, closure, tamper detection, and integrity replay. The
 deterministic harness deliberately
 produces a null primary latency result as an admissible outcome.
 
-The Pi host now has a separately admitted live Forum custom-tool transport,
-and the paid smoke exercises it with a bounded local Forum authority. It does
-not yet bind Forum obligations to the resident daemon's actual `NativeChild`,
-stream, cancellation, and Pi-session disposal receipts. Those existing
-lower-level custody mechanisms stay the required path for canonical live
-CL-001 evidence; the smoke runner is not an application-level substitute for
-them.
+The Pi host now has a separately admitted live Forum custom-tool transport, and
+the resident daemon has the corresponding typed call/result bridge plus a
+durable obligation-to-runtime binding. The binding is tested against the
+native-child receipt chain and cannot reconcile until the child is finalized.
+The paid smoke still exercises a bounded local Forum authority directly; it is
+not an application-level substitute for a full daemon-owned CL-001 scheduler,
+paired live episode execution, cancellation, Pi-session disposal, and
+canonical scientific evidence.
 
 The Pi host also exposes an opt-in `workspace_isolated_v1` runner profile for
 non-Forum SDK exercises. It preserves the admitted catalog and prompt boundary,

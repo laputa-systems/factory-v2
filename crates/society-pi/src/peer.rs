@@ -47,14 +47,69 @@ pub enum TurnDisposition {
 
 /// A caller-visible, normalized terminal or accounting fact.  The daemon may
 /// persist these facts, but this boundary crate never makes a durable charge.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum PeerObservation {
     Usage(UsageDelta),
-    UsageUnavailable { reason: UsageUnavailableReason },
+    UsageUnavailable {
+        reason: UsageUnavailableReason,
+    },
     TurnSettled(TurnReceipt),
+    /// A Forum call is a peer-validated request whose JSON arguments remain
+    /// at the SDK-host boundary. The resident runtime must translate it into
+    /// a typed Forum transition before returning a result to the host.
+    ForumToolCall {
+        correlation_identity: CorrelationIdentity,
+        tool_call_identity: ToolCallIdentity,
+        tool_name: crate::forum::ForumToolName,
+        args: Value,
+    },
     Disposed,
-    Fatal { failure_code: AdapterFailureCode },
+    Fatal {
+        failure_code: AdapterFailureCode,
+    },
 }
+
+impl PartialEq for PeerObservation {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Usage(left), Self::Usage(right)) => left == right,
+            (Self::UsageUnavailable { reason: left }, Self::UsageUnavailable { reason: right }) => {
+                left == right
+            }
+            (Self::TurnSettled(left), Self::TurnSettled(right)) => left == right,
+            (
+                Self::ForumToolCall {
+                    correlation_identity: left_correlation,
+                    tool_call_identity: left_call,
+                    tool_name: left_name,
+                    args: left_args,
+                },
+                Self::ForumToolCall {
+                    correlation_identity: right_correlation,
+                    tool_call_identity: right_call,
+                    tool_name: right_name,
+                    args: right_args,
+                },
+            ) => {
+                left_correlation == right_correlation
+                    && left_call == right_call
+                    && left_name == right_name
+                    && miniserde::json::to_string(left_args)
+                        == miniserde::json::to_string(right_args)
+            }
+            (Self::Disposed, Self::Disposed) => true,
+            (
+                Self::Fatal { failure_code: left },
+                Self::Fatal {
+                    failure_code: right,
+                },
+            ) => left == right,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for PeerObservation {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TurnReceipt {
@@ -489,13 +544,22 @@ impl BoundaryPeer {
                 tool_name,
                 args,
             } => {
+                let Some(correlation_identity) = frame.correlation_identity.clone() else {
+                    self.fence();
+                    return Err(PeerError::UnknownCorrelation);
+                };
                 self.observe_forum_tool_call(
-                    frame.correlation_identity,
+                    Some(correlation_identity.clone()),
+                    tool_call_identity.clone(),
+                    tool_name,
+                    &args,
+                )?;
+                Some(PeerObservation::ForumToolCall {
+                    correlation_identity,
                     tool_call_identity,
                     tool_name,
                     args,
-                )?;
-                None
+                })
             }
             OutboundEvent::UsageSnapshot { usage } => {
                 self.observe_usage(frame_sequence, frame.correlation_identity, usage)?
@@ -820,7 +884,7 @@ impl BoundaryPeer {
         correlation: Option<CorrelationIdentity>,
         tool_call_identity: ToolCallIdentity,
         tool_name: crate::forum::ForumToolName,
-        _args: Value,
+        _args: &Value,
     ) -> Result<(), PeerError> {
         let Some(active) = self.active_turn.as_ref() else {
             self.fence();

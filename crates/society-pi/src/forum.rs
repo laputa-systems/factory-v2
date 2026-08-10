@@ -5,6 +5,9 @@
 //! authorizing any eventual tool action.  In particular, this module carries
 //! no Message, identity, exposure, cursor, or mutable peer-content data.
 
+use miniserde::json::{Number, Value};
+use thiserror::Error;
+
 use crate::protocol::{Blake3Digest, ProtocolError};
 
 /// The revision named by the exact bytes below.  Any wording change is a new
@@ -37,6 +40,185 @@ pub const FORUM_F0_TOOL_CONTRACT_BLAKE3: &str =
 pub enum ForumToolName {
     SocietyForumRead,
     SocietyForumPost,
+}
+
+/// The closed message-kind vocabulary accepted by the F0 host tool.  This
+/// lives at the SDK boundary so a daemon never has to interpret an arbitrary
+/// stringly-typed tool argument.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum ForumMessageKind {
+    Finding,
+    Correction,
+    Question,
+    Challenge,
+    Synthesis,
+}
+
+impl ForumMessageKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Finding => "finding",
+            Self::Correction => "correction",
+            Self::Question => "question",
+            Self::Challenge => "challenge",
+            Self::Synthesis => "synthesis",
+        }
+    }
+}
+
+/// Typed arguments after the JSON-only SDK boundary has been validated.  The
+/// daemon maps this closed value into the generic kernel's corresponding
+/// closed Forum command; no JSON value crosses that authority boundary.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ForumToolArguments {
+    Read {
+        first_message_ordinal: i64,
+        through_message_ordinal: i64,
+    },
+    Post {
+        message_kind: ForumMessageKind,
+        body_utf8: String,
+        in_reply_to_message_id: Option<String>,
+        supersedes_message_id: Option<String>,
+    },
+}
+
+#[derive(Clone, Debug, Error, Eq, PartialEq)]
+pub enum ForumToolArgumentsError {
+    #[error("Forum tool arguments must be a JSON object")]
+    NotObject,
+    #[error("Forum tool arguments contain an unknown field")]
+    UnknownField,
+    #[error("Forum tool arguments are missing a required field")]
+    MissingField,
+    #[error("Forum ordinal must be a positive integer")]
+    InvalidOrdinal,
+    #[error("Forum message kind is not admitted")]
+    InvalidMessageKind,
+    #[error("Forum message body must be a nonempty string")]
+    InvalidBody,
+    #[error("Forum message reference must be a string or null")]
+    InvalidReference,
+}
+
+/// Decodes the exact argument shapes emitted by `forumToolDefinitions`.
+/// Additional fields and non-integral numbers are rejected here even if a
+/// future SDK validator happens to accept them; this is the last typed check
+/// before a call can become a durable study transition.
+pub fn decode_forum_tool_arguments(
+    tool_name: ForumToolName,
+    args: &Value,
+) -> Result<ForumToolArguments, ForumToolArgumentsError> {
+    let Value::Object(object) = args else {
+        return Err(ForumToolArgumentsError::NotObject);
+    };
+    let expected = match tool_name {
+        ForumToolName::SocietyForumRead => {
+            ["first_message_ordinal", "through_message_ordinal", "", ""]
+        }
+        ForumToolName::SocietyForumPost => [
+            "message_kind",
+            "body_utf8",
+            "in_reply_to_message_id",
+            "supersedes_message_id",
+        ],
+    };
+    if object.keys().any(|key| !expected.contains(&key.as_str()))
+        || object.len()
+            != match tool_name {
+                ForumToolName::SocietyForumRead => 2,
+                ForumToolName::SocietyForumPost => 4,
+            }
+    {
+        return Err(ForumToolArgumentsError::UnknownField);
+    }
+
+    match tool_name {
+        ForumToolName::SocietyForumRead => Ok(ForumToolArguments::Read {
+            first_message_ordinal: positive_integer(object, "first_message_ordinal")?,
+            through_message_ordinal: positive_integer(object, "through_message_ordinal")?,
+        }),
+        ForumToolName::SocietyForumPost => Ok(ForumToolArguments::Post {
+            message_kind: message_kind(object, "message_kind")?,
+            body_utf8: required_string(object, "body_utf8", ForumToolArgumentsError::InvalidBody)?,
+            in_reply_to_message_id: optional_string(object, "in_reply_to_message_id")?,
+            supersedes_message_id: optional_string(object, "supersedes_message_id")?,
+        }),
+    }
+}
+
+fn positive_integer(
+    object: &miniserde::json::Object,
+    field: &str,
+) -> Result<i64, ForumToolArgumentsError> {
+    let Some(Value::Number(number)) = object.get(field) else {
+        return Err(if object.contains_key(field) {
+            ForumToolArgumentsError::InvalidOrdinal
+        } else {
+            ForumToolArgumentsError::MissingField
+        });
+    };
+    let value = match number {
+        Number::U64(value) => i64::try_from(*value).ok(),
+        Number::I64(value) => Some(*value),
+        Number::F64(_) => None,
+    };
+    value
+        .filter(|value| *value > 0)
+        .ok_or(ForumToolArgumentsError::InvalidOrdinal)
+}
+
+fn required_string(
+    object: &miniserde::json::Object,
+    field: &str,
+    invalid: ForumToolArgumentsError,
+) -> Result<String, ForumToolArgumentsError> {
+    let Some(Value::String(value)) = object.get(field) else {
+        return Err(if object.contains_key(field) {
+            invalid
+        } else {
+            ForumToolArgumentsError::MissingField
+        });
+    };
+    if value.is_empty() {
+        return Err(invalid);
+    }
+    Ok(value.clone())
+}
+
+fn optional_string(
+    object: &miniserde::json::Object,
+    field: &str,
+) -> Result<Option<String>, ForumToolArgumentsError> {
+    let Some(value) = object.get(field) else {
+        return Err(ForumToolArgumentsError::MissingField);
+    };
+    match value {
+        Value::Null => Ok(None),
+        Value::String(value) => Ok((!value.is_empty()).then(|| value.clone())),
+        _ => Err(ForumToolArgumentsError::InvalidReference),
+    }
+}
+
+fn message_kind(
+    object: &miniserde::json::Object,
+    field: &str,
+) -> Result<ForumMessageKind, ForumToolArgumentsError> {
+    let Some(Value::String(value)) = object.get(field) else {
+        return Err(if object.contains_key(field) {
+            ForumToolArgumentsError::InvalidMessageKind
+        } else {
+            ForumToolArgumentsError::MissingField
+        });
+    };
+    match value.as_str() {
+        "finding" => Ok(ForumMessageKind::Finding),
+        "correction" => Ok(ForumMessageKind::Correction),
+        "question" => Ok(ForumMessageKind::Question),
+        "challenge" => Ok(ForumMessageKind::Challenge),
+        "synthesis" => Ok(ForumMessageKind::Synthesis),
+        _ => Err(ForumToolArgumentsError::InvalidMessageKind),
+    }
 }
 
 impl ForumToolName {
@@ -193,5 +375,44 @@ mod tests {
         };
         assert_eq!(awareness_blake3.as_str(), FORUM_F0_AWARENESS_BLAKE3);
         assert_eq!(tool_contract_blake3.as_str(), FORUM_F0_TOOL_CONTRACT_BLAKE3);
+    }
+
+    #[test]
+    fn forum_arguments_decode_into_closed_values_and_normalize_empty_references() {
+        let args = miniserde::json::from_str::<Value>(
+            r#"{"message_kind":"challenge","body_utf8":"check this","in_reply_to_message_id":"","supersedes_message_id":null}"#,
+        )
+        .expect("closed Forum post fixture must parse");
+        assert_eq!(
+            decode_forum_tool_arguments(ForumToolName::SocietyForumPost, &args)
+                .expect("closed Forum post fixture must decode"),
+            ForumToolArguments::Post {
+                message_kind: ForumMessageKind::Challenge,
+                body_utf8: "check this".to_owned(),
+                in_reply_to_message_id: None,
+                supersedes_message_id: None,
+            }
+        );
+    }
+
+    #[test]
+    fn forum_arguments_reject_unknown_fields_and_fractional_ordinals() {
+        let unknown = miniserde::json::from_str::<Value>(
+            r#"{"first_message_ordinal":1,"through_message_ordinal":1,"cursor":"hidden"}"#,
+        )
+        .expect("closed Forum read fixture must parse");
+        assert_eq!(
+            decode_forum_tool_arguments(ForumToolName::SocietyForumRead, &unknown),
+            Err(ForumToolArgumentsError::UnknownField)
+        );
+
+        let fractional = miniserde::json::from_str::<Value>(
+            r#"{"first_message_ordinal":1.5,"through_message_ordinal":2}"#,
+        )
+        .expect("fractional Forum read fixture must parse");
+        assert_eq!(
+            decode_forum_tool_arguments(ForumToolName::SocietyForumRead, &fractional),
+            Err(ForumToolArgumentsError::InvalidOrdinal)
+        );
     }
 }

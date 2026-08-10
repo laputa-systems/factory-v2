@@ -9,6 +9,7 @@ fn consume(observation: PeerObservation) {
         PeerObservation::Usage(UsageDelta { .. }) => {}
         PeerObservation::UsageUnavailable { reason: _ } => {}
         PeerObservation::TurnSettled(TurnReceipt { .. }) => {}
+        PeerObservation::ForumToolCall { .. } => {}
         PeerObservation::Disposed => {}
         PeerObservation::Fatal { failure_code: _ } => {}
     }

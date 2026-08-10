@@ -22,7 +22,9 @@ use society_content::{
 };
 use society_kernel::{
     Capability, CommandBody, CommandDisposition, CommandId, CommandRequest, ExpectedGeneration,
-    InstallFoundingMissionPreflight, KernelStore, PrincipalId, StoreError,
+    ForumMessageBody, ForumMessageId, ForumMessageKind, InstallFoundingMissionPreflight,
+    KernelStore, PrincipalId, StoreError, StudyActorObligationId, StudyCommand, StudyEvent,
+    StudyTransitionDisposition, StudyTransitionReceipt,
 };
 use thiserror::Error;
 
@@ -33,8 +35,8 @@ use crate::content::{
 use crate::pi_execution::{
     OfficePiExecutionChild, OfficePiExecutionStart, OfficePiSessionDispose,
     OfficePiSessionDisposeOutput, OfficePiSessionDisposeStart, OfficePiSpawnRegistration,
-    PiExecutionDriver, PiExecutionError, UnregisteredOfficePiChild,
-    VerifiedPiSessionDisposeTerminal, VerifiedPiSessionTranscript,
+    OfficePiTurn, OfficePiTurnOutput, OfficePiTurnStart, PiExecutionDriver, PiExecutionError,
+    UnregisteredOfficePiChild, VerifiedPiSessionDisposeTerminal, VerifiedPiSessionTranscript,
 };
 use crate::protocol::{
     ClientCommandBody, ClientCommandRequest, CorrelationId, DaemonStatus, ProtocolErrorCode,
@@ -560,6 +562,344 @@ impl Daemon {
     ) -> Result<crate::supervision::ControlWriteProgress, PiExecutionError> {
         self.pi_execution
             .drive_create_delivery(&mut self.store, child, now)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn authorize_and_begin_office_pi_turn(
+        &mut self,
+        child: &mut OfficePiExecutionChild,
+        start: OfficePiTurnStart,
+        now: crate::supervision::MonotonicTick,
+        deadline: crate::supervision::ControlWriteDeadline,
+    ) -> Result<(OfficePiTurn, crate::supervision::ControlWriteProgress), PiExecutionError> {
+        self.pi_execution.authorize_and_begin_office_turn_prompt(
+            &mut self.store,
+            child,
+            start,
+            now,
+            deadline,
+        )
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn drive_office_pi_turn_prompt_delivery(
+        &mut self,
+        child: &mut OfficePiExecutionChild,
+        turn: &mut OfficePiTurn,
+        now: crate::supervision::MonotonicTick,
+    ) -> Result<crate::supervision::ControlWriteProgress, PiExecutionError> {
+        self.pi_execution
+            .drive_office_turn_prompt_delivery(&mut self.store, child, turn, now)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn observe_office_pi_turn_output(
+        &mut self,
+        child: &mut OfficePiExecutionChild,
+        turn: &mut OfficePiTurn,
+        now: crate::supervision::MonotonicTick,
+    ) -> Result<Option<OfficePiTurnOutput>, PiExecutionError> {
+        self.pi_execution
+            .observe_office_turn_output(&mut self.store, child, turn, now)
+    }
+
+    #[allow(dead_code)]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn send_office_pi_forum_tool_result(
+        &mut self,
+        child: &mut OfficePiExecutionChild,
+        turn: &OfficePiTurn,
+        tool_call_identity: society_pi::ToolCallIdentity,
+        result: society_pi::SdkJsonValue,
+        is_error: bool,
+        now: crate::supervision::MonotonicTick,
+        deadline: crate::supervision::ControlWriteDeadline,
+    ) -> Result<crate::supervision::ControlWriteProgress, PiExecutionError> {
+        self.pi_execution.send_office_forum_tool_result(
+            child,
+            turn,
+            tool_call_identity,
+            result,
+            is_error,
+            now,
+            deadline,
+        )
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn drive_office_pi_forum_tool_result_delivery(
+        &mut self,
+        child: &mut OfficePiExecutionChild,
+        now: crate::supervision::MonotonicTick,
+    ) -> Result<crate::supervision::ControlWriteProgress, PiExecutionError> {
+        self.pi_execution
+            .drive_office_forum_tool_result_delivery(child, now)
+    }
+
+    /// Builds the runtime-binding command from the exact IDs retained by the
+    /// resident child handle. A scheduler cannot accidentally bind an
+    /// obligation to a separately supplied child or office session.
+    #[allow(dead_code)]
+    pub(crate) fn bind_study_actor_runtime_for_child(
+        &mut self,
+        command_id: CommandId,
+        obligation_id: society_kernel::StudyActorObligationId,
+        child: &OfficePiExecutionChild,
+    ) -> Result<StudyTransitionReceipt, PiExecutionError> {
+        self.bind_study_actor_runtime(
+            command_id,
+            StudyCommand::BindActorRuntime {
+                obligation_id,
+                office_session_id: child.office_session_id(),
+                native_child_id: child.child_process_id(),
+                native_child_spawn_admission_id: child.native_child_spawn_admission_id(),
+            },
+        )
+    }
+
+    /// Records runtime reconciliation only after the lower-level driver has
+    /// reached its durable `Finalized` native-child state.
+    #[allow(dead_code)]
+    pub(crate) fn reconcile_study_actor_runtime_for_child(
+        &mut self,
+        command_id: CommandId,
+        obligation_id: society_kernel::StudyActorObligationId,
+        child: &OfficePiExecutionChild,
+    ) -> Result<StudyTransitionReceipt, PiExecutionError> {
+        if child.phase() != "reconciled" {
+            return Err(PiExecutionError::InvalidLifecycle);
+        }
+        self.bind_study_actor_runtime(
+            command_id,
+            StudyCommand::ReconcileActorRuntime {
+                obligation_id,
+                native_child_id: child.child_process_id(),
+            },
+        )
+    }
+
+    /// Translates one peer-validated Forum call into exactly one closed study
+    /// transition and renders only that transition's receipt back into the
+    /// SDK JSON boundary. This is the resident's authority bridge: mutable
+    /// messages and read bytes never travel through a generic metadata map.
+    #[allow(dead_code)]
+    pub(crate) fn execute_study_forum_tool_call(
+        &mut self,
+        command_id: CommandId,
+        obligation_id: StudyActorObligationId,
+        tool_name: society_pi::ForumToolName,
+        args: &society_pi::SdkJsonValue,
+    ) -> Result<(society_pi::SdkJsonValue, bool), PiExecutionError> {
+        let invalid = |message: String| {
+            Ok((
+                society_pi::sdk_json_object([
+                    (
+                        "kind".to_owned(),
+                        society_pi::SdkJsonValue::String("error".to_owned()),
+                    ),
+                    (
+                        "message".to_owned(),
+                        society_pi::SdkJsonValue::String(message),
+                    ),
+                ]),
+                true,
+            ))
+        };
+        let arguments = match society_pi::decode_forum_tool_arguments(tool_name, args) {
+            Ok(arguments) => arguments,
+            Err(error) => return invalid(error.to_string()),
+        };
+        let command = match arguments {
+            society_pi::ForumToolArguments::Read {
+                first_message_ordinal,
+                through_message_ordinal,
+            } => StudyCommand::ReadForum {
+                obligation_id,
+                first_message_ordinal,
+                through_message_ordinal,
+            },
+            society_pi::ForumToolArguments::Post {
+                message_kind,
+                body_utf8,
+                in_reply_to_message_id,
+                supersedes_message_id,
+            } => {
+                let parse_reference =
+                    |value: Option<String>| -> Result<Option<ForumMessageId>, String> {
+                        value
+                            .map(|value| {
+                                value
+                                    .parse::<i64>()
+                                    .ok()
+                                    .and_then(ForumMessageId::new)
+                                    .ok_or_else(|| {
+                                        "Forum message references must be positive numeric IDs"
+                                            .to_owned()
+                                    })
+                            })
+                            .transpose()
+                    };
+                let in_reply_to_message_id = match parse_reference(in_reply_to_message_id) {
+                    Ok(value) => value,
+                    Err(error) => return invalid(error),
+                };
+                let supersedes_message_id = match parse_reference(supersedes_message_id) {
+                    Ok(value) => value,
+                    Err(error) => return invalid(error),
+                };
+                let body = match ForumMessageBody::parse(body_utf8) {
+                    Ok(body) => body,
+                    Err(error) => return invalid(error.to_string()),
+                };
+                StudyCommand::PublishForumMessage {
+                    obligation_id,
+                    kind: match message_kind {
+                        society_pi::ForumMessageKind::Finding => ForumMessageKind::Finding,
+                        society_pi::ForumMessageKind::Correction => ForumMessageKind::Correction,
+                        society_pi::ForumMessageKind::Question => ForumMessageKind::Question,
+                        society_pi::ForumMessageKind::Challenge => ForumMessageKind::Challenge,
+                        society_pi::ForumMessageKind::Synthesis => ForumMessageKind::Synthesis,
+                    },
+                    body,
+                    in_reply_to_message_id,
+                    supersedes_message_id,
+                }
+            }
+        };
+        let receipt = self
+            .store
+            .execute_study_transition(command_id, command)
+            .map_err(PiExecutionError::Kernel)?;
+        match receipt.disposition {
+            StudyTransitionDisposition::Rejected(rejection) => {
+                invalid(format!("Forum transition rejected: {rejection:?}"))
+            }
+            StudyTransitionDisposition::Accepted(StudyEvent::ForumMessagePublished {
+                message_id,
+                message_ordinal,
+                ..
+            }) => Ok((
+                society_pi::sdk_json_object([
+                    (
+                        "kind".to_owned(),
+                        society_pi::SdkJsonValue::String("forum_post_receipt_v1".to_owned()),
+                    ),
+                    (
+                        "message_id".to_owned(),
+                        society_pi::SdkJsonValue::String(message_id.value().to_string()),
+                    ),
+                    (
+                        "message_ordinal".to_owned(),
+                        society_pi::sdk_json_u64(message_ordinal as u64),
+                    ),
+                ]),
+                false,
+            )),
+            StudyTransitionDisposition::Accepted(StudyEvent::ForumMessagesRead {
+                receipt_id,
+                obligation_id: receipt_obligation_id,
+                first_message_ordinal,
+                through_message_ordinal,
+                rendered_digest,
+                ..
+            }) => {
+                let rendering = self
+                    .store
+                    .forum_read_receipt_rendering_for_obligation(receipt_id, receipt_obligation_id)
+                    .map_err(PiExecutionError::Kernel)?;
+                let rendering = String::from_utf8(rendering)
+                    .map_err(|_| PiExecutionError::Kernel(StoreError::InvalidStoredValue))?;
+                Ok((
+                    society_pi::sdk_json_object([
+                        (
+                            "kind".to_owned(),
+                            society_pi::SdkJsonValue::String("forum_read_receipt_v1".to_owned()),
+                        ),
+                        (
+                            "receipt_id".to_owned(),
+                            society_pi::SdkJsonValue::String(receipt_id.value().to_string()),
+                        ),
+                        (
+                            "first_message_ordinal".to_owned(),
+                            society_pi::sdk_json_u64(first_message_ordinal as u64),
+                        ),
+                        (
+                            "through_message_ordinal".to_owned(),
+                            society_pi::sdk_json_u64(through_message_ordinal as u64),
+                        ),
+                        (
+                            "rendering_blake3".to_owned(),
+                            society_pi::SdkJsonValue::String(format!("{rendered_digest:?}")),
+                        ),
+                        (
+                            "rendering_utf8".to_owned(),
+                            society_pi::SdkJsonValue::String(rendering),
+                        ),
+                    ]),
+                    false,
+                ))
+            }
+            StudyTransitionDisposition::Accepted(other) => {
+                invalid(format!("unexpected Forum transition event: {other:?}"))
+            }
+        }
+    }
+
+    /// Completes the resident half of one observed M6 Forum request: derive
+    /// its idempotent study command, commit the typed transition, and stage
+    /// the matching SDK result on the same child. The scheduler remains the
+    /// caller which chooses the obligation and prompt; it cannot bypass this
+    /// custody bridge once a host call has been observed.
+    #[allow(dead_code)]
+    pub(crate) fn handle_office_pi_forum_tool_call(
+        &mut self,
+        obligation_id: StudyActorObligationId,
+        child: &mut OfficePiExecutionChild,
+        turn: &OfficePiTurn,
+        output: OfficePiTurnOutput,
+        now: crate::supervision::MonotonicTick,
+        deadline: crate::supervision::ControlWriteDeadline,
+    ) -> Result<crate::supervision::ControlWriteProgress, PiExecutionError> {
+        let OfficePiTurnOutput::ForumToolCall {
+            tool_call_identity,
+            tool_name,
+            args,
+            ..
+        } = output
+        else {
+            return Err(PiExecutionError::InvalidLifecycle);
+        };
+        let command_id = CommandId::parse(format!(
+            "study-forum-tool-{}-{}",
+            obligation_id.value(),
+            blake3::hash(tool_call_identity.as_str().as_bytes()).to_hex()
+        ))
+        .map_err(|_| PiExecutionError::IdentityConversion)?;
+        let (result, is_error) =
+            self.execute_study_forum_tool_call(command_id, obligation_id, tool_name, &args)?;
+        self.send_office_pi_forum_tool_result(
+            child,
+            turn,
+            tool_call_identity,
+            result,
+            is_error,
+            now,
+            deadline,
+        )
+    }
+
+    /// Commits a live study/runtime binding through the same resident store
+    /// used by native-child custody. This is intentionally not a local-wire
+    /// operation; only a daemon-owned coordinator can call it.
+    #[allow(dead_code)]
+    pub(crate) fn bind_study_actor_runtime(
+        &mut self,
+        command_id: CommandId,
+        command: StudyCommand,
+    ) -> Result<StudyTransitionReceipt, PiExecutionError> {
+        self.store
+            .execute_study_transition(command_id, command)
+            .map_err(PiExecutionError::Kernel)
     }
 
     #[allow(dead_code)]

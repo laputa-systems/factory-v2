@@ -16971,7 +16971,7 @@ fn replay_command_requests(
     Ok(commands)
 }
 
-const MATERIALIZED_TABLES: [&str; 119] = [
+const MATERIALIZED_TABLES: [&str; 120] = [
     "principals",
     "societies",
     "office_contracts",
@@ -17082,6 +17082,7 @@ const MATERIALIZED_TABLES: [&str; 119] = [
     "study_forum_threads",
     "study_actor_obligations",
     "study_actor_occurrences",
+    "study_actor_runtime_bindings",
     "study_frozen_forum_heads",
     "study_forum_exposures",
     "study_forum_messages",

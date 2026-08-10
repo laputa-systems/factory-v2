@@ -41,7 +41,7 @@ export type ForumToolArguments =
 	}
 	| {
 		readonly toolName: "society_forum_post";
-		readonly message_kind: "claim" | "correction" | "question" | "reply";
+		readonly message_kind: "finding" | "correction" | "question" | "challenge" | "synthesis";
 		readonly body_utf8: string;
 		readonly in_reply_to_message_id: string | null;
 		readonly supersedes_message_id: string | null;
@@ -122,7 +122,7 @@ export function forumToolDefinitions(handler: ForumToolCallHandler): ToolDefinit
 	const post = {
 		type: "object",
 		properties: {
-			message_kind: { type: "string", enum: ["claim", "correction", "question", "reply"] },
+			message_kind: { type: "string", enum: ["finding", "correction", "question", "challenge", "synthesis"] },
 			body_utf8: { type: "string", minLength: 1, maxLength: 2000 },
 			in_reply_to_message_id: { anyOf: [{ type: "string" }, { type: "null" }] },
 			supersedes_message_id: { anyOf: [{ type: "string" }, { type: "null" }] },

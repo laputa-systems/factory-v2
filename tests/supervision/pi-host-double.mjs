@@ -89,6 +89,7 @@ let createPayload;
 let disposed = false;
 let promptCount = 0;
 let pendingPromptTerminal;
+let pendingForumTerminal;
 let firstPromptRendering;
 let transcriptBytes;
 
@@ -313,9 +314,54 @@ function accept(frame) {
 				agentEvent: {
 					type: "agent_end",
 					messages: [{ role: "assistant", stopReason }],
-					willRetry: false,
+				willRetry: false,
 				},
 			});
+			const emitPromptTerminal = () => {
+				emit({
+					event: "UsageSnapshot",
+					correlationIdentity: frame.correlationIdentity,
+					usage: knownUsage(promptCount),
+				});
+				const protocolFailed = sessionIdentity.includes("m6-protocol-failed-final-known");
+				emit({
+					event: "Settled",
+					correlationIdentity: frame.correlationIdentity,
+					classification: protocolFailed
+						? "protocol_failed"
+						: stopReason === "stop"
+							? "completed"
+							: "error",
+					finalAssistantOutcome: protocolFailed
+						? { kind: "Unavailable", reason: "missing_final_assistant_outcome" }
+						: { kind: "Observed", stopReason },
+				});
+			};
+			if (sessionIdentity.includes("m6-forum-call")) {
+				// The actor cannot advance to settled evidence until the resident
+				// returns the result of this peer-validated, daemon-authorized call.
+				emit({
+					event: "ForumToolCall",
+					correlationIdentity: frame.correlationIdentity,
+					toolCallIdentity: "forum-call-1",
+					toolName: "society_forum_post",
+					args: {
+						message_kind: "finding",
+						body_utf8: "provider-free Forum bridge observation",
+						in_reply_to_message_id: null,
+						supersedes_message_id: null,
+					},
+				});
+				pendingForumTerminal = () => {
+					emit({
+						event: "AgentEvent",
+						correlationIdentity: frame.correlationIdentity,
+						agentEvent: { type: "agent_settled" },
+					});
+					emitPromptTerminal();
+				};
+				return;
+			}
 			if (sessionIdentity.includes("m6-known-before-and-final-same")) {
 				// The first cumulative snapshot is useful observability but cannot
 				// certify the turn. Pi then forces the exact same totals after
@@ -354,26 +400,6 @@ function accept(frame) {
 				});
 				return;
 			}
-			const emitPromptTerminal = () => {
-				emit({
-					event: "UsageSnapshot",
-					correlationIdentity: frame.correlationIdentity,
-					usage: knownUsage(promptCount),
-				});
-				const protocolFailed = sessionIdentity.includes("m6-protocol-failed-final-known");
-				emit({
-					event: "Settled",
-					correlationIdentity: frame.correlationIdentity,
-					classification: protocolFailed
-						? "protocol_failed"
-						: stopReason === "stop"
-							? "completed"
-							: "error",
-					finalAssistantOutcome: protocolFailed
-						? { kind: "Unavailable", reason: "missing_final_assistant_outcome" }
-						: { kind: "Observed", stopReason },
-				});
-			};
 			if (sessionIdentity.includes("m6-control-interleave")) {
 				pendingPromptTerminal = emitPromptTerminal;
 			} else {
@@ -381,6 +407,20 @@ function accept(frame) {
 			}
 			return;
 		}
+		case "ForumToolResult":
+			if (!sessionIdentity.includes("m6-forum-call")) {
+				throw new Error("provider-free fixture received an unexpected Forum result");
+			}
+			if (frame.payload.toolCallIdentity !== "forum-call-1" || frame.payload.isError) {
+				throw new Error("resident did not return the admitted Forum call result");
+			}
+			if (pendingForumTerminal === undefined) {
+				throw new Error("Forum result arrived without a pending call");
+			}
+			const forumTerminal = pendingForumTerminal;
+			pendingForumTerminal = undefined;
+			forumTerminal();
+			return;
 		case "Dispose":
 			accepted("Dispose", frame.correlationIdentity);
 			if (sessionIdentity.includes("m7-dispose-usage-unavailable")) {
@@ -486,5 +526,6 @@ function knownUsage(turn) {
 function toolsForProfile(profile) {
 	if (profile === "read_execute_v1") return ["read", "bash", "grep", "find", "ls"];
 	if (profile === "read_write_v1") return ["read", "write"];
+	if (profile === "forum_isolated_v1") return ["society_forum_read", "society_forum_post"];
 	return ["read", "bash", "edit", "write", "grep", "find", "ls"];
 }

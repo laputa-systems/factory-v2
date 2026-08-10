@@ -354,6 +354,7 @@ pub(crate) struct OfficePiExecutionChild {
     operation: PiExecutionOperationId,
     supervised_child_id: SupervisedChildId,
     child_process_id: NativeChildId,
+    native_child_spawn_admission_id: NativeChildSpawnAdmissionId,
     office_session_id: RootAuthorityOfficeSessionId,
     /// Native paths remain daemon-private process custody facts. The kernel
     /// receives only a canonical transcript path after peer validation and a
@@ -583,15 +584,59 @@ pub(crate) enum OfficePiSessionDisposeOutput {
 /// The one-frame-at-a-time resident result of projecting peer evidence. It is
 /// intentionally not a semantic submission or generic event log; its arms
 /// correspond only to the M6 kernel facts this bridge may durably attest.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub(crate) enum OfficePiTurnOutput {
     ControlInterleaving,
     PromptAccepted,
+    /// One peer-validated Forum request. The resident must execute its
+    /// closed study transition and then return a result before polling the
+    /// next host frame.
+    ForumToolCall {
+        correlation_identity: CorrelationIdentity,
+        tool_call_identity: society_pi::ToolCallIdentity,
+        tool_name: society_pi::ForumToolName,
+        args: society_pi::SdkJsonValue,
+    },
     KnownUsageRecorded,
     UsageFrozen,
     TerminalRecordedNonReady,
     SettledReady,
 }
+
+impl PartialEq for OfficePiTurnOutput {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::ControlInterleaving, Self::ControlInterleaving)
+            | (Self::PromptAccepted, Self::PromptAccepted)
+            | (Self::KnownUsageRecorded, Self::KnownUsageRecorded)
+            | (Self::UsageFrozen, Self::UsageFrozen)
+            | (Self::TerminalRecordedNonReady, Self::TerminalRecordedNonReady)
+            | (Self::SettledReady, Self::SettledReady) => true,
+            (
+                Self::ForumToolCall {
+                    correlation_identity: left_correlation,
+                    tool_call_identity: left_call,
+                    tool_name: left_name,
+                    args: left_args,
+                },
+                Self::ForumToolCall {
+                    correlation_identity: right_correlation,
+                    tool_call_identity: right_call,
+                    tool_name: right_name,
+                    args: right_args,
+                },
+            ) => {
+                left_correlation == right_correlation
+                    && left_call == right_call
+                    && left_name == right_name
+                    && society_pi::sdk_json_values_equal(left_args, right_args)
+            }
+            _ => false,
+        }
+    }
+}
+
+impl Eq for OfficePiTurnOutput {}
 
 /// A native child exists, but the kernel rejected (or could not persist) its
 /// first PID/PGID receipt. There is intentionally no `NativeChildId`: the
@@ -656,6 +701,14 @@ pub(crate) enum OfficePiSpawnRegistration {
 impl OfficePiExecutionChild {
     pub(crate) fn child_process_id(&self) -> NativeChildId {
         self.child_process_id
+    }
+
+    pub(crate) fn native_child_spawn_admission_id(&self) -> NativeChildSpawnAdmissionId {
+        self.native_child_spawn_admission_id
+    }
+
+    pub(crate) fn office_session_id(&self) -> RootAuthorityOfficeSessionId {
+        self.office_session_id
     }
 
     pub(crate) fn phase(&self) -> &'static str {
@@ -964,6 +1017,7 @@ impl PiExecutionDriver {
             operation: start.operation,
             supervised_child_id: spawned.child_process_id,
             child_process_id,
+            native_child_spawn_admission_id: admission_id,
             office_session_id: start.office_session_id,
             workspace_directory: start.spawn_request.workspace.directory().clone(),
             session_directory: start.spawn_request.create_session.session_directory.clone(),
@@ -1377,6 +1431,82 @@ impl PiExecutionDriver {
             self.record_office_turn_prompt_delivery(store, child, turn, now)?;
         }
         Ok(progress)
+    }
+
+    /// Delivers one result for a peer-validated Forum call. The caller is
+    /// responsible for committing the typed `ReadForum` or
+    /// `PublishForumMessage` transition before invoking this method.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn send_office_forum_tool_result(
+        &mut self,
+        child: &mut OfficePiExecutionChild,
+        turn: &OfficePiTurn,
+        tool_call_identity: society_pi::ToolCallIdentity,
+        result: society_pi::SdkJsonValue,
+        is_error: bool,
+        now: MonotonicTick,
+        deadline: ControlWriteDeadline,
+    ) -> Result<ControlWriteProgress, PiExecutionError> {
+        if !matches!(
+            child.phase,
+            OfficePiExecutionPhase::OfficeTurnPromptActive
+                | OfficePiExecutionPhase::OfficeTurnTerminalBlocked
+        ) || !matches!(
+            turn.phase,
+            OfficePiTurnPhase::AwaitingPromptAcceptance
+                | OfficePiTurnPhase::AwaitingTerminalEvidence
+        ) {
+            return Err(PiExecutionError::InvalidLifecycle);
+        }
+        // A Forum result is a second inbound command, not a second frame of
+        // the Prompt command. It therefore needs its own correlation so the
+        // peer's duplicate-command guard cannot confuse the result with the
+        // still-active turn. The digest keeps the derived identity bounded
+        // even when an SDK emits a long tool-call label.
+        let result_correlation_identity = CorrelationIdentity::parse(format!(
+            "forum-result-{}",
+            blake3::hash(tool_call_identity.as_str().as_bytes()).to_hex()
+        ))
+        .map_err(|_| PiExecutionError::IdentityConversion)?;
+        self.supervisor
+            .send_forum_tool_result(
+                &child.supervised_child_id,
+                result_correlation_identity,
+                tool_call_identity,
+                result,
+                is_error,
+                now,
+                deadline,
+            )
+            .map_err(PiExecutionError::Supervision)
+    }
+
+    /// Continues a Forum result whose JSONL write was back-pressured.  The
+    /// caller must not poll host output until this reaches `Delivered`; that
+    /// ordering keeps the actor from issuing a second mutable tool request
+    /// while the first result is still only physically partial.
+    pub(crate) fn drive_office_forum_tool_result_delivery(
+        &mut self,
+        child: &mut OfficePiExecutionChild,
+        now: MonotonicTick,
+    ) -> Result<ControlWriteProgress, PiExecutionError> {
+        if !matches!(
+            child.phase,
+            OfficePiExecutionPhase::OfficeTurnPromptActive
+                | OfficePiExecutionPhase::OfficeTurnTerminalBlocked
+        ) {
+            return Err(PiExecutionError::InvalidLifecycle);
+        }
+        match self
+            .supervisor
+            .drive_control_write(&child.supervised_child_id, now)
+        {
+            Ok(progress) => Ok(progress),
+            Err(error) => {
+                self.begin_registered_boundary_containment(child, now);
+                Err(PiExecutionError::Supervision(error))
+            }
+        }
     }
 
     /// Projects exactly one peer-sealed, schema-decoded stdout frame into the
@@ -2333,6 +2463,34 @@ impl PiExecutionDriver {
                 }
                 turn.agent_settled_sequence = Some(sequence);
                 Ok(OfficePiTurnOutput::ControlInterleaving)
+            }
+            (
+                OutboundEvent::ForumToolCall {
+                    tool_call_identity,
+                    tool_name,
+                    args,
+                },
+                Some(society_pi::PeerObservation::ForumToolCall {
+                    correlation_identity,
+                    tool_call_identity: observed_tool_call_identity,
+                    tool_name: observed_tool_name,
+                    args: observed_args,
+                }),
+            ) if correlation_identity.as_str() == turn.correlation_identity.as_str()
+                && tool_call_identity == observed_tool_call_identity
+                && tool_name == observed_tool_name
+                && society_pi::sdk_json_values_equal(args, observed_args) =>
+            {
+                if turn.phase != OfficePiTurnPhase::AwaitingTerminalEvidence {
+                    self.begin_registered_boundary_containment(child, now);
+                    return Err(PiExecutionError::PromptEvidenceOrder);
+                }
+                Ok(OfficePiTurnOutput::ForumToolCall {
+                    correlation_identity: correlation_identity.clone(),
+                    tool_call_identity: tool_call_identity.clone(),
+                    tool_name: *tool_name,
+                    args: args.clone(),
+                })
             }
             (
                 OutboundEvent::UsageSnapshot {
@@ -3932,6 +4090,194 @@ mod tests {
         assert!(reconciled, "direct child must be reaped and sealed");
         assert_eq!(child.phase(), "reconciled");
         rejected_open_office_turn(&mut store, office.session_id, "after-child-finalization");
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn m6_forum_call_waits_for_resident_result_before_terminal_evidence() {
+        let mut fixture = NativeFixture::new("m6-forum-call");
+        fixture.create.tool_profile = ToolProfile::ForumIsolatedV1;
+        let mut store = KernelStore::open_in_memory().unwrap();
+        let office = found_office_start(&mut store, &fixture, "m6-forum-call");
+        let mut driver = PiExecutionDriver::new();
+        let mut child = ready_office_child(
+            &mut driver,
+            &mut store,
+            &fixture,
+            &office,
+            "m6-forum-call-child",
+        );
+        let prompt_text = "A resident must authorize each Forum call before it can settle.";
+        let prompt_content = seal_prompt_content(
+            &mut store,
+            &fixture,
+            "m6-forum-call-prompt-content",
+            prompt_text,
+        );
+        let (turn_id, frontier_event_id) =
+            open_office_turn(&mut store, office.session_id, "m6-forum-call-open-turn");
+        let (mut turn, progress) = driver
+            .authorize_and_begin_office_turn_prompt(
+                &mut store,
+                &mut child,
+                office_turn_start(
+                    "m6-forum-call-turn",
+                    turn_id,
+                    "m6-forum-call-correlation",
+                    prompt_content.content_object_id,
+                    prompt_content.digest,
+                    prompt_text,
+                    frontier_event_id,
+                ),
+                MonotonicTick::from_milliseconds(100),
+                ControlWriteDeadline::at(MonotonicTick::from_milliseconds(1_000)),
+            )
+            .unwrap();
+        if progress == crate::supervision::ControlWriteProgress::Pending {
+            drive_prompt_until_delivered(
+                &mut driver,
+                &mut store,
+                &mut child,
+                &mut turn,
+                101,
+                1_000,
+            );
+        }
+
+        let mut saw_call = false;
+        let mut saw_terminal = false;
+        for tick in 101..3_000 {
+            let Some(output) = driver
+                .observe_office_turn_output(
+                    &mut store,
+                    &mut child,
+                    &mut turn,
+                    MonotonicTick::from_milliseconds(tick),
+                )
+                .unwrap()
+            else {
+                thread::sleep(Duration::from_millis(1));
+                continue;
+            };
+            match output {
+                OfficePiTurnOutput::ForumToolCall {
+                    correlation_identity,
+                    tool_call_identity,
+                    tool_name,
+                    args,
+                } => {
+                    assert_eq!(correlation_identity.as_str(), "m6-forum-call-correlation");
+                    assert_eq!(tool_call_identity.as_str(), "forum-call-1");
+                    assert_eq!(tool_name, society_pi::ForumToolName::SocietyForumPost);
+                    assert_eq!(
+                        society_pi::decode_forum_tool_arguments(tool_name, &args).unwrap(),
+                        society_pi::ForumToolArguments::Post {
+                            message_kind: society_pi::ForumMessageKind::Finding,
+                            body_utf8: "provider-free Forum bridge observation".to_owned(),
+                            in_reply_to_message_id: None,
+                            supersedes_message_id: None,
+                        }
+                    );
+                    saw_call = true;
+                    let result_progress = driver
+                        .send_office_forum_tool_result(
+                            &mut child,
+                            &turn,
+                            tool_call_identity,
+                            society_pi::SdkJsonValue::String(
+                                "resident-authorized-result".to_owned(),
+                            ),
+                            false,
+                            MonotonicTick::from_milliseconds(tick),
+                            ControlWriteDeadline::at(MonotonicTick::from_milliseconds(3_000)),
+                        )
+                        .unwrap();
+                    if result_progress == crate::supervision::ControlWriteProgress::Pending {
+                        for result_tick in tick..3_000 {
+                            if driver
+                                .drive_office_forum_tool_result_delivery(
+                                    &mut child,
+                                    MonotonicTick::from_milliseconds(result_tick),
+                                )
+                                .unwrap()
+                                == crate::supervision::ControlWriteProgress::Delivered
+                            {
+                                break;
+                            }
+                            thread::sleep(Duration::from_millis(1));
+                        }
+                    }
+                }
+                OfficePiTurnOutput::SettledReady => {
+                    saw_terminal = true;
+                    break;
+                }
+                OfficePiTurnOutput::TerminalRecordedNonReady => break,
+                _ => {}
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert!(
+            saw_call,
+            "the validated Forum request must reach the resident"
+        );
+        assert!(
+            saw_terminal,
+            "the host must not settle before its result is delivered"
+        );
+
+        let dispose_progress = driver
+            .begin_dispose(
+                &mut child,
+                CorrelationIdentity::parse("m6-forum-call-dispose").unwrap(),
+                MonotonicTick::from_milliseconds(3_001),
+                ControlWriteDeadline::at(MonotonicTick::from_milliseconds(4_000)),
+            )
+            .unwrap();
+        if dispose_progress == crate::supervision::ControlWriteProgress::Pending {
+            for tick in 3_002..4_000 {
+                if driver
+                    .drive_dispose_delivery(&mut child, MonotonicTick::from_milliseconds(tick))
+                    .unwrap()
+                    == crate::supervision::ControlWriteProgress::Delivered
+                {
+                    break;
+                }
+            }
+        }
+        for tick in 3_002..4_000 {
+            if driver
+                .observe_disposed(
+                    &mut child,
+                    MonotonicTick::from_milliseconds(tick),
+                    HandshakeDeadline::at(MonotonicTick::from_milliseconds(4_000)),
+                )
+                .unwrap()
+            {
+                break;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        let content = ContentSealingAuthority::open(
+            ContentStoreRoot::parse(fixture.root.join("m6-forum-call-content")).unwrap(),
+            ContentSealLimit::new(4 * 1024 * 1024).unwrap(),
+        )
+        .unwrap();
+        for tick in 4_000..5_000 {
+            if driver
+                .poll_reap_and_reconcile(
+                    &mut store,
+                    &content,
+                    &mut child,
+                    MonotonicTick::from_milliseconds(tick),
+                )
+                .unwrap()
+            {
+                break;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(child.phase(), "reconciled");
         fixture.cleanup();
     }
 
@@ -6950,13 +7296,14 @@ mod tests {
                 )
                 .unwrap()
             {
-                observed.push(output);
                 if matches!(
-                    output,
+                    &output,
                     OfficePiTurnOutput::SettledReady | OfficePiTurnOutput::TerminalRecordedNonReady
                 ) {
+                    observed.push(output);
                     return observed;
                 }
+                observed.push(output);
             }
             thread::sleep(Duration::from_millis(1));
         }
