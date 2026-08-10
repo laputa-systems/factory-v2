@@ -86,10 +86,11 @@ t10 derive measurements, close all authority/resources, replay each arm
 ```
 
 The paired harness waits for complete replacement and exposure installation in
-both episodes before issuing their matched correction releases. Each release
-transition depends only on its own episode's ready state and is independently
-replayable. The correction is therefore visible in both arms through the same
-mechanism without creating cross-arm authority.
+both episodes before issuing one `ReleaseMatchedCorrection` transition. That
+single service-custodied ledger transition validates both ready states, writes
+the same correction bytes into both Threads, and advances both arms' eligible
+frontiers atomically. It removes correction-timing divergence without creating
+cross-arm actor authority.
 
 ## Treatment arms
 

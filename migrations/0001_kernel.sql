@@ -1015,7 +1015,7 @@ CREATE TABLE event_deterministic_experiment_finalized (
 CREATE TABLE capability_grants (
     capability_grant_id INTEGER PRIMARY KEY,
     principal_id INTEGER NOT NULL REFERENCES principals(principal_id),
-    capability_kind INTEGER NOT NULL CHECK (capability_kind BETWEEN 1 AND 100),
+    capability_kind INTEGER NOT NULL CHECK (capability_kind BETWEEN 1 AND 101),
     office_occupancy_id INTEGER REFERENCES office_occupancies(office_occupancy_id),
     actor_instance_id INTEGER REFERENCES actor_instances(actor_instance_id),
     grant_state INTEGER NOT NULL CHECK (grant_state IN (1, 2)),
@@ -1064,9 +1064,9 @@ CREATE TABLE commands (
     command_id TEXT NOT NULL UNIQUE,
     principal_id INTEGER NOT NULL,
     capability_grant_id INTEGER NOT NULL,
-    capability_kind INTEGER NOT NULL CHECK (capability_kind BETWEEN 1 AND 100),
+    capability_kind INTEGER NOT NULL CHECK (capability_kind BETWEEN 1 AND 101),
     expected_generation INTEGER,
-    command_kind INTEGER NOT NULL CHECK (command_kind BETWEEN 1 AND 100),
+    command_kind INTEGER NOT NULL CHECK (command_kind BETWEEN 1 AND 101),
     request_fingerprint BLOB NOT NULL CHECK (length(request_fingerprint) = 32),
     command_status INTEGER NOT NULL CHECK (command_status IN (1, 2)),
     rejection_code INTEGER,
@@ -1077,7 +1077,7 @@ CREATE TABLE commands (
 CREATE TABLE events (
     event_id INTEGER PRIMARY KEY,
     command_row_id INTEGER NOT NULL UNIQUE REFERENCES commands(command_row_id),
-    event_kind INTEGER NOT NULL CHECK (event_kind BETWEEN 1 AND 94),
+    event_kind INTEGER NOT NULL CHECK (event_kind BETWEEN 1 AND 95),
     event_sequence INTEGER NOT NULL UNIQUE CHECK (event_sequence > 0),
     event_fingerprint BLOB NOT NULL CHECK (length(event_fingerprint) = 32)
 );
@@ -2126,6 +2126,254 @@ INSERT INTO capability_grants VALUES(54,2,97,NULL,NULL,1,3,NULL,NULL);
 INSERT INTO capability_grants VALUES(55,2,98,NULL,NULL,1,3,NULL,NULL);
 INSERT INTO capability_grants VALUES(56,2,99,NULL,NULL,1,3,NULL,NULL);
 INSERT INTO capability_grants VALUES(57,2,100,NULL,NULL,1,3,NULL,NULL);
-PRAGMA user_version = 16;
+INSERT INTO capability_grants VALUES(58,2,101,NULL,NULL,1,3,NULL,NULL);
+-- CL-001 generic experimental control.  These rows are deliberately generic:
+-- application world meaning remains outside this schema.  The command/event
+-- transition rows are the one typed extension of the existing ledger; their
+-- integer discriminants are closed Rust enums, never stringly payload kinds.
+CREATE TABLE study_protocol_revisions (
+    study_protocol_revision_id INTEGER PRIMARY KEY,
+    application_revision_id INTEGER NOT NULL REFERENCES application_revisions(application_revision_id),
+    protocol_digest BLOB NOT NULL CHECK (length(protocol_digest) = 32),
+    actor_policy_digest BLOB NOT NULL CHECK (length(actor_policy_digest) = 32),
+    forum_prompt_digest BLOB NOT NULL CHECK (length(forum_prompt_digest) = 32),
+    forum_tool_digest BLOB NOT NULL CHECK (length(forum_tool_digest) = 32),
+    evidence_digest BLOB NOT NULL CHECK (length(evidence_digest) = 32),
+    topology_digest BLOB NOT NULL CHECK (length(topology_digest) = 32),
+    episode_budget_units INTEGER NOT NULL CHECK (episode_budget_units >= 0),
+    admitted_by_command_id INTEGER NOT NULL
+);
+CREATE TABLE study_world_revisions (
+    study_world_revision_id INTEGER PRIMARY KEY,
+    study_protocol_revision_id INTEGER NOT NULL REFERENCES study_protocol_revisions(study_protocol_revision_id),
+    world_digest BLOB NOT NULL CHECK (length(world_digest) = 32),
+    admitted_by_command_id INTEGER NOT NULL,
+    UNIQUE(study_protocol_revision_id, world_digest)
+);
+CREATE TABLE study_measurement_revisions (
+    study_measurement_revision_id INTEGER PRIMARY KEY,
+    study_protocol_revision_id INTEGER NOT NULL REFERENCES study_protocol_revisions(study_protocol_revision_id),
+    analysis_digest BLOB NOT NULL CHECK (length(analysis_digest) = 32),
+    admitted_by_command_id INTEGER NOT NULL,
+    UNIQUE(study_protocol_revision_id, analysis_digest)
+);
+CREATE TABLE study_institution_revisions (
+    study_institution_revision_id INTEGER PRIMARY KEY,
+    study_protocol_revision_id INTEGER NOT NULL REFERENCES study_protocol_revisions(study_protocol_revision_id),
+    institution_digest BLOB NOT NULL CHECK (length(institution_digest) = 32),
+    admitted_by_command_id INTEGER NOT NULL,
+    UNIQUE(study_protocol_revision_id, institution_digest)
+);
+CREATE TABLE study_population_snapshots (
+    study_population_snapshot_id INTEGER PRIMARY KEY,
+    study_protocol_revision_id INTEGER NOT NULL REFERENCES study_protocol_revisions(study_protocol_revision_id),
+    population_digest BLOB NOT NULL CHECK (length(population_digest) = 32),
+    population_size INTEGER NOT NULL CHECK (population_size > 0),
+    admitted_by_command_id INTEGER NOT NULL,
+    UNIQUE(study_protocol_revision_id, population_digest)
+);
+CREATE TABLE study_episodes (
+    study_episode_id INTEGER PRIMARY KEY,
+    study_protocol_revision_id INTEGER NOT NULL REFERENCES study_protocol_revisions(study_protocol_revision_id),
+    study_world_revision_id INTEGER NOT NULL REFERENCES study_world_revisions(study_world_revision_id),
+    study_measurement_revision_id INTEGER NOT NULL REFERENCES study_measurement_revisions(study_measurement_revision_id),
+    study_institution_revision_id INTEGER NOT NULL REFERENCES study_institution_revisions(study_institution_revision_id),
+    study_population_snapshot_id INTEGER NOT NULL REFERENCES study_population_snapshots(study_population_snapshot_id),
+    randomization_digest BLOB NOT NULL CHECK (length(randomization_digest) = 32),
+    lifecycle_state INTEGER NOT NULL CHECK (lifecycle_state BETWEEN 1 AND 7),
+    admitted_by_command_id INTEGER NOT NULL,
+    last_transition_command_id INTEGER NOT NULL
+);
+CREATE TABLE study_treatment_assignments (
+    study_treatment_assignment_id INTEGER PRIMARY KEY,
+    study_episode_id INTEGER NOT NULL UNIQUE REFERENCES study_episodes(study_episode_id),
+    treatment INTEGER NOT NULL CHECK (treatment IN (1, 2)),
+    assigned_by_command_id INTEGER NOT NULL
+);
+CREATE TABLE study_pairs (
+    study_pair_id INTEGER PRIMARY KEY,
+    retained_episode_id INTEGER NOT NULL UNIQUE REFERENCES study_episodes(study_episode_id),
+    reset_episode_id INTEGER NOT NULL UNIQUE REFERENCES study_episodes(study_episode_id),
+    admitted_by_command_id INTEGER NOT NULL,
+    CHECK(retained_episode_id != reset_episode_id)
+);
+CREATE TABLE study_episode_forums (
+    episode_forum_id INTEGER PRIMARY KEY,
+    study_episode_id INTEGER NOT NULL UNIQUE REFERENCES study_episodes(study_episode_id),
+    charter_digest BLOB NOT NULL CHECK (length(charter_digest) = 32),
+    lifecycle_state INTEGER NOT NULL CHECK (lifecycle_state IN (1, 2, 3)),
+    created_by_command_id INTEGER NOT NULL,
+    last_transition_command_id INTEGER NOT NULL
+);
+CREATE TABLE study_forum_threads (
+    forum_thread_id INTEGER PRIMARY KEY,
+    episode_forum_id INTEGER NOT NULL REFERENCES study_episode_forums(episode_forum_id),
+    title TEXT NOT NULL,
+    lifecycle_state INTEGER NOT NULL CHECK (lifecycle_state IN (1, 2, 3)),
+    head_message_ordinal INTEGER NOT NULL CHECK (head_message_ordinal >= 0),
+    created_by_command_id INTEGER NOT NULL,
+    UNIQUE(episode_forum_id, title)
+);
+CREATE TABLE study_actor_obligations (
+    study_actor_obligation_id INTEGER PRIMARY KEY,
+    study_episode_id INTEGER NOT NULL REFERENCES study_episodes(study_episode_id),
+    population_phase INTEGER NOT NULL CHECK (population_phase IN (1, 2)),
+    role_ordinal INTEGER NOT NULL CHECK (role_ordinal BETWEEN 1 AND 64),
+    private_view_digest BLOB NOT NULL CHECK (length(private_view_digest) = 32),
+    prompt_digest BLOB NOT NULL CHECK (length(prompt_digest) = 32),
+    tool_digest BLOB NOT NULL CHECK (length(tool_digest) = 32),
+    budget_units INTEGER NOT NULL CHECK (budget_units >= 0),
+    charged_budget_units INTEGER NOT NULL DEFAULT 0 CHECK (charged_budget_units >= 0),
+    read_budget INTEGER NOT NULL CHECK (read_budget > 0),
+    reads_used INTEGER NOT NULL DEFAULT 0 CHECK (reads_used >= 0),
+    lifecycle_state INTEGER NOT NULL CHECK (lifecycle_state IN (1, 2)),
+    admitted_by_command_id INTEGER NOT NULL,
+    completed_by_command_id INTEGER,
+    UNIQUE(study_episode_id, population_phase, role_ordinal)
+);
+CREATE TABLE study_actor_occurrences (
+    actor_occurrence_id INTEGER PRIMARY KEY,
+    study_actor_obligation_id INTEGER NOT NULL UNIQUE REFERENCES study_actor_obligations(study_actor_obligation_id),
+    created_by_command_id INTEGER NOT NULL
+);
+CREATE TABLE study_frozen_forum_heads (
+    study_episode_id INTEGER PRIMARY KEY REFERENCES study_episodes(study_episode_id),
+    forum_thread_id INTEGER NOT NULL REFERENCES study_forum_threads(forum_thread_id),
+    frozen_head_message_ordinal INTEGER NOT NULL CHECK (frozen_head_message_ordinal >= 0),
+    frozen_by_command_id INTEGER NOT NULL
+);
+CREATE TABLE study_forum_exposures (
+    forum_exposure_id INTEGER PRIMARY KEY,
+    study_actor_obligation_id INTEGER NOT NULL UNIQUE REFERENCES study_actor_obligations(study_actor_obligation_id),
+    episode_forum_id INTEGER NOT NULL REFERENCES study_episode_forums(episode_forum_id),
+    visible_from_message_ordinal INTEGER NOT NULL CHECK (visible_from_message_ordinal > 0),
+    visible_through_message_ordinal INTEGER NOT NULL CHECK (visible_through_message_ordinal >= 0),
+    admitted_by_command_id INTEGER NOT NULL
+);
+CREATE TABLE study_forum_messages (
+    forum_message_id INTEGER PRIMARY KEY,
+    forum_thread_id INTEGER NOT NULL REFERENCES study_forum_threads(forum_thread_id),
+    thread_message_ordinal INTEGER NOT NULL CHECK (thread_message_ordinal > 0),
+    author_occurrence_id INTEGER REFERENCES study_actor_occurrences(actor_occurrence_id),
+    service_origin INTEGER NOT NULL CHECK (service_origin IN (0, 1)),
+    message_kind INTEGER NOT NULL CHECK (message_kind BETWEEN 1 AND 5),
+    in_reply_to_message_id INTEGER REFERENCES study_forum_messages(forum_message_id),
+    supersedes_message_id INTEGER REFERENCES study_forum_messages(forum_message_id),
+    body_utf8 TEXT NOT NULL,
+    body_digest BLOB NOT NULL CHECK (length(body_digest) = 32),
+    publication_state INTEGER NOT NULL CHECK (publication_state IN (1, 2)),
+    created_by_command_id INTEGER NOT NULL,
+    CHECK((author_occurrence_id IS NOT NULL AND service_origin = 0)
+       OR (author_occurrence_id IS NULL AND service_origin = 1)),
+    UNIQUE(forum_thread_id, thread_message_ordinal)
+);
+CREATE TABLE study_forum_read_receipts (
+    forum_read_receipt_id INTEGER PRIMARY KEY,
+    study_actor_obligation_id INTEGER NOT NULL REFERENCES study_actor_obligations(study_actor_obligation_id),
+    forum_thread_id INTEGER NOT NULL REFERENCES study_forum_threads(forum_thread_id),
+    first_message_ordinal INTEGER NOT NULL CHECK (first_message_ordinal > 0),
+    through_message_ordinal INTEGER NOT NULL CHECK (through_message_ordinal >= first_message_ordinal),
+    rendering_digest BLOB NOT NULL CHECK (length(rendering_digest) = 32),
+    returned_by_command_id INTEGER NOT NULL
+);
+CREATE TABLE study_decisions (
+    study_actor_obligation_id INTEGER PRIMARY KEY REFERENCES study_actor_obligations(study_actor_obligation_id),
+    decision_digest BLOB NOT NULL CHECK (length(decision_digest) = 32),
+    cited_forum_message_id INTEGER REFERENCES study_forum_messages(forum_message_id),
+    recorded_by_command_id INTEGER NOT NULL
+);
+CREATE TABLE study_measurement_results (
+    study_measurement_result_id INTEGER PRIMARY KEY,
+    study_episode_id INTEGER NOT NULL REFERENCES study_episodes(study_episode_id),
+    measurement_slot INTEGER NOT NULL CHECK (measurement_slot BETWEEN 1 AND 64),
+    result_status INTEGER NOT NULL CHECK (result_status IN (1, 2, 3)),
+    value_digest BLOB CHECK (length(value_digest) = 32),
+    reason_digest BLOB CHECK (length(reason_digest) = 32),
+    recorded_by_command_id INTEGER NOT NULL,
+    UNIQUE(study_episode_id, measurement_slot),
+    CHECK((result_status = 1 AND value_digest IS NOT NULL AND reason_digest IS NULL)
+       OR (result_status IN (2, 3) AND value_digest IS NULL AND reason_digest IS NOT NULL))
+);
+CREATE TABLE study_experimental_forks (
+    experimental_fork_id INTEGER PRIMARY KEY,
+    source_study_episode_id INTEGER NOT NULL REFERENCES study_episodes(study_episode_id),
+    forked_study_episode_id INTEGER NOT NULL UNIQUE REFERENCES study_episodes(study_episode_id),
+    treatment_delta INTEGER NOT NULL CHECK (treatment_delta IN (1, 2)),
+    created_by_command_id INTEGER NOT NULL
+);
+-- The parent command/event body remains one exact named body in the shared
+-- ledger.  The fixed columns are intentionally not a generic payload bucket.
+CREATE TABLE command_study_transition (
+    command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id),
+    study_command_kind INTEGER NOT NULL CHECK (study_command_kind BETWEEN 1 AND 23),
+    application_revision_id INTEGER,
+    protocol_revision_id INTEGER,
+    world_revision_id INTEGER,
+    measurement_revision_id INTEGER,
+    institution_revision_id INTEGER,
+    population_snapshot_id INTEGER,
+    study_episode_id INTEGER,
+    related_study_episode_id INTEGER,
+    study_pair_id INTEGER,
+    forum_id INTEGER,
+    thread_id INTEGER,
+    related_thread_id INTEGER,
+    obligation_id INTEGER,
+    related_obligation_id INTEGER,
+    message_id INTEGER,
+    related_message_id INTEGER,
+    study_treatment INTEGER,
+    population_phase INTEGER,
+    role_ordinal INTEGER,
+    measurement_slot INTEGER,
+    measurement_status INTEGER,
+    first_ordinal INTEGER,
+    through_ordinal INTEGER,
+    population_size INTEGER,
+    budget_units INTEGER,
+    charged_budget_units INTEGER,
+    read_budget INTEGER,
+    protocol_digest BLOB,
+    actor_policy_digest BLOB,
+    forum_prompt_digest BLOB,
+    forum_tool_digest BLOB,
+    evidence_digest BLOB,
+    topology_digest BLOB,
+    world_digest BLOB,
+    analysis_digest BLOB,
+    institution_digest BLOB,
+    population_digest BLOB,
+    randomization_digest BLOB,
+    charter_digest BLOB,
+    private_view_digest BLOB,
+    body_digest BLOB,
+    decision_digest BLOB,
+    value_digest BLOB,
+    reason_digest BLOB,
+    text_value TEXT,
+    message_kind INTEGER
+);
+CREATE TABLE event_study_transition (
+    event_id INTEGER PRIMARY KEY REFERENCES events(event_id),
+    study_event_kind INTEGER NOT NULL CHECK (study_event_kind BETWEEN 1 AND 23),
+    primary_id INTEGER,
+    secondary_id INTEGER,
+    tertiary_id INTEGER,
+    study_episode_id INTEGER,
+    forum_id INTEGER,
+    thread_id INTEGER,
+    obligation_id INTEGER,
+    message_id INTEGER,
+    actor_occurrence_id INTEGER,
+    population_phase INTEGER,
+    study_treatment INTEGER,
+    message_kind INTEGER,
+    measurement_status INTEGER,
+    first_ordinal INTEGER,
+    through_ordinal INTEGER,
+    body_digest BLOB,
+    rendered_digest BLOB
+);
+PRAGMA user_version = 19;
 COMMIT;
 PRAGMA foreign_keys = ON;

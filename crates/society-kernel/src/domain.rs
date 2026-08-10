@@ -922,6 +922,10 @@ pub enum Capability {
     /// Binds one reaped deterministic evaluator child's complete stdout to a
     /// fresh forensic occurrence. The output object is derived, never chosen.
     RegisterDeterministicEvaluatorForensicManifest = 100,
+    /// Executes one closed, generic experimental-control transition.  The
+    /// nested study command has its own normalized named body and cannot carry
+    /// application JSON or a generic metadata payload.
+    RunStudyTransition = 101,
 }
 
 impl Capability {
@@ -983,7 +987,7 @@ impl Capability {
         Self::FinalizeDeterministicExperiment,
     ];
 
-    pub const KERNEL_SERVICE: [Self; 49] = [
+    pub const KERNEL_SERVICE: [Self; 50] = [
         Self::RecordCycleDrained,
         Self::RecordOfficeSessionReady,
         Self::SettleOfficeTurn,
@@ -1033,6 +1037,7 @@ impl Capability {
         Self::AdmitDeterministicEvaluatorNativeChild,
         Self::RecordDeterministicEvaluatorNativeChildSpawn,
         Self::RegisterDeterministicEvaluatorForensicManifest,
+        Self::RunStudyTransition,
     ];
 
     pub const fn requires_consumption(self) -> bool {
@@ -2664,6 +2669,9 @@ pub enum CommandBody {
         disposed_sequence: PiProtocolSequence,
         transcript_receipt: PiOfficeSessionTranscriptReceipt,
     },
+    StudyTransition {
+        command: crate::StudyCommand,
+    },
 }
 
 impl CommandBody {
@@ -2805,6 +2813,7 @@ impl CommandBody {
             Self::RecordPiOfficeSessionDisposed { .. } => {
                 CommandKind::RecordPiOfficeSessionDisposed
             }
+            Self::StudyTransition { .. } => CommandKind::StudyTransition,
         }
     }
 
@@ -2942,6 +2951,7 @@ impl CommandBody {
                 Capability::RecordPiOfficeSessionDisposeUsageFailure
             }
             Self::RecordPiOfficeSessionDisposed { .. } => Capability::RecordPiOfficeSessionDisposed,
+            Self::StudyTransition { .. } => Capability::RunStudyTransition,
         }
     }
 }
@@ -3049,6 +3059,7 @@ pub enum CommandKind {
     AdmitDeterministicEvaluatorNativeChild = 98,
     RecordDeterministicEvaluatorNativeChildSpawn = 99,
     RegisterDeterministicEvaluatorForensicManifest = 100,
+    StudyTransition = 101,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -3602,6 +3613,9 @@ pub enum EventBody {
         observed_cumulative_micro_usd: UsdMicros,
         budget_disposition: PiOfficeSessionDisposeBudgetDisposition,
     },
+    StudyTransition {
+        event: crate::StudyEvent,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -3701,6 +3715,7 @@ pub enum EventKind {
     DeterministicEvaluatorNativeChildAdmitted = 92,
     DeterministicEvaluatorNativeChildSpawnRecorded = 93,
     DeterministicEvaluatorForensicManifestRegistered = 94,
+    StudyTransition = 95,
 }
 
 impl EventBody {
@@ -3836,6 +3851,7 @@ impl EventBody {
                 EventKind::PiOfficeSessionDisposeUsageFrozen
             }
             Self::PiOfficeSessionDisposed { .. } => EventKind::PiOfficeSessionDisposed,
+            Self::StudyTransition { .. } => EventKind::StudyTransition,
         }
     }
 }

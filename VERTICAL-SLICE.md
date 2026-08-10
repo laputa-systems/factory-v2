@@ -60,10 +60,21 @@ sealed StudyProtocolRevision
 Every arrow is a typed authority boundary. Application bytes and parsers may
 define world semantics but cannot write these transitions directly.
 
-## Minimum new contracts
+## Implemented provider-free contracts
 
-Names are directional until implemented; code, schema, protocol, tests, and
-this document must land together when a name becomes durable.
+The generic boundary is implemented as the closed
+`CommandBody::StudyTransition` / `EventBody::StudyTransition` ledger family
+and its normalized `study_*` state. Its alternatives are the closed
+`StudyCommand` and `StudyEvent` enums in `crates/society-kernel/src/study.rs`;
+they are not application payloads. `KernelStore::execute_study_transition`
+is the service-custody bridge used by provider-free doubles, and
+`KernelStore::validate_replayed_materialized_state` reconstructs the accepted
+shared ledger into a fresh schema before comparing all study and Forum state.
+
+The isolated `applications/correction-latency/correction-latency-harness`
+admits the canonical world, runs the eight-role retained/reset pair, emits a
+deterministic report, and validates replay. It intentionally does not claim a
+live provider call, a Pi SDK session, or native-child lifecycle custody.
 
 ### Study protocol
 
@@ -152,9 +163,9 @@ The first slice needs three exact interventions:
   process/session reconciliation, and admits a fresh population snapshot;
 - `SetSuccessorForumExposure`, which atomically installs Retained or Reset
   visibility for the new actor obligations; and
-- `ReleaseCorrection`, which publishes the same exact correction through a
-  deterministic-service author only after both arms' successor exposures are
-  admitted.
+- `ReleaseMatchedCorrection`, which publishes the same exact correction
+  through deterministic-service custody into both paired Threads in one
+  transaction only after both arms' successor exposures are admitted.
 
 No source actor is alive when the correction is published.
 
@@ -224,15 +235,17 @@ CL-001 does not include:
 
 ## Acceptance gates
 
-The slice is complete only when provider-free tests and the admitted live-run
-path prove:
+The provider-free slice proves the following properties. A separately admitted
+live-run profile must additionally bind actual Pi-session and native-child
+facts before it can make any live-run claim:
 
 1. protocol, world, population, institution, treatment, and measurements are
    revision-bound before work;
 2. actor-local state cannot cross replacement; only Forum Messages admitted
    before termination may remain institutionally visible;
-3. all source actor authority and native descendants close before successors
-   act;
+3. all provider-free source actor authority closes before successors act;
+   live runs additionally reconcile the source Pi session and native child
+   through the existing custody protocol;
 4. retained and reset arms receive byte-identical Forum prompt/tool revisions,
    actor policies, evidence, correction timing, and resource ceilings;
 5. the reset arm cannot recover pre-replacement Forum state through a read,
@@ -241,16 +254,24 @@ path prove:
 7. every Message publication, exposure frontier, returned read range, and
    correction publication is replay-auditable;
 8. measurements derive from raw episode facts and preserve unavailable data;
-9. integrity replay reconstructs each arm independently;
+9. integrity replay reconstructs the complete shared paired ledger, including
+   separately identified material state for both arms;
 10. an experimental fork has new authority and names its exact delta; and
 11. the report includes isolated and unstructured actor baselines before using
     the term emergent.
 
 ## Current implementation boundary
 
-None of the experimental-control contracts above are implemented yet. The
-repository supplies much of the lower trusted physics, but there is no honest
-CL-001 or Forum execution path today. The next tranche should start with
-protocol, episode, treatment, Forum identity, and a provider-free deterministic
-harness—not with a live model call, reputation economy, notification reactor,
-or additional governance hierarchy.
+The provider-free CL-001 path is implemented. It covers sealed generic study
+revisions, matched episode/treatment admission, eight disposable obligations
+per population, one F0 Thread, immutable attributed publication and
+retraction, exposure frontiers, deterministic read receipts, atomic matched
+correction release, decisions, typed measurement status, closure, tamper
+detection, and integrity replay. The deterministic harness deliberately
+produces a null primary latency result as an admissible outcome.
+
+It does not yet execute live weak actors through a Pi SDK custom-tool transport
+or bind Forum obligations to actual `NativeChild`, stream, cancellation, and
+Pi-session disposal facts. Those existing lower-level custody mechanisms stay
+the required path for a separately authorized live profile; they are not
+emulated by application-local state.

@@ -20,3 +20,18 @@ helps. Faster correction, slower correction, persistent error, and no
 measurable difference are all legitimate results.
 
 See [`VERTICAL-SLICE.md`](VERTICAL-SLICE.md) for the protocol.
+
+## Provider-free acceptance run
+
+The isolated deterministic paired run is available without a provider call:
+
+```text
+cargo run --manifest-path applications/correction-latency/Cargo.toml -p correction-latency-harness
+```
+
+It admits the canonical eight-role source and successor populations in both
+arms, freezes the source head, proves reset-history denial and source-authority
+loss, releases the same correction through one matched service transition,
+records typed measurements, and validates fresh materialized-state replay. It
+is not a live Pi/native-child study; those custody facts remain prerequisites
+for a separately admitted live profile.

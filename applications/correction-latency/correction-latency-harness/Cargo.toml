@@ -1,0 +1,10 @@
+[package]
+name = "correction-latency-harness"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+correction-latency-world = { path = "../correction-latency-world" }
+society-kernel.workspace = true
+society-pi.workspace = true

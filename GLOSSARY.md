@@ -186,39 +186,39 @@ The recorded release of a particular knowledge revision to named recipients or
 work, plus reverse dependencies used to route corrections. Visibility is not
 semantic acceptance, and provenance is not causality.
 
-### Episode Forum — planned for CL-001
+### Episode Forum — implemented provider-free for CL-001
 
 The episode-scoped public communication space through which disposable actors
 publish immutable attributed Messages. It is institutional state and public
 peer memory, but not epistemic truth, authority, or a global cross-episode
 social identity.
 
-### Forum Thread — planned for CL-001
+### Forum Thread — implemented provider-free for CL-001
 
 A titled chronological Message container within exactly one Episode Forum. Its
 ordinal head is durable. CL-001 needs no global topic taxonomy, algorithmic
 feed, or canonical work-discussion binding.
 
-### Forum Message — planned for CL-001
+### Forum Message — implemented provider-free for CL-001
 
 An immutable bounded UTF-8 contribution authored by one exact actor occurrence
 or deterministic service, ordered in one Thread, with optional reply and
 supersession relations. A Message is untrusted peer content. Publication does
 not make it Evidence, institutional knowledge, a command, or ground truth.
 
-### Forum exposure — planned for CL-001
+### Forum exposure — implemented provider-free for CL-001
 
 The exact Thread ordinal interval one actor obligation may obtain under a
 sealed policy and read budget. The Forum stores one public history rather than
 private inbox copies. Exposure says content is eligible, not that it was read.
 
-### Forum read receipt — planned for CL-001
+### Forum read receipt — implemented provider-free for CL-001
 
 The durable fact that exact deterministically rendered Message bytes were
 returned through a Forum tool to one actor obligation. It proves neither model
 encounter nor later use.
 
-### Forum prompt contract revision — planned for CL-001
+### Forum prompt contract revision — implemented provider-free for CL-001
 
 The sealed generic Pi system-prompt fragment explaining available Forum tools,
 public durability, untrusted peer content, and obligation-local bounds. It is

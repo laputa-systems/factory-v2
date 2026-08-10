@@ -56,16 +56,16 @@ use crate::{
     ProjectNorthStarRevisitAnswer, ProjectState, ProviderCostBinary64, Rejection,
     RetentionAccessClass, ReviewChallengeId, ReviewChallengeResponseState, ReviewChallengeSeverity,
     ReviewDispositionKind, ReviewResolutionKind, RootAuthorityOfficeSessionId, SocietyId,
-    SocietyName, SpawnNonce, SupervisedChildIdentity, SupervisorEpochId, SupervisorEpochIdentity,
-    TicketId, TicketState, UsdMicros, WorkItemId, WorkItemKind, WorkItemState, WorkLeaseId,
-    WorkLeaseState,
+    SocietyName, SpawnNonce, StudyCommand, StudyTransitionDisposition, StudyTransitionReceipt,
+    SupervisedChildIdentity, SupervisorEpochId, SupervisorEpochIdentity, TicketId, TicketState,
+    UsdMicros, WorkItemId, WorkItemKind, WorkItemState, WorkLeaseId, WorkLeaseState,
 };
 
 const CURRENT_SCHEMA: &str = include_str!("../../../migrations/0001_kernel.sql");
 // Historical prototype schemas used versions one through thirteen. The collapsed
 // fresh schema deliberately occupies a noncolliding identity, so an old
 // ledger cannot be mistaken for current trusted physics.
-const CURRENT_SCHEMA_VERSION: i64 = 16;
+const CURRENT_SCHEMA_VERSION: i64 = 19;
 
 struct PiChildSpawnAdmissionInput<'a> {
     operating_cycle_id: OperatingCycleId,
@@ -177,7 +177,7 @@ type PiOfficeSessionDisposedCommandSqlRow = (
     Option<Vec<u8>>,
 );
 
-const COMMAND_BODY_TABLES: [&str; 100] = [
+const COMMAND_BODY_TABLES: [&str; 101] = [
     "command_create_society_identity",
     "command_install_root_authority_office",
     "command_install_founding_mission",
@@ -278,9 +278,10 @@ const COMMAND_BODY_TABLES: [&str; 100] = [
     "command_admit_deterministic_evaluator_native_child",
     "command_record_deterministic_evaluator_native_child_spawn",
     "command_register_deterministic_evaluator_forensic_manifest",
+    "command_study_transition",
 ];
 
-const EVENT_BODY_TABLES: [&str; 94] = [
+const EVENT_BODY_TABLES: [&str; 95] = [
     "event_society_identity_created",
     "event_root_authority_office_installed",
     "event_founding_mission_installed",
@@ -375,6 +376,7 @@ const EVENT_BODY_TABLES: [&str; 94] = [
     "event_deterministic_evaluator_native_child_admitted",
     "event_deterministic_evaluator_native_child_spawn_recorded",
     "event_deterministic_evaluator_forensic_manifest_registered",
+    "event_study_transition",
 ];
 
 const GRAPH_REVISION_BODY_TABLES: [&str; 2] = ["observation_revisions", "hypothesis_revisions"];
@@ -714,6 +716,62 @@ impl KernelStore {
             .map(crate::CapabilityGrantId::try_from)
             .transpose()
             .map_err(|_| StoreError::InvalidStoredValue)
+    }
+
+    /// Executes one generic experimental-control transition with the
+    /// kernel-only service grant.
+    ///
+    /// This is the public custody bridge for provider-free actor doubles and
+    /// for the resident authority.  It intentionally exposes no raw service
+    /// capability grant at the Pi/actor boundary: authorship and exposure are
+    /// derived and checked by the closed transition itself.
+    pub fn execute_study_transition(
+        &mut self,
+        command_id: CommandId,
+        command: StudyCommand,
+    ) -> Result<StudyTransitionReceipt, StoreError> {
+        let capability = Capability::RunStudyTransition;
+        let capability_grant_id = self
+            .active_capability_grant(PrincipalId::KERNEL, capability)?
+            .ok_or(StoreError::LedgerCorruption(
+                "current schema has no kernel study-transition grant",
+            ))?;
+        let receipt = self.execute(CommandRequest {
+            command_id,
+            principal_id: PrincipalId::KERNEL,
+            capability_grant_id,
+            capability,
+            expected_generation: ExpectedGeneration::NotApplicable,
+            body: CommandBody::StudyTransition { command },
+        })?;
+        let disposition = match receipt.disposition {
+            CommandDisposition::Accepted(event_id) => {
+                let event = self.ledger_event(event_id)?;
+                let EventBody::StudyTransition { event } = event.body else {
+                    return Err(StoreError::LedgerCorruption(
+                        "accepted study transition has a non-study event",
+                    ));
+                };
+                StudyTransitionDisposition::Accepted(event)
+            }
+            CommandDisposition::Rejected(rejection) => {
+                StudyTransitionDisposition::Rejected(rejection)
+            }
+        };
+        Ok(StudyTransitionReceipt {
+            disposition,
+            idempotent: receipt.idempotent,
+        })
+    }
+
+    /// Reconstructs the exact deterministic bytes returned by one durable
+    /// F0 read receipt.  It exposes only a receipt-owned range; it is not a
+    /// search, transcript, alias, or unrestricted content-retrieval API.
+    pub fn forum_read_receipt_rendering(
+        &self,
+        receipt_id: crate::ForumReadReceiptId,
+    ) -> Result<Vec<u8>, StoreError> {
+        crate::study::rendering_for_read_receipt(&self.connection, receipt_id)
     }
 
     pub fn deterministic_evaluator_native_child_admission(
@@ -3078,6 +3136,10 @@ fn apply_command(
             *disposed_sequence,
             transcript_receipt,
         ),
+        CommandBody::StudyTransition { command } => {
+            crate::study::apply(transaction, command_row_id, command)
+                .map(|event| EventBody::StudyTransition { event })
+        }
     };
 
     if result.is_ok()
@@ -12227,6 +12289,9 @@ fn request_fingerprint(request: &CommandRequest) -> Blake3Digest {
             put_i64(&mut bytes, disposed_sequence.value());
             put_pi_office_session_transcript_receipt(&mut bytes, transcript_receipt);
         }
+        CommandBody::StudyTransition { command } => {
+            crate::study::append_command_fingerprint(&mut bytes, command);
+        }
     }
     Blake3Digest::of_bytes(&bytes)
 }
@@ -12966,6 +13031,9 @@ fn event_fingerprint(event_id: EventId, command_id: &CommandId, body: &EventBody
             put_i64(&mut bytes, observed_cumulative_micro_usd.value());
             put_pi_office_session_dispose_budget_disposition(&mut bytes, *budget_disposition);
         }
+        EventBody::StudyTransition { event } => {
+            crate::study::append_event_fingerprint(&mut bytes, event);
+        }
     }
     Blake3Digest::of_bytes(&bytes)
 }
@@ -13470,6 +13538,9 @@ fn insert_command_body(
                 "INSERT INTO command_record_pi_office_session_disposed VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 params![command_row_id, session_id.value(), correlation_identity.as_str(), disposed_sequence.value(), kind, session_file, digest, content, first_kind, first_digest],
             )?;
+        }
+        CommandBody::StudyTransition { command } => {
+            crate::study::insert_command_body(transaction, command_row_id, command)?;
         }
         CommandBody::RecordContentSealReceipt { digest } => {
             transaction.execute(
@@ -15478,6 +15549,9 @@ fn insert_event_body(
                 params![event_id.value(), pi_office_session_dispose_receipt_id.value(), session_id.value(), budget_reservation_id.value(), observed_cumulative_micro_usd.value(), kind, cancellation_request_id, postmortem_id],
             )?;
         }
+        EventBody::StudyTransition { event } => {
+            crate::study::insert_event_body(transaction, event_id.value(), event)?;
+        }
     }
     Ok(())
 }
@@ -16623,6 +16697,9 @@ fn decode_event_body(
                 )?,
             }
         }
+        EventKind::StudyTransition => EventBody::StudyTransition {
+            event: crate::study::decode_event_body(connection, event_id)?,
+        },
     };
     let stored_fingerprint: Vec<u8> = connection.query_row(
         "SELECT event_fingerprint FROM events WHERE event_id = ?1",
@@ -16891,7 +16968,7 @@ fn replay_command_requests(
     Ok(commands)
 }
 
-const MATERIALIZED_TABLES: [&str; 97] = [
+const MATERIALIZED_TABLES: [&str; 116] = [
     "principals",
     "societies",
     "office_contracts",
@@ -16989,6 +17066,25 @@ const MATERIALIZED_TABLES: [&str; 97] = [
     "pi_office_session_dispose_usage_receipts",
     "pi_office_session_dispose_usage_failures",
     "pi_office_session_dispose_receipts",
+    "study_protocol_revisions",
+    "study_world_revisions",
+    "study_measurement_revisions",
+    "study_institution_revisions",
+    "study_population_snapshots",
+    "study_episodes",
+    "study_treatment_assignments",
+    "study_pairs",
+    "study_episode_forums",
+    "study_forum_threads",
+    "study_actor_obligations",
+    "study_actor_occurrences",
+    "study_frozen_forum_heads",
+    "study_forum_exposures",
+    "study_forum_messages",
+    "study_forum_read_receipts",
+    "study_decisions",
+    "study_measurement_results",
+    "study_experimental_forks",
 ];
 
 fn materialized_state_digest(connection: &Connection) -> Result<Blake3Digest, StoreError> {
@@ -18366,6 +18462,9 @@ fn decode_command_body(
                 )?,
             }
         }
+        CommandKind::StudyTransition => CommandBody::StudyTransition {
+            command: crate::study::decode_command_body(connection, command_row_id)?,
+        },
     };
     Ok(body)
 }
@@ -18870,6 +18969,7 @@ fn command_kind_from_i64(value: i64) -> Result<CommandKind, StoreError> {
         98 => Ok(CommandKind::AdmitDeterministicEvaluatorNativeChild),
         99 => Ok(CommandKind::RecordDeterministicEvaluatorNativeChildSpawn),
         100 => Ok(CommandKind::RegisterDeterministicEvaluatorForensicManifest),
+        101 => Ok(CommandKind::StudyTransition),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }
@@ -18976,6 +19076,7 @@ fn capability_from_i64(value: i64) -> Result<Capability, StoreError> {
         98 => Ok(Capability::AdmitDeterministicEvaluatorNativeChild),
         99 => Ok(Capability::RecordDeterministicEvaluatorNativeChildSpawn),
         100 => Ok(Capability::RegisterDeterministicEvaluatorForensicManifest),
+        101 => Ok(Capability::RunStudyTransition),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }
@@ -19340,6 +19441,7 @@ fn event_kind_from_i64(value: i64) -> Result<EventKind, StoreError> {
         92 => Ok(EventKind::DeterministicEvaluatorNativeChildAdmitted),
         93 => Ok(EventKind::DeterministicEvaluatorNativeChildSpawnRecorded),
         94 => Ok(EventKind::DeterministicEvaluatorForensicManifestRegistered),
+        95 => Ok(EventKind::StudyTransition),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }

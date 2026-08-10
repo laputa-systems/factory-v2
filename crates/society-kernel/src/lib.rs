@@ -6,6 +6,7 @@
 
 mod domain;
 mod store;
+mod study;
 
 pub use domain::*;
 pub use store::{
@@ -13,3 +14,4 @@ pub use store::{
     DeterministicEvaluatorScheduleClaim, DeterministicEvaluatorScheduleClaimRequest,
     InstallFoundingMissionPreflight, KernelStore, StoreError,
 };
+pub use study::*;

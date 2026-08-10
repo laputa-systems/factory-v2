@@ -1,5 +1,18 @@
 export { isExecutionProfileMutation, projectAgentSessionEvent } from "./event-projection.js";
 export {
+	FORUM_ENABLED_TOOL_CONTRACT,
+	FORUM_F0_AWARENESS_BLAKE3,
+	FORUM_F0_AWARENESS_REVISION,
+	FORUM_F0_AWARENESS_TEXT,
+	FORUM_F0_TOOL_CONTRACT_BLAKE3,
+	FORUM_F0_TOOL_CONTRACT_TEXT,
+	SEQUESTERED_TOOL_CONTRACT,
+	forumF0AwarenessBytes,
+	forumToolContractDescriptor,
+	type ForumToolContractDescriptor,
+	type ForumToolName,
+} from "./forum.js";
+export {
 	PiSdkHost,
 	localRuntimeIdentity,
 	resolvedInstalledPiSdkVersion,
