@@ -82,7 +82,8 @@ t6  admit fresh populations and atomically install Retained or Reset exposure
 t7  deterministic service publishes the identical correction into both Threads
 t8  successor actors read/post under the same role topology and budgets
 t9  successor decision actor records final decision
-t10 derive measurements, close all authority/resources, replay each arm
+t10 reveal the previously committed truth after every actor terminates
+t11 derive measurements, close all authority/resources, replay each arm
 ```
 
 The paired harness waits for complete replacement and exposure installation in

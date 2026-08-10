@@ -1411,7 +1411,7 @@ fn current_schema_reopens_after_atomic_fresh_bootstrap() {
         connection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        26
+        27
     );
     drop(connection);
     drop(KernelStore::open(&path).unwrap());
@@ -1420,7 +1420,7 @@ fn current_schema_reopens_after_atomic_fresh_bootstrap() {
         reopened
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        26
+        27
     );
     assert_eq!(
         reopened

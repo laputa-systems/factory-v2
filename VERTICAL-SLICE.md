@@ -86,11 +86,16 @@ live provider call, a Pi SDK session, or native-child lifecycle custody.
 - actor count, policy revisions, role topology, and replacement point;
 - per-actor and total episode ceilings;
 - correction-release schedule;
+- a BLAKE3 commitment to application-owned ground-truth reveal bytes;
 - raw fact retention and exclusion rules;
 - measurement revisions and analysis population; and
 - stop and closure conditions.
 
 The protocol cannot contain the observed result or select a preferred outcome.
+The committed truth bytes are revealed once per episode only after every actor
+obligation is terminal and before a measurement result may be recorded. The
+generic control stores and checks their identity; the application alone
+interprets their world semantics.
 
 ### Episode and treatment
 
@@ -273,8 +278,9 @@ The provider-free CL-001 path is implemented. It covers sealed generic study
 revisions, matched episode/treatment admission, eight disposable obligations
 per population, one F0 Thread, immutable attributed publication and
 retraction, exposure frontiers, deterministic read receipts, atomic matched
-correction release, decisions, typed measurement status, closure, tamper
-detection, and integrity replay. The deterministic harness deliberately
+correction release, decisions, committed post-actor truth reveal, typed
+measurement status, closure, tamper detection, and integrity replay. The
+deterministic harness deliberately
 produces a null primary latency result as an admissible outcome.
 
 It does not yet execute live weak actors through a Pi SDK custom-tool transport

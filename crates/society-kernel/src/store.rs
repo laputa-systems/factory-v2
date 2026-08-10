@@ -65,7 +65,7 @@ const CURRENT_SCHEMA: &str = include_str!("../../../migrations/0001_kernel.sql")
 // Historical prototype schemas used versions one through thirteen. The collapsed
 // fresh schema deliberately occupies a noncolliding identity, so an old
 // ledger cannot be mistaken for current trusted physics.
-const CURRENT_SCHEMA_VERSION: i64 = 26;
+const CURRENT_SCHEMA_VERSION: i64 = 27;
 
 struct PiChildSpawnAdmissionInput<'a> {
     operating_cycle_id: OperatingCycleId,
@@ -16971,7 +16971,7 @@ fn replay_command_requests(
     Ok(commands)
 }
 
-const MATERIALIZED_TABLES: [&str; 118] = [
+const MATERIALIZED_TABLES: [&str; 119] = [
     "principals",
     "societies",
     "office_contracts",
@@ -17088,6 +17088,7 @@ const MATERIALIZED_TABLES: [&str; 118] = [
     "study_forum_read_receipts",
     "study_forum_read_receipt_renderings",
     "study_decisions",
+    "study_ground_truth_reveals",
     "study_measurement_results",
     "study_experimental_forks",
 ];

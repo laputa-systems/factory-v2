@@ -58,7 +58,9 @@ multi-agent transcript looks sophisticated.
 
 An immutable specification of the research question, eligibility rules,
 treatment variables, assignment procedure, episode budget, interventions,
-measurements, exclusions, and analysis. It cannot require a preferred outcome.
+measurements, exclusions, analysis, and a BLAKE3 commitment to any
+application-owned post-actor ground-truth reveal. It cannot require a preferred
+outcome.
 
 ### Episode — implemented provider-free for CL-001
 
@@ -106,7 +108,9 @@ replacement, memory reset, correction release, or communication-edge removal.
 
 A typed observation derived under a named analysis procedure from retained raw
 facts. A measurement is not mission authority, reward, selection, or truth by
-fiat.
+fiat. For CL-001, its episode's committed ground truth must first be revealed
+after all actor obligations terminate; the generic layer verifies the exact
+commitment without interpreting world semantics.
 
 ### Experimental fork — partial
 

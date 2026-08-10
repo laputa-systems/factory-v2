@@ -2139,6 +2139,7 @@ CREATE TABLE study_protocol_revisions (
     forum_prompt_digest BLOB NOT NULL CHECK (length(forum_prompt_digest) = 32),
     forum_tool_digest BLOB NOT NULL CHECK (length(forum_tool_digest) = 32),
     evidence_digest BLOB NOT NULL CHECK (length(evidence_digest) = 32),
+    ground_truth_commitment_digest BLOB NOT NULL CHECK (length(ground_truth_commitment_digest) = 32),
     correction_digest BLOB NOT NULL CHECK (length(correction_digest) = 32),
     topology_digest BLOB NOT NULL CHECK (length(topology_digest) = 32),
     episode_budget_units INTEGER NOT NULL CHECK (episode_budget_units >= 0),
@@ -2305,6 +2306,15 @@ CREATE TABLE study_decisions (
     cited_forum_message_id INTEGER REFERENCES study_forum_messages(forum_message_id),
     recorded_by_command_id INTEGER NOT NULL
 );
+-- The protocol commits to this exact application-owned value before actors
+-- run. A reveal is allowed only after every actor obligation is terminal and
+-- before any result may be recorded for the episode.
+CREATE TABLE study_ground_truth_reveals (
+    study_episode_id INTEGER PRIMARY KEY REFERENCES study_episodes(study_episode_id),
+    reveal_utf8 TEXT NOT NULL,
+    reveal_digest BLOB NOT NULL CHECK (length(reveal_digest) = 32),
+    revealed_by_command_id INTEGER NOT NULL
+);
 CREATE TABLE study_measurement_results (
     study_measurement_result_id INTEGER PRIMARY KEY,
     study_episode_id INTEGER NOT NULL REFERENCES study_episodes(study_episode_id),
@@ -2329,7 +2339,7 @@ CREATE TABLE study_experimental_forks (
 -- ledger.  The fixed columns are intentionally not a generic payload bucket.
 CREATE TABLE command_study_transition (
     command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id),
-    study_command_kind INTEGER NOT NULL CHECK (study_command_kind BETWEEN 1 AND 24),
+    study_command_kind INTEGER NOT NULL CHECK (study_command_kind BETWEEN 1 AND 25),
     application_revision_id INTEGER,
     protocol_revision_id INTEGER,
     world_revision_id INTEGER,
@@ -2363,6 +2373,7 @@ CREATE TABLE command_study_transition (
     forum_prompt_digest BLOB,
     forum_tool_digest BLOB,
     evidence_digest BLOB,
+    ground_truth_commitment_digest BLOB,
     correction_digest BLOB,
     topology_digest BLOB,
     world_digest BLOB,
@@ -2382,7 +2393,7 @@ CREATE TABLE command_study_transition (
 );
 CREATE TABLE event_study_transition (
     event_id INTEGER PRIMARY KEY REFERENCES events(event_id),
-    study_event_kind INTEGER NOT NULL CHECK (study_event_kind BETWEEN 1 AND 24),
+    study_event_kind INTEGER NOT NULL CHECK (study_event_kind BETWEEN 1 AND 25),
     primary_id INTEGER,
     secondary_id INTEGER,
     tertiary_id INTEGER,
@@ -2401,6 +2412,6 @@ CREATE TABLE event_study_transition (
     body_digest BLOB,
     rendered_digest BLOB
 );
-PRAGMA user_version = 26;
+PRAGMA user_version = 27;
 COMMIT;
 PRAGMA foreign_keys = ON;

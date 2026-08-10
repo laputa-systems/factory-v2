@@ -23,6 +23,7 @@ type StoredProtocolCommandRow = (
     Option<Vec<u8>>,
     Option<Vec<u8>>,
     Option<Vec<u8>>,
+    Option<Vec<u8>>,
     Option<i64>,
 );
 type StoredEpisodeCommandRow = (
@@ -136,6 +137,10 @@ pub enum StudyValueError {
     InvalidForumThreadTitle,
     #[error("study decisions must be nonempty, contain no NUL, and be at most 2048 UTF-8 bytes")]
     InvalidStudyDecisionBody,
+    #[error(
+        "ground-truth reveals must be nonempty, contain no NUL, and be at most 2048 UTF-8 bytes"
+    )]
+    InvalidGroundTruthReveal,
     #[error("study budget units must be nonnegative")]
     NegativeBudgetUnits,
     #[error("study role ordinals are in 1..=64")]
@@ -303,6 +308,32 @@ impl StudyDecisionBody {
     }
 }
 
+/// Exact application-owned truth bytes revealed only at the post-actor
+/// analysis boundary. Generic control verifies their prior commitment but
+/// never interprets their world semantics.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct StudyGroundTruthReveal(String);
+
+impl StudyGroundTruthReveal {
+    pub const MAX_BYTES: usize = 2 * 1024;
+
+    pub fn parse(value: impl Into<String>) -> Result<Self, StudyValueError> {
+        let value = value.into();
+        if value.is_empty() || value.len() > Self::MAX_BYTES || value.contains('\0') {
+            return Err(StudyValueError::InvalidGroundTruthReveal);
+        }
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn digest(&self) -> Blake3Digest {
+        Blake3Digest::of_bytes(self.0.as_bytes())
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(i64)]
 pub enum StudyEpisodeState {
@@ -455,6 +486,9 @@ pub enum StudyCommand {
         forum_prompt_digest: Blake3Digest,
         forum_tool_digest: Blake3Digest,
         evidence_digest: Blake3Digest,
+        /// BLAKE3 commitment to the exact application-owned truth bytes that
+        /// may be revealed only after all actor obligations are terminal.
+        ground_truth_commitment_digest: Blake3Digest,
         /// Exact identity of the deterministic matched intervention that may
         /// be released after replacement. Generic control verifies identity;
         /// only the application interprets its bytes.
@@ -570,6 +604,10 @@ pub enum StudyCommand {
         decision: StudyDecisionBody,
         cited_message_id: Option<ForumMessageId>,
     },
+    RevealGroundTruth {
+        episode_id: StudyEpisodeId,
+        reveal: StudyGroundTruthReveal,
+    },
     RecordMeasurementResult {
         episode_id: StudyEpisodeId,
         measurement_slot: StudyMeasurementSlot,
@@ -619,6 +657,7 @@ pub enum StudyCommandKind {
     ForkEpisode = 22,
     RetractForumMessage = 23,
     FailActorObligation = 24,
+    RevealGroundTruth = 25,
 }
 
 impl StudyCommand {
@@ -637,6 +676,7 @@ impl StudyCommand {
             Self::AdmitActorObligation { .. } => StudyCommandKind::AdmitActorObligation,
             Self::CompleteActorObligation { .. } => StudyCommandKind::CompleteActorObligation,
             Self::FailActorObligation { .. } => StudyCommandKind::FailActorObligation,
+            Self::RevealGroundTruth { .. } => StudyCommandKind::RevealGroundTruth,
             Self::FreezeForumHead { .. } => StudyCommandKind::FreezeForumHead,
             Self::ReplacePopulation { .. } => StudyCommandKind::ReplacePopulation,
             Self::AdmitForumExposure { .. } => StudyCommandKind::AdmitForumExposure,
@@ -701,6 +741,10 @@ pub enum StudyEvent {
     ActorObligationFailed {
         obligation_id: StudyActorObligationId,
         reason_digest: Blake3Digest,
+    },
+    GroundTruthRevealed {
+        episode_id: StudyEpisodeId,
+        reveal_digest: Blake3Digest,
     },
     ForumHeadFrozen {
         episode_id: StudyEpisodeId,
@@ -811,6 +855,7 @@ pub enum StudyEventKind {
     ExperimentalForkCreated = 22,
     ForumMessageRetracted = 23,
     ActorObligationFailed = 24,
+    GroundTruthRevealed = 25,
 }
 
 impl StudyEvent {
@@ -829,6 +874,7 @@ impl StudyEvent {
             Self::ActorObligationAdmitted { .. } => StudyEventKind::ActorObligationAdmitted,
             Self::ActorObligationCompleted { .. } => StudyEventKind::ActorObligationCompleted,
             Self::ActorObligationFailed { .. } => StudyEventKind::ActorObligationFailed,
+            Self::GroundTruthRevealed { .. } => StudyEventKind::GroundTruthRevealed,
             Self::ForumHeadFrozen { .. } => StudyEventKind::ForumHeadFrozen,
             Self::PopulationReplaced { .. } => StudyEventKind::PopulationReplaced,
             Self::ForumExposureAdmitted { .. } => StudyEventKind::ForumExposureAdmitted,
@@ -891,6 +937,7 @@ pub(crate) fn append_command_fingerprint(bytes: &mut Vec<u8>, command: &StudyCom
             forum_prompt_digest,
             forum_tool_digest,
             evidence_digest,
+            ground_truth_commitment_digest,
             correction_digest,
             topology_digest,
             episode_budget,
@@ -902,6 +949,7 @@ pub(crate) fn append_command_fingerprint(bytes: &mut Vec<u8>, command: &StudyCom
                 *forum_prompt_digest,
                 *forum_tool_digest,
                 *evidence_digest,
+                *ground_truth_commitment_digest,
                 *correction_digest,
                 *topology_digest,
             ] {
@@ -1090,6 +1138,10 @@ pub(crate) fn append_command_fingerprint(bytes: &mut Vec<u8>, command: &StudyCom
             put_bytes(bytes, decision.as_str().as_bytes());
             put_optional_i64(bytes, cited_message_id.map(ForumMessageId::value));
         }
+        StudyCommand::RevealGroundTruth { episode_id, reveal } => {
+            put_i64(bytes, episode_id.value());
+            put_bytes(bytes, reveal.as_str().as_bytes());
+        }
         StudyCommand::RecordMeasurementResult {
             episode_id,
             measurement_slot,
@@ -1124,9 +1176,9 @@ pub(crate) fn insert_command_body(
 ) -> Result<(), StoreError> {
     let kind = command.kind() as i64;
     match command {
-        StudyCommand::AdmitProtocolRevision { application_revision_id, protocol_digest, actor_policy_digest, forum_prompt_digest, forum_tool_digest, evidence_digest, correction_digest, topology_digest, episode_budget } => transaction.execute(
-            "INSERT INTO command_study_transition(command_row_id, study_command_kind, application_revision_id, protocol_digest, actor_policy_digest, forum_prompt_digest, forum_tool_digest, evidence_digest, correction_digest, topology_digest, budget_units) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-            params![command_row_id, kind, application_revision_id.value(), protocol_digest.as_bytes().as_slice(), actor_policy_digest.as_bytes().as_slice(), forum_prompt_digest.as_bytes().as_slice(), forum_tool_digest.as_bytes().as_slice(), evidence_digest.as_bytes().as_slice(), correction_digest.as_bytes().as_slice(), topology_digest.as_bytes().as_slice(), episode_budget.value()],
+        StudyCommand::AdmitProtocolRevision { application_revision_id, protocol_digest, actor_policy_digest, forum_prompt_digest, forum_tool_digest, evidence_digest, ground_truth_commitment_digest, correction_digest, topology_digest, episode_budget } => transaction.execute(
+            "INSERT INTO command_study_transition(command_row_id, study_command_kind, application_revision_id, protocol_digest, actor_policy_digest, forum_prompt_digest, forum_tool_digest, evidence_digest, ground_truth_commitment_digest, correction_digest, topology_digest, budget_units) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            params![command_row_id, kind, application_revision_id.value(), protocol_digest.as_bytes().as_slice(), actor_policy_digest.as_bytes().as_slice(), forum_prompt_digest.as_bytes().as_slice(), forum_tool_digest.as_bytes().as_slice(), evidence_digest.as_bytes().as_slice(), ground_truth_commitment_digest.as_bytes().as_slice(), correction_digest.as_bytes().as_slice(), topology_digest.as_bytes().as_slice(), episode_budget.value()],
         )?,
         StudyCommand::AdmitWorldRevision { protocol_revision_id, world_digest } => transaction.execute("INSERT INTO command_study_transition(command_row_id, study_command_kind, protocol_revision_id, world_digest) VALUES (?1, ?2, ?3, ?4)", params![command_row_id, kind, protocol_revision_id.value(), world_digest.as_bytes().as_slice()])?,
         StudyCommand::AdmitMeasurementRevision { protocol_revision_id, analysis_digest } => transaction.execute("INSERT INTO command_study_transition(command_row_id, study_command_kind, protocol_revision_id, analysis_digest) VALUES (?1, ?2, ?3, ?4)", params![command_row_id, kind, protocol_revision_id.value(), analysis_digest.as_bytes().as_slice()])?,
@@ -1152,6 +1204,7 @@ pub(crate) fn insert_command_body(
         StudyCommand::ReleaseMatchedCorrection { pair_id, retained_thread_id, reset_thread_id, correction } => transaction.execute("INSERT INTO command_study_transition(command_row_id, study_command_kind, study_pair_id, thread_id, related_thread_id, text_value) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![command_row_id, kind, pair_id.value(), retained_thread_id.value(), reset_thread_id.value(), correction.as_str()])?,
         StudyCommand::ReadForum { obligation_id, first_message_ordinal, through_message_ordinal } => transaction.execute("INSERT INTO command_study_transition(command_row_id, study_command_kind, obligation_id, first_ordinal, through_ordinal) VALUES (?1, ?2, ?3, ?4, ?5)", params![command_row_id, kind, obligation_id.value(), first_message_ordinal, through_message_ordinal])?,
         StudyCommand::RecordDecision { obligation_id, decision, cited_message_id } => transaction.execute("INSERT INTO command_study_transition(command_row_id, study_command_kind, obligation_id, decision_digest, text_value, message_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![command_row_id, kind, obligation_id.value(), decision.digest().as_bytes().as_slice(), decision.as_str(), cited_message_id.map(ForumMessageId::value)])?,
+        StudyCommand::RevealGroundTruth { episode_id, reveal } => transaction.execute("INSERT INTO command_study_transition(command_row_id, study_command_kind, study_episode_id, body_digest, text_value) VALUES (?1, ?2, ?3, ?4, ?5)", params![command_row_id, kind, episode_id.value(), reveal.digest().as_bytes().as_slice(), reveal.as_str()])?,
         StudyCommand::RecordMeasurementResult { episode_id, measurement_slot, status, value, value_digest, reason_digest } => transaction.execute("INSERT INTO command_study_transition(command_row_id, study_command_kind, study_episode_id, measurement_slot, measurement_status, observed_value, value_digest, reason_digest) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)", params![command_row_id, kind, episode_id.value(), i64::from(measurement_slot.value()), *status as i64, value, value_digest.map(Blake3Digest::as_bytes).map(Vec::from), reason_digest.map(Blake3Digest::as_bytes).map(Vec::from)])?,
         StudyCommand::ForkEpisode { source_episode_id, treatment_delta } => transaction.execute("INSERT INTO command_study_transition(command_row_id, study_command_kind, study_episode_id, study_treatment) VALUES (?1, ?2, ?3, ?4)", params![command_row_id, kind, source_episode_id.value(), *treatment_delta as i64])?,
     };
@@ -1261,6 +1314,7 @@ pub(crate) fn apply(
             forum_prompt_digest,
             forum_tool_digest,
             evidence_digest,
+            ground_truth_commitment_digest,
             correction_digest,
             topology_digest,
             episode_budget,
@@ -1278,9 +1332,9 @@ pub(crate) fn apply(
                 return Err(Rejection::InvalidLifecycleTransition);
             }
             transaction.execute(
-                "INSERT INTO study_protocol_revisions(application_revision_id, protocol_digest, actor_policy_digest, forum_prompt_digest, forum_tool_digest, evidence_digest, correction_digest, topology_digest, episode_budget_units, admitted_by_command_id)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-                params![application_revision_id.value(), protocol_digest.as_bytes().as_slice(), actor_policy_digest.as_bytes().as_slice(), forum_prompt_digest.as_bytes().as_slice(), forum_tool_digest.as_bytes().as_slice(), evidence_digest.as_bytes().as_slice(), correction_digest.as_bytes().as_slice(), topology_digest.as_bytes().as_slice(), episode_budget.value(), command_row_id],
+                "INSERT INTO study_protocol_revisions(application_revision_id, protocol_digest, actor_policy_digest, forum_prompt_digest, forum_tool_digest, evidence_digest, ground_truth_commitment_digest, correction_digest, topology_digest, episode_budget_units, admitted_by_command_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![application_revision_id.value(), protocol_digest.as_bytes().as_slice(), actor_policy_digest.as_bytes().as_slice(), forum_prompt_digest.as_bytes().as_slice(), forum_tool_digest.as_bytes().as_slice(), evidence_digest.as_bytes().as_slice(), ground_truth_commitment_digest.as_bytes().as_slice(), correction_digest.as_bytes().as_slice(), topology_digest.as_bytes().as_slice(), episode_budget.value(), command_row_id],
             ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
             Ok(StudyEvent::ProtocolRevisionAdmitted {
                 protocol_revision_id: last_id(transaction)?,
@@ -1788,6 +1842,53 @@ pub(crate) fn apply(
                 obligation_id: *obligation_id,
             })
         }
+        StudyCommand::RevealGroundTruth { episode_id, reveal } => {
+            let (protocol_id, state) = episode_state(transaction, *episode_id)?;
+            let all_obligations_terminal: i64 = transaction
+                .query_row(
+                    "SELECT COUNT(*) FROM study_actor_obligations
+                     WHERE study_episode_id = ?1 AND lifecycle_state NOT IN (2, 3)",
+                    [episode_id.value()],
+                    |row| row.get(0),
+                )
+                .map_err(|_| Rejection::SubjectNotFound)?;
+            if !matches!(
+                state,
+                StudyEpisodeState::CorrectionReleased | StudyEpisodeState::SuccessorActive
+            ) || all_obligations_terminal != 0
+            {
+                return Err(Rejection::InvalidLifecycleTransition);
+            }
+            let commitment: Vec<u8> = transaction
+                .query_row(
+                    "SELECT ground_truth_commitment_digest
+                       FROM study_protocol_revisions
+                      WHERE study_protocol_revision_id = ?1",
+                    [protocol_id.value()],
+                    |row| row.get(0),
+                )
+                .map_err(|_| Rejection::SubjectNotFound)?;
+            if commitment.as_slice() != reveal.digest().as_bytes() {
+                return Err(Rejection::InvalidLifecycleTransition);
+            }
+            transaction
+                .execute(
+                    "INSERT INTO study_ground_truth_reveals(
+                    study_episode_id, reveal_utf8, reveal_digest, revealed_by_command_id
+                 ) VALUES (?1, ?2, ?3, ?4)",
+                    params![
+                        episode_id.value(),
+                        reveal.as_str(),
+                        reveal.digest().as_bytes().as_slice(),
+                        command_row_id,
+                    ],
+                )
+                .map_err(|_| Rejection::InvalidLifecycleTransition)?;
+            Ok(StudyEvent::GroundTruthRevealed {
+                episode_id: *episode_id,
+                reveal_digest: reveal.digest(),
+            })
+        }
         StudyCommand::RecordMeasurementResult {
             episode_id,
             measurement_slot,
@@ -1805,10 +1906,17 @@ pub(crate) fn apply(
                     |row| row.get(0),
                 )
                 .map_err(|_| Rejection::SubjectNotFound)?;
+            let ground_truth_revealed = exists(
+                transaction,
+                "SELECT study_episode_id FROM study_ground_truth_reveals
+                 WHERE study_episode_id = ?1",
+                episode_id.value(),
+            )?;
             if !matches!(
                 state,
                 StudyEpisodeState::CorrectionReleased | StudyEpisodeState::SuccessorActive
             ) || all_obligations_terminal != 0
+                || !ground_truth_revealed
                 || !measurement_result_shape_valid(*status, *value, *value_digest, *reason_digest)
             {
                 return Err(Rejection::InvalidLifecycleTransition);
@@ -2504,6 +2612,13 @@ pub(crate) fn append_event_fingerprint(bytes: &mut Vec<u8>, event: &StudyEvent) 
             put_i64(bytes, obligation_id.value());
             put_digest(bytes, *reason_digest);
         }
+        StudyEvent::GroundTruthRevealed {
+            episode_id,
+            reveal_digest,
+        } => {
+            put_i64(bytes, episode_id.value());
+            put_digest(bytes, *reveal_digest);
+        }
         StudyEvent::ForumHeadFrozen {
             episode_id,
             thread_id,
@@ -2616,6 +2731,7 @@ pub(crate) fn insert_event_body(
         StudyEvent::ActorObligationAdmitted { obligation_id, actor_occurrence_id, episode_id, population_snapshot_id, phase } => transaction.execute("INSERT INTO event_study_transition(event_id, study_event_kind, primary_id, obligation_id, actor_occurrence_id, study_episode_id, population_phase) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)", params![event_id, kind, population_snapshot_id.value(), obligation_id.value(), actor_occurrence_id.value(), episode_id.value(), *phase as i64])?,
         StudyEvent::ActorObligationCompleted { obligation_id } | StudyEvent::DecisionRecorded { obligation_id } => transaction.execute("INSERT INTO event_study_transition(event_id, study_event_kind, obligation_id) VALUES (?1, ?2, ?3)", params![event_id, kind, obligation_id.value()])?,
         StudyEvent::ActorObligationFailed { obligation_id, reason_digest } => transaction.execute("INSERT INTO event_study_transition(event_id, study_event_kind, obligation_id, body_digest) VALUES (?1, ?2, ?3, ?4)", params![event_id, kind, obligation_id.value(), reason_digest.as_bytes().as_slice()])?,
+        StudyEvent::GroundTruthRevealed { episode_id, reveal_digest } => transaction.execute("INSERT INTO event_study_transition(event_id, study_event_kind, study_episode_id, body_digest) VALUES (?1, ?2, ?3, ?4)", params![event_id, kind, episode_id.value(), reveal_digest.as_bytes().as_slice()])?,
         StudyEvent::ForumHeadFrozen { episode_id, thread_id, head_message_ordinal } => transaction.execute("INSERT INTO event_study_transition(event_id, study_event_kind, study_episode_id, thread_id, through_ordinal) VALUES (?1, ?2, ?3, ?4, ?5)", params![event_id, kind, episode_id.value(), thread_id.value(), head_message_ordinal])?,
         StudyEvent::ForumExposureAdmitted { exposure_id, obligation_id, visible_from_message_ordinal, visible_through_message_ordinal } => transaction.execute("INSERT INTO event_study_transition(event_id, study_event_kind, primary_id, obligation_id, first_ordinal, through_ordinal) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![event_id, kind, exposure_id.value(), obligation_id.value(), visible_from_message_ordinal, visible_through_message_ordinal])?,
         StudyEvent::ForumMessagePublished { message_id, thread_id, message_ordinal, author_occurrence_id, kind: message_kind, body_digest } => transaction.execute("INSERT INTO event_study_transition(event_id, study_event_kind, message_id, thread_id, actor_occurrence_id, through_ordinal, message_kind, body_digest) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)", params![event_id, kind, message_id.value(), thread_id.value(), author_occurrence_id.value(), message_ordinal, *message_kind as i64, body_digest.as_bytes().as_slice()])?,
@@ -2666,6 +2782,7 @@ fn study_command_kind_from_i64(value: i64) -> Result<StudyCommandKind, StoreErro
         22 => Ok(StudyCommandKind::ForkEpisode),
         23 => Ok(StudyCommandKind::RetractForumMessage),
         24 => Ok(StudyCommandKind::FailActorObligation),
+        25 => Ok(StudyCommandKind::RevealGroundTruth),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }
@@ -2696,6 +2813,7 @@ fn study_event_kind_from_i64(value: i64) -> Result<StudyEventKind, StoreError> {
         22 => Ok(StudyEventKind::ExperimentalForkCreated),
         23 => Ok(StudyEventKind::ForumMessageRetracted),
         24 => Ok(StudyEventKind::ActorObligationFailed),
+        25 => Ok(StudyEventKind::GroundTruthRevealed),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }
@@ -2749,7 +2867,7 @@ pub(crate) fn decode_command_body(
     )?;
     match study_command_kind_from_i64(kind)? {
         StudyCommandKind::AdmitProtocolRevision => {
-            let row: StoredProtocolCommandRow = connection.query_row("SELECT application_revision_id, protocol_digest, actor_policy_digest, forum_prompt_digest, forum_tool_digest, evidence_digest, correction_digest, topology_digest, budget_units FROM command_study_transition WHERE command_row_id = ?1", [command_row_id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,r.get(8)?)))?;
+            let row: StoredProtocolCommandRow = connection.query_row("SELECT application_revision_id, protocol_digest, actor_policy_digest, forum_prompt_digest, forum_tool_digest, evidence_digest, ground_truth_commitment_digest, correction_digest, topology_digest, budget_units FROM command_study_transition WHERE command_row_id = ?1", [command_row_id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,r.get(8)?,r.get(9)?)))?;
             Ok(StudyCommand::AdmitProtocolRevision {
                 application_revision_id: stored(row.0)?,
                 protocol_digest: stored_digest(row.1)?,
@@ -2757,10 +2875,11 @@ pub(crate) fn decode_command_body(
                 forum_prompt_digest: stored_digest(row.3)?,
                 forum_tool_digest: stored_digest(row.4)?,
                 evidence_digest: stored_digest(row.5)?,
-                correction_digest: stored_digest(row.6)?,
-                topology_digest: stored_digest(row.7)?,
+                ground_truth_commitment_digest: stored_digest(row.6)?,
+                correction_digest: stored_digest(row.7)?,
+                topology_digest: stored_digest(row.8)?,
                 episode_budget: StudyBudgetUnits::try_from(
-                    row.8.ok_or(StoreError::InvalidStoredValue)?,
+                    row.9.ok_or(StoreError::InvalidStoredValue)?,
                 )
                 .map_err(|_| StoreError::InvalidStoredValue)?,
             })
@@ -2973,6 +3092,24 @@ pub(crate) fn decode_command_body(
                     .map_err(|_| StoreError::InvalidStoredValue)?,
             })
         }
+        StudyCommandKind::RevealGroundTruth => {
+            let row: (Option<i64>, Option<String>, Option<Vec<u8>>) = connection.query_row(
+                "SELECT study_episode_id, text_value, body_digest
+                   FROM command_study_transition WHERE command_row_id = ?1",
+                [command_row_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )?;
+            let reveal =
+                StudyGroundTruthReveal::parse(row.1.ok_or(StoreError::InvalidStoredValue)?)
+                    .map_err(|_| StoreError::InvalidStoredValue)?;
+            if reveal.digest() != stored_digest(row.2)? {
+                return Err(StoreError::InvalidStoredValue);
+            }
+            Ok(StudyCommand::RevealGroundTruth {
+                episode_id: stored(row.0)?,
+                reveal,
+            })
+        }
         StudyCommandKind::RecordMeasurementResult => {
             let row: StoredMeasurementCommandRow = connection.query_row("SELECT study_episode_id,measurement_slot,measurement_status,observed_value,value_digest,reason_digest FROM command_study_transition WHERE command_row_id=?1",[command_row_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?)))?;
             Ok(StudyCommand::RecordMeasurementResult {
@@ -3070,6 +3207,10 @@ pub(crate) fn decode_event_body(
         StudyEventKind::ActorObligationFailed => Ok(StudyEvent::ActorObligationFailed {
             obligation_id: stored(row.7)?,
             reason_digest: stored_digest(row.14)?,
+        }),
+        StudyEventKind::GroundTruthRevealed => Ok(StudyEvent::GroundTruthRevealed {
+            episode_id: stored(row.4)?,
+            reveal_digest: stored_digest(row.14)?,
         }),
         StudyEventKind::ForumHeadFrozen => Ok(StudyEvent::ForumHeadFrozen {
             episode_id: stored(row.4)?,

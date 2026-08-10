@@ -271,9 +271,10 @@ opaque evidence admission, and integrity replay.
 Implemented provider-free are the first-class generic study ledger, matched
 episode/treatment/pair admission, F0 Forum Message/exposure/read-receipt
 transitions, actor-obligation replacement, atomic matched correction release,
-closed measurement statuses, experimental forks, and materialized-state
-integrity replay. The correction-latency application owns the synthetic world,
-analysis-only evaluator, deterministic actor doubles, and paired report.
+committed post-actor ground-truth reveal, closed measurement statuses,
+experimental forks, and materialized-state integrity replay. The
+correction-latency application owns the synthetic world, analysis-only
+evaluator, deterministic actor doubles, and paired report.
 
 Not implemented are a live study scheduler, Pi custom-tool transport, Forum
 obligation binding to actual Pi/native-child custody, knowledge promotion, or

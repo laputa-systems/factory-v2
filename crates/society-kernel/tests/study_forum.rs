@@ -14,9 +14,9 @@ use society_kernel::{
     MissionPrinciples, MissionStatement, NorthStarBoundaryCommitmentQuestion,
     NorthStarChangeQuestion, NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet,
     NorthStarRevisitQuestion, PrincipalId, Rejection, StoreError, StudyBudgetUnits, StudyCommand,
-    StudyDecisionBody, StudyEpisodeId, StudyEvent, StudyMeasurementSlot, StudyMeasurementStatus,
-    StudyPopulationPhase, StudyRoleOrdinal, StudyTransitionDisposition, StudyTreatment,
-    forum_f0_awareness_digest, forum_f0_tool_contract_digest,
+    StudyDecisionBody, StudyEpisodeId, StudyEvent, StudyGroundTruthReveal, StudyMeasurementSlot,
+    StudyMeasurementStatus, StudyPopulationPhase, StudyRoleOrdinal, StudyTransitionDisposition,
+    StudyTreatment, forum_f0_awareness_digest, forum_f0_tool_contract_digest,
 };
 
 fn application_mission() -> ApplicationMissionInput {
@@ -200,6 +200,7 @@ fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
 
     let prompt = forum_f0_awareness_digest();
     let tools = forum_f0_tool_contract_digest();
+    let ground_truth_reveal = StudyGroundTruthReveal::parse("study-forum-ground-truth-v1").unwrap();
     let protocol = society_kernel::StudyProtocolRevisionId::try_from(event_id(submit_study(
         &mut store,
         &mut ordinal,
@@ -210,6 +211,7 @@ fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
             forum_prompt_digest: prompt,
             forum_tool_digest: tools,
             evidence_digest: Blake3Digest::of_bytes(b"evidence-v1"),
+            ground_truth_commitment_digest: ground_truth_reveal.digest(),
             correction_digest: Blake3Digest::of_bytes(b"correction: proposition one"),
             topology_digest: Blake3Digest::of_bytes(b"topology-v1"),
             episode_budget: StudyBudgetUnits::new(10).unwrap(),
@@ -913,6 +915,42 @@ fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
             },
         );
     }
+    assert_eq!(
+        rejected_study(
+            &mut store,
+            &mut ordinal,
+            StudyCommand::RecordMeasurementResult {
+                episode_id: retained,
+                measurement_slot: StudyMeasurementSlot::new(1).unwrap(),
+                status: StudyMeasurementStatus::Observed,
+                value: Some(1),
+                value_digest: Some(Blake3Digest::of_bytes(b"latency-value-v1")),
+                reason_digest: None,
+            },
+        ),
+        Rejection::InvalidLifecycleTransition
+    );
+    assert_eq!(
+        rejected_study(
+            &mut store,
+            &mut ordinal,
+            StudyCommand::RevealGroundTruth {
+                episode_id: retained,
+                reveal: StudyGroundTruthReveal::parse("wrong-ground-truth-v1").unwrap(),
+            },
+        ),
+        Rejection::InvalidLifecycleTransition
+    );
+    for episode in [retained, reset] {
+        submit_study(
+            &mut store,
+            &mut ordinal,
+            StudyCommand::RevealGroundTruth {
+                episode_id: episode,
+                reveal: ground_truth_reveal.clone(),
+            },
+        );
+    }
     for episode in [retained, reset] {
         submit_study(
             &mut store,
@@ -969,6 +1007,7 @@ fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
                 forum_prompt_digest: prompt,
                 forum_tool_digest: tools,
                 evidence_digest: Blake3Digest::of_bytes(b"evidence-v1"),
+                ground_truth_commitment_digest: ground_truth_reveal.digest(),
                 correction_digest: Blake3Digest::of_bytes(b"correction: proposition one"),
                 topology_digest: Blake3Digest::of_bytes(b"topology-v1"),
                 episode_budget: StudyBudgetUnits::new(10).unwrap(),
@@ -986,6 +1025,7 @@ fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
                 forum_prompt_digest: prompt,
                 forum_tool_digest: tools,
                 evidence_digest: Blake3Digest::of_bytes(b"evidence-v1"),
+                ground_truth_commitment_digest: ground_truth_reveal.digest(),
                 correction_digest: Blake3Digest::of_bytes(b"correction: proposition one"),
                 topology_digest: Blake3Digest::of_bytes(b"topology-v1"),
                 episode_budget: StudyBudgetUnits::new(10).unwrap(),

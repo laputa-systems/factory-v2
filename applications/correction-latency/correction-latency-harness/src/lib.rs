@@ -25,7 +25,7 @@ use society_kernel::{
     PrincipalId, Rejection, StoreError, StudyActorObligationId, StudyBudgetUnits, StudyCommand,
     StudyDecisionBody, StudyEpisodeId, StudyEvent, StudyMeasurementSlot,
     StudyMeasurementStatus, StudyPopulationPhase, StudyProtocolRevisionId, StudyRoleOrdinal,
-    StudyPopulationSnapshotId, StudyTransitionDisposition, StudyTreatment,
+    StudyPopulationSnapshotId, StudyGroundTruthReveal, StudyTransitionDisposition, StudyTreatment,
     forum_f0_awareness_digest, forum_f0_tool_contract_digest,
 };
 
@@ -89,6 +89,7 @@ pub struct PairedReport {
     pub reset_history_read_rejected: bool,
     pub isolated_baseline: BaselineReport,
     pub unstructured_baseline: BaselineReport,
+    pub ground_truth_reveal_digest: Blake3Digest,
     pub replay_materialized_state_digest: Blake3Digest,
 }
 
@@ -183,6 +184,11 @@ fn exact_forum_contract() -> Result<ForumContract, HarnessError> {
 /// closure, and fresh replay validation.
 pub fn run_provider_free_pair() -> Result<PairedReport, HarnessError> {
     let fixture = WorldFixture::canonical();
+    let ground_truth_reveal = StudyGroundTruthReveal::parse(
+        std::str::from_utf8(fixture.analysis_ground_truth_reveal().bytes())
+            .map_err(|_| HarnessError::UnexpectedEvent("UTF-8 ground-truth fixture"))?,
+    )
+    .map_err(|_| HarnessError::UnexpectedEvent("ground-truth fixture"))?;
     let mut store = KernelStore::open_in_memory()?;
     install_application_revision(&mut store)?;
     let mut sequence = 1_u32;
@@ -201,6 +207,7 @@ pub fn run_provider_free_pair() -> Result<PairedReport, HarnessError> {
         &fixture,
         actor_policy_digest,
         forum_contract,
+        ground_truth_reveal.digest(),
     )?;
     let shared = admit_shared_revisions(&mut store, &mut sequence, protocol, &fixture)?;
     let randomization = Blake3Digest::of_bytes(b"cl-001|matched-randomization|v1");
@@ -356,6 +363,7 @@ pub fn run_provider_free_pair() -> Result<PairedReport, HarnessError> {
         &fixture,
         &retained,
         StudyTreatment::Retained,
+        &ground_truth_reveal,
     )?;
     let reset_report = close_and_measure(
         &mut store,
@@ -363,6 +371,7 @@ pub fn run_provider_free_pair() -> Result<PairedReport, HarnessError> {
         &fixture,
         &reset,
         StudyTreatment::Reset,
+        &ground_truth_reveal,
     )?;
     store.replay_ledger()?;
     let replay_materialized_state_digest = store.validate_replayed_materialized_state()?;
@@ -377,6 +386,7 @@ pub fn run_provider_free_pair() -> Result<PairedReport, HarnessError> {
         reset_history_read_rejected,
         isolated_baseline,
         unstructured_baseline,
+        ground_truth_reveal_digest: ground_truth_reveal.digest(),
         replay_materialized_state_digest,
     })
 }
@@ -502,6 +512,7 @@ fn admit_protocol(
     fixture: &WorldFixture,
     actor_policy_digest: Blake3Digest,
     forum_contract: ForumContract,
+    ground_truth_commitment_digest: Blake3Digest,
 ) -> Result<StudyProtocolRevisionId, HarnessError> {
     match accepted(
         store,
@@ -514,6 +525,7 @@ fn admit_protocol(
             forum_prompt_digest: forum_contract.prompt_digest,
             forum_tool_digest: forum_contract.tool_digest,
             evidence_digest: fixture.evidence().identity(),
+            ground_truth_commitment_digest,
             correction_digest: fixture.correction_package().digest(),
             topology_digest: canonical_role_topology_digest(),
             episode_budget: budget(EPISODE_BUDGET_UNITS)?,
@@ -1078,7 +1090,20 @@ fn close_and_measure(
     fixture: &WorldFixture,
     arm: &ArmRun,
     treatment: StudyTreatment,
+    ground_truth_reveal: &StudyGroundTruthReveal,
 ) -> Result<ArmReport, HarnessError> {
+    match accepted(
+        store,
+        sequence,
+        StudyCommand::RevealGroundTruth {
+            episode_id: arm.episode_id,
+            reveal: ground_truth_reveal.clone(),
+        },
+    )? {
+        StudyEvent::GroundTruthRevealed { reveal_digest, .. }
+            if reveal_digest == ground_truth_reveal.digest() => {}
+        _ => return Err(HarnessError::UnexpectedEvent("GroundTruthRevealed")),
+    }
     let correction_release_sequence = arm
         .correction_release_sequence
         .ok_or(HarnessError::UnexpectedEvent("correction release occurrence"))?;
@@ -1468,6 +1493,11 @@ mod tests {
         assert_eq!(first, second);
         assert!(first.source_authority_rejected_after_replacement);
         assert!(first.reset_history_read_rejected);
+        assert_eq!(
+            first.ground_truth_reveal_digest,
+            WorldFixture::canonical().analysis_ground_truth_reveal().digest(),
+            "the report names the exact reveal committed before actors ran"
+        );
         assert_eq!(
             first.retained.correction_digest,
             first.reset.correction_digest

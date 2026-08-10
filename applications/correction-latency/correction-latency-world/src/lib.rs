@@ -25,6 +25,12 @@ pub const FALSE_CLAIM_BYTES: &[u8] =
 pub const CORRECTION_PACKAGE_BYTES: &[u8] =
     b"cl-001|correction|v1|proposition=1|basis=all-eight-cards|source=deterministic-evaluator";
 
+/// Exact analysis-only bytes whose digest is committed by the protocol before
+/// treatment assignment. These bytes must not enter an actor view, prompt, or
+/// Forum rendering; the harness reveals them only after all actors terminate.
+pub const GROUND_TRUTH_REVEAL_BYTES: &[u8] =
+    b"cl-001|ground-truth-reveal|v1|proposition=1|basis=parity-of-eight-cards";
+
 /// Exact BLAKE3 identity of [`FALSE_CLAIM_BYTES`].
 pub const FALSE_CLAIM_DIGEST: Blake3Digest = Blake3Digest::from_bytes([
     0x9c, 0x4f, 0xcf, 0x46, 0xbe, 0x60, 0xc8, 0x2c, 0x7b, 0x71, 0x9a, 0xaa, 0xcd, 0x11, 0x8d, 0x6c,
@@ -425,6 +431,12 @@ pub fn canonical_correction_package() -> CorrectionPackage {
     CorrectionPackage(ImmutableContent::from_static(CORRECTION_PACKAGE_BYTES))
 }
 
+/// Return the analysis-only ground-truth reveal committed by the canonical
+/// protocol. Callers must hold it outside every actor-facing boundary.
+pub fn canonical_ground_truth_reveal() -> GroundTruthReveal {
+    GroundTruthReveal(ImmutableContent::from_static(GROUND_TRUTH_REVEAL_BYTES))
+}
+
 /// Immutable bytes with a BLAKE3 identity, used for world-owned packages.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ImmutableContent {
@@ -481,6 +493,23 @@ pub struct CorrectionPackage(ImmutableContent);
 
 impl CorrectionPackage {
     /// Exact canonical correction bytes.
+    pub fn bytes(&self) -> &[u8] {
+        self.0.bytes()
+    }
+
+    /// Exact BLAKE3 identity of [`Self::bytes`].
+    pub const fn digest(&self) -> Blake3Digest {
+        self.0.digest()
+    }
+}
+
+/// Exact application-owned bytes revealed only at the post-actor analysis
+/// boundary. They are not evidence supplied to any actor.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GroundTruthReveal(ImmutableContent);
+
+impl GroundTruthReveal {
+    /// Exact canonical reveal bytes.
     pub fn bytes(&self) -> &[u8] {
         self.0.bytes()
     }
@@ -1153,6 +1182,7 @@ pub struct WorldFixture {
     partition: EvidencePartition,
     false_claim: FalseClaim,
     correction_package: CorrectionPackage,
+    ground_truth_reveal: GroundTruthReveal,
     identity: Blake3Digest,
     hidden_outcome: BinaryOutcome,
 }
@@ -1203,14 +1233,22 @@ impl WorldFixture {
         let false_claim = FalseClaim(ImmutableContent::from_static(FALSE_CLAIM_BYTES));
         let correction_package =
             CorrectionPackage(ImmutableContent::from_static(CORRECTION_PACKAGE_BYTES));
+        let ground_truth_reveal =
+            GroundTruthReveal(ImmutableContent::from_static(GROUND_TRUTH_REVEAL_BYTES));
         debug_assert_eq!(false_claim.digest(), FALSE_CLAIM_DIGEST);
         debug_assert_eq!(correction_package.digest(), CORRECTION_PACKAGE_DIGEST);
-        let identity = world_identity(&partition, &false_claim, &correction_package);
+        let identity = world_identity(
+            &partition,
+            &false_claim,
+            &correction_package,
+            &ground_truth_reveal,
+        );
 
         Ok(Self {
             partition,
             false_claim,
             correction_package,
+            ground_truth_reveal,
             identity,
             hidden_outcome,
         })
@@ -1234,6 +1272,12 @@ impl WorldFixture {
     /// The deterministic correction package.
     pub const fn correction_package(&self) -> &CorrectionPackage {
         &self.correction_package
+    }
+
+    /// The committed truth bytes for post-actor analysis only. This method is
+    /// deliberately not part of any role specification or actor input.
+    pub const fn analysis_ground_truth_reveal(&self) -> &GroundTruthReveal {
+        &self.ground_truth_reveal
     }
 
     /// Exact BLAKE3 identity of the complete canonical world fixture.
@@ -1378,12 +1422,14 @@ fn world_identity(
     partition: &EvidencePartition,
     false_claim: &FalseClaim,
     correction_package: &CorrectionPackage,
+    ground_truth_reveal: &GroundTruthReveal,
 ) -> Blake3Digest {
     let mut bytes = Vec::with_capacity(128);
     bytes.extend_from_slice(b"cl-001|hidden-binary-world|v1|");
     bytes.extend_from_slice(&partition.identity.as_bytes());
     bytes.extend_from_slice(&false_claim.digest().as_bytes());
     bytes.extend_from_slice(&correction_package.digest().as_bytes());
+    bytes.extend_from_slice(&ground_truth_reveal.digest().as_bytes());
     Blake3Digest::of_bytes(&bytes)
 }
 
@@ -1466,6 +1512,14 @@ mod tests {
         assert_eq!(
             fixture.correction_package().digest(),
             CORRECTION_PACKAGE_DIGEST
+        );
+        assert_eq!(
+            fixture.analysis_ground_truth_reveal().bytes(),
+            GROUND_TRUTH_REVEAL_BYTES
+        );
+        assert_eq!(
+            fixture.analysis_ground_truth_reveal().digest(),
+            canonical_ground_truth_reveal().digest()
         );
         assert_ne!(
             fixture.false_claim().digest(),

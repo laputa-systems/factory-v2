@@ -111,9 +111,9 @@ provider-free CL-001 control path: sealed study revisions, matched
 retained/reset episodes, distinct source and successor population snapshots,
 F0 Forum Threads, bounded attributed publication/read receipts, post and read
 quotas, terminal completion/failure, atomic digest-bound correction release,
-decisions, measurements, closure, and ledger integrity replay. The application
-harness runs the closed eight-role synthetic world and reports its paired
-controls.
+decisions, committed post-actor ground-truth reveal, measurements, closure,
+and ledger integrity replay. The application harness runs the closed eight-role
+synthetic world and reports its paired controls.
 
 This does **not** make a live weak-actor experiment complete. The Pi host now
 accepts a closed Forum session-contract descriptor and verifies its digests,
