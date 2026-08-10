@@ -595,16 +595,29 @@ fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
         ));
     }
 
-    for obligation in [retained_source, reset_source] {
+    submit_study(
+        &mut store,
+        &mut ordinal,
+        StudyCommand::CompleteActorObligation {
+            obligation_id: retained_source,
+            charged_budget: StudyBudgetUnits::new(2).unwrap(),
+        },
+    );
+    let source_failure = Blake3Digest::of_bytes(b"source actor deterministic failure");
+    assert_eq!(
         submit_study(
             &mut store,
             &mut ordinal,
-            StudyCommand::CompleteActorObligation {
-                obligation_id: obligation,
-                charged_budget: StudyBudgetUnits::new(2).unwrap(),
+            StudyCommand::FailActorObligation {
+                obligation_id: reset_source,
+                reason_digest: source_failure,
             },
-        );
-    }
+        ),
+        StudyEvent::ActorObligationFailed {
+            obligation_id: reset_source,
+            reason_digest: source_failure,
+        }
+    );
     for (episode, thread, successor_population_snapshot_id) in [
         (retained, retained_thread, retained_successor_population),
         (reset, reset_thread, reset_successor_population),

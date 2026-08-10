@@ -518,6 +518,13 @@ pub enum StudyCommand {
         obligation_id: StudyActorObligationId,
         charged_budget: StudyBudgetUnits,
     },
+    /// Closes an obligation without fabricating successful completion.
+    /// The opaque reason is a fixed diagnostic identity, never application
+    /// semantics or an authority-bearing payload.
+    FailActorObligation {
+        obligation_id: StudyActorObligationId,
+        reason_digest: Blake3Digest,
+    },
     FreezeForumHead {
         episode_id: StudyEpisodeId,
         thread_id: ForumThreadId,
@@ -611,6 +618,7 @@ pub enum StudyCommandKind {
     CloseEpisode = 21,
     ForkEpisode = 22,
     RetractForumMessage = 23,
+    FailActorObligation = 24,
 }
 
 impl StudyCommand {
@@ -628,6 +636,7 @@ impl StudyCommand {
             Self::OpenForumThread { .. } => StudyCommandKind::OpenForumThread,
             Self::AdmitActorObligation { .. } => StudyCommandKind::AdmitActorObligation,
             Self::CompleteActorObligation { .. } => StudyCommandKind::CompleteActorObligation,
+            Self::FailActorObligation { .. } => StudyCommandKind::FailActorObligation,
             Self::FreezeForumHead { .. } => StudyCommandKind::FreezeForumHead,
             Self::ReplacePopulation { .. } => StudyCommandKind::ReplacePopulation,
             Self::AdmitForumExposure { .. } => StudyCommandKind::AdmitForumExposure,
@@ -688,6 +697,10 @@ pub enum StudyEvent {
     },
     ActorObligationCompleted {
         obligation_id: StudyActorObligationId,
+    },
+    ActorObligationFailed {
+        obligation_id: StudyActorObligationId,
+        reason_digest: Blake3Digest,
     },
     ForumHeadFrozen {
         episode_id: StudyEpisodeId,
@@ -797,6 +810,7 @@ pub enum StudyEventKind {
     EpisodeClosed = 21,
     ExperimentalForkCreated = 22,
     ForumMessageRetracted = 23,
+    ActorObligationFailed = 24,
 }
 
 impl StudyEvent {
@@ -814,6 +828,7 @@ impl StudyEvent {
             Self::ForumThreadOpened { .. } => StudyEventKind::ForumThreadOpened,
             Self::ActorObligationAdmitted { .. } => StudyEventKind::ActorObligationAdmitted,
             Self::ActorObligationCompleted { .. } => StudyEventKind::ActorObligationCompleted,
+            Self::ActorObligationFailed { .. } => StudyEventKind::ActorObligationFailed,
             Self::ForumHeadFrozen { .. } => StudyEventKind::ForumHeadFrozen,
             Self::PopulationReplaced { .. } => StudyEventKind::PopulationReplaced,
             Self::ForumExposureAdmitted { .. } => StudyEventKind::ForumExposureAdmitted,
@@ -996,6 +1011,13 @@ pub(crate) fn append_command_fingerprint(bytes: &mut Vec<u8>, command: &StudyCom
             put_i64(bytes, obligation_id.value());
             put_i64(bytes, charged_budget.value());
         }
+        StudyCommand::FailActorObligation {
+            obligation_id,
+            reason_digest,
+        } => {
+            put_i64(bytes, obligation_id.value());
+            put_digest(bytes, *reason_digest);
+        }
         StudyCommand::FreezeForumHead {
             episode_id,
             thread_id,
@@ -1117,6 +1139,7 @@ pub(crate) fn insert_command_body(
         StudyCommand::OpenForumThread { forum_id, title } => transaction.execute("INSERT INTO command_study_transition(command_row_id, study_command_kind, forum_id, text_value) VALUES (?1, ?2, ?3, ?4)", params![command_row_id, kind, forum_id.value(), title.as_str()])?,
         StudyCommand::AdmitActorObligation { episode_id, phase, role, private_view_digest, prompt_digest, tool_digest, budget, read_budget, post_budget } => transaction.execute("INSERT INTO command_study_transition(command_row_id, study_command_kind, study_episode_id, population_phase, role_ordinal, private_view_digest, forum_prompt_digest, forum_tool_digest, budget_units, read_budget, post_budget) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)", params![command_row_id, kind, episode_id.value(), *phase as i64, i64::from(role.value()), private_view_digest.as_bytes().as_slice(), prompt_digest.as_bytes().as_slice(), tool_digest.as_bytes().as_slice(), budget.value(), read_budget.value(), post_budget.value()])?,
         StudyCommand::CompleteActorObligation { obligation_id, charged_budget } => transaction.execute("INSERT INTO command_study_transition(command_row_id, study_command_kind, obligation_id, charged_budget_units) VALUES (?1, ?2, ?3, ?4)", params![command_row_id, kind, obligation_id.value(), charged_budget.value()])?,
+        StudyCommand::FailActorObligation { obligation_id, reason_digest } => transaction.execute("INSERT INTO command_study_transition(command_row_id, study_command_kind, obligation_id, reason_digest) VALUES (?1, ?2, ?3, ?4)", params![command_row_id, kind, obligation_id.value(), reason_digest.as_bytes().as_slice()])?,
         StudyCommand::FreezeForumHead { episode_id, thread_id } => transaction.execute("INSERT INTO command_study_transition(command_row_id, study_command_kind, study_episode_id, thread_id) VALUES (?1, ?2, ?3, ?4)", params![command_row_id, kind, episode_id.value(), thread_id.value()])?,
         StudyCommand::ReplacePopulation {
             episode_id,
@@ -1552,6 +1575,27 @@ pub(crate) fn apply(
                 obligation_id: *obligation_id,
             })
         }
+        StudyCommand::FailActorObligation {
+            obligation_id,
+            reason_digest,
+        } => {
+            let state: Option<i64> = transaction
+                .query_row(
+                    "SELECT lifecycle_state FROM study_actor_obligations WHERE study_actor_obligation_id = ?1",
+                    [obligation_id.value()],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|_| Rejection::SubjectNotFound)?;
+            if state != Some(1) {
+                return Err(Rejection::CapabilityNoLongerActive);
+            }
+            transaction.execute("UPDATE study_actor_obligations SET lifecycle_state = 3, failed_by_command_id = ?1, failure_reason_digest = ?2 WHERE study_actor_obligation_id = ?3", params![command_row_id, reason_digest.as_bytes().as_slice(), obligation_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+            Ok(StudyEvent::ActorObligationFailed {
+                obligation_id: *obligation_id,
+                reason_digest: *reason_digest,
+            })
+        }
         StudyCommand::FreezeForumHead {
             episode_id,
             thread_id,
@@ -1560,7 +1604,7 @@ pub(crate) fn apply(
             if state != StudyEpisodeState::SourceActive {
                 return Err(Rejection::InvalidLifecycleTransition);
             }
-            let incomplete: i64 = transaction.query_row("SELECT COUNT(*) FROM study_actor_obligations WHERE study_episode_id = ?1 AND population_phase = 1 AND lifecycle_state != 2", [episode_id.value()], |row| row.get(0)).map_err(|_| Rejection::SubjectNotFound)?;
+            let incomplete: i64 = transaction.query_row("SELECT COUNT(*) FROM study_actor_obligations WHERE study_episode_id = ?1 AND population_phase = 1 AND lifecycle_state NOT IN (2, 3)", [episode_id.value()], |row| row.get(0)).map_err(|_| Rejection::SubjectNotFound)?;
             if incomplete != 0 {
                 return Err(Rejection::InvalidLifecycleTransition);
             }
@@ -1587,7 +1631,7 @@ pub(crate) fn apply(
             {
                 return Err(Rejection::InvalidLifecycleTransition);
             }
-            let source_live: i64 = transaction.query_row("SELECT COUNT(*) FROM study_actor_obligations WHERE study_episode_id = ?1 AND population_phase = 1 AND lifecycle_state != 2", [episode_id.value()], |row| row.get(0)).map_err(|_| Rejection::SubjectNotFound)?;
+            let source_live: i64 = transaction.query_row("SELECT COUNT(*) FROM study_actor_obligations WHERE study_episode_id = ?1 AND population_phase = 1 AND lifecycle_state NOT IN (2, 3)", [episode_id.value()], |row| row.get(0)).map_err(|_| Rejection::SubjectNotFound)?;
             if source_live != 0 {
                 return Err(Rejection::InvalidLifecycleTransition);
             }
@@ -1756,7 +1800,7 @@ pub(crate) fn apply(
             let all_obligations_terminal: i64 = transaction
                 .query_row(
                     "SELECT COUNT(*) FROM study_actor_obligations
-                 WHERE study_episode_id = ?1 AND lifecycle_state != 2",
+                 WHERE study_episode_id = ?1 AND lifecycle_state NOT IN (2, 3)",
                     [episode_id.value()],
                     |row| row.get(0),
                 )
@@ -2294,7 +2338,7 @@ fn close_episode(
     ) {
         return Err(Rejection::InvalidLifecycleTransition);
     }
-    let incomplete: i64 = transaction.query_row("SELECT COUNT(*) FROM study_actor_obligations WHERE study_episode_id = ?1 AND lifecycle_state != 2", [episode_id.value()], |row| row.get(0)).map_err(|_| Rejection::SubjectNotFound)?;
+    let incomplete: i64 = transaction.query_row("SELECT COUNT(*) FROM study_actor_obligations WHERE study_episode_id = ?1 AND lifecycle_state NOT IN (2, 3)", [episode_id.value()], |row| row.get(0)).map_err(|_| Rejection::SubjectNotFound)?;
     if incomplete != 0 {
         return Err(Rejection::InvalidLifecycleTransition);
     }
@@ -2453,6 +2497,13 @@ pub(crate) fn append_event_fingerprint(bytes: &mut Vec<u8>, event: &StudyEvent) 
         }
         StudyEvent::ActorObligationCompleted { obligation_id }
         | StudyEvent::DecisionRecorded { obligation_id } => put_i64(bytes, obligation_id.value()),
+        StudyEvent::ActorObligationFailed {
+            obligation_id,
+            reason_digest,
+        } => {
+            put_i64(bytes, obligation_id.value());
+            put_digest(bytes, *reason_digest);
+        }
         StudyEvent::ForumHeadFrozen {
             episode_id,
             thread_id,
@@ -2564,6 +2615,7 @@ pub(crate) fn insert_event_body(
         StudyEvent::ForumThreadOpened { thread_id, forum_id } => transaction.execute("INSERT INTO event_study_transition(event_id, study_event_kind, thread_id, forum_id) VALUES (?1, ?2, ?3, ?4)", params![event_id, kind, thread_id.value(), forum_id.value()])?,
         StudyEvent::ActorObligationAdmitted { obligation_id, actor_occurrence_id, episode_id, population_snapshot_id, phase } => transaction.execute("INSERT INTO event_study_transition(event_id, study_event_kind, primary_id, obligation_id, actor_occurrence_id, study_episode_id, population_phase) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)", params![event_id, kind, population_snapshot_id.value(), obligation_id.value(), actor_occurrence_id.value(), episode_id.value(), *phase as i64])?,
         StudyEvent::ActorObligationCompleted { obligation_id } | StudyEvent::DecisionRecorded { obligation_id } => transaction.execute("INSERT INTO event_study_transition(event_id, study_event_kind, obligation_id) VALUES (?1, ?2, ?3)", params![event_id, kind, obligation_id.value()])?,
+        StudyEvent::ActorObligationFailed { obligation_id, reason_digest } => transaction.execute("INSERT INTO event_study_transition(event_id, study_event_kind, obligation_id, body_digest) VALUES (?1, ?2, ?3, ?4)", params![event_id, kind, obligation_id.value(), reason_digest.as_bytes().as_slice()])?,
         StudyEvent::ForumHeadFrozen { episode_id, thread_id, head_message_ordinal } => transaction.execute("INSERT INTO event_study_transition(event_id, study_event_kind, study_episode_id, thread_id, through_ordinal) VALUES (?1, ?2, ?3, ?4, ?5)", params![event_id, kind, episode_id.value(), thread_id.value(), head_message_ordinal])?,
         StudyEvent::ForumExposureAdmitted { exposure_id, obligation_id, visible_from_message_ordinal, visible_through_message_ordinal } => transaction.execute("INSERT INTO event_study_transition(event_id, study_event_kind, primary_id, obligation_id, first_ordinal, through_ordinal) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![event_id, kind, exposure_id.value(), obligation_id.value(), visible_from_message_ordinal, visible_through_message_ordinal])?,
         StudyEvent::ForumMessagePublished { message_id, thread_id, message_ordinal, author_occurrence_id, kind: message_kind, body_digest } => transaction.execute("INSERT INTO event_study_transition(event_id, study_event_kind, message_id, thread_id, actor_occurrence_id, through_ordinal, message_kind, body_digest) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)", params![event_id, kind, message_id.value(), thread_id.value(), author_occurrence_id.value(), message_ordinal, *message_kind as i64, body_digest.as_bytes().as_slice()])?,
@@ -2613,6 +2665,7 @@ fn study_command_kind_from_i64(value: i64) -> Result<StudyCommandKind, StoreErro
         21 => Ok(StudyCommandKind::CloseEpisode),
         22 => Ok(StudyCommandKind::ForkEpisode),
         23 => Ok(StudyCommandKind::RetractForumMessage),
+        24 => Ok(StudyCommandKind::FailActorObligation),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }
@@ -2642,6 +2695,7 @@ fn study_event_kind_from_i64(value: i64) -> Result<StudyEventKind, StoreError> {
         21 => Ok(StudyEventKind::EpisodeClosed),
         22 => Ok(StudyEventKind::ExperimentalForkCreated),
         23 => Ok(StudyEventKind::ForumMessageRetracted),
+        24 => Ok(StudyEventKind::ActorObligationFailed),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }
@@ -2814,6 +2868,17 @@ pub(crate) fn decode_command_body(
                     row.1.ok_or(StoreError::InvalidStoredValue)?,
                 )
                 .map_err(|_| StoreError::InvalidStoredValue)?,
+            })
+        }
+        StudyCommandKind::FailActorObligation => {
+            let row: (Option<i64>, Option<Vec<u8>>) = connection.query_row(
+                "SELECT obligation_id, reason_digest FROM command_study_transition WHERE command_row_id = ?1",
+                [command_row_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+            Ok(StudyCommand::FailActorObligation {
+                obligation_id: stored(row.0)?,
+                reason_digest: stored_digest(row.1)?,
             })
         }
         StudyCommandKind::FreezeForumHead => {
@@ -3001,6 +3066,10 @@ pub(crate) fn decode_event_body(
         }),
         StudyEventKind::ActorObligationCompleted => Ok(StudyEvent::ActorObligationCompleted {
             obligation_id: stored(row.7)?,
+        }),
+        StudyEventKind::ActorObligationFailed => Ok(StudyEvent::ActorObligationFailed {
+            obligation_id: stored(row.7)?,
+            reason_digest: stored_digest(row.14)?,
         }),
         StudyEventKind::ForumHeadFrozen => Ok(StudyEvent::ForumHeadFrozen {
             episode_id: stored(row.4)?,

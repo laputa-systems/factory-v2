@@ -2234,9 +2234,14 @@ CREATE TABLE study_actor_obligations (
     reads_used INTEGER NOT NULL DEFAULT 0 CHECK (reads_used >= 0),
     post_budget INTEGER NOT NULL CHECK (post_budget > 0),
     posts_used INTEGER NOT NULL DEFAULT 0 CHECK (posts_used >= 0 AND posts_used <= post_budget),
-    lifecycle_state INTEGER NOT NULL CHECK (lifecycle_state IN (1, 2)),
+    lifecycle_state INTEGER NOT NULL CHECK (lifecycle_state IN (1, 2, 3)),
     admitted_by_command_id INTEGER NOT NULL,
     completed_by_command_id INTEGER,
+    failed_by_command_id INTEGER,
+    failure_reason_digest BLOB CHECK (length(failure_reason_digest) = 32),
+    CHECK((lifecycle_state = 1 AND completed_by_command_id IS NULL AND failed_by_command_id IS NULL AND failure_reason_digest IS NULL)
+       OR (lifecycle_state = 2 AND completed_by_command_id IS NOT NULL AND failed_by_command_id IS NULL AND failure_reason_digest IS NULL)
+       OR (lifecycle_state = 3 AND completed_by_command_id IS NULL AND failed_by_command_id IS NOT NULL AND failure_reason_digest IS NOT NULL)),
     UNIQUE(study_episode_id, population_phase, role_ordinal)
 );
 CREATE TABLE study_actor_occurrences (
@@ -2324,7 +2329,7 @@ CREATE TABLE study_experimental_forks (
 -- ledger.  The fixed columns are intentionally not a generic payload bucket.
 CREATE TABLE command_study_transition (
     command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id),
-    study_command_kind INTEGER NOT NULL CHECK (study_command_kind BETWEEN 1 AND 23),
+    study_command_kind INTEGER NOT NULL CHECK (study_command_kind BETWEEN 1 AND 24),
     application_revision_id INTEGER,
     protocol_revision_id INTEGER,
     world_revision_id INTEGER,
@@ -2377,7 +2382,7 @@ CREATE TABLE command_study_transition (
 );
 CREATE TABLE event_study_transition (
     event_id INTEGER PRIMARY KEY REFERENCES events(event_id),
-    study_event_kind INTEGER NOT NULL CHECK (study_event_kind BETWEEN 1 AND 23),
+    study_event_kind INTEGER NOT NULL CHECK (study_event_kind BETWEEN 1 AND 24),
     primary_id INTEGER,
     secondary_id INTEGER,
     tertiary_id INTEGER,
@@ -2396,6 +2401,6 @@ CREATE TABLE event_study_transition (
     body_digest BLOB,
     rendered_digest BLOB
 );
-PRAGMA user_version = 25;
+PRAGMA user_version = 26;
 COMMIT;
 PRAGMA foreign_keys = ON;

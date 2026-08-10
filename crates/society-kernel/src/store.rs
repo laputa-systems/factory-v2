@@ -65,7 +65,7 @@ const CURRENT_SCHEMA: &str = include_str!("../../../migrations/0001_kernel.sql")
 // Historical prototype schemas used versions one through thirteen. The collapsed
 // fresh schema deliberately occupies a noncolliding identity, so an old
 // ledger cannot be mistaken for current trusted physics.
-const CURRENT_SCHEMA_VERSION: i64 = 25;
+const CURRENT_SCHEMA_VERSION: i64 = 26;
 
 struct PiChildSpawnAdmissionInput<'a> {
     operating_cycle_id: OperatingCycleId,

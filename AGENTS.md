@@ -110,9 +110,10 @@ The existing implementation provides trusted physics plus a narrow,
 provider-free CL-001 control path: sealed study revisions, matched
 retained/reset episodes, distinct source and successor population snapshots,
 F0 Forum Threads, bounded attributed publication/read receipts, post and read
-quotas, atomic digest-bound correction release, decisions, measurements,
-closure, and ledger integrity replay. The application harness runs the closed
-eight-role synthetic world and reports its paired controls.
+quotas, terminal completion/failure, atomic digest-bound correction release,
+decisions, measurements, closure, and ledger integrity replay. The application
+harness runs the closed eight-role synthetic world and reports its paired
+controls.
 
 This does **not** make a live weak-actor experiment complete. The Pi host now
 accepts a closed Forum session-contract descriptor and verifies its digests,

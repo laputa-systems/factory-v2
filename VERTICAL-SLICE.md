@@ -113,7 +113,8 @@ An episode-local actor obligation binds:
 - one institution revision;
 - one bounded work item and deadline;
 - one capability subset and resource ceiling; and
-- one authority-closing completion, failure, or expiry.
+- one authority-closing completion or durable failure; a live deadline/expiry
+  transition remains required for a time-bearing runtime profile.
 
 It does not carry durable free-form memory. A successor actor receives only
 institutionally admitted state selected through its new obligation.
