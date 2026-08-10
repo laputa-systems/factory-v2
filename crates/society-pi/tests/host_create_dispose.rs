@@ -76,7 +76,7 @@ fn committed_host_create_then_dispose_is_sealed_without_a_provider_call() {
                     ("kind", string("forum_enabled_v1")),
                     (
                         "awarenessBlake3",
-                        string("b058dadccdc7c3fb8e2e3558bd16e726e1f00aa60fda5a849da20eb6e86ad46a"),
+                        string("c2db53f69595a724b745a3b0ccbee710b70ebea4b2cc06dfff902bd7d3e886ea"),
                     ),
                     (
                         "toolContractBlake3",

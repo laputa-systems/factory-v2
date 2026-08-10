@@ -14,23 +14,23 @@ export function projectAgentSessionEvent(event: AgentSessionEvent): ProjectedAge
 		case "agent_start":
 			return { type: "agent_start" };
 		case "agent_end":
-			return { type: "agent_end", messages: event.messages.map(toSdkJsonValue), willRetry: event.willRetry };
+			return { type: "agent_end", messages: event.messages.map(toSdkAgentMessage), willRetry: event.willRetry };
 		case "agent_settled":
 			return { type: "agent_settled" };
 		case "turn_start":
 			return { type: "turn_start" };
 		case "turn_end":
-			return { type: "turn_end", message: toSdkJsonValue(event.message), toolResults: event.toolResults.map(toSdkJsonValue) };
+			return { type: "turn_end", message: toSdkAgentMessage(event.message), toolResults: event.toolResults.map(toSdkAgentMessage) };
 		case "message_start":
-			return { type: "message_start", message: toSdkJsonValue(event.message) };
+			return { type: "message_start", message: toSdkAgentMessage(event.message) };
 		case "message_update":
 			return {
 				type: "message_update",
-				message: toSdkJsonValue(event.message),
-				assistantMessageEvent: toSdkJsonValue(event.assistantMessageEvent),
+				message: toSdkAgentMessage(event.message),
+				assistantMessageEvent: toSdkJsonValueWithOptionalMembers(event.assistantMessageEvent),
 			};
 		case "message_end":
-			return { type: "message_end", message: toSdkJsonValue(event.message) };
+			return { type: "message_end", message: toSdkAgentMessage(event.message) };
 		case "tool_execution_start":
 			return { type: "tool_execution_start", toolCallIdentity: event.toolCallId, toolName: event.toolName, args: toSdkJsonValue(event.args) };
 		case "tool_execution_update":
@@ -134,13 +134,31 @@ function toSdkJsonValue(value: unknown): SdkJsonValue {
 	return validateSdkJsonValue(value, new Set<object>());
 }
 
+function toSdkAgentMessage(value: unknown): SdkJsonValue {
+	if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+		const role = (value as { readonly role?: unknown }).role;
+		if (role === "user" || role === "assistant" || role === "toolResult") return toSdkJsonValueWithOptionalMembers(value);
+	}
+	return toSdkJsonValue(value);
+}
+
+/**
+ * Pi's typed streaming messages contain optional fields which some providers
+ * materialize as own properties with `undefined` values. They have no JSON
+ * representation, so omit only those typed SDK members while retaining the
+ * strict validator for general evidence and all array values.
+ */
+function toSdkJsonValueWithOptionalMembers(value: unknown): SdkJsonValue {
+	return validateSdkJsonValue(value, new Set<object>(), true);
+}
+
 /**
  * Pi event evidence is projected field-for-field, but never through
  * JSON.stringify/parse. That shortcut silently turns non-finite numbers into
  * null, omits undefined object members, and can make a malformed SDK object
  * look admissible. The adapter instead accepts the closed JSON subset only.
  */
-function validateSdkJsonValue(value: unknown, ancestors: Set<object>): SdkJsonValue {
+function validateSdkJsonValue(value: unknown, ancestors: Set<object>, omitUndefinedObjectMembers = false): SdkJsonValue {
 	if (value === null || typeof value === "boolean" || typeof value === "string") return value;
 	if (typeof value === "number") {
 		if (!Number.isFinite(value) || Object.is(value, -0)) throw new Error("sdk_value_not_json_safe");
@@ -153,7 +171,7 @@ function validateSdkJsonValue(value: unknown, ancestors: Set<object>): SdkJsonVa
 		try {
 			const output: SdkJsonValue[] = [];
 			for (let index = 0; index < value.length; index += 1) {
-				output.push(validateSdkJsonValue(value[index], ancestors));
+				output.push(validateSdkJsonValue(value[index], ancestors, omitUndefinedObjectMembers));
 			}
 			return output;
 		} finally {
@@ -177,10 +195,14 @@ function validateSdkJsonValue(value: unknown, ancestors: Set<object>): SdkJsonVa
 		const output: Record<string, SdkJsonValue> = Object.create(null) as Record<string, SdkJsonValue>;
 		for (const key of propertyNames) {
 			const descriptor = Object.getOwnPropertyDescriptor(value, key);
-			if (descriptor === undefined || !descriptor.enumerable || !("value" in descriptor) || descriptor.value === undefined) {
+			if (descriptor === undefined || !descriptor.enumerable || !("value" in descriptor)) {
 				throw new Error("sdk_value_not_json_safe");
 			}
-			output[key] = validateSdkJsonValue(descriptor.value, ancestors);
+			if (descriptor.value === undefined) {
+				if (omitUndefinedObjectMembers) continue;
+				throw new Error("sdk_value_not_json_safe");
+			}
+			output[key] = validateSdkJsonValue(descriptor.value, ancestors, omitUndefinedObjectMembers);
 		}
 		return output;
 	} finally {

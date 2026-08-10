@@ -25,7 +25,7 @@ test("protocol: decodes the complete pinned CreateSession profile and rejects am
 	assert.equal(command.payload.settings.images, "blocked");
 	assert.deepEqual(command.payload.forumContract, {
 		kind: "forum_enabled_v1",
-		awarenessBlake3: "b058dadccdc7c3fb8e2e3558bd16e726e1f00aa60fda5a849da20eb6e86ad46a",
+		awarenessBlake3: "c2db53f69595a724b745a3b0ccbee710b70ebea4b2cc06dfff902bd7d3e886ea",
 		toolContractBlake3: "738e664f66be09dfb7f8e5e4873521d7b9f1600d385dd0c8a41c80ca087566be",
 	});
 
@@ -46,6 +46,30 @@ test("protocol: admits the closed workspace-isolated runner profile", () => {
 	const command = decodeCommand(1, "CreateSession", isolated);
 	assert.equal(command.command, "CreateSession");
 	if (command.command === "CreateSession") assert.equal(command.payload.toolProfile, "workspace_isolated_v1");
+});
+
+test("protocol: admits each saved OpenRouter model while keeping model and catalog paired", () => {
+	for (const [modelId, canonicalSlug, contextWindow, maxTokens, inputCost, outputCost, cacheReadCost] of [
+		["inclusionai/ling-3.0-tiny:free", "inclusionai/ling-3.0-tiny:free", 262_144, 32_768, "0", "0", "0"],
+		["poolside/laguna-xs-2.1:free", "poolside/laguna-xs-2.1:free", 262_144, 32_768, "0", "0", "0"],
+		["inclusionai/ling-2.6-flash", "inclusionai/ling-2.6-flash", 262_144, 32_768, "0.01", "0.03", "0.002"],
+	] as const) {
+		const payload = createSessionPayload();
+		(payload.model as Record<string, unknown>).modelId = modelId;
+		(payload.model as Record<string, unknown>).thinkingLevel = modelId === "inclusionai/ling-2.6-flash" ? "off" : "high";
+		const catalog = payload.modelCatalog as Record<string, unknown>;
+		const effectiveModel = catalog.effectiveModel as Record<string, unknown>;
+		effectiveModel.modelId = modelId;
+		effectiveModel.canonicalSlug = canonicalSlug;
+		effectiveModel.contextWindow = contextWindow;
+		effectiveModel.maxTokens = maxTokens;
+		effectiveModel.inputUsdPerMillion = { kind: "Known", usdPerMillion: inputCost };
+		effectiveModel.outputUsdPerMillion = { kind: "Known", usdPerMillion: outputCost };
+		effectiveModel.cacheReadUsdPerMillion = { kind: "Known", usdPerMillion: cacheReadCost };
+		const command = decodeCommand(1, "CreateSession", payload);
+		assert.equal(command.command, "CreateSession");
+		if (command.command === "CreateSession") assert.equal(command.payload.model.modelId, modelId);
+	}
 });
 
 test("protocol: workspace-isolated profile cannot claim Forum tools it does not install", () => {
@@ -86,7 +110,7 @@ test("protocol: rejects noncanonical paths, model drift, and nonempty GetState p
 	assert.throws(() => decodeCommand(1, "CreateSession", trailingCreatePath), ProtocolDecodeError);
 
 	const modelDrift = createSessionPayload();
-	(modelDrift.model as Record<string, unknown>).modelId = "deepseek/other";
+	(modelDrift.model as Record<string, unknown>).modelId = "inclusionai/other";
 	assert.throws(() => decodeCommand(1, "CreateSession", modelDrift), ProtocolDecodeError);
 
 	assert.throws(() => decodeCommand(1, "GetState", { arbitrary: "no" }), ProtocolDecodeError);

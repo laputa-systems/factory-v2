@@ -11,11 +11,20 @@ export const ADAPTER_PROTOCOL_VERSION = "society-pi-host/v4" as const;
 export const ADAPTER_VERSION = "1" as const;
 export const PINNED_PI_SDK_VERSION = "0.83.0" as const;
 export const PINNED_PROVIDER = "openrouter" as const;
+/** The original paid treatment remains the default profile model. */
 export const PINNED_MODEL = "deepseek/deepseek-v4-flash-0731" as const;
 export const PINNED_CANONICAL_MODEL_SLUG = "deepseek/deepseek-v4-flash-20260731" as const;
+/** Additional provider-scoped models admitted by the saved OpenRouter catalog. */
+export const ADMITTED_LING_MODEL = "inclusionai/ling-3.0-tiny:free" as const;
+export const ADMITTED_LING_CANONICAL_MODEL_SLUG = "inclusionai/ling-3.0-tiny:free" as const;
+export const ADMITTED_LAGUNA_MODEL = "poolside/laguna-xs-2.1:free" as const;
+export const ADMITTED_LAGUNA_CANONICAL_MODEL_SLUG = "poolside/laguna-xs-2.1:free" as const;
+export const ADMITTED_LING_26_FLASH_MODEL = "inclusionai/ling-2.6-flash" as const;
+export const ADMITTED_LING_26_FLASH_CANONICAL_MODEL_SLUG = "inclusionai/ling-2.6-flash" as const;
 export const PINNED_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1" as const;
 export const PINNED_THINKING_LEVEL = "high" as const;
-export const PINNED_FORUM_F0_AWARENESS_BLAKE3 = "b058dadccdc7c3fb8e2e3558bd16e726e1f00aa60fda5a849da20eb6e86ad46a" as Blake3Digest;
+export const ADMITTED_NON_REASONING_THINKING_LEVEL = "off" as const;
+export const PINNED_FORUM_F0_AWARENESS_BLAKE3 = "c2db53f69595a724b745a3b0ccbee710b70ebea4b2cc06dfff902bd7d3e886ea" as Blake3Digest;
 export const PINNED_FORUM_F0_TOOL_CONTRACT_BLAKE3 = "738e664f66be09dfb7f8e5e4873521d7b9f1600d385dd0c8a41c80ca087566be" as Blake3Digest;
 export const MAX_JSONL_FRAME_BYTES = 1024 * 1024;
 /**
@@ -29,8 +38,30 @@ export type AdapterProtocolVersion = typeof ADAPTER_PROTOCOL_VERSION;
 export type AdapterVersion = typeof ADAPTER_VERSION;
 export type PiSdkVersion = typeof PINNED_PI_SDK_VERSION;
 export type ProviderId = typeof PINNED_PROVIDER;
-export type ModelId = typeof PINNED_MODEL;
-export type ThinkingLevel = typeof PINNED_THINKING_LEVEL;
+export type ModelId = typeof PINNED_MODEL | typeof ADMITTED_LING_MODEL | typeof ADMITTED_LAGUNA_MODEL | typeof ADMITTED_LING_26_FLASH_MODEL;
+export type CanonicalModelSlug = typeof PINNED_CANONICAL_MODEL_SLUG | typeof ADMITTED_LING_CANONICAL_MODEL_SLUG | typeof ADMITTED_LAGUNA_CANONICAL_MODEL_SLUG | typeof ADMITTED_LING_26_FLASH_CANONICAL_MODEL_SLUG;
+export type ThinkingLevel = typeof PINNED_THINKING_LEVEL | typeof ADMITTED_NON_REASONING_THINKING_LEVEL;
+
+const ADMITTED_MODEL_PAIRS = [
+	[PINNED_MODEL, PINNED_CANONICAL_MODEL_SLUG],
+	[ADMITTED_LING_MODEL, ADMITTED_LING_CANONICAL_MODEL_SLUG],
+	[ADMITTED_LAGUNA_MODEL, ADMITTED_LAGUNA_CANONICAL_MODEL_SLUG],
+	[ADMITTED_LING_26_FLASH_MODEL, ADMITTED_LING_26_FLASH_CANONICAL_MODEL_SLUG],
+] as const;
+
+export function isAdmittedModelId(value: unknown): value is ModelId {
+	return ADMITTED_MODEL_PAIRS.some(([modelId]) => value === modelId);
+}
+
+function isAdmittedModelPair(modelId: ModelId, canonicalSlug: CanonicalModelSlug): boolean {
+	return ADMITTED_MODEL_PAIRS.some(([admittedModelId, admittedCanonicalSlug]) => modelId === admittedModelId && canonicalSlug === admittedCanonicalSlug);
+}
+
+export function isAdmittedThinkingLevel(modelId: ModelId, thinkingLevel: ThinkingLevel): boolean {
+	return modelId === ADMITTED_LING_26_FLASH_MODEL
+		? thinkingLevel === ADMITTED_NON_REASONING_THINKING_LEVEL
+		: thinkingLevel === PINNED_THINKING_LEVEL;
+}
 
 declare const sessionIdentityBrand: unique symbol;
 declare const correlationIdentityBrand: unique symbol;
@@ -56,7 +87,7 @@ export type PositiveInteger = number & { readonly [positiveIntegerBrand]: "Posit
 export type LedgerFrontier = number & { readonly [ledgerFrontierBrand]: "LedgerFrontier" };
 export type Binary64BigEndianHex = string & { readonly [binary64BigEndianHexBrand]: "Binary64BigEndianHex" };
 export type NodeRuntimeVersion = string & { readonly [nodeRuntimeVersionBrand]: "NodeRuntimeVersion" };
-/** Canonical nonzero base-10 USD amount, never a JavaScript display float. */
+/** Canonical nonnegative base-10 USD amount, never a JavaScript display float. */
 export type UsdPerMillionDecimal = string & { readonly [usdPerMillionDecimalBrand]: "UsdPerMillionDecimal" };
 
 const ID_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/u;
@@ -168,7 +199,7 @@ export function providerCostObservation(value: number): ProviderCostObservationV
 }
 
 export function usdPerMillionDecimal(value: string): UsdPerMillionDecimal {
-	if (!USD_PER_MILLION_PATTERN.test(value) || Number(value) <= 0 || !Number.isFinite(Number(value))) {
+	if (!USD_PER_MILLION_PATTERN.test(value) || Number(value) < 0 || !Number.isFinite(Number(value))) {
 		throw new ProtocolDecodeError("invalid_frame");
 	}
 	return value as UsdPerMillionDecimal;
@@ -188,11 +219,12 @@ export function nodeRuntimeVersion(value: string): NodeRuntimeVersion {
 export type SessionKind = "TaskAttempt" | "RootAuthorityOffice";
 /**
  * `workspace_isolated_v1` is the opt-in runner profile for actors whose Pi
- * file tools must be bound to the admitted cwd. It intentionally has no shell,
- * search subprocess, Forum tool, or native-child capability.
+ * file tools must be bound to the admitted cwd. `forum_isolated_v1` is the
+ * separately admitted live smoke profile: its only active tools are the two
+ * daemon-mediated Forum calls below.
  */
-export type ToolProfile = "read_execute_v1" | "read_write_v1" | "workspace_mutation_v1" | "workspace_isolated_v1";
-export type PiToolName = "read" | "bash" | "edit" | "write" | "grep" | "find" | "ls";
+export type ToolProfile = "read_execute_v1" | "read_write_v1" | "workspace_mutation_v1" | "workspace_isolated_v1" | "forum_isolated_v1";
+export type PiToolName = "read" | "bash" | "edit" | "write" | "grep" | "find" | "ls" | "society_forum_read" | "society_forum_post";
 export type QueueMode = "all" | "one-at-a-time";
 export type CompactionMode = "enabled" | "disabled";
 export type PromptPurpose = "TaskAssignment" | "OfficeTurn";
@@ -205,6 +237,7 @@ const TOOL_PROFILE_TOOLS: Readonly<Record<ToolProfile, readonly PiToolName[]>> =
 	read_write_v1: ["read", "write"],
 	workspace_mutation_v1: ["read", "bash", "edit", "write", "grep", "find", "ls"],
 	workspace_isolated_v1: ["read", "edit", "write", "ls"],
+	forum_isolated_v1: ["society_forum_read", "society_forum_post"],
 };
 
 export function toolsForProfile(profile: ToolProfile): readonly PiToolName[] {
@@ -308,7 +341,7 @@ export interface EffectiveModelDescriptorV1 {
 	readonly baseUrl: typeof PINNED_OPENROUTER_BASE_URL;
 	readonly api: "openai-completions";
 	readonly modelId: ModelId;
-	readonly canonicalSlug: typeof PINNED_CANONICAL_MODEL_SLUG;
+	readonly canonicalSlug: CanonicalModelSlug;
 	readonly input: "text_only";
 	readonly contextWindow: PositiveInteger;
 	readonly maxTokens: PositiveInteger;
@@ -338,9 +371,52 @@ export const PINNED_EFFECTIVE_MODEL_DESCRIPTOR_V1: Omit<EffectiveModelDescriptor
 	cacheWriteUsdPerMillion: { kind: "Absent" },
 };
 
+export const ADMITTED_LING_EFFECTIVE_MODEL_DESCRIPTOR_V1: Omit<EffectiveModelDescriptorV1, "provider"> = {
+	baseUrl: PINNED_OPENROUTER_BASE_URL,
+	api: "openai-completions",
+	modelId: ADMITTED_LING_MODEL,
+	canonicalSlug: ADMITTED_LING_CANONICAL_MODEL_SLUG,
+	input: "text_only",
+	contextWindow: positiveInteger(262_144),
+	maxTokens: positiveInteger(32_768),
+	inputUsdPerMillion: { kind: "Known", usdPerMillion: usdPerMillionDecimal("0") },
+	outputUsdPerMillion: { kind: "Known", usdPerMillion: usdPerMillionDecimal("0") },
+	cacheReadUsdPerMillion: { kind: "Known", usdPerMillion: usdPerMillionDecimal("0") },
+	cacheWriteUsdPerMillion: { kind: "Absent" },
+};
+
+export const ADMITTED_LAGUNA_EFFECTIVE_MODEL_DESCRIPTOR_V1: Omit<EffectiveModelDescriptorV1, "provider"> = {
+	...ADMITTED_LING_EFFECTIVE_MODEL_DESCRIPTOR_V1,
+	modelId: ADMITTED_LAGUNA_MODEL,
+	canonicalSlug: ADMITTED_LAGUNA_CANONICAL_MODEL_SLUG,
+};
+
+export const ADMITTED_LING_26_FLASH_EFFECTIVE_MODEL_DESCRIPTOR_V1: Omit<EffectiveModelDescriptorV1, "provider"> = {
+	baseUrl: PINNED_OPENROUTER_BASE_URL,
+	api: "openai-completions",
+	modelId: ADMITTED_LING_26_FLASH_MODEL,
+	canonicalSlug: ADMITTED_LING_26_FLASH_CANONICAL_MODEL_SLUG,
+	input: "text_only",
+	contextWindow: positiveInteger(262_144),
+	maxTokens: positiveInteger(32_768),
+	inputUsdPerMillion: { kind: "Known", usdPerMillion: usdPerMillionDecimal("0.01") },
+	outputUsdPerMillion: { kind: "Known", usdPerMillion: usdPerMillionDecimal("0.03") },
+	cacheReadUsdPerMillion: { kind: "Known", usdPerMillion: usdPerMillionDecimal("0.002") },
+	cacheWriteUsdPerMillion: { kind: "Absent" },
+};
+
+function admittedEffectiveModelDescriptor(modelId: ModelId, canonicalSlug: CanonicalModelSlug): Omit<EffectiveModelDescriptorV1, "provider"> {
+	if (modelId === PINNED_MODEL && canonicalSlug === PINNED_CANONICAL_MODEL_SLUG) return PINNED_EFFECTIVE_MODEL_DESCRIPTOR_V1;
+	if (modelId === ADMITTED_LING_MODEL && canonicalSlug === ADMITTED_LING_CANONICAL_MODEL_SLUG) return ADMITTED_LING_EFFECTIVE_MODEL_DESCRIPTOR_V1;
+	if (modelId === ADMITTED_LAGUNA_MODEL && canonicalSlug === ADMITTED_LAGUNA_CANONICAL_MODEL_SLUG) return ADMITTED_LAGUNA_EFFECTIVE_MODEL_DESCRIPTOR_V1;
+	if (modelId === ADMITTED_LING_26_FLASH_MODEL && canonicalSlug === ADMITTED_LING_26_FLASH_CANONICAL_MODEL_SLUG) return ADMITTED_LING_26_FLASH_EFFECTIVE_MODEL_DESCRIPTOR_V1;
+	throw new ProtocolDecodeError("invalid_frame");
+}
+
 export function assertPinnedModelCatalogPolicy(policy: ModelCatalogPolicyV1): ModelCatalogPolicyV1 {
 	const model = policy.effectiveModel;
-	const expected = PINNED_EFFECTIVE_MODEL_DESCRIPTOR_V1;
+	if (!isAdmittedModelPair(model.modelId, model.canonicalSlug)) throw new ProtocolDecodeError("invalid_frame");
+	const expected = admittedEffectiveModelDescriptor(model.modelId, model.canonicalSlug);
 	if (
 		model.provider !== PINNED_PROVIDER || model.baseUrl !== expected.baseUrl || model.api !== expected.api ||
 		model.modelId !== expected.modelId || model.canonicalSlug !== expected.canonicalSlug || model.input !== expected.input ||
@@ -398,6 +474,12 @@ export interface DisposePayload {
 	readonly reason: DisposeReason;
 }
 
+export interface ForumToolResultPayload {
+	readonly toolCallIdentity: string;
+	readonly result: SdkJsonValue;
+	readonly isError: boolean;
+}
+
 interface InboundFrameBase {
 	readonly protocolVersion: AdapterProtocolVersion;
 	readonly sequence: BoundarySequence;
@@ -440,6 +522,11 @@ export interface DisposeCommand extends InboundFrameBase {
 	readonly payload: DisposePayload;
 }
 
+export interface ForumToolResultCommand extends InboundFrameBase {
+	readonly command: "ForumToolResult";
+	readonly payload: ForumToolResultPayload;
+}
+
 export type InboundFrame =
 	| CreateSessionCommand
 	| PromptCommand
@@ -447,7 +534,8 @@ export type InboundFrame =
 	| SteerCommand
 	| AbortCommand
 	| GetStateCommand
-	| DisposeCommand;
+	| DisposeCommand
+	| ForumToolResultCommand;
 
 export type AdapterPhase = "Inert" | "Creating" | "Ready" | "Closing" | "Disposed" | "Fatal";
 export type AdapterFailureCode =
@@ -600,6 +688,14 @@ export interface AgentEventFrame extends OutboundFrameBase {
 	readonly agentEvent: ProjectedAgentEvent;
 }
 
+export interface ForumToolCallFrame extends OutboundFrameBase {
+	readonly event: "ForumToolCall";
+	readonly correlationIdentity: CorrelationIdentity;
+	readonly toolCallIdentity: string;
+	readonly toolName: "society_forum_read" | "society_forum_post";
+	readonly args: SdkJsonValue;
+}
+
 export interface UsageSnapshotFrame extends OutboundFrameBase {
 	readonly event: "UsageSnapshot";
 	readonly correlationIdentity?: CorrelationIdentity;
@@ -660,6 +756,7 @@ export type OutboundFrame =
 	| SessionReadyFrame
 	| CommandResultFrame
 	| AgentEventFrame
+	| ForumToolCallFrame
 	| UsageSnapshotFrame
 	| SettledFrame
 	| DisposedFrame
@@ -711,9 +808,16 @@ export function decodeInboundJsonl(line: string): InboundFrame {
 			return { ...base, command, payload: {} };
 		case "Dispose":
 			return { ...base, command, payload: decodeDisposePayload(payload) };
+		case "ForumToolResult":
+			return { ...base, command, payload: decodeForumToolResultPayload(payload) };
 		default:
 			throw new ProtocolDecodeError("invalid_frame");
 	}
+}
+
+/** Serialize a frame only after the caller has constructed its closed shape. */
+export function encodeInboundJsonl(frame: InboundFrame): string {
+	return JSON.stringify(frame);
 }
 
 /**
@@ -813,14 +917,23 @@ function decodeCreateSessionPayload(value: Record<string, unknown>): CreateSessi
 	requireExactKeys(model, ["provider", "modelId", "thinkingLevel"]);
 	const settings = requiredRecord(value.settings);
 	const modelCatalog = requiredRecord(value.modelCatalog);
+	const modelId = requiredAdmittedModelId(model, "modelId");
+	const thinkingLevel = requiredOneOf(model, "thinkingLevel", [PINNED_THINKING_LEVEL, ADMITTED_NON_REASONING_THINKING_LEVEL] as const);
+	if (!isAdmittedThinkingLevel(modelId, thinkingLevel)) throw new ProtocolDecodeError("invalid_frame");
+	const admittedCatalog = assertPinnedModelCatalogPolicy(decodeModelCatalogPolicy(modelCatalog));
+	if (modelId !== admittedCatalog.effectiveModel.modelId) throw new ProtocolDecodeError("invalid_frame");
 	const forumContract = decodeForumSessionContract(requiredRecord(value.forumContract));
 	const toolProfile = requiredOneOf(value, "toolProfile", [
 		"read_execute_v1",
 		"read_write_v1",
 		"workspace_mutation_v1",
 		"workspace_isolated_v1",
+		"forum_isolated_v1",
 	] as const);
 	if (toolProfile === "workspace_isolated_v1" && forumContract.kind !== "sequestered_v1") {
+		throw new ProtocolDecodeError("invalid_frame");
+	}
+	if (toolProfile === "forum_isolated_v1" && forumContract.kind !== "forum_enabled_v1") {
 		throw new ProtocolDecodeError("invalid_frame");
 	}
 	return {
@@ -834,10 +947,10 @@ function decodeCreateSessionPayload(value: Record<string, unknown>): CreateSessi
 		systemPromptDigest: blake3Digest(requiredString(value, "systemPromptDigest")),
 		model: {
 			provider: requiredLiteral(model, "provider", PINNED_PROVIDER),
-			modelId: requiredLiteral(model, "modelId", PINNED_MODEL),
-			thinkingLevel: requiredLiteral(model, "thinkingLevel", PINNED_THINKING_LEVEL),
+			modelId,
+			thinkingLevel,
 		},
-		modelCatalog: assertPinnedModelCatalogPolicy(decodeModelCatalogPolicy(modelCatalog)),
+		modelCatalog: admittedCatalog,
 		toolProfile,
 		settings: assertPinnedActorModelPolicy(decodeSettings(settings)),
 		forumContract,
@@ -874,8 +987,8 @@ function decodeModelCatalogPolicy(value: Record<string, unknown>): ModelCatalogP
 			provider: requiredLiteral(model, "provider", PINNED_PROVIDER),
 			baseUrl: requiredLiteral(model, "baseUrl", PINNED_OPENROUTER_BASE_URL),
 			api: requiredLiteral(model, "api", "openai-completions"),
-			modelId: requiredLiteral(model, "modelId", PINNED_MODEL),
-			canonicalSlug: requiredLiteral(model, "canonicalSlug", PINNED_CANONICAL_MODEL_SLUG),
+			modelId: requiredAdmittedModelId(model, "modelId"),
+			canonicalSlug: requiredCanonicalModelSlug(model, "canonicalSlug"),
 			input: requiredLiteral(model, "input", "text_only"),
 			contextWindow: positiveInteger(requiredSafeInteger(model, "contextWindow")),
 			maxTokens: positiveInteger(requiredSafeInteger(model, "maxTokens")),
@@ -994,6 +1107,15 @@ function decodeDisposePayload(value: Record<string, unknown>): DisposePayload {
 	};
 }
 
+function decodeForumToolResultPayload(value: Record<string, unknown>): ForumToolResultPayload {
+	requireExactKeys(value, ["toolCallIdentity", "result", "isError"]);
+	return {
+		toolCallIdentity: requiredNonEmptyString(value, "toolCallIdentity"),
+		result: sdkJsonValue(value.result),
+		isError: requiredBoolean(value, "isError"),
+	};
+}
+
 function requiredRecord(value: unknown): Record<string, unknown> {
 	if (typeof value !== "object" || value === null || Array.isArray(value)) throw new ProtocolDecodeError("invalid_frame");
 	return value as Record<string, unknown>;
@@ -1015,6 +1137,24 @@ function requiredString(value: Record<string, unknown>, key: string): string {
 	const candidate = value[key];
 	if (typeof candidate !== "string") throw new ProtocolDecodeError("invalid_frame");
 	return candidate;
+}
+
+function requiredBoolean(value: Record<string, unknown>, key: string): boolean {
+	const candidate = value[key];
+	if (typeof candidate !== "boolean") throw new ProtocolDecodeError("invalid_frame");
+	return candidate;
+}
+
+function sdkJsonValue(value: unknown, depth = 0): SdkJsonValue {
+	if (depth > MAX_JSON_NESTING) throw new ProtocolDecodeError("invalid_frame");
+	if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+	if (typeof value === "number" && Number.isFinite(value) && !Object.is(value, -0)) return value;
+	if (Array.isArray(value)) return value.map((item) => sdkJsonValue(item, depth + 1));
+	if (typeof value === "object") {
+		const record = value as Record<string, unknown>;
+		return Object.fromEntries(Object.entries(record).map(([key, item]) => [key, sdkJsonValue(item, depth + 1)]));
+	}
+	throw new ProtocolDecodeError("invalid_frame");
 }
 
 function requiredNonEmptyString(value: Record<string, unknown>, key: string): string {
@@ -1044,6 +1184,20 @@ function requiredAbsolutePath(value: Record<string, unknown>, key: string): Abso
 function requiredLiteral<const T extends string | boolean>(value: Record<string, unknown>, key: string, expected: T): T {
 	if (value[key] !== expected) throw new ProtocolDecodeError("invalid_frame");
 	return expected;
+}
+
+function requiredAdmittedModelId(value: Record<string, unknown>, key: string): ModelId {
+	const candidate = requiredString(value, key);
+	if (!isAdmittedModelId(candidate)) throw new ProtocolDecodeError("invalid_frame");
+	return candidate;
+}
+
+function requiredCanonicalModelSlug(value: Record<string, unknown>, key: string): CanonicalModelSlug {
+	const candidate = requiredString(value, key);
+	if (candidate !== PINNED_CANONICAL_MODEL_SLUG && candidate !== ADMITTED_LING_CANONICAL_MODEL_SLUG && candidate !== ADMITTED_LAGUNA_CANONICAL_MODEL_SLUG && candidate !== ADMITTED_LING_26_FLASH_CANONICAL_MODEL_SLUG) {
+		throw new ProtocolDecodeError("invalid_frame");
+	}
+	return candidate;
 }
 
 function requiredOneOf<const T extends readonly string[]>(value: Record<string, unknown>, key: string, allowed: T): T[number] {

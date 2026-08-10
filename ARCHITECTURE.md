@@ -276,10 +276,13 @@ experimental forks, and materialized-state integrity replay. The
 correction-latency application owns the synthetic world, analysis-only
 evaluator, deterministic actor doubles, and paired report.
 
-Not implemented are a live study scheduler, Pi custom-tool transport, Forum
-obligation binding to actual Pi/native-child custody, knowledge promotion, or
-general institution-policy runtime. Product-delivery mechanics remain dormant
-and outside the present slice.
+Not implemented are a daemon-owned live study scheduler, Forum-obligation
+binding to actual resident Pi/native-child custody, knowledge promotion, or
+general institution-policy runtime. The Pi host has a separately admitted
+closed Forum custom-tool transport and a reduced direct qualification smoke;
+that adapter path does not establish daemon custody or canonical study
+evidence. Product-delivery mechanics remain dormant and outside the present
+slice.
 
 The next implementation work is limited to the contracts required by CL-001.
 No general swarm, hierarchy, reproduction, RL, or self-improvement framework is

@@ -28,11 +28,12 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import { blake3Hex } from "./digest.js";
+import { forumToolDefinitions, type ForumToolCallHandler } from "./forum.js";
 
 import {
-	PINNED_MODEL,
 	PINNED_PROVIDER,
-	PINNED_THINKING_LEVEL,
+	isAdmittedModelId,
+	isAdmittedThinkingLevel,
 	absolutePath,
 	assertPinnedActorModelPolicy,
 	assertPinnedModelCatalogPolicy,
@@ -74,7 +75,7 @@ export interface SdkSession {
 }
 
 export interface SdkRuntime {
-	create(sessionIdentity: SessionIdentity, payload: CreateSessionPayload): Promise<SdkSession>;
+	create(sessionIdentity: SessionIdentity, payload: CreateSessionPayload, forumToolCall?: ForumToolCallHandler): Promise<SdkSession>;
 }
 
 /**
@@ -94,7 +95,7 @@ export class PinnedPiSdkRuntime implements SdkRuntime {
 	/** Test-only race seam; production supplies no hook and has no ambient discovery. */
 	constructor(private readonly constructionHooks: { readonly afterCatalogRead?: (modelsPath: AbsolutePath) => Promise<void> } = {}) {}
 
-	async create(sessionIdentity: SessionIdentity, payload: CreateSessionPayload): Promise<SdkSession> {
+	async create(sessionIdentity: SessionIdentity, payload: CreateSessionPayload, forumToolCall?: ForumToolCallHandler): Promise<SdkSession> {
 		assertSystemPromptDigest(payload);
 		assertExactCreatePayload(payload);
 
@@ -111,8 +112,8 @@ export class PinnedPiSdkRuntime implements SdkRuntime {
 				allowModelNetwork: false,
 			});
 			await assertCatalogUnchanged(catalog);
-			const model = modelRuntime.getModel(PINNED_PROVIDER, PINNED_MODEL);
-			if (!model || model.provider !== PINNED_PROVIDER || model.id !== PINNED_MODEL) {
+			const model = modelRuntime.getModel(payload.model.provider, payload.model.modelId);
+			if (!model || model.provider !== payload.model.provider || model.id !== payload.model.modelId) {
 				throw new SdkConstructionError("execution_profile_drift");
 			}
 			assertEffectiveBillingTreatment(model, payload.modelCatalog.effectiveModel);
@@ -124,14 +125,19 @@ export class PinnedPiSdkRuntime implements SdkRuntime {
 				cwd: payload.cwd,
 				agentDir: catalog.agentDirectory,
 				model,
-				thinkingLevel: "high",
+				thinkingLevel: payload.model.thinkingLevel,
 				modelRuntime,
 				resourceLoader,
 				settingsManager,
 				sessionManager,
 				tools: [...toolsForProfile(payload.toolProfile)],
 				excludeTools: [],
-				customTools: workspaceToolDefinitions(payload.cwd, payload.toolProfile),
+				customTools: [
+					...workspaceToolDefinitions(payload.cwd, payload.toolProfile),
+					...(payload.toolProfile === "forum_isolated_v1"
+						? forumToolDefinitions(forumToolCall ?? (async () => ({ kind: "error", message: "Forum transport is unavailable" })))
+						: []),
+				],
 				scopedModels: [],
 			});
 			if (result.modelFallbackMessage !== undefined) throw new SdkConstructionError("execution_profile_drift");
@@ -355,9 +361,10 @@ function assertSystemPromptDigest(payload: CreateSessionPayload): void {
 function assertExactCreatePayload(payload: CreateSessionPayload): void {
 	if (
 		payload.model.provider !== PINNED_PROVIDER ||
-		payload.model.modelId !== PINNED_MODEL ||
-		payload.model.thinkingLevel !== PINNED_THINKING_LEVEL
-		|| payload.toolProfile === "workspace_isolated_v1" && payload.forumContract.kind !== "sequestered_v1"
+		!isAdmittedModelId(payload.model.modelId) ||
+		!isAdmittedThinkingLevel(payload.model.modelId, payload.model.thinkingLevel) ||
+		payload.toolProfile === "workspace_isolated_v1" && payload.forumContract.kind !== "sequestered_v1"
+		|| payload.toolProfile === "forum_isolated_v1" && payload.forumContract.kind !== "forum_enabled_v1"
 	) throw new SdkConstructionError("execution_profile_drift");
 	try {
 		assertPinnedActorModelPolicy(payload.settings);
@@ -461,7 +468,7 @@ function assertEffectiveSession(
 	if (session.sessionId !== sessionIdentity || session.sessionFile === undefined) {
 		throw new SdkConstructionError("execution_profile_drift");
 	}
-	if (session.model?.provider !== PINNED_PROVIDER || session.model.id !== PINNED_MODEL || session.thinkingLevel !== "high") {
+	if (session.model?.provider !== payload.model.provider || session.model.id !== payload.model.modelId || session.thinkingLevel !== payload.model.thinkingLevel) {
 		throw new SdkConstructionError("execution_profile_drift");
 	}
 	if (normalize(session.sessionManager.getCwd()) !== normalize(payload.cwd)) {
@@ -532,8 +539,8 @@ function assertAssistantMessageExecutionProfile(message: unknown): void {
 	if (candidate.role !== "assistant") return;
 	if (
 		candidate.provider !== PINNED_PROVIDER ||
-		candidate.model !== PINNED_MODEL ||
-		(candidate.responseModel !== undefined && candidate.responseModel !== PINNED_MODEL)
+		!isAdmittedModelId(candidate.model) ||
+		(candidate.responseModel !== undefined && !isAdmittedModelId(candidate.responseModel))
 	) {
 		throw new SdkConstructionError("execution_profile_drift");
 	}

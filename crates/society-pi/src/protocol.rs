@@ -11,7 +11,7 @@ use std::{collections::BTreeSet, fmt, path::Path};
 use miniserde::json::{Array, Number, Object, Value};
 use thiserror::Error;
 
-use crate::forum::ForumSessionContractV1;
+use crate::forum::{ForumSessionContractV1, ForumToolName};
 
 pub const ADAPTER_PROTOCOL_VERSION: &str = "society-pi-host/v4";
 pub const ADAPTER_VERSION: &str = "1";
@@ -291,6 +291,9 @@ pub enum ToolProfile {
     /// Pi's file tools are replaced with canonical operations rooted at cwd.
     /// This profile has no shell or subprocess-backed search tool.
     WorkspaceIsolatedV1,
+    /// Only the resident-mediated Forum tools are active; no Pi built-in
+    /// filesystem or subprocess tool is exposed.
+    ForumIsolatedV1,
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PiToolName {
@@ -301,6 +304,8 @@ pub enum PiToolName {
     Grep,
     Find,
     Ls,
+    SocietyForumRead,
+    SocietyForumPost,
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum QueueMode {
@@ -342,10 +347,16 @@ pub enum Provider {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ModelId {
     DeepseekV4Flash0731,
+    InclusionAiLing30TinyFree,
+    PoolsideLagunaXs21Free,
+    InclusionAiLing26Flash,
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CanonicalModelSlug {
     DeepseekV4Flash20260731,
+    InclusionAiLing30TinyFree,
+    PoolsideLagunaXs21Free,
+    InclusionAiLing26Flash,
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OpenRouterBaseUrl {
@@ -410,6 +421,7 @@ impl ToolProfile {
                 PiToolName::Write,
                 PiToolName::Ls,
             ],
+            Self::ForumIsolatedV1 => &[PiToolName::SocietyForumRead, PiToolName::SocietyForumPost],
         }
     }
 }
@@ -503,20 +515,31 @@ pub struct ModelCatalogPolicyV1 {
     pub effective_model: EffectiveModelDescriptorV1,
 }
 impl ModelCatalogPolicyV1 {
-    /// Rejects any deviation from the current pinned Pi SDK model catalog.
+    /// Rejects any deviation from the saved, provider-scoped admitted model catalog.
     pub fn assert_pinned(&self) -> Result<(), ProtocolError> {
         let model = &self.effective_model;
+        let expected = match (model.model_id, model.canonical_slug) {
+            (ModelId::DeepseekV4Flash0731, CanonicalModelSlug::DeepseekV4Flash20260731) => {
+                (1_048_576, 384_000, "0.09", "0.18", "0.018")
+            }
+            (ModelId::InclusionAiLing30TinyFree, CanonicalModelSlug::InclusionAiLing30TinyFree)
+            | (ModelId::PoolsideLagunaXs21Free, CanonicalModelSlug::PoolsideLagunaXs21Free) => {
+                (262_144, 32_768, "0", "0", "0")
+            }
+            (ModelId::InclusionAiLing26Flash, CanonicalModelSlug::InclusionAiLing26Flash) => {
+                (262_144, 32_768, "0.01", "0.03", "0.002")
+            }
+            _ => return Err(ProtocolError::InvalidFrame("pinned model catalog policy")),
+        };
         if model.provider != Provider::OpenRouter
             || model.base_url != OpenRouterBaseUrl::ApiV1
             || model.api != ModelApi::OpenAiCompletions
-            || model.model_id != ModelId::DeepseekV4Flash0731
-            || model.canonical_slug != CanonicalModelSlug::DeepseekV4Flash20260731
             || model.input != ModelInput::TextOnly
-            || model.context_window.value() != 1_048_576
-            || model.max_tokens.value() != 384_000
-            || model.input_usd_per_million.usd_per_million.as_str() != "0.09"
-            || model.output_usd_per_million.usd_per_million.as_str() != "0.18"
-            || model.cache_read_usd_per_million.usd_per_million.as_str() != "0.018"
+            || model.context_window.value() != expected.0
+            || model.max_tokens.value() != expected.1
+            || model.input_usd_per_million.usd_per_million.as_str() != expected.2
+            || model.output_usd_per_million.usd_per_million.as_str() != expected.3
+            || model.cache_read_usd_per_million.usd_per_million.as_str() != expected.4
             || model.cache_write_usd_per_million != CacheWritePerMillionRateV1::Absent
         {
             return Err(ProtocolError::InvalidFrame("pinned model catalog policy"));
@@ -566,6 +589,23 @@ pub struct DisposePayload {
     pub reason: DisposeReason,
 }
 
+#[derive(Clone, Debug)]
+pub struct ForumToolResultPayload {
+    pub tool_call_identity: ToolCallIdentity,
+    pub result: Value,
+    pub is_error: bool,
+}
+
+impl PartialEq for ForumToolResultPayload {
+    fn eq(&self, other: &Self) -> bool {
+        self.tool_call_identity == other.tool_call_identity
+            && self.is_error == other.is_error
+            && json_values_equal(&self.result, &other.result)
+    }
+}
+
+impl Eq for ForumToolResultPayload {}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum InboundCommand {
     CreateSession(Box<CreateSessionPayload>),
@@ -575,6 +615,7 @@ pub enum InboundCommand {
     Abort(AbortPayload),
     GetState,
     Dispose(DisposePayload),
+    ForumToolResult(ForumToolResultPayload),
 }
 impl InboundCommand {
     pub const fn name(&self) -> CommandName {
@@ -586,6 +627,7 @@ impl InboundCommand {
             Self::Abort(_) => CommandName::Abort,
             Self::GetState => CommandName::GetState,
             Self::Dispose(_) => CommandName::Dispose,
+            Self::ForumToolResult(_) => CommandName::ForumToolResult,
         }
     }
 }
@@ -598,6 +640,7 @@ pub enum CommandName {
     Abort,
     GetState,
     Dispose,
+    ForumToolResult,
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InboundFrame {
@@ -669,8 +712,8 @@ impl EffectiveSessionConfiguration {
         self.settings.assert_pinned()?;
         self.forum_contract.assert_pinned()?;
         if self.model.provider != Provider::OpenRouter
-            || self.model.model_id != ModelId::DeepseekV4Flash0731
-            || self.model.thinking_level != ThinkingLevel::High
+            || self.model.model_id != self.model_catalog.effective_model.model_id
+            || !model_thinking_level_is_admitted(self.model.model_id, self.model.thinking_level)
             || self.tools.as_slice() != self.tool_profile.tools()
         {
             return Err(ProtocolError::InvalidFrame(
@@ -1098,6 +1141,13 @@ pub enum ThinkingLevel {
     Xhigh,
     Max,
 }
+
+pub fn model_thinking_level_is_admitted(model_id: ModelId, thinking_level: ThinkingLevel) -> bool {
+    match model_id {
+        ModelId::InclusionAiLing26Flash => thinking_level == ThinkingLevel::Off,
+        _ => thinking_level == ThinkingLevel::High,
+    }
+}
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SummarizationSource {
     BranchSummary,
@@ -1200,6 +1250,11 @@ pub enum OutboundEvent {
     AgentEvent {
         agent_event: ProjectedAgentEvent,
     },
+    ForumToolCall {
+        tool_call_identity: ToolCallIdentity,
+        tool_name: ForumToolName,
+        args: Value,
+    },
     UsageSnapshot {
         usage: UsageObservation,
     },
@@ -1243,6 +1298,22 @@ impl PartialEq for OutboundEvent {
             (Self::CommandResult(left), Self::CommandResult(right)) => left == right,
             (Self::AgentEvent { agent_event: left }, Self::AgentEvent { agent_event: right }) => {
                 left == right
+            }
+            (
+                Self::ForumToolCall {
+                    tool_call_identity: left_identity,
+                    tool_name: left_name,
+                    args: left_args,
+                },
+                Self::ForumToolCall {
+                    tool_call_identity: right_identity,
+                    tool_name: right_name,
+                    args: right_args,
+                },
+            ) => {
+                left_identity == right_identity
+                    && left_name == right_name
+                    && json_values_equal(left_args, right_args)
             }
             (Self::UsageSnapshot { usage: left }, Self::UsageSnapshot { usage: right }) => {
                 match (left, right) {
@@ -1314,6 +1385,10 @@ fn json_bool(value: bool) -> Value {
     Value::Bool(value)
 }
 
+fn json_values_equal(left: &Value, right: &Value) -> bool {
+    miniserde::json::to_string(left) == miniserde::json::to_string(right)
+}
+
 pub fn decode_inbound_jsonl(line: &str) -> Result<InboundFrame, ProtocolError> {
     let root = decode_frame_value(line)?;
     let frame = object(&root)?;
@@ -1347,6 +1422,14 @@ pub fn decode_inbound_jsonl(line: &str) -> Result<InboundFrame, ProtocolError> {
             InboundCommand::GetState
         }
         CommandName::Dispose => InboundCommand::Dispose(decode_dispose(payload)?),
+        CommandName::ForumToolResult => {
+            exact_keys(payload, &["toolCallIdentity", "result", "isError"])?;
+            InboundCommand::ForumToolResult(ForumToolResultPayload {
+                tool_call_identity: ToolCallIdentity::parse(string(payload, "toolCallIdentity")?)?,
+                result: required(payload, "result")?.clone(),
+                is_error: boolean(payload, "isError")?,
+            })
+        }
     };
     Ok(InboundFrame {
         sequence,
@@ -1378,6 +1461,13 @@ pub fn encode_inbound_jsonl(frame: &InboundFrame) -> Result<String, ProtocolErro
         InboundCommand::GetState => json_object!(),
         InboundCommand::Dispose(payload) => {
             json_object!("reason" => json_string(dispose_reason_wire(payload.reason)))
+        }
+        InboundCommand::ForumToolResult(payload) => {
+            json_object!(
+                "toolCallIdentity" => json_string(payload.tool_call_identity.as_str()),
+                "result" => payload.result.clone(),
+                "isError" => json_bool(payload.is_error),
+            )
         }
     };
     let line = miniserde::json::to_string(&json_object!(
@@ -1503,20 +1593,20 @@ fn encode_settings(value: &ActorModelPolicyV1) -> Value {
 
 macro_rules! wire { ($name:ident, $enum:ident, {$($variant:ident => $text:literal),+ $(,)?}) => { fn $name(value: $enum) -> &'static str { match value { $($enum::$variant => $text),+ } } }; }
 wire!(session_kind_wire, SessionKind, { TaskAttempt => "TaskAttempt", RootAuthorityOffice => "RootAuthorityOffice" });
-wire!(tool_profile_wire, ToolProfile, { ReadExecuteV1 => "read_execute_v1", ReadWriteV1 => "read_write_v1", WorkspaceMutationV1 => "workspace_mutation_v1", WorkspaceIsolatedV1 => "workspace_isolated_v1" });
+wire!(tool_profile_wire, ToolProfile, { ReadExecuteV1 => "read_execute_v1", ReadWriteV1 => "read_write_v1", WorkspaceMutationV1 => "workspace_mutation_v1", WorkspaceIsolatedV1 => "workspace_isolated_v1", ForumIsolatedV1 => "forum_isolated_v1" });
 wire!(queue_mode_wire, QueueMode, { All => "all", OneAtATime => "one-at-a-time" });
 wire!(compaction_mode_wire, CompactionMode, { Enabled => "enabled", Disabled => "disabled" });
 wire!(prompt_purpose_wire, PromptPurpose, { TaskAssignment => "TaskAssignment", OfficeTurn => "OfficeTurn" });
 wire!(steer_reason_wire, SteerReason, { UrgentStalePremise => "UrgentStalePremise", UrgentUnsafePremise => "UrgentUnsafePremise" });
 wire!(abort_reason_wire, AbortReason, { GracefulCancellation => "GracefulCancellation", EmergencyStop => "EmergencyStop", BudgetGuardrail => "BudgetGuardrail", DaemonRecovery => "DaemonRecovery" });
 wire!(dispose_reason_wire, DisposeReason, { CycleReconciliation => "CycleReconciliation", ProcessRecovery => "ProcessRecovery", ProtocolFailure => "ProtocolFailure" });
-wire!(command_name_wire, CommandName, { CreateSession => "CreateSession", Prompt => "Prompt", FollowUp => "FollowUp", Steer => "Steer", Abort => "Abort", GetState => "GetState", Dispose => "Dispose" });
+wire!(command_name_wire, CommandName, { CreateSession => "CreateSession", Prompt => "Prompt", FollowUp => "FollowUp", Steer => "Steer", Abort => "Abort", GetState => "GetState", Dispose => "Dispose", ForumToolResult => "ForumToolResult" });
 wire!(provider_wire, Provider, { OpenRouter => "openrouter" });
-wire!(model_id_wire, ModelId, { DeepseekV4Flash0731 => "deepseek/deepseek-v4-flash-0731" });
+wire!(model_id_wire, ModelId, { DeepseekV4Flash0731 => "deepseek/deepseek-v4-flash-0731", InclusionAiLing30TinyFree => "inclusionai/ling-3.0-tiny:free", PoolsideLagunaXs21Free => "poolside/laguna-xs-2.1:free", InclusionAiLing26Flash => "inclusionai/ling-2.6-flash" });
 wire!(thinking_level_wire, ThinkingLevel, { Off => "off", Minimal => "minimal", Low => "low", Medium => "medium", High => "high", Xhigh => "xhigh", Max => "max" });
 wire!(base_url_wire, OpenRouterBaseUrl, { ApiV1 => "https://openrouter.ai/api/v1" });
 wire!(model_api_wire, ModelApi, { OpenAiCompletions => "openai-completions" });
-wire!(canonical_slug_wire, CanonicalModelSlug, { DeepseekV4Flash20260731 => "deepseek/deepseek-v4-flash-20260731" });
+wire!(canonical_slug_wire, CanonicalModelSlug, { DeepseekV4Flash20260731 => "deepseek/deepseek-v4-flash-20260731", InclusionAiLing30TinyFree => "inclusionai/ling-3.0-tiny:free", PoolsideLagunaXs21Free => "poolside/laguna-xs-2.1:free", InclusionAiLing26Flash => "inclusionai/ling-2.6-flash" });
 wire!(model_input_wire, ModelInput, { TextOnly => "text_only" });
 wire!(transport_wire, Transport, { Sse => "sse" });
 wire!(project_trust_wire, ProjectTrust, { Never => "never" });
@@ -1662,6 +1752,35 @@ pub fn decode_outbound_jsonl(line: &str) -> Result<OutboundFrame, ProtocolError>
                 },
             )
         }
+        "ForumToolCall" => {
+            exact_keys(
+                frame,
+                &[
+                    base_keys[0],
+                    base_keys[1],
+                    base_keys[2],
+                    base_keys[3],
+                    "correlationIdentity",
+                    "toolCallIdentity",
+                    "toolName",
+                    "args",
+                ],
+            )?;
+            (
+                Some(CorrelationIdentity::parse(string(
+                    frame,
+                    "correlationIdentity",
+                )?)?),
+                OutboundEvent::ForumToolCall {
+                    tool_call_identity: ToolCallIdentity::parse(string(
+                        frame,
+                        "toolCallIdentity",
+                    )?)?,
+                    tool_name: forum_tool_name(string(frame, "toolName")?)?,
+                    args: required(frame, "args")?.clone(),
+                },
+            )
+        }
         "UsageSnapshot" => {
             let has_corr = frame.contains_key("correlationIdentity");
             let expected = if has_corr {
@@ -1800,12 +1919,12 @@ fn decode_create_session(value: &Object) -> Result<CreateSessionPayload, Protoco
     let model = object(required(value, "model")?)?;
     exact_keys(model, &["provider", "modelId", "thinkingLevel"])?;
     literal(model, "provider", PINNED_PROVIDER)?;
-    literal(model, "modelId", PINNED_MODEL)?;
-    literal(model, "thinkingLevel", PINNED_THINKING_LEVEL)?;
     let model_selection = decode_model_selection(model)?;
     if model_selection.provider != Provider::OpenRouter
-        || model_selection.model_id != ModelId::DeepseekV4Flash0731
-        || model_selection.thinking_level != ThinkingLevel::High
+        || !model_thinking_level_is_admitted(
+            model_selection.model_id,
+            model_selection.thinking_level,
+        )
     {
         return Err(ProtocolError::InvalidFrame("pinned model selection"));
     }
@@ -1824,12 +1943,21 @@ fn decode_create_session(value: &Object) -> Result<CreateSessionPayload, Protoco
         settings: decode_settings(object(required(value, "settings")?)?)?,
         forum_contract: decode_forum_session_contract(object(required(value, "forumContract")?)?)?,
     };
+    if decoded.model.model_id != decoded.model_catalog.effective_model.model_id {
+        return Err(ProtocolError::InvalidFrame("model catalog selection"));
+    }
     if decoded.tool_profile == ToolProfile::WorkspaceIsolatedV1
-        && !matches!(&decoded.forum_contract, ForumSessionContractV1::SequesteredV1)
+        && !matches!(
+            &decoded.forum_contract,
+            ForumSessionContractV1::SequesteredV1
+        )
+        || decoded.tool_profile == ToolProfile::ForumIsolatedV1
+            && !matches!(
+                &decoded.forum_contract,
+                ForumSessionContractV1::ForumEnabledV1 { .. }
+            )
     {
-        return Err(ProtocolError::InvalidFrame(
-            "workspace-isolated Forum pairing",
-        ));
+        return Err(ProtocolError::InvalidFrame("isolated Forum pairing"));
     }
     decoded.model_catalog.assert_pinned()?;
     decoded.settings.assert_pinned()?;
@@ -2525,6 +2653,14 @@ fn exact_keys(object: &Object, expected: &[&str]) -> Result<(), ProtocolError> {
         Ok(())
     }
 }
+
+fn forum_tool_name(value: &str) -> Result<ForumToolName, ProtocolError> {
+    match value {
+        "society_forum_read" => Ok(ForumToolName::SocietyForumRead),
+        "society_forum_post" => Ok(ForumToolName::SocietyForumPost),
+        _ => Err(ProtocolError::InvalidFrame("Forum tool name")),
+    }
+}
 fn literal(object: &Object, key: &str, expected: &str) -> Result<(), ProtocolError> {
     if string(object, key)? == expected {
         Ok(())
@@ -2535,8 +2671,8 @@ fn literal(object: &Object, key: &str, expected: &str) -> Result<(), ProtocolErr
 
 macro_rules! closed_enum { ($function:ident, $enum:ident, {$($text:literal => $variant:ident),+ $(,)?}) => { fn $function(value:&str)->Result<$enum,ProtocolError>{match value{$($text=>Ok($enum::$variant),)+_=>Err(ProtocolError::InvalidFrame(stringify!($enum)))}} }; }
 closed_enum!(session_kind,SessionKind,{"TaskAttempt"=>TaskAttempt,"RootAuthorityOffice"=>RootAuthorityOffice});
-closed_enum!(tool_profile,ToolProfile,{"read_execute_v1"=>ReadExecuteV1,"read_write_v1"=>ReadWriteV1,"workspace_mutation_v1"=>WorkspaceMutationV1,"workspace_isolated_v1"=>WorkspaceIsolatedV1});
-closed_enum!(pi_tool_name,PiToolName,{"read"=>Read,"bash"=>Bash,"edit"=>Edit,"write"=>Write,"grep"=>Grep,"find"=>Find,"ls"=>Ls});
+closed_enum!(tool_profile,ToolProfile,{"read_execute_v1"=>ReadExecuteV1,"read_write_v1"=>ReadWriteV1,"workspace_mutation_v1"=>WorkspaceMutationV1,"workspace_isolated_v1"=>WorkspaceIsolatedV1,"forum_isolated_v1"=>ForumIsolatedV1});
+closed_enum!(pi_tool_name,PiToolName,{"read"=>Read,"bash"=>Bash,"edit"=>Edit,"write"=>Write,"grep"=>Grep,"find"=>Find,"ls"=>Ls,"society_forum_read"=>SocietyForumRead,"society_forum_post"=>SocietyForumPost});
 closed_enum!(queue_mode,QueueMode,{"all"=>All,"one-at-a-time"=>OneAtATime});
 closed_enum!(compaction_mode,CompactionMode,{"enabled"=>Enabled,"disabled"=>Disabled});
 closed_enum!(prompt_purpose,PromptPurpose,{"TaskAssignment"=>TaskAssignment,"OfficeTurn"=>OfficeTurn});
@@ -2544,8 +2680,8 @@ closed_enum!(steer_reason,SteerReason,{"UrgentStalePremise"=>UrgentStalePremise,
 closed_enum!(abort_reason,AbortReason,{"GracefulCancellation"=>GracefulCancellation,"EmergencyStop"=>EmergencyStop,"BudgetGuardrail"=>BudgetGuardrail,"DaemonRecovery"=>DaemonRecovery});
 closed_enum!(dispose_reason,DisposeReason,{"CycleReconciliation"=>CycleReconciliation,"ProcessRecovery"=>ProcessRecovery,"ProtocolFailure"=>ProtocolFailure});
 closed_enum!(provider,Provider,{"openrouter"=>OpenRouter});
-closed_enum!(model_id,ModelId,{"deepseek/deepseek-v4-flash-0731"=>DeepseekV4Flash0731});
-closed_enum!(canonical_model_slug,CanonicalModelSlug,{"deepseek/deepseek-v4-flash-20260731"=>DeepseekV4Flash20260731});
+closed_enum!(model_id,ModelId,{"deepseek/deepseek-v4-flash-0731"=>DeepseekV4Flash0731,"inclusionai/ling-3.0-tiny:free"=>InclusionAiLing30TinyFree,"poolside/laguna-xs-2.1:free"=>PoolsideLagunaXs21Free,"inclusionai/ling-2.6-flash"=>InclusionAiLing26Flash});
+closed_enum!(canonical_model_slug,CanonicalModelSlug,{"deepseek/deepseek-v4-flash-20260731"=>DeepseekV4Flash20260731,"inclusionai/ling-3.0-tiny:free"=>InclusionAiLing30TinyFree,"poolside/laguna-xs-2.1:free"=>PoolsideLagunaXs21Free,"inclusionai/ling-2.6-flash"=>InclusionAiLing26Flash});
 closed_enum!(open_router_base_url,OpenRouterBaseUrl,{"https://openrouter.ai/api/v1"=>ApiV1});
 closed_enum!(model_api,ModelApi,{"openai-completions"=>OpenAiCompletions});
 closed_enum!(model_input,ModelInput,{"text_only"=>TextOnly});
@@ -2554,7 +2690,7 @@ closed_enum!(project_trust,ProjectTrust,{"never"=>Never});
 closed_enum!(images,Images,{"blocked"=>Blocked});
 closed_enum!(adapter_version,AdapterVersion,{"1"=>V1});
 closed_enum!(pi_sdk_version,PiSdkVersion,{"0.83.0"=>V0830});
-closed_enum!(command_name,CommandName,{"CreateSession"=>CreateSession,"Prompt"=>Prompt,"FollowUp"=>FollowUp,"Steer"=>Steer,"Abort"=>Abort,"GetState"=>GetState,"Dispose"=>Dispose});
+closed_enum!(command_name,CommandName,{"CreateSession"=>CreateSession,"Prompt"=>Prompt,"FollowUp"=>FollowUp,"Steer"=>Steer,"Abort"=>Abort,"GetState"=>GetState,"Dispose"=>Dispose,"ForumToolResult"=>ForumToolResult});
 closed_enum!(adapter_phase,AdapterPhase,{"Inert"=>Inert,"Creating"=>Creating,"Ready"=>Ready,"Closing"=>Closing,"Disposed"=>Disposed,"Fatal"=>Fatal});
 closed_enum!(session_liveness,SessionLiveness,{"inert"=>Inert,"creating"=>Creating,"idle"=>Idle,"active"=>Active,"closing"=>Closing,"disposed"=>Disposed,"fatal"=>Fatal});
 closed_enum!(failure_code,AdapterFailureCode,{"invalid_command"=>InvalidCommand,"invalid_state"=>InvalidState,"sequence_gap"=>SequenceGap,"session_identity_mismatch"=>SessionIdentityMismatch,"execution_profile_drift"=>ExecutionProfileDrift,"sdk_operation_failed"=>SdkOperationFailed,"missing_agent_settled"=>MissingAgentSettled,"missing_final_assistant_outcome"=>MissingFinalAssistantOutcome,"protocol_decode_failed"=>ProtocolDecodeFailed,"outbound_frame_too_large"=>OutboundFrameTooLarge});

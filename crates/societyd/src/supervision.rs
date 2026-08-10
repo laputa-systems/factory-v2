@@ -24,9 +24,9 @@ use blake3::Hasher;
 use society_pi::{
     AbortPayload, AbortReason, AbsolutePath, Blake3Digest, BoundaryPeer, BoundarySequence,
     CorrelationIdentity, CreateSessionPayload, DisposePayload, DisposeReason, HostProcessId,
-    InboundCommand, InboundFrame, MAX_JSONL_FRAME_BYTES, ModelId, OutboundFrame, PeerError,
-    PeerObservation, PeerPhase, PromptPayload, Provider, RuntimeIdentity, SessionIdentity,
-    SpawnNonce, ThinkingLevel, decode_outbound_jsonl, encode_inbound_jsonl,
+    InboundCommand, InboundFrame, MAX_JSONL_FRAME_BYTES, OutboundFrame, PeerError, PeerObservation,
+    PeerPhase, PromptPayload, Provider, RuntimeIdentity, SessionIdentity, SpawnNonce,
+    decode_outbound_jsonl, encode_inbound_jsonl, model_thinking_level_is_admitted,
 };
 use thiserror::Error;
 
@@ -2660,8 +2660,16 @@ fn validate_spawn_request(request: &PiSpawnRequest) -> Result<(), SupervisionErr
             .models_path
             .is_strict_descendant_of(&request.create_session.agent_directory)
         || request.create_session.model.provider != Provider::OpenRouter
-        || request.create_session.model.model_id != ModelId::DeepseekV4Flash0731
-        || request.create_session.model.thinking_level != ThinkingLevel::High
+        || request.create_session.model.model_id
+            != request
+                .create_session
+                .model_catalog
+                .effective_model
+                .model_id
+        || !model_thinking_level_is_admitted(
+            request.create_session.model.model_id,
+            request.create_session.model.thinking_level,
+        )
         || digest_bytes(request.create_session.system_prompt.as_bytes())
             != request.create_session.system_prompt_digest
     {

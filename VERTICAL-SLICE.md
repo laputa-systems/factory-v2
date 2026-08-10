@@ -82,6 +82,20 @@ is explicitly not applicable because no provider-backed agent runs. Live Pi
 Office usage has exact ledger-backed provider-cost accounting; a live
 end-of-cycle aggregate remains separately scoped.
 
+The separately admitted `forum_isolated_v1` profile is exercised by
+`make run-society-paid`. That reduced qualification smoke runs 16 actor
+lifetimes with at most 8 native Pi hosts concurrently, applies a hard $0.50
+aggregate provider-cost ceiling plus a per-actor guardrail, and prints a
+world-simulation-style report with each actor's status, tokens, cost, Forum
+reads/posts, and errors. Its actor prompt uses ordinary participant language;
+the retained/reset treatment labels remain report metadata and are not shown
+to the actors. This runner is direct adapter qualification, not canonical
+CL-001 evidence or proof of daemon-owned native-child custody. Pass
+`PROVIDER` and `MODEL` to select the same admitted treatment for every actor;
+the default is paid Ling 2.6. The provider-scoped catalog retains DeepSeek,
+free Ling, Laguna, and paid Ling 2.6 at
+`packages/society-pi-host/catalogs/openrouter-admitted-models-v1.json`.
+
 ### Study protocol
 
 `StudyProtocolRevision` freezes:
@@ -155,20 +169,23 @@ ordinal 1. Neither treatment transfers private actor state.
 
 The sealed `ForumSessionContract` carries the exact awareness/tool digest pair
 through Pi `CreateSession` and `SessionReady`, while `Sequestered` carries no
-Forum digest. The current host validates that metadata but deliberately
-installs no mutable custom tools. The provider-free harness uses the same exact
-bytes through generic transitions. A live Forum profile must compose them into
-the session prompt and install only the named read/post tools; mutable Messages
-never enter the system prompt.
+Forum digest. The provider-free harness uses the same exact bytes through
+generic transitions. The separately admitted `forum_isolated_v1` host profile
+composes the natural sealed fragment into the system prompt and installs only
+the named read/post tools; mutable Messages never enter the system prompt.
+The `workspace_isolated_v1` profile remains Forum-free.
 
 `Sequestered` actors receive no claim that Forum tools exist. Reputation is
 absent from CL-001 and therefore absent from its prompt. A later reputation
 treatment requires a separate exact fragment explaining that reputation is
 scoped, uncertain, non-authoritative, and not evidence that a Message is true.
 
-The future live F0 profile exposes only explicit `society_forum_read` and
+The F0 profile exposes only explicit `society_forum_read` and
 `society_forum_post` actions. There is no polling or asynchronous `Steer`
-delivery.
+delivery. The paid smoke routes those calls through a bounded local Forum
+authority; binding the same profile to the resident daemon's actor scheduler,
+NativeChild registry, cancellation, and disposal receipts remains separately
+authorized work.
 
 ### Intervention
 
@@ -289,11 +306,13 @@ measurement status, closure, tamper detection, and integrity replay. The
 deterministic harness deliberately
 produces a null primary latency result as an admissible outcome.
 
-It does not yet execute live weak actors through a Pi SDK custom-tool transport
-or bind Forum obligations to actual `NativeChild`, stream, cancellation, and
-Pi-session disposal facts. Those existing lower-level custody mechanisms stay
-the required path for a separately authorized live profile; they are not
-emulated by application-local state.
+The Pi host now has a separately admitted live Forum custom-tool transport,
+and the paid smoke exercises it with a bounded local Forum authority. It does
+not yet bind Forum obligations to the resident daemon's actual `NativeChild`,
+stream, cancellation, and Pi-session disposal receipts. Those existing
+lower-level custody mechanisms stay the required path for canonical live
+CL-001 evidence; the smoke runner is not an application-level substitute for
+them.
 
 The Pi host also exposes an opt-in `workspace_isolated_v1` runner profile for
 non-Forum SDK exercises. It preserves the admitted catalog and prompt boundary,

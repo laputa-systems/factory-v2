@@ -19,7 +19,7 @@ test("forum F0 awareness is exact UTF-8 and has the registered digest", () => {
 	assert.equal(blake3Hex(bytes), FORUM_F0_AWARENESS_BLAKE3);
 	assert.equal(blake3Hex(FORUM_F0_AWARENESS_TEXT), FORUM_F0_AWARENESS_BLAKE3);
 	assert.equal(blake3Hex(FORUM_F0_TOOL_CONTRACT_TEXT), FORUM_F0_TOOL_CONTRACT_BLAKE3);
-	assert.equal(FORUM_F0_AWARENESS_BLAKE3, "b058dadccdc7c3fb8e2e3558bd16e726e1f00aa60fda5a849da20eb6e86ad46a");
+	assert.equal(FORUM_F0_AWARENESS_BLAKE3, "c2db53f69595a724b745a3b0ccbee710b70ebea4b2cc06dfff902bd7d3e886ea");
 	assert.equal(FORUM_F0_TOOL_CONTRACT_BLAKE3, "738e664f66be09dfb7f8e5e4873521d7b9f1600d385dd0c8a41c80ca087566be");
 
 	// The exported accessor is a copy, not mutable shared prompt state.

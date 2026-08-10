@@ -7,6 +7,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use miniserde::json::Value;
 use thiserror::Error;
 
 use crate::{
@@ -16,8 +17,9 @@ use crate::{
         CorrelationIdentity, CreateSessionPayload, EffectiveSessionConfiguration,
         FinalAssistantOutcome, HostProcessId, InboundCommand, InboundFrame, MAX_JSONL_FRAME_BYTES,
         OutboundEvent, OutboundFrame, ProjectedAgentEvent, PromptPurpose, ProtocolError,
-        RuntimeIdentity, SessionIdentity, SessionKind, SpawnNonce, TranscriptFlushReceiptV1,
-        UsageObservation, UsageUnavailableReason, decode_inbound_jsonl, decode_outbound_jsonl,
+        RuntimeIdentity, SessionIdentity, SessionKind, SpawnNonce, ToolCallIdentity,
+        TranscriptFlushReceiptV1, UsageObservation, UsageUnavailableReason, decode_inbound_jsonl,
+        decode_outbound_jsonl,
     },
 };
 
@@ -204,6 +206,7 @@ pub struct BoundaryPeer {
     create_candidate: Option<(CorrelationIdentity, CreateSessionPayload)>,
     configuration: Option<EffectiveSessionConfiguration>,
     pending_prompt: Option<PendingPrompt>,
+    pending_forum_tool_calls: BTreeSet<ToolCallIdentity>,
     pending_dispose: Option<PendingDispose>,
     active_dispose: Option<ActiveDispose>,
     active_turn: Option<ActiveTurn>,
@@ -240,6 +243,7 @@ impl BoundaryPeer {
             create_candidate: None,
             configuration: None,
             pending_prompt: None,
+            pending_forum_tool_calls: BTreeSet::new(),
             pending_dispose: None,
             active_dispose: None,
             active_turn: None,
@@ -480,6 +484,19 @@ impl BoundaryPeer {
                 self.observe_agent_event(frame_sequence, frame.correlation_identity, agent_event)?;
                 None
             }
+            OutboundEvent::ForumToolCall {
+                tool_call_identity,
+                tool_name,
+                args,
+            } => {
+                self.observe_forum_tool_call(
+                    frame.correlation_identity,
+                    tool_call_identity,
+                    tool_name,
+                    args,
+                )?;
+                None
+            }
             OutboundEvent::UsageSnapshot { usage } => {
                 self.observe_usage(frame_sequence, frame.correlation_identity, usage)?
             }
@@ -546,8 +563,11 @@ impl BoundaryPeer {
                         .is_strict_descendant_of(&payload.agent_directory)
                     || digest(payload.system_prompt.as_bytes()) != payload.system_prompt_digest
                     || payload.model.provider != crate::protocol::Provider::OpenRouter
-                    || payload.model.model_id != crate::protocol::ModelId::DeepseekV4Flash0731
-                    || payload.model.thinking_level != crate::protocol::ThinkingLevel::High
+                    || payload.model.model_id != payload.model_catalog.effective_model.model_id
+                    || !crate::protocol::model_thinking_level_is_admitted(
+                        payload.model.model_id,
+                        payload.model.thinking_level,
+                    )
                 {
                     self.fence();
                     return Err(PeerError::ExecutionProfileDrift);
@@ -589,6 +609,17 @@ impl BoundaryPeer {
                     })
                     || self.create.as_ref().map(|create| create.session_kind)
                         != Some(SessionKind::RootAuthorityOffice)
+                {
+                    self.fence();
+                    return Err(PeerError::InvalidTransition);
+                }
+            }
+            InboundCommand::ForumToolResult(payload) => {
+                if self.phase != PeerPhase::Ready
+                    || self.active_turn.is_none()
+                    || !self
+                        .pending_forum_tool_calls
+                        .remove(&payload.tool_call_identity)
                 {
                     self.fence();
                     return Err(PeerError::InvalidTransition);
@@ -688,7 +719,8 @@ impl BoundaryPeer {
                 CommandName::FollowUp
                 | CommandName::Steer
                 | CommandName::Abort
-                | CommandName::GetState => {}
+                | CommandName::GetState
+                | CommandName::ForumToolResult => {}
             }
         }
         if !accepted && pending.name == CommandName::Prompt {
@@ -781,6 +813,38 @@ impl BoundaryPeer {
             return Err(PeerError::UnknownCorrelation);
         }
         Ok(())
+    }
+
+    fn observe_forum_tool_call(
+        &mut self,
+        correlation: Option<CorrelationIdentity>,
+        tool_call_identity: ToolCallIdentity,
+        tool_name: crate::forum::ForumToolName,
+        _args: Value,
+    ) -> Result<(), PeerError> {
+        let Some(active) = self.active_turn.as_ref() else {
+            self.fence();
+            return Err(PeerError::InvalidTransition);
+        };
+        let tool_profile_is_forum = self.configuration.as_ref().is_some_and(|configuration| {
+            configuration.tool_profile == crate::protocol::ToolProfile::ForumIsolatedV1
+                && configuration.tools.as_slice()
+                    == [
+                        crate::protocol::PiToolName::SocietyForumRead,
+                        crate::protocol::PiToolName::SocietyForumPost,
+                    ]
+        });
+        if correlation.as_ref() != Some(&active.correlation)
+            || !tool_profile_is_forum
+            || !self.pending_forum_tool_calls.insert(tool_call_identity)
+        {
+            self.fence();
+            return Err(PeerError::InvalidTransition);
+        }
+        match tool_name {
+            crate::forum::ForumToolName::SocietyForumRead
+            | crate::forum::ForumToolName::SocietyForumPost => Ok(()),
+        }
     }
 
     fn observe_usage(

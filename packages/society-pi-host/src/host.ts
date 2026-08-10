@@ -10,6 +10,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
+import type { ForumToolCallHandler, ForumToolResult } from "./forum.js";
 
 import { isExecutionProfileMutation, projectAgentSessionEvent } from "./event-projection.js";
 import {
@@ -89,6 +90,7 @@ export class PiSdkHost {
 	private sdkDisposeInvoked = false;
 	private emittingTerminalFrame = false;
 	private outboundTransportClosed = false;
+	private readonly pendingForumToolCalls = new Map<string, { readonly resolve: (result: ForumToolResult) => void; readonly reject: (error: Error) => void }>();
 
 	constructor(
 		private readonly identity: HostIdentity,
@@ -144,6 +146,9 @@ export class PiSdkHost {
 				case "Dispose":
 					await this.dispose(command);
 					return;
+				case "ForumToolResult":
+					this.forumToolResult(command);
+					return;
 				default:
 					return assertNever(command);
 			}
@@ -192,7 +197,7 @@ export class PiSdkHost {
 	private async createSession(command: CreateSessionCommand): Promise<void> {
 		if (this.phase !== "Inert") return this.reject(command, "invalid_state");
 		this.phase = "Creating";
-		const session = await this.runtime.create(this.identity.sessionIdentity, command.payload);
+		const session = await this.runtime.create(this.identity.sessionIdentity, command.payload, this.forumToolCallHandler());
 		if (this.phase !== "Creating") {
 			session.dispose();
 			return;
@@ -253,6 +258,39 @@ export class PiSdkHost {
 			// terminal classification, not a contradictory second CommandResult.
 			this.settleCommandFailure(command.correlationIdentity, errorToFailureCode(error));
 		}
+	}
+
+	private forumToolCallHandler(): ForumToolCallHandler {
+		return async ({ toolCallIdentity, toolName, args }) => {
+			const activeTurn = this.activeTurn;
+			if (this.createPayload?.toolProfile !== "forum_isolated_v1" || activeTurn === undefined) {
+				return { kind: "error", message: "Forum tool call is outside the admitted live profile" };
+			}
+			const result = new Promise<ForumToolResult>((resolve, reject) => {
+				this.pendingForumToolCalls.set(toolCallIdentity, { resolve, reject });
+			});
+			this.emit({
+				event: "ForumToolCall",
+				correlationIdentity: activeTurn.correlationIdentity,
+				toolCallIdentity,
+				toolName,
+				args: args as unknown as import("./protocol.js").SdkJsonValue,
+			});
+			return result;
+		};
+	}
+
+	private forumToolResult(command: Extract<InboundFrame, { command: "ForumToolResult" }>): void {
+		if (this.phase !== "Ready" || this.activeTurn === undefined || this.createPayload?.toolProfile !== "forum_isolated_v1") {
+			return this.reject(command, "invalid_state");
+		}
+		const pending = this.pendingForumToolCalls.get(command.payload.toolCallIdentity);
+		if (pending === undefined) return this.reject(command, "invalid_command");
+		this.pendingForumToolCalls.delete(command.payload.toolCallIdentity);
+		this.accepted(command);
+		pending.resolve(command.payload.isError
+			? { kind: "error", message: forumErrorMessage(command.payload.result) }
+			: { kind: "success", payload: command.payload.result });
 	}
 
 	private async followUp(command: Extract<InboundFrame, { command: "FollowUp" }>): Promise<void> {
@@ -514,6 +552,8 @@ export class PiSdkHost {
 		if (this.phase === "Fatal") return;
 		this.phase = "Fatal";
 		this.activeTurn = undefined;
+		for (const pending of this.pendingForumToolCalls.values()) pending.reject(new Error(failureCode));
+		this.pendingForumToolCalls.clear();
 		try {
 			this.unsubscribe?.();
 			this.disposeSdkSession();
@@ -558,6 +598,10 @@ export class PiSdkHost {
 			}
 		}
 	}
+}
+
+function forumErrorMessage(result: import("./protocol.js").SdkJsonValue): string {
+	return typeof result === "string" ? result : "Forum tool call rejected by the resident authority";
 }
 
 class UsageInvariantError extends Error {

@@ -55,6 +55,20 @@ For isolated SDK exercises, the Pi host also offers opt-in
 search subprocesses, and no ambient model-catalog cache. It is not the live
 CL-001 runtime profile.
 
+The separately admitted `forum_isolated_v1` profile gives an actor a natural,
+digest-bound Forum prompt and exactly two custom tools—read and post—with no
+shell, search, general filesystem, or native-child capability. `make
+run-society-paid` runs a reduced qualification smoke of 16 actor lifetimes,
+with at most 8 native Pi hosts at once and a hard aggregate provider-cost
+ceiling; it reports per-actor tokens, cost, reads, posts, and failures. This
+is direct adapter qualification, not yet daemon-owned CL-001 custody or
+scientific evidence. Pass `PROVIDER` and `MODEL` to select the same admitted
+treatment for every actor; the default is the free
+`openrouter/inclusionai/ling-2.6-flash` treatment for the first paid smoke.
+The credential-free provider catalog, retaining DeepSeek alongside free Ling,
+Laguna, and paid Ling 2.6, is saved at
+`packages/society-pi-host/catalogs/openrouter-admitted-models-v1.json`.
+
 The provider-free CL-001 world summary is runnable with `make run-society`.
 It reports accepted actor and Forum activity, study budget units, measurements,
 baselines, and replay integrity; monetary cost is explicitly not applicable to
