@@ -186,7 +186,12 @@ export function nodeRuntimeVersion(value: string): NodeRuntimeVersion {
 }
 
 export type SessionKind = "TaskAttempt" | "RootAuthorityOffice";
-export type ToolProfile = "read_execute_v1" | "read_write_v1" | "workspace_mutation_v1";
+/**
+ * `workspace_isolated_v1` is the opt-in runner profile for actors whose Pi
+ * file tools must be bound to the admitted cwd. It intentionally has no shell,
+ * search subprocess, Forum tool, or native-child capability.
+ */
+export type ToolProfile = "read_execute_v1" | "read_write_v1" | "workspace_mutation_v1" | "workspace_isolated_v1";
 export type PiToolName = "read" | "bash" | "edit" | "write" | "grep" | "find" | "ls";
 export type QueueMode = "all" | "one-at-a-time";
 export type CompactionMode = "enabled" | "disabled";
@@ -199,6 +204,7 @@ const TOOL_PROFILE_TOOLS: Readonly<Record<ToolProfile, readonly PiToolName[]>> =
 	read_execute_v1: ["read", "bash", "grep", "find", "ls"],
 	read_write_v1: ["read", "write"],
 	workspace_mutation_v1: ["read", "bash", "edit", "write", "grep", "find", "ls"],
+	workspace_isolated_v1: ["read", "edit", "write", "ls"],
 };
 
 export function toolsForProfile(profile: ToolProfile): readonly PiToolName[] {
@@ -808,6 +814,15 @@ function decodeCreateSessionPayload(value: Record<string, unknown>): CreateSessi
 	const settings = requiredRecord(value.settings);
 	const modelCatalog = requiredRecord(value.modelCatalog);
 	const forumContract = decodeForumSessionContract(requiredRecord(value.forumContract));
+	const toolProfile = requiredOneOf(value, "toolProfile", [
+		"read_execute_v1",
+		"read_write_v1",
+		"workspace_mutation_v1",
+		"workspace_isolated_v1",
+	] as const);
+	if (toolProfile === "workspace_isolated_v1" && forumContract.kind !== "sequestered_v1") {
+		throw new ProtocolDecodeError("invalid_frame");
+	}
 	return {
 		sessionKind: requiredOneOf(value, "sessionKind", ["TaskAttempt", "RootAuthorityOffice"] as const),
 		cwd: requiredAbsolutePath(value, "cwd"),
@@ -823,11 +838,7 @@ function decodeCreateSessionPayload(value: Record<string, unknown>): CreateSessi
 			thinkingLevel: requiredLiteral(model, "thinkingLevel", PINNED_THINKING_LEVEL),
 		},
 		modelCatalog: assertPinnedModelCatalogPolicy(decodeModelCatalogPolicy(modelCatalog)),
-		toolProfile: requiredOneOf(value, "toolProfile", [
-			"read_execute_v1",
-			"read_write_v1",
-			"workspace_mutation_v1",
-		] as const),
+		toolProfile,
 		settings: assertPinnedActorModelPolicy(decodeSettings(settings)),
 		forumContract,
 	};

@@ -50,6 +50,11 @@ tool transport and actor-to-native-child custody remain separate work. The
 next work is to close those named experimental boundaries, not to fill in a
 general-purpose swarm framework.
 
+For isolated SDK exercises, the Pi host also offers opt-in
+`workspace_isolated_v1`: canonical workspace-bound file tools, no shell or
+search subprocesses, and no ambient model-catalog cache. It is not the live
+CL-001 runtime profile.
+
 ## Documents
 
 - [`RESEARCH-PROGRAM.md`](RESEARCH-PROGRAM.md) — thesis and research sequence

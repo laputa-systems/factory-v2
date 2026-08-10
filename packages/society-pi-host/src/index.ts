@@ -72,6 +72,8 @@ export {
 	SdkConstructionError,
 	assertSdkEventExecutionProfile,
 	createInertResourceLoader,
+	WorkspacePathPolicy,
+	workspaceToolDefinitions,
 	verifyCanonicalTranscriptFile,
 	type SdkRuntime,
 	type SdkSession,

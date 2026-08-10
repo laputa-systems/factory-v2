@@ -39,6 +39,21 @@ test("protocol: decodes the complete pinned CreateSession profile and rejects am
 	assert.throws(() => decodeCommand(1, "CreateSession", retryDrift), ProtocolDecodeError);
 });
 
+test("protocol: admits the closed workspace-isolated runner profile", () => {
+	const isolated = createSessionPayload();
+	isolated.toolProfile = "workspace_isolated_v1";
+	isolated.forumContract = { kind: "sequestered_v1" };
+	const command = decodeCommand(1, "CreateSession", isolated);
+	assert.equal(command.command, "CreateSession");
+	if (command.command === "CreateSession") assert.equal(command.payload.toolProfile, "workspace_isolated_v1");
+});
+
+test("protocol: workspace-isolated profile cannot claim Forum tools it does not install", () => {
+	const invalid = createSessionPayload();
+	invalid.toolProfile = "workspace_isolated_v1";
+	assert.throws(() => decodeCommand(1, "CreateSession", invalid), ProtocolDecodeError);
+});
+
 test("protocol: Forum session contract rejects digest drift and invalid pairings", () => {
 	const awarenessDrift = createSessionPayload();
 	(awarenessDrift.forumContract as Record<string, unknown>).awarenessBlake3 = "0".repeat(64);

@@ -9,7 +9,9 @@ import { absolutePath, blake3Digest, sessionIdentity } from "../src/protocol.js"
 import {
 	PinnedPiSdkRuntime,
 	SdkConstructionError,
+	WorkspacePathPolicy,
 	createInertResourceLoader,
+	workspaceToolDefinitions,
 	verifyCanonicalTranscriptFile,
 } from "../src/sdk.js";
 import { decodeCommand } from "./support.js";
@@ -31,6 +33,33 @@ test("sdk: the V2 ResourceLoader exposes only the supplied system prompt and no 
 	assert.deepEqual(loader.getAgentsFiles().agentsFiles, []);
 	assert.deepEqual(loader.getAppendSystemPrompt(), []);
 	assert.throws(() => loader.extendResources({}), SdkConstructionError);
+});
+
+test("sdk: workspace-isolated tools keep familiar names but omit shell and search subprocesses", () => {
+	assert.deepEqual(
+		workspaceToolDefinitions("/tmp/society-host-fixture/work", "workspace_isolated_v1").map((tool) => tool.name),
+		["read", "edit", "write", "ls"],
+	);
+	assert.deepEqual(workspaceToolDefinitions("/tmp/society-host-fixture/work", "read_execute_v1"), []);
+});
+
+test("sdk: workspace-isolated path policy rejects lexical and symlink escapes", async (context) => {
+	const directory = await mkdtemp(join(tmpdir(), "society-pi-host-workspace-policy-"));
+	context.after(async () => rm(directory, { recursive: true, force: true }));
+	const workspace = join(directory, "workspace");
+	const outside = join(directory, "outside");
+	await mkdir(workspace);
+	await mkdir(outside);
+	await writeFile(join(workspace, "inside.txt"), "inside", "utf8");
+	await writeFile(join(outside, "secret.txt"), "secret", "utf8");
+	await symlink(outside, join(workspace, "redirect"));
+
+	const policy = new WorkspacePathPolicy(workspace);
+	assert.equal(await policy.existing(join(workspace, "inside.txt")), await realpath(join(workspace, "inside.txt")));
+	await assert.rejects(policy.existing(join(workspace, "..", "outside", "secret.txt")));
+	await assert.rejects(policy.existing(join(workspace, "redirect", "secret.txt")));
+	await assert.rejects(policy.creatable(join(workspace, "redirect", "new.txt")));
+	assert.equal(await policy.creatable(join(workspace, "new", "file.txt")), join(await realpath(workspace), "new", "file.txt"));
 });
 
 test("sdk: prompt-digest drift fails before ModelRuntime construction or a provider request", async () => {
@@ -88,6 +117,7 @@ test("sdk: pinned production construction accepts only an explicit local model c
 	const authPath = join(agentDirectory, "auth.json");
 	const modelsPath = join(agentDirectory, "models.json");
 	await writeFile(authPath, "{}", "utf8");
+	await writeFile(join(agentDirectory, "models-store.json"), "not-json", "utf8");
 	const catalogText = JSON.stringify({
 		providers: {
 			openrouter: {
@@ -112,6 +142,8 @@ test("sdk: pinned production construction accepts only an explicit local model c
 	rawPayload.authPath = authPath;
 	rawPayload.modelsPath = modelsPath;
 	rawPayload.sessionDirectory = sessionDirectory;
+	rawPayload.toolProfile = "workspace_isolated_v1";
+	rawPayload.forumContract = { kind: "sequestered_v1" };
 	(rawPayload.modelCatalog as Record<string, unknown>).catalogBlake3 = blake3Hex(catalogText);
 	const command = decodeCommand(1, "CreateSession", rawPayload);
 	if (command.command !== "CreateSession") throw new Error("expected_create_session");

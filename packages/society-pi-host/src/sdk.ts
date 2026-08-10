@@ -4,18 +4,27 @@
  * project resources nor exposes a mutating Pi configuration surface.
  */
 
-import { access, readFile, realpath, stat } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, normalize, relative } from "node:path";
+import { access, mkdir, readFile, readdir, realpath, stat, writeFile } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
 
 import {
 	createAgentSession,
 	createExtensionRuntime,
+	createEditToolDefinition,
+	createLsToolDefinition,
+	createReadToolDefinition,
+	createWriteToolDefinition,
 	ModelRuntime,
 	SessionManager,
 	SettingsManager,
 	type AgentSession,
 	type AgentSessionEvent,
+	type EditOperations,
+	type LsOperations,
+	type ReadOperations,
 	type ResourceLoader,
+	type ToolDefinition,
+	type WriteOperations,
 } from "@earendil-works/pi-coding-agent";
 
 import { blake3Hex } from "./digest.js";
@@ -39,6 +48,7 @@ import {
 	type ModelCatalogPolicyV1,
 	type PiToolName,
 	type SessionIdentity,
+	type ToolProfile,
 	type TranscriptFlushReceiptV1,
 	type UsageTotals,
 	toolsForProfile,
@@ -94,6 +104,10 @@ export class PinnedPiSdkRuntime implements SdkRuntime {
 			const modelRuntime = await ModelRuntime.create({
 				authPath: catalog.authPath,
 				modelsPath: catalog.modelsPath,
+				// Dynamic provider catalogs are not part of the admitted execution
+				// profile. Keep them process-local instead of allowing Pi to read or
+				// write a models-store.json beside the admitted catalog.
+				modelsStore: createInMemoryModelsStore(),
 				allowModelNetwork: false,
 			});
 			await assertCatalogUnchanged(catalog);
@@ -117,7 +131,7 @@ export class PinnedPiSdkRuntime implements SdkRuntime {
 				sessionManager,
 				tools: [...toolsForProfile(payload.toolProfile)],
 				excludeTools: [],
-				customTools: [],
+				customTools: workspaceToolDefinitions(payload.cwd, payload.toolProfile),
 				scopedModels: [],
 			});
 			if (result.modelFallbackMessage !== undefined) throw new SdkConstructionError("execution_profile_drift");
@@ -130,6 +144,153 @@ export class PinnedPiSdkRuntime implements SdkRuntime {
 			throw new SdkConstructionError("sdk_operation_failed");
 		}
 	}
+}
+
+/**
+ * Keep Pi's dynamic model-catalog cache in the host process. The admitted
+ * `models.json` remains the durable, digest-bound catalog; this store is only
+ * the SDK's optional remote-refresh cache and is never allowed to become an
+ * ambient file input.
+ */
+function createInMemoryModelsStore() {
+	return {
+		read: async (_providerId: string) => undefined,
+		write: async (_providerId: string, _entry: unknown) => undefined,
+		delete: async (_providerId: string) => undefined,
+	};
+}
+
+/**
+ * The Pi SDK's built-in file tools resolve paths relative to cwd but otherwise
+ * permit absolute paths and `..`. This profile keeps the familiar tool names
+ * and schemas while replacing their filesystem operations with a canonical
+ * workspace policy. It deliberately does not provide bash, grep, find, Forum
+ * tools, or any subprocess-backed custom tool.
+ */
+export function workspaceToolDefinitions(
+	cwd: string,
+	toolProfile: ToolProfile,
+): ToolDefinition<any, any, any>[] {
+	if (toolProfile !== "workspace_isolated_v1") return [];
+
+	const policy = new WorkspacePathPolicy(cwd);
+	const readOperations: ReadOperations = {
+		readFile: async (path) => readFile(await policy.existing(path)),
+		access: async (path) => {
+			await stat(await policy.existing(path));
+		},
+	};
+	const writeOperations: WriteOperations = {
+		writeFile: async (path, content) => {
+			await writeFile(await policy.creatable(path), content);
+		},
+		mkdir: async (path) => {
+			await mkdir(await policy.creatable(path), { recursive: true });
+		},
+	};
+	const editOperations: EditOperations = {
+		readFile: async (path) => readFile(await policy.existing(path)),
+		writeFile: async (path, content) => {
+			await writeFile(await policy.creatable(path), content);
+		},
+		access: async (path) => {
+			await stat(await policy.existing(path));
+		},
+	};
+	const lsOperations: LsOperations = {
+		exists: async (path) => {
+			try {
+				await policy.existing(path);
+				return true;
+			} catch {
+				return false;
+			}
+		},
+		stat: async (path) => stat(await policy.existing(path)),
+		readdir: async (path) => readdir(await policy.existing(path)),
+	};
+
+	return [
+		createReadToolDefinition(cwd, { operations: readOperations }),
+		createEditToolDefinition(cwd, { operations: editOperations }),
+		createWriteToolDefinition(cwd, { operations: writeOperations }),
+		createLsToolDefinition(cwd, { operations: lsOperations }),
+	];
+}
+
+export class WorkspacePathPolicy {
+	private readonly root: string;
+
+	constructor(root: string) {
+		this.root = resolve(root);
+	}
+
+	private async assertInside(candidate: string): Promise<string> {
+		const root = await realpath(this.root);
+		const path = resolve(candidate);
+		const pathFromRoot = relative(root, path);
+		if (
+			pathFromRoot === "" ||
+			(pathFromRoot !== ".." &&
+				!pathFromRoot.startsWith(`..${sep}`) &&
+				!isAbsolute(pathFromRoot))
+		) {
+		return path;
+		}
+		throw new Error("workspace_path_escape");
+	}
+
+	private assertLexicallyInside(candidate: string): string {
+		const path = resolve(candidate);
+		const pathFromRoot = relative(this.root, path);
+		if (
+			pathFromRoot === "" ||
+			(pathFromRoot !== ".." &&
+				!pathFromRoot.startsWith(`..${sep}`) &&
+				!isAbsolute(pathFromRoot))
+		) {
+			return path;
+		}
+		throw new Error("workspace_path_escape");
+	}
+
+	private async canonicalExisting(path: string): Promise<string> {
+		const resolved = this.assertLexicallyInside(path);
+		const canonical = await realpath(resolved);
+		return this.assertInside(canonical);
+	}
+
+	/** Resolve a path whose final component may not exist yet. */
+	private async canonicalForCreation(path: string): Promise<string> {
+		let current = this.assertLexicallyInside(path);
+		const missingComponents: string[] = [];
+
+		while (true) {
+			try {
+				const canonicalBase = await realpath(current);
+				const candidate = join(canonicalBase, ...missingComponents.reverse());
+				return this.assertInside(candidate);
+			} catch (error) {
+				if (!isNotFound(error)) throw error;
+				const parent = dirname(current);
+				if (parent === current) throw error;
+				missingComponents.push(basename(current));
+				current = parent;
+			}
+		}
+	}
+
+	async existing(path: string): Promise<string> {
+		return this.canonicalExisting(path);
+	}
+
+	async creatable(path: string): Promise<string> {
+		return this.canonicalForCreation(path);
+	}
+}
+
+function isNotFound(error: unknown): boolean {
+	return typeof error === "object" && error !== null && (error as { code?: unknown }).code === "ENOENT";
 }
 
 /**
@@ -196,6 +357,7 @@ function assertExactCreatePayload(payload: CreateSessionPayload): void {
 		payload.model.provider !== PINNED_PROVIDER ||
 		payload.model.modelId !== PINNED_MODEL ||
 		payload.model.thinkingLevel !== PINNED_THINKING_LEVEL
+		|| payload.toolProfile === "workspace_isolated_v1" && payload.forumContract.kind !== "sequestered_v1"
 	) throw new SdkConstructionError("execution_profile_drift");
 	try {
 		assertPinnedActorModelPolicy(payload.settings);

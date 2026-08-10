@@ -288,3 +288,11 @@ or bind Forum obligations to actual `NativeChild`, stream, cancellation, and
 Pi-session disposal facts. Those existing lower-level custody mechanisms stay
 the required path for a separately authorized live profile; they are not
 emulated by application-local state.
+
+The Pi host also exposes an opt-in `workspace_isolated_v1` runner profile for
+non-Forum SDK exercises. It preserves the admitted catalog and prompt boundary,
+uses no-discovery resources and in-memory SDK catalog state, and replaces Pi's
+file-tool operations with canonical paths rooted at the admitted workspace.
+That profile has no shell, search subprocess, Forum custom tool, or native-child
+capability. It is runner hardening, not a live CL-001 admission or a substitute
+for the separately authorized Forum/native-child custody profile.

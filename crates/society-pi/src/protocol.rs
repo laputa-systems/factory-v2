@@ -288,6 +288,9 @@ pub enum ToolProfile {
     ReadExecuteV1,
     ReadWriteV1,
     WorkspaceMutationV1,
+    /// Pi's file tools are replaced with canonical operations rooted at cwd.
+    /// This profile has no shell or subprocess-backed search tool.
+    WorkspaceIsolatedV1,
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PiToolName {
@@ -399,6 +402,12 @@ impl ToolProfile {
                 PiToolName::Write,
                 PiToolName::Grep,
                 PiToolName::Find,
+                PiToolName::Ls,
+            ],
+            Self::WorkspaceIsolatedV1 => &[
+                PiToolName::Read,
+                PiToolName::Edit,
+                PiToolName::Write,
                 PiToolName::Ls,
             ],
         }
@@ -1494,7 +1503,7 @@ fn encode_settings(value: &ActorModelPolicyV1) -> Value {
 
 macro_rules! wire { ($name:ident, $enum:ident, {$($variant:ident => $text:literal),+ $(,)?}) => { fn $name(value: $enum) -> &'static str { match value { $($enum::$variant => $text),+ } } }; }
 wire!(session_kind_wire, SessionKind, { TaskAttempt => "TaskAttempt", RootAuthorityOffice => "RootAuthorityOffice" });
-wire!(tool_profile_wire, ToolProfile, { ReadExecuteV1 => "read_execute_v1", ReadWriteV1 => "read_write_v1", WorkspaceMutationV1 => "workspace_mutation_v1" });
+wire!(tool_profile_wire, ToolProfile, { ReadExecuteV1 => "read_execute_v1", ReadWriteV1 => "read_write_v1", WorkspaceMutationV1 => "workspace_mutation_v1", WorkspaceIsolatedV1 => "workspace_isolated_v1" });
 wire!(queue_mode_wire, QueueMode, { All => "all", OneAtATime => "one-at-a-time" });
 wire!(compaction_mode_wire, CompactionMode, { Enabled => "enabled", Disabled => "disabled" });
 wire!(prompt_purpose_wire, PromptPurpose, { TaskAssignment => "TaskAssignment", OfficeTurn => "OfficeTurn" });
@@ -1815,6 +1824,13 @@ fn decode_create_session(value: &Object) -> Result<CreateSessionPayload, Protoco
         settings: decode_settings(object(required(value, "settings")?)?)?,
         forum_contract: decode_forum_session_contract(object(required(value, "forumContract")?)?)?,
     };
+    if decoded.tool_profile == ToolProfile::WorkspaceIsolatedV1
+        && !matches!(&decoded.forum_contract, ForumSessionContractV1::SequesteredV1)
+    {
+        return Err(ProtocolError::InvalidFrame(
+            "workspace-isolated Forum pairing",
+        ));
+    }
     decoded.model_catalog.assert_pinned()?;
     decoded.settings.assert_pinned()?;
     decoded.forum_contract.assert_pinned()?;
@@ -2519,7 +2535,7 @@ fn literal(object: &Object, key: &str, expected: &str) -> Result<(), ProtocolErr
 
 macro_rules! closed_enum { ($function:ident, $enum:ident, {$($text:literal => $variant:ident),+ $(,)?}) => { fn $function(value:&str)->Result<$enum,ProtocolError>{match value{$($text=>Ok($enum::$variant),)+_=>Err(ProtocolError::InvalidFrame(stringify!($enum)))}} }; }
 closed_enum!(session_kind,SessionKind,{"TaskAttempt"=>TaskAttempt,"RootAuthorityOffice"=>RootAuthorityOffice});
-closed_enum!(tool_profile,ToolProfile,{"read_execute_v1"=>ReadExecuteV1,"read_write_v1"=>ReadWriteV1,"workspace_mutation_v1"=>WorkspaceMutationV1});
+closed_enum!(tool_profile,ToolProfile,{"read_execute_v1"=>ReadExecuteV1,"read_write_v1"=>ReadWriteV1,"workspace_mutation_v1"=>WorkspaceMutationV1,"workspace_isolated_v1"=>WorkspaceIsolatedV1});
 closed_enum!(pi_tool_name,PiToolName,{"read"=>Read,"bash"=>Bash,"edit"=>Edit,"write"=>Write,"grep"=>Grep,"find"=>Find,"ls"=>Ls});
 closed_enum!(queue_mode,QueueMode,{"all"=>All,"one-at-a-time"=>OneAtATime});
 closed_enum!(compaction_mode,CompactionMode,{"enabled"=>Enabled,"disabled"=>Disabled});
@@ -2862,6 +2878,22 @@ mod protocol_tests {
         );
         miniserde::json::to_string(&frame)
     }
+
+    #[test]
+    fn workspace_isolated_tool_profile_is_closed_and_has_no_shell_or_search_tools() {
+        let profile = tool_profile("workspace_isolated_v1").unwrap();
+        assert_eq!(
+            profile.tools(),
+            &[
+                PiToolName::Read,
+                PiToolName::Edit,
+                PiToolName::Write,
+                PiToolName::Ls,
+            ]
+        );
+        assert_eq!(tool_profile_wire(profile), "workspace_isolated_v1");
+    }
+
     #[test]
     fn rejects_duplicate_nested_keys_and_negative_zero() {
         assert_eq!(
