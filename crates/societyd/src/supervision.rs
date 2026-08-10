@@ -1310,40 +1310,58 @@ impl PiSupervisor {
         now: MonotonicTick,
         deadline: HandshakeDeadline,
     ) -> Result<bool, SupervisionError> {
+        let observed = self.observe_disposal_output_at(child_process_id, now, deadline)?;
+        if observed.is_none() {
+            return Ok(false);
+        }
+        Ok(self.child_mut(child_process_id)?.peer()?.phase() == PeerPhase::Disposed)
+    }
+
+    /// Reads exactly one disposal-phase stdout frame without discarding its
+    /// peer-sealed transport coordinates. The daemon's final Office-session
+    /// accounting bridge needs the accepted Dispose result, final cumulative
+    /// usage, and typed transcript receipt in their actual sequence; a bool
+    /// `Disposed` result cannot honestly reconstruct those facts later.
+    ///
+    /// This remains native process physics only. A caller must commit any
+    /// durable session-terminal receipt before it treats the returned frame as
+    /// authoritative, and malformed/output-loss cases still begin bounded
+    /// containment here.
+    pub fn observe_disposal_output_at(
+        &mut self,
+        child_process_id: &SupervisedChildId,
+        now: MonotonicTick,
+        deadline: HandshakeDeadline,
+    ) -> Result<Option<SealedDecodedPeerFrame>, SupervisionError> {
         let child = self.child_mut(child_process_id)?;
         if child.lifecycle != ChildLifecycle::Quiescing {
             return Err(SupervisionError::InvalidLifecycle);
         }
         if child.pending_control.is_some() {
-            return Ok(false);
+            return Ok(None);
         }
-        for _ in 0..MAX_HANDSHAKE_FRAMES {
-            match child.read_one_outbound() {
-                Ok(OutboundRead::NotReady) => {
-                    if now >= deadline.expires_at() {
-                        child.start_automatic_boundary_containment(now)?;
-                        return Err(SupervisionError::HandshakeDeadlineExpired);
-                    }
-                    return Ok(false);
-                }
-                Ok(OutboundRead::Observation(_)) => {
-                    if child.peer()?.phase() == PeerPhase::Fatal {
-                        child.start_automatic_boundary_containment(now)?;
-                        return Err(SupervisionError::Peer(PeerError::Fatal));
-                    }
-                }
-                Err(error) => {
+        match child.read_one_outbound() {
+            Ok(OutboundRead::NotReady) => {
+                if now >= deadline.expires_at() {
                     child.start_automatic_boundary_containment(now)?;
-                    return Err(error);
+                    return Err(SupervisionError::HandshakeDeadlineExpired);
                 }
+                Ok(None)
             }
-            if child.peer()?.phase() == PeerPhase::Disposed {
-                child.stdin.take();
-                return Ok(true);
+            Ok(OutboundRead::Observation(observation)) => {
+                if observation.peer_became_fatal() {
+                    child.start_automatic_boundary_containment(now)?;
+                }
+                if child.peer()?.phase() == PeerPhase::Disposed {
+                    child.stdin.take();
+                }
+                Ok(Some(*observation))
+            }
+            Err(error) => {
+                child.start_automatic_boundary_containment(now)?;
+                Err(error)
             }
         }
-        child.start_automatic_boundary_containment(now)?;
-        Err(SupervisionError::InvalidLifecycle)
     }
 
     /// Observes one non-handshake output frame while a session or cancellation

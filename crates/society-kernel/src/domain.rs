@@ -88,6 +88,7 @@ identifier!(PiOfficeTurnPromptAuthorizationId);
 identifier!(PiOfficeTurnUsageReceiptId);
 identifier!(PiOfficeTurnUsageFailureId);
 identifier!(PiOfficeTurnTerminalReceiptId);
+identifier!(PiOfficeSessionDisposeReceiptId);
 identifier!(PiProtocolSequence);
 identifier!(ChildProcessRecoveryReceiptId);
 identifier!(ChildStreamSealId);
@@ -213,6 +214,40 @@ impl CanonicalWorkspacePath {
         {
             return Err(DomainValueError::InvalidOperationalIdentity {
                 type_name: "CanonicalWorkspacePath",
+            });
+        }
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// The supervisor-attested, syntactically canonical absolute transcript path
+/// reported by the peer-sealed Pi Dispose boundary. It is nominally distinct
+/// from a workspace custody path; physical no-follow/private-root custody
+/// remains daemon responsibility while the kernel preserves this exact
+/// durable receipt without admitting a caller-selected filesystem namespace.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct CanonicalPiSessionTranscriptPath(String);
+
+impl CanonicalPiSessionTranscriptPath {
+    pub fn parse(value: impl Into<String>) -> Result<Self, DomainValueError> {
+        let value = value.into();
+        if value.len() < 2
+            || value.len() > 4096
+            || !value.starts_with('/')
+            || value.contains('\0')
+            || value.bytes().any(|byte| byte.is_ascii_control())
+            || value
+                .split('/')
+                .skip(1)
+                .any(|part| part.is_empty() || part == "." || part == "..")
+            || value.ends_with('/')
+        {
+            return Err(DomainValueError::InvalidOperationalIdentity {
+                type_name: "CanonicalPiSessionTranscriptPath",
             });
         }
         Ok(Self(value))
@@ -837,6 +872,18 @@ pub enum Capability {
     RecordPiOfficeTurnUsage = 89,
     RecordPiOfficeTurnUsageFailure = 90,
     RecordPiOfficeTurnTerminal = 91,
+    /// Authorizes one exact Pi `Dispose` correlation before the daemon may
+    /// touch the host pipe. It binds the current cycle generation and idle
+    /// peer-ready child, preventing a post-write delivery receipt from being
+    /// the first authority decision.
+    AuthorizePiOfficeSessionDispose = 92,
+    /// Records the complete physical handoff of the one closing Dispose
+    /// command. Host acceptance and final accounting are separate facts.
+    RecordPiOfficeSessionDisposeDelivery = 93,
+    RecordPiOfficeSessionDisposeAccepted = 94,
+    RecordPiOfficeSessionDisposeUsage = 95,
+    RecordPiOfficeSessionDisposeUsageFailure = 96,
+    RecordPiOfficeSessionDisposed = 97,
 }
 
 impl Capability {
@@ -898,7 +945,7 @@ impl Capability {
         Self::CloseDeterministicExperiment,
     ];
 
-    pub const KERNEL_SERVICE: [Self; 40] = [
+    pub const KERNEL_SERVICE: [Self; 46] = [
         Self::RecordCycleDrained,
         Self::RecordOfficeSessionReady,
         Self::SettleOfficeTurn,
@@ -939,6 +986,12 @@ impl Capability {
         Self::RecordPiOfficeTurnUsage,
         Self::RecordPiOfficeTurnUsageFailure,
         Self::RecordPiOfficeTurnTerminal,
+        Self::AuthorizePiOfficeSessionDispose,
+        Self::RecordPiOfficeSessionDisposeDelivery,
+        Self::RecordPiOfficeSessionDisposeAccepted,
+        Self::RecordPiOfficeSessionDisposeUsage,
+        Self::RecordPiOfficeSessionDisposeUsageFailure,
+        Self::RecordPiOfficeSessionDisposed,
     ];
 
     pub const fn requires_consumption(self) -> bool {
@@ -1421,6 +1474,49 @@ impl PiOfficeTurnDisposition {
 #[repr(i64)]
 pub enum PiOfficeTurnTranscriptDisposition {
     DeferredUntilOfficeSessionDispose = 1,
+}
+
+/// The peer's Dispose receipt says whether a first user Prompt was present in
+/// the flushed SessionManager transcript. The kernel independently binds a
+/// verified digest to its prior Prompt authorization; this closed receipt
+/// never accepts an SDK narrative or arbitrary transcript metadata.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PiOfficeSessionFirstUserPromptReceipt {
+    Absent,
+    Verified { digest: Blake3Digest },
+}
+
+/// The final peer-sealed transcript materialization for one Pi Office
+/// session. A materialized file is admitted only through the normal sealed
+/// content-object boundary and the exact host digest; an empty prompt history
+/// may instead produce the closed unmaterialized receipt.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PiOfficeSessionTranscriptReceipt {
+    Materialized {
+        session_file: CanonicalPiSessionTranscriptPath,
+        session_file_digest: Blake3Digest,
+        transcript_content_object_id: ContentObjectId,
+        first_user_prompt: PiOfficeSessionFirstUserPromptReceipt,
+    },
+    UnmaterializedNoPrompt {
+        session_file: CanonicalPiSessionTranscriptPath,
+    },
+}
+
+/// The final reservation disposition recorded with a peer-valid Dispose
+/// terminal carrying Known usage. A usage failure cannot produce this
+/// terminal at all: the peer protocol fatals after that boundary and leaves
+/// the frozen parent/session for a later recovery tranche. A known overrun is
+/// still a durable physical Dispose fact but remains a frozen duty.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PiOfficeSessionDisposeBudgetDisposition {
+    Reconciled {
+        observed_cumulative_micro_usd: UsdMicros,
+    },
+    Frozen {
+        cancellation_request_id: CancellationRequestId,
+        postmortem_id: CostPostmortemId,
+    },
 }
 
 /// Why the trusted boundary could not produce a usable cumulative provider
@@ -2415,6 +2511,53 @@ pub enum CommandBody {
         assistant_outcome: PiOfficeTurnAssistantOutcome,
         transcript_disposition: PiOfficeTurnTranscriptDisposition,
     },
+    /// Freezes one exact Dispose correlation under the current cycle
+    /// generation before the daemon performs the physical pipe write.
+    AuthorizePiOfficeSessionDispose {
+        session_id: RootAuthorityOfficeSessionId,
+        correlation_identity: PiCorrelationIdentity,
+    },
+    /// Attests the complete physical Pi `Dispose` write for an idle Office
+    /// session. It deliberately precedes the host CommandResult and terminal
+    /// receipt, so a crash cannot turn a partial closing observation into a
+    /// synthetic completed disposal.
+    RecordPiOfficeSessionDisposeDelivery {
+        session_id: RootAuthorityOfficeSessionId,
+        correlation_identity: PiCorrelationIdentity,
+    },
+    /// Attests the accepted Pi `Dispose` CommandResult at one exact outbound
+    /// protocol sequence after delivery.
+    RecordPiOfficeSessionDisposeAccepted {
+        session_id: RootAuthorityOfficeSessionId,
+        correlation_identity: PiCorrelationIdentity,
+        command_result_sequence: PiProtocolSequence,
+    },
+    /// The exact final known SDK cumulative usage emitted by a peer after it
+    /// accepted Dispose. This does not finalize the reservation until the
+    /// peer's terminal transcript receipt arrives.
+    RecordPiOfficeSessionDisposeUsage {
+        session_id: RootAuthorityOfficeSessionId,
+        correlation_identity: PiCorrelationIdentity,
+        protocol_sequence: PiProtocolSequence,
+        usage: PiCumulativeUsage,
+    },
+    /// Preserves a final typed accounting failure and freezes the parent
+    /// reservation before terminal Dispose evidence may close the session.
+    RecordPiOfficeSessionDisposeUsageFailure {
+        session_id: RootAuthorityOfficeSessionId,
+        correlation_identity: PiCorrelationIdentity,
+        protocol_sequence: PiProtocolSequence,
+        failure: PiOfficeTurnUsageFailure,
+    },
+    /// The peer's final `Disposed` boundary. It proves the same-correlation
+    /// transcript flush and atomically reconciles a known parent remainder,
+    /// or durably records the frozen cancellation/postmortem outcome.
+    RecordPiOfficeSessionDisposed {
+        session_id: RootAuthorityOfficeSessionId,
+        correlation_identity: PiCorrelationIdentity,
+        disposed_sequence: PiProtocolSequence,
+        transcript_receipt: PiOfficeSessionTranscriptReceipt,
+    },
 }
 
 impl CommandBody {
@@ -2527,6 +2670,24 @@ impl CommandBody {
                 CommandKind::RecordPiOfficeTurnUsageFailure
             }
             Self::RecordPiOfficeTurnTerminal { .. } => CommandKind::RecordPiOfficeTurnTerminal,
+            Self::AuthorizePiOfficeSessionDispose { .. } => {
+                CommandKind::AuthorizePiOfficeSessionDispose
+            }
+            Self::RecordPiOfficeSessionDisposeDelivery { .. } => {
+                CommandKind::RecordPiOfficeSessionDisposeDelivery
+            }
+            Self::RecordPiOfficeSessionDisposeAccepted { .. } => {
+                CommandKind::RecordPiOfficeSessionDisposeAccepted
+            }
+            Self::RecordPiOfficeSessionDisposeUsage { .. } => {
+                CommandKind::RecordPiOfficeSessionDisposeUsage
+            }
+            Self::RecordPiOfficeSessionDisposeUsageFailure { .. } => {
+                CommandKind::RecordPiOfficeSessionDisposeUsageFailure
+            }
+            Self::RecordPiOfficeSessionDisposed { .. } => {
+                CommandKind::RecordPiOfficeSessionDisposed
+            }
         }
     }
 
@@ -2637,6 +2798,22 @@ impl CommandBody {
                 Capability::RecordPiOfficeTurnUsageFailure
             }
             Self::RecordPiOfficeTurnTerminal { .. } => Capability::RecordPiOfficeTurnTerminal,
+            Self::AuthorizePiOfficeSessionDispose { .. } => {
+                Capability::AuthorizePiOfficeSessionDispose
+            }
+            Self::RecordPiOfficeSessionDisposeDelivery { .. } => {
+                Capability::RecordPiOfficeSessionDisposeDelivery
+            }
+            Self::RecordPiOfficeSessionDisposeAccepted { .. } => {
+                Capability::RecordPiOfficeSessionDisposeAccepted
+            }
+            Self::RecordPiOfficeSessionDisposeUsage { .. } => {
+                Capability::RecordPiOfficeSessionDisposeUsage
+            }
+            Self::RecordPiOfficeSessionDisposeUsageFailure { .. } => {
+                Capability::RecordPiOfficeSessionDisposeUsageFailure
+            }
+            Self::RecordPiOfficeSessionDisposed { .. } => Capability::RecordPiOfficeSessionDisposed,
         }
     }
 }
@@ -2735,6 +2912,12 @@ pub enum CommandKind {
     RecordPiOfficeTurnUsage = 89,
     RecordPiOfficeTurnUsageFailure = 90,
     RecordPiOfficeTurnTerminal = 91,
+    AuthorizePiOfficeSessionDispose = 92,
+    RecordPiOfficeSessionDisposeDelivery = 93,
+    RecordPiOfficeSessionDisposeAccepted = 94,
+    RecordPiOfficeSessionDisposeUsage = 95,
+    RecordPiOfficeSessionDisposeUsageFailure = 96,
+    RecordPiOfficeSessionDisposed = 97,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2857,6 +3040,9 @@ closed_rejection_codes! {
     PiOfficeTurnTerminalAlreadyRecorded = 56,
     PiOfficeTurnUsageAlreadyFrozen = 57,
     ProjectNorthStarAlignmentMismatch = 58,
+    PiOfficeSessionDisposeBindingMismatch = 59,
+    PiOfficeSessionDisposeUsageNotMonotonic = 60,
+    PiOfficeSessionDisposeReceiptMissing = 61,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -3232,6 +3418,41 @@ pub enum EventBody {
         disposition: PiOfficeTurnDisposition,
         assistant_outcome: PiOfficeTurnAssistantOutcome,
     },
+    PiOfficeSessionDisposeAuthorized {
+        session_id: RootAuthorityOfficeSessionId,
+        child_process_id: ChildProcessId,
+        correlation_identity: PiCorrelationIdentity,
+        authorized_generation: AdmissionGeneration,
+    },
+    PiOfficeSessionDisposeDelivered {
+        session_id: RootAuthorityOfficeSessionId,
+        child_process_id: ChildProcessId,
+        correlation_identity: PiCorrelationIdentity,
+    },
+    PiOfficeSessionDisposeAccepted {
+        session_id: RootAuthorityOfficeSessionId,
+        correlation_identity: PiCorrelationIdentity,
+        command_result_sequence: PiProtocolSequence,
+    },
+    PiOfficeSessionDisposeUsageRecorded {
+        session_id: RootAuthorityOfficeSessionId,
+        protocol_sequence: PiProtocolSequence,
+        cumulative_micro_usd: UsdMicros,
+    },
+    PiOfficeSessionDisposeUsageFrozen {
+        session_id: RootAuthorityOfficeSessionId,
+        budget_reservation_id: BudgetReservationId,
+        cancellation_request_id: CancellationRequestId,
+        postmortem_id: CostPostmortemId,
+        failure: PiOfficeTurnUsageFailure,
+    },
+    PiOfficeSessionDisposed {
+        pi_office_session_dispose_receipt_id: PiOfficeSessionDisposeReceiptId,
+        session_id: RootAuthorityOfficeSessionId,
+        budget_reservation_id: BudgetReservationId,
+        observed_cumulative_micro_usd: UsdMicros,
+        budget_disposition: PiOfficeSessionDisposeBudgetDisposition,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -3322,6 +3543,12 @@ pub enum EventKind {
     PiOfficeTurnUsageRecorded = 83,
     PiOfficeTurnUsageFrozen = 84,
     PiOfficeTurnTerminalRecorded = 85,
+    PiOfficeSessionDisposeAuthorized = 86,
+    PiOfficeSessionDisposeDelivered = 87,
+    PiOfficeSessionDisposeAccepted = 88,
+    PiOfficeSessionDisposeUsageRecorded = 89,
+    PiOfficeSessionDisposeUsageFrozen = 90,
+    PiOfficeSessionDisposed = 91,
 }
 
 impl EventBody {
@@ -3430,6 +3657,22 @@ impl EventBody {
             Self::PiOfficeTurnUsageRecorded { .. } => EventKind::PiOfficeTurnUsageRecorded,
             Self::PiOfficeTurnUsageFrozen { .. } => EventKind::PiOfficeTurnUsageFrozen,
             Self::PiOfficeTurnTerminalRecorded { .. } => EventKind::PiOfficeTurnTerminalRecorded,
+            Self::PiOfficeSessionDisposeAuthorized { .. } => {
+                EventKind::PiOfficeSessionDisposeAuthorized
+            }
+            Self::PiOfficeSessionDisposeDelivered { .. } => {
+                EventKind::PiOfficeSessionDisposeDelivered
+            }
+            Self::PiOfficeSessionDisposeAccepted { .. } => {
+                EventKind::PiOfficeSessionDisposeAccepted
+            }
+            Self::PiOfficeSessionDisposeUsageRecorded { .. } => {
+                EventKind::PiOfficeSessionDisposeUsageRecorded
+            }
+            Self::PiOfficeSessionDisposeUsageFrozen { .. } => {
+                EventKind::PiOfficeSessionDisposeUsageFrozen
+            }
+            Self::PiOfficeSessionDisposed { .. } => EventKind::PiOfficeSessionDisposed,
         }
     }
 }

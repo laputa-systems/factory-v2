@@ -23,15 +23,16 @@ use society_pi::{
     CorrelationIdentity, CreateSessionPayload, Disabled, EffectiveModelDescriptorV1, Images,
     InboundCommand, InboundFrame, KnownPerMillionRateV1, MAX_JSONL_FRAME_BYTES, ModelApi,
     ModelCatalogPolicyV1, ModelId, ModelInput, ModelSelection, NodeRuntimeVersion,
-    NonNegativeInteger, OpenRouterBaseUrl, PiSdkVersion, PositiveInteger, ProjectTrust, Provider,
-    QueueMode, RetryPolicyV1, RuntimeIdentity, SessionIdentity, SessionKind, SpawnNonce,
-    ThinkingLevel, ToolProfile, Transport, UsdPerMillionDecimal, encode_inbound_jsonl,
+    NonNegativeInteger, OpenRouterBaseUrl, OutboundEvent, PiSdkVersion, PositiveInteger,
+    ProjectTrust, Provider, QueueMode, RetryPolicyV1, RuntimeIdentity, SessionIdentity,
+    SessionKind, SpawnNonce, ThinkingLevel, ToolProfile, TranscriptFlushReceiptV1, Transport,
+    UsdPerMillionDecimal, encode_inbound_jsonl,
 };
 use societyd::supervision::{
     AdmissionDenied, CancellationMode, CancellationReason, CancellationRequest,
     CancellationRequestId, ChildLifecycle, ChildTerminalDisposition, ControlWriteDeadline,
     HandshakeDeadline, MonotonicTick, NativeHostEnvironment, NativeWorkspace, NativeWorkspaceId,
-    NativeWorkspaceRoot, PiSpawnRequest, PiSupervisor, PreCreateAdmissionGate,
+    NativeWorkspaceRoot, PeerFrameValidation, PiSpawnRequest, PiSupervisor, PreCreateAdmissionGate,
     QualifiedHostExecution, SupervisedChildId, SupervisionError, VerifiedArtifact,
 };
 
@@ -118,6 +119,119 @@ fn inert_handshake_create_dispose_and_reap_are_provider_free() {
         supervisor.spawn_inert(fixture.spawn_request()),
         Err(SupervisionError::DuplicateChildIdentity)
     ));
+    fixture.cleanup();
+}
+
+#[test]
+fn disposal_output_preserves_sealed_acceptance_usage_and_transcript_coordinates() {
+    let fixture = Fixture::new("m4-disposal-output");
+    let child_id = fixture.child_id();
+    let dispose_correlation = correlation("dispose-sealed-output");
+    let mut supervisor = PiSupervisor::new();
+    supervisor.spawn_inert(fixture.spawn_request()).unwrap();
+    await_adapter(&mut supervisor, &child_id);
+    supervisor
+        .send_create_session(
+            &child_id,
+            &mut Allow,
+            MonotonicTick::ZERO,
+            control_deadline(),
+        )
+        .unwrap();
+    await_session_ready(&mut supervisor, &child_id);
+    let dispose_write = supervisor
+        .send_dispose(
+            &child_id,
+            dispose_correlation.clone(),
+            society_pi::DisposeReason::CycleReconciliation,
+            MonotonicTick::ZERO,
+            control_deadline(),
+        )
+        .unwrap();
+
+    // A logical Dispose admission is not yet a physical closing frame. This
+    // test consumes raw terminal output only after the nonblocking stdin
+    // suffix has fully drained, matching the M7 durable delivery boundary.
+    let dispose_delivered = match dispose_write {
+        societyd::supervision::ControlWriteProgress::Delivered => true,
+        societyd::supervision::ControlWriteProgress::Pending => {
+            let mut delivered = false;
+            for tick in 0..1_000 {
+                if supervisor
+                    .drive_control_write(&child_id, MonotonicTick::from_milliseconds(tick))
+                    .unwrap()
+                    == societyd::supervision::ControlWriteProgress::Delivered
+                {
+                    delivered = true;
+                    break;
+                }
+                // Monotonic test coordinates do not schedule the native
+                // host. Yielding mirrors the handshake helpers below and
+                // prevents a tight test loop from outrunning Node before it
+                // can consume the physical Dispose suffix.
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            delivered
+        }
+    };
+    assert!(
+        dispose_delivered,
+        "Dispose JSONL frame must drain before stdout"
+    );
+
+    let mut observed = Vec::new();
+    for tick in 0..1_000 {
+        let Some(frame) = supervisor
+            .observe_disposal_output_at(
+                &child_id,
+                MonotonicTick::from_milliseconds(tick),
+                HandshakeDeadline::at(MonotonicTick::from_milliseconds(1_000)),
+            )
+            .unwrap()
+        else {
+            // A nonblocking `NotReady` result carries no terminal fact. Give
+            // the provider-free native double a real scheduling opportunity;
+            // synthetic ticks alone do not do that.
+            std::thread::sleep(std::time::Duration::from_millis(1));
+            continue;
+        };
+        assert!(matches!(frame.validation(), PeerFrameValidation::Accepted));
+        assert!(!frame.peer_became_fatal());
+        assert_eq!(
+            frame.frame().correlation_identity.as_ref(),
+            Some(&dispose_correlation)
+        );
+        match &frame.frame().event {
+            OutboundEvent::CommandResult(society_pi::CommandResult::Accepted {
+                command, ..
+            }) if *command == society_pi::CommandName::Dispose => {
+                observed.push((frame.frame().sequence.value(), "accepted"))
+            }
+            OutboundEvent::UsageSnapshot {
+                usage: society_pi::UsageObservation::Known(_),
+            } => observed.push((frame.frame().sequence.value(), "usage")),
+            OutboundEvent::Disposed {
+                transcript_flush_receipt:
+                    TranscriptFlushReceiptV1::UnmaterializedNoPrompt {
+                        session_identity, ..
+                    },
+            } if session_identity == &fixture.session_identity => {
+                observed.push((frame.frame().sequence.value(), "disposed"));
+                break;
+            }
+            other => panic!("unexpected disposal frame: {other:?}"),
+        }
+    }
+    assert_eq!(observed, [(4, "accepted"), (5, "usage"), (6, "disposed")]);
+    assert_eq!(
+        supervisor.lifecycle(&child_id),
+        Some(ChildLifecycle::Quiescing)
+    );
+    let receipt = supervisor.wait_and_reap(&child_id).unwrap();
+    assert_eq!(
+        receipt.peer_state,
+        societyd::supervision::PiPeerReceiptState::Observed(society_pi::PeerPhase::Disposed)
+    );
     fixture.cleanup();
 }
 

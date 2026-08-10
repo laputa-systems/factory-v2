@@ -112,6 +112,27 @@ lifecycle. Only completed/observed-stop returns the Office to Ready. This is a
 generic execution boundary, not evidence that an application's requested work
 was correct or that a product change is authorized.
 
+The same daemon-private foundation now records an idle Office-session Dispose
+chain as `Authorize-before-write -> delivered -> accepted -> final
+Known/failure -> Disposed`. Authorization is durable before the physical
+Dispose write; delivery is the complete pipe write; accepted is a separate host
+fact. The immediately following final Known usage permits the next `Disposed`
+receipt, whose materialized SessionManager transcript is verified under the
+owned session directory and sealed by the daemon's sole content writer before
+the kernel records its object identity. A no-Prompt session may instead have a
+sealed materialized transcript whose first prompt is explicitly absent; only a
+lazy missing session file is explicitly unmaterialized and has no content
+object. Neither absence arm can invent a first prompt or content. The final Known terminal
+reconciles the existing parent reservation, releasing its unused reserve, or
+freezes a known overrun. A final accounting failure freezes the reservation and
+enters containment without a synthetic `Disposed` receipt. Reaping the child
+is a separate process-custody transition.
+
+This is still only a same-lifetime foundation: the resident serving loop has
+no scheduler/control-loop call site for it, and there is no post-restart
+recovery, workspace disposal, semantic submission, paid/native qualification,
+or end-to-end application execution claim.
+
 The generic sequence therefore makes no claim that an application can yet run
 end to end. A product-specific executable contract must state its own admitted
 inputs, evaluators, budgets, delivery gates, and acceptance judge under

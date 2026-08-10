@@ -72,6 +72,17 @@ application may use generic public crates by path or published interface; it
 does not become a generic workspace member merely by being stored in this
 repository.
 
+The implemented generic Office-session Dispose foundation records the exact
+`Authorize-before-write -> delivered -> accepted -> final Known/failure ->
+Disposed` boundary. The final branch is exclusive: final Known usage followed
+by the peer's transcript-flush receipt can record `Disposed` and reconcile the
+parent reservation; a final accounting failure freezes that reservation and
+begins containment without a synthetic `Disposed` receipt. This foundation is
+not a resident scheduler/control-loop call site, post-restart recovery,
+workspace disposal, semantic submission, paid/native qualification, or an
+end-to-end application execution claim. Direct-child reap remains a separate
+process-custody fact.
+
 ## Nearest hard judges
 
 Run the narrowest relevant judge first, then broaden:

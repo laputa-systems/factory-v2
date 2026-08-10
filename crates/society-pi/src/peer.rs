@@ -137,6 +137,18 @@ struct PendingDispose {
     correlation: CorrelationIdentity,
 }
 
+/// A peer-accepted Pi `Dispose` is a short, closed terminal chain rather
+/// than an arbitrary Closing phase: accepted command result, exactly one
+/// forced cumulative usage snapshot, then the transcript receipt. Keeping
+/// this state separately from `PendingDispose` lets the boundary reject a
+/// schema-valid `Disposed` record that skipped final accounting.
+#[derive(Clone, Debug)]
+struct ActiveDispose {
+    correlation: CorrelationIdentity,
+    accepted_sequence: u64,
+    final_usage_sequence: Option<u64>,
+}
+
 /// The terminal evidence path Pi 0.83 actually exposes for an admitted
 /// Prompt. Non-lifecycle projected events remain sealed evidence, but the
 /// lifecycle facts that can certify a charged outcome are strictly ordered.
@@ -193,6 +205,7 @@ pub struct BoundaryPeer {
     configuration: Option<EffectiveSessionConfiguration>,
     pending_prompt: Option<PendingPrompt>,
     pending_dispose: Option<PendingDispose>,
+    active_dispose: Option<ActiveDispose>,
     active_turn: Option<ActiveTurn>,
     task_attempt_prompt_admitted: bool,
     prompt_candidates: BTreeMap<CorrelationIdentity, Blake3Digest>,
@@ -228,6 +241,7 @@ impl BoundaryPeer {
             configuration: None,
             pending_prompt: None,
             pending_dispose: None,
+            active_dispose: None,
             active_turn: None,
             task_attempt_prompt_admitted: false,
             prompt_candidates: BTreeMap::new(),
@@ -459,7 +473,7 @@ impl BoundaryPeer {
                 None
             }
             OutboundEvent::CommandResult(result) => {
-                self.observe_command_result(frame.correlation_identity, result)?;
+                self.observe_command_result(frame_sequence, frame.correlation_identity, result)?;
                 None
             }
             OutboundEvent::AgentEvent { agent_event } => {
@@ -481,7 +495,11 @@ impl BoundaryPeer {
             OutboundEvent::Disposed {
                 transcript_flush_receipt,
             } => {
-                self.observe_disposed(frame.correlation_identity, transcript_flush_receipt)?;
+                self.observe_disposed(
+                    frame_sequence,
+                    frame.correlation_identity,
+                    transcript_flush_receipt,
+                )?;
                 Some(PeerObservation::Disposed)
             }
             OutboundEvent::Fatal { failure_code } => {
@@ -596,6 +614,7 @@ impl BoundaryPeer {
 
     fn observe_command_result(
         &mut self,
+        sequence: u64,
         correlation: Option<CorrelationIdentity>,
         result: CommandResult,
     ) -> Result<(), PeerError> {
@@ -657,7 +676,14 @@ impl BoundaryPeer {
                         abort_intent_admitted: pending_prompt.abort_intent_admitted,
                     });
                 }
-                CommandName::Dispose => self.phase = PeerPhase::Closing,
+                CommandName::Dispose => {
+                    self.phase = PeerPhase::Closing;
+                    self.active_dispose = Some(ActiveDispose {
+                        correlation: correlation.clone(),
+                        accepted_sequence: sequence,
+                        final_usage_sequence: None,
+                    });
+                }
                 CommandName::FollowUp
                 | CommandName::Steer
                 | CommandName::Abort
@@ -773,6 +799,20 @@ impl BoundaryPeer {
             self.fence();
             return Err(PeerError::InvalidTransition);
         }
+        let is_final_dispose_usage = if let Some(active_dispose) = self.active_dispose.as_ref() {
+            if self.phase != PeerPhase::Closing
+                || correlation != active_dispose.correlation
+                || command.name != CommandName::Dispose
+                || active_dispose.final_usage_sequence.is_some()
+                || active_dispose.accepted_sequence.checked_add(1) != Some(sequence)
+            {
+                self.fence();
+                return Err(PeerError::MissingTerminalEvidence);
+            }
+            true
+        } else {
+            false
+        };
         let active_prompt_correlation = self
             .active_turn
             .as_ref()
@@ -802,6 +842,17 @@ impl BoundaryPeer {
         }
         match self.usage.observe(&usage) {
             Ok(delta) => {
+                if is_final_dispose_usage {
+                    // A host-forced same-total snapshot produces an explicit
+                    // idempotent zero delta. Its sequence remains mandatory
+                    // terminal accounting evidence and must not be dropped
+                    // merely because cumulative charge did not change.
+                    let Some(active_dispose) = self.active_dispose.as_mut() else {
+                        self.fence();
+                        return Err(PeerError::MissingTerminalEvidence);
+                    };
+                    active_dispose.final_usage_sequence = Some(sequence);
+                }
                 if let Some(active) = self.active_turn.as_mut()
                     && correlation == active.correlation
                 {
@@ -945,6 +996,7 @@ impl BoundaryPeer {
 
     fn observe_disposed(
         &mut self,
+        sequence: u64,
         correlation: Option<CorrelationIdentity>,
         receipt: TranscriptFlushReceiptV1,
     ) -> Result<(), PeerError> {
@@ -958,11 +1010,24 @@ impl BoundaryPeer {
             .ok_or(PeerError::UnknownCorrelation)?;
         if pending.name != CommandName::Dispose
             || !pending.result_seen
+            || !pending.accepted
             || self.phase != PeerPhase::Closing
             || self.active_turn.is_some()
         {
             self.fence();
             return Err(PeerError::InvalidTransition);
+        }
+        let Some(active_dispose) = self.active_dispose.as_ref() else {
+            self.fence();
+            return Err(PeerError::MissingTerminalEvidence);
+        };
+        if active_dispose.correlation != correlation
+            || active_dispose
+                .final_usage_sequence
+                .is_none_or(|usage| usage.checked_add(1) != Some(sequence))
+        {
+            self.fence();
+            return Err(PeerError::MissingTerminalEvidence);
         }
         let Some(create) = self.create.as_ref() else {
             self.fence();
@@ -1016,6 +1081,7 @@ impl BoundaryPeer {
                 }
             }
         }
+        self.active_dispose = None;
         self.phase = PeerPhase::Disposed;
         Ok(())
     }
@@ -1024,6 +1090,7 @@ impl BoundaryPeer {
         self.phase = PeerPhase::Fatal;
         self.pending_prompt = None;
         self.pending_dispose = None;
+        self.active_dispose = None;
         self.active_turn = None;
     }
 }
@@ -1307,6 +1374,43 @@ mod peer_tests {
         ))
         .unwrap();
         peer
+    }
+    fn admit_dispose(peer: &mut BoundaryPeer) {
+        peer.admit_inbound(InboundFrame {
+            sequence: crate::protocol::BoundarySequence::parse(2).unwrap(),
+            session_identity: SessionIdentity::parse("peer-session-001").unwrap(),
+            correlation_identity: CorrelationIdentity::parse("dispose-001").unwrap(),
+            command: InboundCommand::Dispose(crate::protocol::DisposePayload {
+                reason: crate::protocol::DisposeReason::ProcessRecovery,
+            }),
+        })
+        .unwrap();
+        peer.observe_outbound(frame(
+            4,
+            Some("dispose-001"),
+            OutboundEvent::CommandResult(CommandResult::Accepted {
+                command: CommandName::Dispose,
+                detail: crate::protocol::CommandResultDetail::Acknowledged,
+            }),
+        ))
+        .unwrap();
+    }
+    fn unmaterialized_transcript_receipt() -> TranscriptFlushReceiptV1 {
+        TranscriptFlushReceiptV1::UnmaterializedNoPrompt {
+            session_identity: SessionIdentity::parse("peer-session-001").unwrap(),
+            session_file: AbsolutePath::parse("/tmp/peer/sessions/receipt.jsonl").unwrap(),
+        }
+    }
+    fn materialized_transcript_receipt() -> TranscriptFlushReceiptV1 {
+        TranscriptFlushReceiptV1::Materialized {
+            session_identity: SessionIdentity::parse("peer-session-001").unwrap(),
+            session_file: AbsolutePath::parse("/tmp/peer/sessions/receipt.jsonl").unwrap(),
+            session_file_blake3: digest_value(),
+            header_cwd: AbsolutePath::parse("/tmp/peer/cwd").unwrap(),
+            first_user_prompt: crate::protocol::FirstUserPromptReceipt::Verified {
+                digest: digest(b"first prompt"),
+            },
+        }
     }
     fn admit_prompt(peer: &mut BoundaryPeer) {
         peer.admit_inbound(prompt_frame()).unwrap();
@@ -2375,6 +2479,14 @@ mod peer_tests {
             }),
         ))
         .unwrap();
+        peer.observe_outbound(frame(
+            5,
+            Some("dispose-001"),
+            OutboundEvent::UsageSnapshot {
+                usage: zero_usage(),
+            },
+        ))
+        .unwrap();
         let receipt = TranscriptFlushReceiptV1::Materialized {
             session_identity: SessionIdentity::parse("peer-session-001").unwrap(),
             session_file: AbsolutePath::parse("/tmp/peer/sessions/receipt.jsonl").unwrap(),
@@ -2386,7 +2498,7 @@ mod peer_tests {
         };
         assert_eq!(
             peer.observe_outbound(frame(
-                5,
+                6,
                 Some("dispose-001"),
                 OutboundEvent::Disposed {
                     transcript_flush_receipt: receipt
@@ -2395,6 +2507,148 @@ mod peer_tests {
             Err(PeerError::TranscriptReceipt)
         );
         assert_eq!(peer.phase(), PeerPhase::Fatal);
+    }
+
+    #[test]
+    fn materialized_header_only_transcript_with_absent_prompt_is_a_valid_dispose_receipt() {
+        let mut peer = setup_ready();
+        admit_dispose(&mut peer);
+        peer.observe_outbound(frame(
+            5,
+            Some("dispose-001"),
+            OutboundEvent::UsageSnapshot {
+                usage: zero_usage(),
+            },
+        ))
+        .unwrap();
+        let receipt = TranscriptFlushReceiptV1::Materialized {
+            session_identity: SessionIdentity::parse("peer-session-001").unwrap(),
+            session_file: AbsolutePath::parse("/tmp/peer/sessions/receipt.jsonl").unwrap(),
+            session_file_blake3: digest_value(),
+            header_cwd: AbsolutePath::parse("/tmp/peer/cwd").unwrap(),
+            first_user_prompt: crate::protocol::FirstUserPromptReceipt::Absent,
+        };
+        assert_eq!(
+            peer.observe_outbound(frame(
+                6,
+                Some("dispose-001"),
+                OutboundEvent::Disposed {
+                    transcript_flush_receipt: receipt,
+                },
+            )),
+            Ok(Some(PeerObservation::Disposed))
+        );
+        assert_eq!(peer.phase(), PeerPhase::Disposed);
+    }
+
+    #[test]
+    fn disposed_without_the_forced_final_usage_snapshot_fences_the_peer() {
+        let mut peer = setup_ready();
+        admit_dispose(&mut peer);
+        assert_eq!(
+            peer.observe_outbound(frame(
+                5,
+                Some("dispose-001"),
+                OutboundEvent::Disposed {
+                    transcript_flush_receipt: unmaterialized_transcript_receipt(),
+                },
+            )),
+            Err(PeerError::MissingTerminalEvidence)
+        );
+        assert_eq!(peer.phase(), PeerPhase::Fatal);
+    }
+
+    #[test]
+    fn dispose_usage_must_immediately_follow_its_accepted_result() {
+        let mut peer = setup_ready();
+        admit_dispose(&mut peer);
+        // The transport sequence itself remains contiguous. This unrelated
+        // schema-valid lifecycle frame is nevertheless forbidden between the
+        // accepted Dispose result and its forced final usage snapshot.
+        peer.observe_outbound(frame(
+            5,
+            None,
+            OutboundEvent::AgentEvent {
+                agent_event: ProjectedAgentEvent::AgentStart,
+            },
+        ))
+        .unwrap();
+        assert_eq!(
+            peer.observe_outbound(frame(
+                6,
+                Some("dispose-001"),
+                OutboundEvent::UsageSnapshot {
+                    usage: zero_usage(),
+                },
+            )),
+            Err(PeerError::MissingTerminalEvidence)
+        );
+        assert_eq!(peer.phase(), PeerPhase::Fatal);
+    }
+
+    #[test]
+    fn same_total_dispose_usage_is_required_terminal_evidence_even_without_a_delta() {
+        let mut peer = setup_ready();
+        admit_prompt(&mut peer);
+        let settled_sequence = materialized_prompt_sequence(&mut peer, 5);
+        peer.observe_outbound(frame(
+            settled_sequence,
+            Some("prompt-001"),
+            OutboundEvent::Settled {
+                classification: SettledClassification::Completed,
+                final_assistant_outcome: FinalAssistantOutcome::Observed {
+                    stop_reason: AssistantStopReason::Stop,
+                },
+            },
+        ))
+        .unwrap();
+        peer.admit_inbound(InboundFrame {
+            sequence: crate::protocol::BoundarySequence::parse(3).unwrap(),
+            session_identity: SessionIdentity::parse("peer-session-001").unwrap(),
+            correlation_identity: CorrelationIdentity::parse("dispose-001").unwrap(),
+            command: InboundCommand::Dispose(crate::protocol::DisposePayload {
+                reason: crate::protocol::DisposeReason::ProcessRecovery,
+            }),
+        })
+        .unwrap();
+        peer.observe_outbound(frame(
+            settled_sequence + 1,
+            Some("dispose-001"),
+            OutboundEvent::CommandResult(CommandResult::Accepted {
+                command: CommandName::Dispose,
+                detail: crate::protocol::CommandResultDetail::Acknowledged,
+            }),
+        ))
+        .unwrap();
+        assert_eq!(
+            peer.observe_outbound(frame(
+                settled_sequence + 2,
+                Some("dispose-001"),
+                OutboundEvent::UsageSnapshot {
+                    usage: zero_usage(),
+                },
+            )),
+            Ok(Some(PeerObservation::Usage(UsageDelta {
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
+                total_tokens: 0,
+                micro_usd: crate::cost::UsdMicros::ZERO,
+                idempotent: true,
+            })))
+        );
+        assert_eq!(
+            peer.observe_outbound(frame(
+                settled_sequence + 3,
+                Some("dispose-001"),
+                OutboundEvent::Disposed {
+                    transcript_flush_receipt: materialized_transcript_receipt(),
+                },
+            )),
+            Ok(Some(PeerObservation::Disposed))
+        );
+        assert_eq!(peer.phase(), PeerPhase::Disposed);
     }
 
     #[test]

@@ -15,38 +15,40 @@ use crate::{
     BudgetFreezeReason, BudgetReservationId, BudgetReservationState, CancellationMode,
     CancellationPropagationId, CancellationPropagationState,
     CancellationPropagationTargetDisposition, CancellationRequestId, CancellationState,
-    CanonicalWorkspacePath, Capability, CausalEpisodeId, ChildProcessId,
-    ChildProcessLivenessObservationId, ChildProcessReapReceiptId, ChildProcessRecoveryReceiptId,
-    ChildProcessState, ChildRecoveryObservation, ChildStreamKind, ChildStreamSealCompleteness,
-    ChildStreamSealId, ChildTerminalDisposition, CommandBody, CommandDisposition, CommandId,
-    CommandKind, CommandReceipt, CommandRequest, ContentMediaSchemaContract, ContentObjectId,
-    ContentSealReceiptId, ContextPackId, ContextPackPurpose, CostObservation, CostPostmortemCause,
-    CostPostmortemId, CostPostmortemResolution, CostPostmortemState, CostUnavailableReason,
-    CostUnknownReason, DeterministicEvaluationReceiptId, DeterministicExperimentId,
-    DeterministicExperimentState, DevelopmentalAttractor, DirectChildWaitStatus, EpisodeState,
-    EvaluatorRevisionId, EventBody, EventId, EventKind, EvidenceAdmissionId,
-    EvidenceLimitationText, EvidenceSemanticRole, ExecutionProfileId, ExecutionProfileKind,
-    ExecutionProfileReadiness, ExpectedGeneration, ForensicManifestCapturePolicy,
-    ForensicManifestId, FoundingMissionId, GraphEdgeId, GraphEdgeKind, GraphObjectId,
-    GraphObjectKind, GraphRevisionBody, GraphRevisionId, GraphRevisionState,
-    HypothesisRevisionText, InputManifestId, LedgerEvent, MissionPrinciple, MissionPrincipleKind,
-    MissionPrincipleText, MissionPrinciples, MissionStatement, NativeChildPid, NativeWorkspaceId,
-    NorthStarBoundaryCommitmentQuestion, NorthStarChangeQuestion,
-    NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet, NorthStarRevisitQuestion,
-    ObservationRevisionText, OfficeId, OfficeKind, OfficeOccupancyId, OfficeSessionState,
-    OfficeSessionTerminalState, OfficeTurnId, OfficeTurnPurpose, OfficeTurnState, OperatingCycleId,
-    OperatingCycleState, OperatingCycleTreatment, OutcomeObligationDisposition,
-    OutcomeObligationId, OutcomeObligationState, OwnedProcessGroupId, PiAbortControlReceiptId,
-    PiAbortControlWriteOutcome, PiBoundarySessionIdentity, PiChildNotSpawnedReason, PiChildOwner,
-    PiChildSessionState, PiChildSpawnAdmissionId, PiChildSpawnAdmissionState,
-    PiCorrelationIdentity, PiCumulativeUsage, PiOfficeTurnAssistantOutcome,
-    PiOfficeTurnDisposition, PiOfficeTurnPromptAuthorizationId, PiOfficeTurnTerminalEvidence,
-    PiOfficeTurnTerminalReceiptId, PiOfficeTurnTranscriptDisposition, PiOfficeTurnUsageFailure,
-    PiOfficeTurnUsageFailureId, PiOfficeTurnUsageReceiptId, PiOfficeTurnUsageUnavailableReason,
-    PiOfficeTurnUsageUnknownReason, PiProtocolSequence, PiSessionId, PiTokenCount,
-    PostmortemActionKind, PostmortemActionProposalId, PostmortemCausalClaimId,
-    PostmortemCausalClaimKind, PostmortemId, PostmortemState, PrincipalId, PrincipalKind,
-    ProcessExitCode, ProcessGroupLiveness, ProcessSignalAction, ProcessSignalCause,
+    CanonicalPiSessionTranscriptPath, CanonicalWorkspacePath, Capability, CausalEpisodeId,
+    ChildProcessId, ChildProcessLivenessObservationId, ChildProcessReapReceiptId,
+    ChildProcessRecoveryReceiptId, ChildProcessState, ChildRecoveryObservation, ChildStreamKind,
+    ChildStreamSealCompleteness, ChildStreamSealId, ChildTerminalDisposition, CommandBody,
+    CommandDisposition, CommandId, CommandKind, CommandReceipt, CommandRequest,
+    ContentMediaSchemaContract, ContentObjectId, ContentSealReceiptId, ContextPackId,
+    ContextPackPurpose, CostObservation, CostPostmortemCause, CostPostmortemId,
+    CostPostmortemResolution, CostPostmortemState, CostUnavailableReason, CostUnknownReason,
+    DeterministicEvaluationReceiptId, DeterministicExperimentId, DeterministicExperimentState,
+    DevelopmentalAttractor, DirectChildWaitStatus, EpisodeState, EvaluatorRevisionId, EventBody,
+    EventId, EventKind, EvidenceAdmissionId, EvidenceLimitationText, EvidenceSemanticRole,
+    ExecutionProfileId, ExecutionProfileKind, ExecutionProfileReadiness, ExpectedGeneration,
+    ForensicManifestCapturePolicy, ForensicManifestId, FoundingMissionId, GraphEdgeId,
+    GraphEdgeKind, GraphObjectId, GraphObjectKind, GraphRevisionBody, GraphRevisionId,
+    GraphRevisionState, HypothesisRevisionText, InputManifestId, LedgerEvent, MissionPrinciple,
+    MissionPrincipleKind, MissionPrincipleText, MissionPrinciples, MissionStatement,
+    NativeChildPid, NativeWorkspaceId, NorthStarBoundaryCommitmentQuestion,
+    NorthStarChangeQuestion, NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet,
+    NorthStarRevisitQuestion, ObservationRevisionText, OfficeId, OfficeKind, OfficeOccupancyId,
+    OfficeSessionState, OfficeSessionTerminalState, OfficeTurnId, OfficeTurnPurpose,
+    OfficeTurnState, OperatingCycleId, OperatingCycleState, OperatingCycleTreatment,
+    OutcomeObligationDisposition, OutcomeObligationId, OutcomeObligationState, OwnedProcessGroupId,
+    PiAbortControlReceiptId, PiAbortControlWriteOutcome, PiBoundarySessionIdentity,
+    PiChildNotSpawnedReason, PiChildOwner, PiChildSessionState, PiChildSpawnAdmissionId,
+    PiChildSpawnAdmissionState, PiCorrelationIdentity, PiCumulativeUsage,
+    PiOfficeSessionDisposeBudgetDisposition, PiOfficeSessionDisposeReceiptId,
+    PiOfficeSessionFirstUserPromptReceipt, PiOfficeSessionTranscriptReceipt,
+    PiOfficeTurnAssistantOutcome, PiOfficeTurnDisposition, PiOfficeTurnPromptAuthorizationId,
+    PiOfficeTurnTerminalEvidence, PiOfficeTurnTerminalReceiptId, PiOfficeTurnTranscriptDisposition,
+    PiOfficeTurnUsageFailure, PiOfficeTurnUsageFailureId, PiOfficeTurnUsageReceiptId,
+    PiOfficeTurnUsageUnavailableReason, PiOfficeTurnUsageUnknownReason, PiProtocolSequence,
+    PiSessionId, PiTokenCount, PostmortemActionKind, PostmortemActionProposalId,
+    PostmortemCausalClaimId, PostmortemCausalClaimKind, PostmortemId, PostmortemState, PrincipalId,
+    PrincipalKind, ProcessExitCode, ProcessGroupLiveness, ProcessSignalAction, ProcessSignalCause,
     ProcessSignalDelivery, ProcessSignalNumber, ProcessSignalReceiptId, ProjectId,
     ProjectMilestoneId, ProjectMilestoneState, ProjectNorthStarAlignment,
     ProjectNorthStarBoundaryCommitmentAnswer, ProjectNorthStarChangeAnswer,
@@ -62,7 +64,7 @@ const CURRENT_SCHEMA: &str = include_str!("../../../migrations/0001_kernel.sql")
 // Historical prototype schemas used versions one through ten. The collapsed
 // fresh schema deliberately occupies a noncolliding identity, so an old
 // ledger cannot be mistaken for current trusted physics.
-const CURRENT_SCHEMA_VERSION: i64 = 11;
+const CURRENT_SCHEMA_VERSION: i64 = 12;
 
 struct PiChildSpawnAdmissionInput<'a> {
     operating_cycle_id: OperatingCycleId,
@@ -136,8 +138,45 @@ type StoredPiChildAdmissionCommand = (
 
 type PiOfficeTurnUsageSqlRow = (i64, i64, i64, i64, i64, Vec<u8>, i64, i64);
 type PiOfficeTurnSettlementSqlRow = (i64, i64, i64, i64, i64, i64, i64, i64, i64, i64);
+type PiOfficeSessionDisposeBindingSqlRow = (i64, i64, i64, i64, i64, i64, i64);
+type PiOfficeSessionDisposeTerminalSqlRow = (
+    i64,
+    i64,
+    String,
+    i64,
+    i64,
+    i64,
+    i64,
+    i64,
+    i64,
+    i64,
+    Vec<u8>,
+    i64,
+    i64,
+    i64,
+    i64,
+);
+type PiOfficeSessionTranscriptReceiptSqlValues = (
+    i64,
+    String,
+    Option<Vec<u8>>,
+    Option<i64>,
+    Option<i64>,
+    Option<Vec<u8>>,
+);
+type PiOfficeSessionDisposedCommandSqlRow = (
+    i64,
+    String,
+    i64,
+    i64,
+    String,
+    Option<Vec<u8>>,
+    Option<i64>,
+    Option<i64>,
+    Option<Vec<u8>>,
+);
 
-const COMMAND_BODY_TABLES: [&str; 91] = [
+const COMMAND_BODY_TABLES: [&str; 97] = [
     "command_create_society_identity",
     "command_install_root_authority_office",
     "command_install_founding_mission",
@@ -229,9 +268,15 @@ const COMMAND_BODY_TABLES: [&str; 91] = [
     "command_record_pi_office_turn_usage",
     "command_record_pi_office_turn_usage_failure",
     "command_record_pi_office_turn_terminal",
+    "command_authorize_pi_office_session_dispose",
+    "command_record_pi_office_session_dispose_delivery",
+    "command_record_pi_office_session_dispose_accepted",
+    "command_record_pi_office_session_dispose_usage",
+    "command_record_pi_office_session_dispose_usage_failure",
+    "command_record_pi_office_session_disposed",
 ];
 
-const EVENT_BODY_TABLES: [&str; 85] = [
+const EVENT_BODY_TABLES: [&str; 91] = [
     "event_society_identity_created",
     "event_root_authority_office_installed",
     "event_founding_mission_installed",
@@ -317,6 +362,12 @@ const EVENT_BODY_TABLES: [&str; 85] = [
     "event_pi_office_turn_usage_recorded",
     "event_pi_office_turn_usage_frozen",
     "event_pi_office_turn_terminal_recorded",
+    "event_pi_office_session_dispose_authorized",
+    "event_pi_office_session_dispose_delivered",
+    "event_pi_office_session_dispose_accepted",
+    "event_pi_office_session_dispose_usage_recorded",
+    "event_pi_office_session_dispose_usage_frozen",
+    "event_pi_office_session_disposed",
 ];
 
 const GRAPH_REVISION_BODY_TABLES: [&str; 2] = ["observation_revisions", "hypothesis_revisions"];
@@ -1186,6 +1237,12 @@ fn apply_command(
             | CommandBody::RecordPiOfficeTurnUsage { .. }
             | CommandBody::RecordPiOfficeTurnUsageFailure { .. }
             | CommandBody::RecordPiOfficeTurnTerminal { .. }
+            | CommandBody::AuthorizePiOfficeSessionDispose { .. }
+            | CommandBody::RecordPiOfficeSessionDisposeDelivery { .. }
+            | CommandBody::RecordPiOfficeSessionDisposeAccepted { .. }
+            | CommandBody::RecordPiOfficeSessionDisposeUsage { .. }
+            | CommandBody::RecordPiOfficeSessionDisposeUsageFailure { .. }
+            | CommandBody::RecordPiOfficeSessionDisposed { .. }
     ) != matches!(request.expected_generation, ExpectedGeneration::Exact(_))
     {
         return Ok(Err(Rejection::InvalidExpectedGeneration));
@@ -2209,6 +2266,80 @@ fn apply_command(
                 transcript_disposition: *transcript_disposition,
             },
         ),
+        CommandBody::RecordPiOfficeSessionDisposeDelivery {
+            session_id,
+            correlation_identity,
+        } => record_pi_office_session_dispose_delivery(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *session_id,
+            correlation_identity,
+        ),
+        CommandBody::AuthorizePiOfficeSessionDispose {
+            session_id,
+            correlation_identity,
+        } => authorize_pi_office_session_dispose(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *session_id,
+            correlation_identity,
+        ),
+        CommandBody::RecordPiOfficeSessionDisposeAccepted {
+            session_id,
+            correlation_identity,
+            command_result_sequence,
+        } => record_pi_office_session_dispose_accepted(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *session_id,
+            correlation_identity,
+            *command_result_sequence,
+        ),
+        CommandBody::RecordPiOfficeSessionDisposeUsage {
+            session_id,
+            correlation_identity,
+            protocol_sequence,
+            usage,
+        } => record_pi_office_session_dispose_usage(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *session_id,
+            correlation_identity,
+            *protocol_sequence,
+            *usage,
+        ),
+        CommandBody::RecordPiOfficeSessionDisposeUsageFailure {
+            session_id,
+            correlation_identity,
+            protocol_sequence,
+            failure,
+        } => record_pi_office_session_dispose_usage_failure(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *session_id,
+            correlation_identity,
+            *protocol_sequence,
+            *failure,
+        ),
+        CommandBody::RecordPiOfficeSessionDisposed {
+            session_id,
+            correlation_identity,
+            disposed_sequence,
+            transcript_receipt,
+        } => record_pi_office_session_disposed(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *session_id,
+            correlation_identity,
+            *disposed_sequence,
+            transcript_receipt,
+        ),
     };
 
     if result.is_ok()
@@ -3142,6 +3273,931 @@ fn record_pi_office_turn_usage_failure(
     })
 }
 
+/// Resolves the one supervised Pi child and parent reservation which are
+/// structurally bound to an Office session. Dispose is intentionally not a
+/// generic child terminal shortcut: it can begin only after the session is
+/// idle, quiesced, and still owns a live, peer-ready child.
+fn pi_office_session_dispose_binding(
+    transaction: &Transaction<'_>,
+    session_id: RootAuthorityOfficeSessionId,
+) -> Result<PiOfficeSessionDisposeBindingSqlRow, Rejection> {
+    transaction
+        .query_row(
+            "SELECT s.lifecycle_state, s.operating_cycle_id, parent.budget_reservation_id,
+                    child.child_process_id, admission.pi_session_id,
+                    child.lifecycle_state, protocol.lifecycle_state
+             FROM root_authority_office_sessions s
+             JOIN office_session_budget_reservations parent
+               ON parent.root_authority_office_session_id = s.root_authority_office_session_id
+             JOIN pi_child_spawn_admissions admission
+               ON admission.root_authority_office_session_id = s.root_authority_office_session_id
+             JOIN pi_child_processes child
+               ON child.pi_child_spawn_admission_id = admission.pi_child_spawn_admission_id
+             JOIN pi_child_session_protocols protocol
+               ON protocol.child_process_id = child.child_process_id
+             WHERE s.root_authority_office_session_id = ?1",
+            [session_id.value()],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|_| Rejection::PiOfficeSessionDisposeBindingMismatch)?
+        .ok_or(Rejection::PiOfficeSessionDisposeBindingMismatch)
+}
+
+fn pi_office_session_has_active_turn(
+    transaction: &Transaction<'_>,
+    session_id: RootAuthorityOfficeSessionId,
+) -> Result<bool, Rejection> {
+    transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM office_turns
+             WHERE root_authority_office_session_id = ?1 AND lifecycle_state = ?2)",
+            params![session_id.value(), OfficeTurnState::Active as i64],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|value| value != 0)
+        .map_err(|_| Rejection::PiOfficeSessionDisposeBindingMismatch)
+}
+
+fn require_pi_office_session_dispose_authorization_generation(
+    transaction: &Transaction<'_>,
+    expected_generation: ExpectedGeneration,
+    session_id: RootAuthorityOfficeSessionId,
+) -> Result<(), Rejection> {
+    let authorized_generation: i64 = transaction
+        .query_row(
+            "SELECT authorized_generation FROM pi_office_session_dispose_authorizations
+             WHERE root_authority_office_session_id = ?1",
+            [session_id.value()],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|_| Rejection::PiOfficeSessionDisposeBindingMismatch)?
+        .ok_or(Rejection::PiOfficeSessionDisposeBindingMismatch)?;
+    match expected_generation {
+        ExpectedGeneration::Exact(generation) if generation.value() == authorized_generation => {
+            Ok(())
+        }
+        ExpectedGeneration::Exact(_) => Err(Rejection::StaleAdmissionGeneration),
+        ExpectedGeneration::NotApplicable => Err(Rejection::InvalidExpectedGeneration),
+    }
+}
+
+fn authorize_pi_office_session_dispose(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    session_id: RootAuthorityOfficeSessionId,
+    correlation_identity: &PiCorrelationIdentity,
+) -> Result<EventBody, Rejection> {
+    let (session_state, cycle, _reservation, child, pi_session, child_state, protocol_state) =
+        pi_office_session_dispose_binding(transaction, session_id)?;
+    let cycle_id = OperatingCycleId::try_from(cycle)
+        .map_err(|_| Rejection::PiOfficeSessionDisposeBindingMismatch)?;
+    let cycle = cycle_for_generation(transaction, cycle_id, expected_generation)?;
+    if session_state != OfficeSessionState::Ready as i64
+        || cycle.state != OperatingCycleState::Quiescing
+        || child_state != ChildProcessState::Running as i64
+        || protocol_state != PiChildSessionState::SessionReady as i64
+        || pi_office_session_has_active_turn(transaction, session_id)?
+    {
+        return Err(Rejection::PiOfficeSessionDisposeBindingMismatch);
+    }
+    let correlation_already_used: i64 = transaction
+        .query_row(
+            "SELECT EXISTS(
+             SELECT 1 FROM pi_office_turn_prompt_authorizations
+             WHERE pi_session_id = ?1 AND correlation_identity = ?2
+             UNION ALL
+             SELECT 1 FROM pi_office_session_dispose_authorizations
+             WHERE pi_session_id = ?1 AND correlation_identity = ?2
+         )",
+            params![pi_session, correlation_identity.as_str()],
+            |row| row.get(0),
+        )
+        .map_err(|_| Rejection::PiOfficeSessionDisposeBindingMismatch)?;
+    transaction
+        .execute(
+            "UPDATE root_authority_office_sessions
+         SET lifecycle_state = ?1, last_transition_command_id = ?2
+         WHERE root_authority_office_session_id = ?3",
+            params![
+                OfficeSessionState::Quiescing as i64,
+                command_row_id,
+                session_id.value()
+            ],
+        )
+        .map_err(|_| Rejection::PiOfficeSessionDisposeBindingMismatch)?;
+    if correlation_already_used != 0 {
+        return Err(Rejection::PiOfficeSessionDisposeBindingMismatch);
+    }
+    let (reservation_state, charged): (i64, i64) = transaction
+        .query_row(
+            "SELECT reservation.reservation_state, reservation.charged_micros
+         FROM office_session_budget_reservations parent
+         JOIN budget_reservations reservation
+           ON reservation.budget_reservation_id = parent.budget_reservation_id
+         WHERE parent.root_authority_office_session_id = ?1",
+            [session_id.value()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(|_| Rejection::PiOfficeSessionDisposeBindingMismatch)?;
+    let latest_known: Option<i64> = transaction
+        .query_row(
+            "SELECT cumulative_ceiling_micros FROM pi_office_turn_usage_receipts
+         WHERE pi_session_id = ?1 ORDER BY protocol_sequence DESC LIMIT 1",
+            [pi_session],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|_| Rejection::PiOfficeSessionDisposeBindingMismatch)?;
+    let has_usage_failure: i64 = transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM pi_office_turn_usage_failures WHERE pi_session_id = ?1)",
+            [pi_session],
+            |row| row.get(0),
+        )
+        .map_err(|_| Rejection::PiOfficeSessionDisposeBindingMismatch)?;
+    if reservation_state != BudgetReservationState::Reserved as i64
+        || latest_known.unwrap_or(0) != charged
+        || has_usage_failure != 0
+    {
+        return Err(Rejection::PiOfficeSessionDisposeBindingMismatch);
+    }
+    transaction
+        .execute(
+            "INSERT INTO pi_office_session_dispose_authorizations(
+             root_authority_office_session_id, child_process_id, pi_session_id,
+             correlation_identity, authorized_generation, authorized_by_command_id
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                session_id.value(),
+                child,
+                pi_session,
+                correlation_identity.as_str(),
+                cycle.generation.value(),
+                command_row_id
+            ],
+        )
+        .map_err(|_| Rejection::PiOfficeSessionDisposeBindingMismatch)?;
+    Ok(EventBody::PiOfficeSessionDisposeAuthorized {
+        session_id,
+        child_process_id: ChildProcessId::try_from(child)
+            .map_err(|_| Rejection::PiOfficeSessionDisposeBindingMismatch)?,
+        correlation_identity: correlation_identity.clone(),
+        authorized_generation: cycle.generation,
+    })
+}
+
+fn record_pi_office_session_dispose_delivery(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    session_id: RootAuthorityOfficeSessionId,
+    correlation_identity: &PiCorrelationIdentity,
+) -> Result<EventBody, Rejection> {
+    require_pi_office_session_dispose_authorization_generation(
+        transaction,
+        expected_generation,
+        session_id,
+    )?;
+    let authorization: Option<(i64, i64, String, i64)> = transaction.query_row(
+        "SELECT authorization.child_process_id, authorization.pi_session_id,
+                authorization.correlation_identity, session.lifecycle_state
+         FROM pi_office_session_dispose_authorizations authorization
+         JOIN root_authority_office_sessions session
+           ON session.root_authority_office_session_id = authorization.root_authority_office_session_id
+         WHERE authorization.root_authority_office_session_id = ?1",
+        [session_id.value()],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    ).optional().map_err(|_| Rejection::PiOfficeSessionDisposeBindingMismatch)?;
+    let (child, pi_session, stored_correlation, session_state) =
+        authorization.ok_or(Rejection::PiOfficeSessionDisposeBindingMismatch)?;
+    if stored_correlation != correlation_identity.as_str()
+        || session_state != OfficeSessionState::Quiescing as i64
+        || pi_office_session_has_active_turn(transaction, session_id)?
+    {
+        return Err(Rejection::PiOfficeSessionDisposeBindingMismatch);
+    }
+    transaction
+        .execute(
+            "INSERT INTO pi_office_session_dispose_deliveries(
+             root_authority_office_session_id, child_process_id, pi_session_id,
+             correlation_identity, delivered_by_command_id
+         ) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                session_id.value(),
+                child,
+                pi_session,
+                correlation_identity.as_str(),
+                command_row_id
+            ],
+        )
+        .map_err(|_| Rejection::PiOfficeSessionDisposeBindingMismatch)?;
+    Ok(EventBody::PiOfficeSessionDisposeDelivered {
+        session_id,
+        child_process_id: ChildProcessId::try_from(child)
+            .map_err(|_| Rejection::PiOfficeSessionDisposeBindingMismatch)?,
+        correlation_identity: correlation_identity.clone(),
+    })
+}
+
+fn record_pi_office_session_dispose_accepted(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    session_id: RootAuthorityOfficeSessionId,
+    correlation_identity: &PiCorrelationIdentity,
+    command_result_sequence: PiProtocolSequence,
+) -> Result<EventBody, Rejection> {
+    require_pi_office_session_dispose_authorization_generation(
+        transaction,
+        expected_generation,
+        session_id,
+    )?;
+    let row: Option<(i64, String, i64)> = transaction
+        .query_row(
+            "SELECT d.pi_session_id, d.correlation_identity, s.lifecycle_state
+         FROM pi_office_session_dispose_deliveries d
+         JOIN root_authority_office_sessions s
+           ON s.root_authority_office_session_id = d.root_authority_office_session_id
+         WHERE d.root_authority_office_session_id = ?1",
+            [session_id.value()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .map_err(|_| Rejection::PiOfficeSessionDisposeBindingMismatch)?;
+    let (pi_session, stored_correlation, session_state) =
+        row.ok_or(Rejection::PiOfficeSessionDisposeBindingMismatch)?;
+    if stored_correlation != correlation_identity.as_str()
+        || session_state != OfficeSessionState::Quiescing as i64
+    {
+        return Err(Rejection::PiOfficeSessionDisposeBindingMismatch);
+    }
+    if pi_office_session_max_sequence(transaction, pi_session)?
+        .is_some_and(|previous| command_result_sequence.value() <= previous)
+    {
+        return Err(Rejection::PiOfficeSessionDisposeUsageNotMonotonic);
+    }
+    transaction
+        .execute(
+            "INSERT INTO pi_office_session_dispose_acceptances(
+             root_authority_office_session_id, command_result_sequence, accepted_by_command_id
+         ) VALUES (?1, ?2, ?3)",
+            params![
+                session_id.value(),
+                command_result_sequence.value(),
+                command_row_id
+            ],
+        )
+        .map_err(|_| Rejection::PiOfficeSessionDisposeBindingMismatch)?;
+    Ok(EventBody::PiOfficeSessionDisposeAccepted {
+        session_id,
+        correlation_identity: correlation_identity.clone(),
+        command_result_sequence,
+    })
+}
+
+fn record_pi_office_session_dispose_usage(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    session_id: RootAuthorityOfficeSessionId,
+    correlation_identity: &PiCorrelationIdentity,
+    protocol_sequence: PiProtocolSequence,
+    usage: PiCumulativeUsage,
+) -> Result<EventBody, Rejection> {
+    require_pi_office_session_dispose_authorization_generation(
+        transaction,
+        expected_generation,
+        session_id,
+    )?;
+    if !usage.is_internally_consistent() {
+        return Err(Rejection::PiOfficeSessionDisposeUsageNotMonotonic);
+    }
+    let row: Option<(i64, String, i64, i64)> = transaction
+        .query_row(
+            "SELECT d.pi_session_id, d.correlation_identity, a.command_result_sequence,
+                s.lifecycle_state
+         FROM pi_office_session_dispose_deliveries d
+         JOIN pi_office_session_dispose_acceptances a
+           ON a.root_authority_office_session_id = d.root_authority_office_session_id
+         JOIN root_authority_office_sessions s
+           ON s.root_authority_office_session_id = d.root_authority_office_session_id
+         WHERE d.root_authority_office_session_id = ?1",
+            [session_id.value()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .optional()
+        .map_err(|_| Rejection::PiOfficeSessionDisposeBindingMismatch)?;
+    let (pi_session, stored_correlation, accepted_sequence, session_state) =
+        row.ok_or(Rejection::PiOfficeSessionDisposeBindingMismatch)?;
+    if stored_correlation != correlation_identity.as_str()
+        || session_state != OfficeSessionState::Quiescing as i64
+    {
+        return Err(Rejection::PiOfficeSessionDisposeBindingMismatch);
+    }
+    if accepted_sequence.checked_add(1) != Some(protocol_sequence.value())
+        || pi_office_session_max_sequence(transaction, pi_session)?
+            .is_some_and(|previous| protocol_sequence.value() <= previous)
+    {
+        return Err(Rejection::PiOfficeSessionDisposeUsageNotMonotonic);
+    }
+    let prior: Option<PiOfficeTurnUsageSqlRow> = transaction.query_row(
+        "SELECT input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
+                provider_cost_binary64, cumulative_ceiling_micros, protocol_sequence
+         FROM (
+             SELECT input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
+                    provider_cost_binary64, cumulative_ceiling_micros, protocol_sequence
+             FROM pi_office_turn_usage_receipts WHERE pi_session_id = ?1
+             UNION ALL
+             SELECT input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
+                    provider_cost_binary64, cumulative_ceiling_micros, protocol_sequence
+             FROM pi_office_session_dispose_usage_receipts WHERE pi_session_id = ?1
+         ) ORDER BY protocol_sequence DESC LIMIT 1",
+        [pi_session],
+        |row| {
+            Ok((
+                row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?,
+                row.get(6)?, row.get(7)?,
+            ))
+        },
+    ).optional().map_err(|_| Rejection::PiOfficeSessionDisposeUsageNotMonotonic)?;
+    if let Some(prior) = prior {
+        let prior_usage = pi_cumulative_usage_from_sql(
+            prior.0, prior.1, prior.2, prior.3, prior.4, &prior.5, prior.6,
+        )
+        .map_err(|_| Rejection::PiOfficeSessionDisposeUsageNotMonotonic)?;
+        if protocol_sequence.value() <= prior.7
+            || usage.input_tokens < prior_usage.input_tokens
+            || usage.output_tokens < prior_usage.output_tokens
+            || usage.cache_read_tokens < prior_usage.cache_read_tokens
+            || usage.cache_write_tokens < prior_usage.cache_write_tokens
+            || usage.total_tokens < prior_usage.total_tokens
+            || usage.provider_cost < prior_usage.provider_cost
+            || usage.ceiling_micro_usd < prior_usage.ceiling_micro_usd
+        {
+            return Err(Rejection::PiOfficeSessionDisposeUsageNotMonotonic);
+        }
+    }
+    let charged: i64 = transaction
+        .query_row(
+            "SELECT reservation.charged_micros
+         FROM office_session_budget_reservations parent
+         JOIN budget_reservations reservation
+           ON reservation.budget_reservation_id = parent.budget_reservation_id
+         WHERE parent.root_authority_office_session_id = ?1",
+            [session_id.value()],
+            |row| row.get(0),
+        )
+        .map_err(|_| Rejection::PiOfficeSessionDisposeBindingMismatch)?;
+    if usage.ceiling_micro_usd.value() < charged {
+        return Err(Rejection::PiOfficeSessionDisposeUsageNotMonotonic);
+    }
+    transaction
+        .execute(
+            "INSERT INTO pi_office_session_dispose_usage_receipts(
+             root_authority_office_session_id, pi_session_id, correlation_identity,
+             protocol_sequence, input_tokens, output_tokens, cache_read_tokens,
+             cache_write_tokens, total_tokens, provider_cost_binary64,
+             cumulative_ceiling_micros, recorded_by_command_id
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            params![
+                session_id.value(),
+                pi_session,
+                correlation_identity.as_str(),
+                protocol_sequence.value(),
+                usage.input_tokens.value(),
+                usage.output_tokens.value(),
+                usage.cache_read_tokens.value(),
+                usage.cache_write_tokens.value(),
+                usage.total_tokens.value(),
+                usage.provider_cost.as_big_endian_bytes().as_slice(),
+                usage.ceiling_micro_usd.value(),
+                command_row_id,
+            ],
+        )
+        .map_err(|_| Rejection::PiOfficeSessionDisposeUsageNotMonotonic)?;
+    Ok(EventBody::PiOfficeSessionDisposeUsageRecorded {
+        session_id,
+        protocol_sequence,
+        cumulative_micro_usd: usage.ceiling_micro_usd,
+    })
+}
+
+fn record_pi_office_session_dispose_usage_failure(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    session_id: RootAuthorityOfficeSessionId,
+    correlation_identity: &PiCorrelationIdentity,
+    protocol_sequence: PiProtocolSequence,
+    failure: PiOfficeTurnUsageFailure,
+) -> Result<EventBody, Rejection> {
+    require_pi_office_session_dispose_authorization_generation(
+        transaction,
+        expected_generation,
+        session_id,
+    )?;
+    let row: Option<(i64, String, i64, i64, i64, i64)> = transaction
+        .query_row(
+            "SELECT d.pi_session_id, d.correlation_identity, a.command_result_sequence,
+                parent.budget_reservation_id, s.operating_cycle_id, s.lifecycle_state
+         FROM pi_office_session_dispose_deliveries d
+         JOIN pi_office_session_dispose_acceptances a
+           ON a.root_authority_office_session_id = d.root_authority_office_session_id
+         JOIN root_authority_office_sessions s
+           ON s.root_authority_office_session_id = d.root_authority_office_session_id
+         JOIN office_session_budget_reservations parent
+           ON parent.root_authority_office_session_id = s.root_authority_office_session_id
+         WHERE d.root_authority_office_session_id = ?1",
+            [session_id.value()],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|_| Rejection::PiOfficeSessionDisposeBindingMismatch)?;
+    let (pi_session, stored_correlation, accepted_sequence, reservation, cycle, session_state) =
+        row.ok_or(Rejection::PiOfficeSessionDisposeBindingMismatch)?;
+    if stored_correlation != correlation_identity.as_str()
+        || session_state != OfficeSessionState::Quiescing as i64
+    {
+        return Err(Rejection::PiOfficeSessionDisposeBindingMismatch);
+    }
+    if accepted_sequence.checked_add(1) != Some(protocol_sequence.value())
+        || pi_office_session_max_sequence(transaction, pi_session)?
+            .is_some_and(|previous| protocol_sequence.value() <= previous)
+    {
+        return Err(Rejection::PiOfficeSessionDisposeUsageNotMonotonic);
+    }
+    let reservation_id =
+        BudgetReservationId::try_from(reservation).map_err(|_| Rejection::ReservationNotActive)?;
+    let cycle_id = OperatingCycleId::try_from(cycle).map_err(|_| Rejection::SubjectNotFound)?;
+    let (amount, charged, state): (i64, i64, i64) = transaction
+        .query_row(
+            "SELECT amount_micros, charged_micros, reservation_state
+         FROM budget_reservations WHERE budget_reservation_id = ?1",
+            [reservation],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .map_err(|_| Rejection::ReservationNotActive)?;
+    if state != BudgetReservationState::Reserved as i64 || amount < charged {
+        return Err(Rejection::ReservationNotActive);
+    }
+    let freeze_reason = pi_office_turn_usage_failure_freeze_reason(failure);
+    let frozen = freeze_budget_admission(
+        transaction,
+        command_row_id,
+        reservation_id,
+        cycle_id,
+        UsdMicros::try_from(amount - charged).map_err(|_| Rejection::ReservationNotActive)?,
+        freeze_reason,
+    )?;
+    let (cancellation_request_id, postmortem_id) = match frozen {
+        EventBody::BudgetAdmissionFrozen {
+            cancellation_request_id,
+            postmortem_id,
+            ..
+        } => (cancellation_request_id, postmortem_id),
+        _ => return Err(Rejection::PiOfficeSessionDisposeBindingMismatch),
+    };
+    let (kind, unknown, unavailable) = sql_pi_office_turn_usage_failure(failure);
+    transaction
+        .execute(
+            "INSERT INTO pi_office_session_dispose_usage_failures(
+             root_authority_office_session_id, pi_session_id, correlation_identity,
+             protocol_sequence, failure_kind, unknown_reason, unavailable_reason,
+             budget_reservation_id, cancellation_request_id, cost_postmortem_id,
+             recorded_by_command_id
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                session_id.value(),
+                pi_session,
+                correlation_identity.as_str(),
+                protocol_sequence.value(),
+                kind,
+                unknown,
+                unavailable,
+                reservation,
+                cancellation_request_id.value(),
+                postmortem_id.value(),
+                command_row_id,
+            ],
+        )
+        .map_err(|_| Rejection::PiOfficeSessionDisposeBindingMismatch)?;
+    Ok(EventBody::PiOfficeSessionDisposeUsageFrozen {
+        session_id,
+        budget_reservation_id: reservation_id,
+        cancellation_request_id,
+        postmortem_id,
+        failure,
+    })
+}
+
+fn pi_office_turn_usage_failure_freeze_reason(
+    failure: PiOfficeTurnUsageFailure,
+) -> BudgetFreezeReason {
+    match failure {
+        PiOfficeTurnUsageFailure::Unknown(
+            PiOfficeTurnUsageUnknownReason::MissingFinalUsageSnapshot,
+        ) => BudgetFreezeReason::Unknown(CostUnknownReason::ProviderDidNotReport),
+        PiOfficeTurnUsageFailure::Unknown(
+            PiOfficeTurnUsageUnknownReason::BoundaryStreamInterrupted,
+        ) => BudgetFreezeReason::Unknown(CostUnknownReason::AdapterStreamInterrupted),
+        PiOfficeTurnUsageFailure::Unknown(
+            PiOfficeTurnUsageUnknownReason::TerminalEvidenceMissing,
+        ) => BudgetFreezeReason::Unknown(CostUnknownReason::ReconciliationMismatch),
+        PiOfficeTurnUsageFailure::Unavailable(_) => {
+            BudgetFreezeReason::Unavailable(CostUnavailableReason::AdapterAccountingUnavailable)
+        }
+    }
+}
+
+fn record_pi_office_session_disposed(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    session_id: RootAuthorityOfficeSessionId,
+    correlation_identity: &PiCorrelationIdentity,
+    disposed_sequence: PiProtocolSequence,
+    transcript_receipt: &PiOfficeSessionTranscriptReceipt,
+) -> Result<EventBody, Rejection> {
+    require_pi_office_session_dispose_authorization_generation(
+        transaction,
+        expected_generation,
+        session_id,
+    )?;
+    let row: Option<PiOfficeSessionDisposeTerminalSqlRow> = transaction
+        .query_row(
+            "SELECT d.child_process_id, d.pi_session_id, d.correlation_identity,
+                accepted.command_result_sequence, usage.protocol_sequence,
+                usage.input_tokens, usage.output_tokens, usage.cache_read_tokens,
+                usage.cache_write_tokens, usage.total_tokens, usage.provider_cost_binary64,
+                usage.cumulative_ceiling_micros, parent.budget_reservation_id,
+                s.operating_cycle_id, s.lifecycle_state
+         FROM pi_office_session_dispose_deliveries d
+         JOIN pi_office_session_dispose_acceptances accepted
+           ON accepted.root_authority_office_session_id = d.root_authority_office_session_id
+         JOIN pi_office_session_dispose_usage_receipts usage
+           ON usage.root_authority_office_session_id = d.root_authority_office_session_id
+         JOIN root_authority_office_sessions s
+           ON s.root_authority_office_session_id = d.root_authority_office_session_id
+         JOIN office_session_budget_reservations parent
+           ON parent.root_authority_office_session_id = s.root_authority_office_session_id
+         WHERE d.root_authority_office_session_id = ?1",
+            [session_id.value()],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                    row.get(8)?,
+                    row.get(9)?,
+                    row.get(10)?,
+                    row.get(11)?,
+                    row.get(12)?,
+                    row.get(13)?,
+                    row.get(14)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|_| Rejection::PiOfficeSessionDisposeReceiptMissing)?;
+    let (
+        child,
+        pi_session,
+        stored_correlation,
+        accepted_sequence,
+        usage_sequence,
+        input_tokens,
+        output_tokens,
+        cache_read_tokens,
+        cache_write_tokens,
+        total_tokens,
+        provider_cost,
+        cumulative_ceiling,
+        reservation,
+        cycle,
+        session_state,
+    ) = row.ok_or(Rejection::PiOfficeSessionDisposeReceiptMissing)?;
+    if stored_correlation != correlation_identity.as_str()
+        || session_state != OfficeSessionState::Quiescing as i64
+    {
+        return Err(Rejection::PiOfficeSessionDisposeBindingMismatch);
+    }
+    if accepted_sequence.checked_add(1) != Some(usage_sequence)
+        || usage_sequence.checked_add(1) != Some(disposed_sequence.value())
+        || pi_office_session_max_sequence(transaction, pi_session)?
+            .is_some_and(|previous| disposed_sequence.value() <= previous)
+        || pi_office_session_has_active_turn(transaction, session_id)?
+    {
+        return Err(Rejection::PiOfficeSessionDisposeUsageNotMonotonic);
+    }
+    let usage = pi_cumulative_usage_from_sql(
+        input_tokens,
+        output_tokens,
+        cache_read_tokens,
+        cache_write_tokens,
+        total_tokens,
+        &provider_cost,
+        cumulative_ceiling,
+    )
+    .map_err(|_| Rejection::PiOfficeSessionDisposeUsageNotMonotonic)?;
+    let (
+        transcript_kind,
+        session_file,
+        session_file_digest,
+        transcript_content_object_id,
+        first_user_prompt_kind,
+        first_user_prompt_digest,
+    ) = transcript_receipt_sql_values(transcript_receipt);
+    validate_pi_office_session_transcript_receipt(
+        transaction,
+        pi_session,
+        session_file_digest.as_deref(),
+        transcript_content_object_id,
+        first_user_prompt_kind,
+        first_user_prompt_digest.as_deref(),
+        transcript_kind,
+    )?;
+    let reservation_id =
+        BudgetReservationId::try_from(reservation).map_err(|_| Rejection::ReservationNotActive)?;
+    let cycle_id = OperatingCycleId::try_from(cycle).map_err(|_| Rejection::SubjectNotFound)?;
+    let (amount, charged, reservation_state): (i64, i64, i64) = transaction
+        .query_row(
+            "SELECT amount_micros, charged_micros, reservation_state
+         FROM budget_reservations WHERE budget_reservation_id = ?1",
+            [reservation],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .map_err(|_| Rejection::ReservationNotActive)?;
+    if reservation_state != BudgetReservationState::Reserved as i64
+        || amount < charged
+        || usage.ceiling_micro_usd.value() < charged
+    {
+        return Err(Rejection::PiOfficeSessionDisposeUsageNotMonotonic);
+    }
+    let (budget_disposition, next_session_state) = if usage.ceiling_micro_usd.value() > amount {
+        let frozen = freeze_budget_admission(
+            transaction,
+            command_row_id,
+            reservation_id,
+            cycle_id,
+            UsdMicros::try_from(amount - charged).map_err(|_| Rejection::ReservationNotActive)?,
+            BudgetFreezeReason::KnownOverrun {
+                observed: usage.ceiling_micro_usd,
+                reserved: UsdMicros::try_from(amount - charged)
+                    .map_err(|_| Rejection::ReservationNotActive)?,
+            },
+        )?;
+        let (cancellation_request_id, postmortem_id) = match frozen {
+            EventBody::BudgetAdmissionFrozen {
+                cancellation_request_id,
+                postmortem_id,
+                ..
+            } => (cancellation_request_id, postmortem_id),
+            _ => return Err(Rejection::PiOfficeSessionDisposeReceiptMissing),
+        };
+        (
+            PiOfficeSessionDisposeBudgetDisposition::Frozen {
+                cancellation_request_id,
+                postmortem_id,
+            },
+            OfficeSessionState::Cancelled,
+        )
+    } else {
+        let delta = usage.ceiling_micro_usd.value() - charged;
+        let mut charge_statement = transaction
+            .prepare(
+                "SELECT budget_envelope_id, amount_micros FROM budget_reservation_charges
+                 WHERE budget_reservation_id = ?1 ORDER BY budget_envelope_id",
+            )
+            .map_err(|_| Rejection::ReservationNotActive)?;
+        let charges = charge_statement
+            .query_map([reservation_id.value()], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+            })
+            .map_err(|_| Rejection::ReservationNotActive)?;
+        for charge in charges {
+            let (budget_id, reserved_charge) =
+                charge.map_err(|_| Rejection::ReservationNotActive)?;
+            if reserved_charge < delta {
+                return Err(Rejection::PiOfficeSessionDisposeUsageNotMonotonic);
+            }
+            transaction
+                .execute(
+                    "UPDATE budget_envelopes
+                 SET reserved_micros = reserved_micros - ?1,
+                     spent_micros = spent_micros + ?2
+                 WHERE budget_envelope_id = ?3",
+                    params![reserved_charge, delta, budget_id],
+                )
+                .map_err(|_| Rejection::BudgetCeilingExceeded)?;
+            transaction
+                .execute(
+                    "UPDATE budget_reservation_charges SET amount_micros = 0
+                 WHERE budget_reservation_id = ?1 AND budget_envelope_id = ?2",
+                    params![reservation_id.value(), budget_id],
+                )
+                .map_err(|_| Rejection::ReservationNotActive)?;
+        }
+        transaction
+            .execute(
+                "UPDATE budget_reservations
+             SET reservation_state = ?1, charged_micros = ?2, reconciled_by_command_id = ?3
+             WHERE budget_reservation_id = ?4",
+                params![
+                    BudgetReservationState::Reconciled as i64,
+                    usage.ceiling_micro_usd.value(),
+                    command_row_id,
+                    reservation_id.value(),
+                ],
+            )
+            .map_err(|_| Rejection::ReservationNotActive)?;
+        (
+            PiOfficeSessionDisposeBudgetDisposition::Reconciled {
+                observed_cumulative_micro_usd: usage.ceiling_micro_usd,
+            },
+            OfficeSessionState::Closed,
+        )
+    };
+    let (budget_disposition_kind, cancellation_request_id, postmortem_id) =
+        sql_pi_office_session_dispose_budget_disposition(budget_disposition);
+    transaction
+        .execute(
+            "INSERT INTO pi_office_session_dispose_receipts(
+             root_authority_office_session_id, child_process_id, pi_session_id,
+             correlation_identity, disposed_sequence, transcript_kind, session_file,
+             session_file_digest, transcript_content_object_id, first_user_prompt_kind,
+             first_user_prompt_digest, budget_disposition_kind, cancellation_request_id,
+             cost_postmortem_id, recorded_by_command_id
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+            params![
+                session_id.value(),
+                child,
+                pi_session,
+                correlation_identity.as_str(),
+                disposed_sequence.value(),
+                transcript_kind,
+                session_file,
+                session_file_digest,
+                transcript_content_object_id,
+                first_user_prompt_kind,
+                first_user_prompt_digest,
+                budget_disposition_kind,
+                cancellation_request_id,
+                postmortem_id,
+                command_row_id,
+            ],
+        )
+        .map_err(|_| Rejection::PiOfficeSessionDisposeReceiptMissing)?;
+    let receipt_id = id_from_last_insert::<PiOfficeSessionDisposeReceiptId>(transaction)?;
+    transaction
+        .execute(
+            "UPDATE root_authority_office_sessions
+         SET lifecycle_state = ?1, last_transition_command_id = ?2
+         WHERE root_authority_office_session_id = ?3",
+            params![
+                next_session_state as i64,
+                command_row_id,
+                session_id.value()
+            ],
+        )
+        .map_err(|_| Rejection::PiOfficeSessionDisposeReceiptMissing)?;
+    Ok(EventBody::PiOfficeSessionDisposed {
+        pi_office_session_dispose_receipt_id: receipt_id,
+        session_id,
+        budget_reservation_id: reservation_id,
+        observed_cumulative_micro_usd: usage.ceiling_micro_usd,
+        budget_disposition,
+    })
+}
+
+fn transcript_receipt_sql_values(
+    receipt: &PiOfficeSessionTranscriptReceipt,
+) -> PiOfficeSessionTranscriptReceiptSqlValues {
+    match receipt {
+        PiOfficeSessionTranscriptReceipt::Materialized {
+            session_file,
+            session_file_digest,
+            transcript_content_object_id,
+            first_user_prompt,
+        } => {
+            let (first_user_prompt_kind, first_user_prompt_digest) = match first_user_prompt {
+                PiOfficeSessionFirstUserPromptReceipt::Absent => (Some(1), None),
+                PiOfficeSessionFirstUserPromptReceipt::Verified { digest } => {
+                    (Some(2), Some(digest.as_bytes().to_vec()))
+                }
+            };
+            (
+                1,
+                session_file.as_str().to_owned(),
+                Some(session_file_digest.as_bytes().to_vec()),
+                Some(transcript_content_object_id.value()),
+                first_user_prompt_kind,
+                first_user_prompt_digest,
+            )
+        }
+        PiOfficeSessionTranscriptReceipt::UnmaterializedNoPrompt { session_file } => {
+            (2, session_file.as_str().to_owned(), None, None, None, None)
+        }
+    }
+}
+
+fn validate_pi_office_session_transcript_receipt(
+    transaction: &Transaction<'_>,
+    pi_session_id: i64,
+    session_file_digest: Option<&[u8]>,
+    transcript_content_object_id: Option<i64>,
+    first_user_prompt_kind: Option<i64>,
+    first_user_prompt_digest: Option<&[u8]>,
+    transcript_kind: i64,
+) -> Result<(), Rejection> {
+    let first_prompt: Option<Vec<u8>> = transaction
+        .query_row(
+            "SELECT prompt_digest FROM pi_office_turn_prompt_authorizations
+         WHERE pi_session_id = ?1
+         ORDER BY pi_office_turn_prompt_authorization_id ASC LIMIT 1",
+            [pi_session_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|_| Rejection::PiOfficeSessionDisposeReceiptMissing)?;
+    match transcript_kind {
+        1 => {
+            let content_object_id = transcript_content_object_id
+                .ok_or(Rejection::PiOfficeSessionDisposeReceiptMissing)?;
+            let content_digest: Option<Vec<u8>> = transaction
+                .query_row(
+                    "SELECT seal.digest FROM content_objects object
+                 JOIN content_seal_receipts seal
+                   ON seal.content_seal_receipt_id = object.content_seal_receipt_id
+                 WHERE object.content_object_id = ?1",
+                    [content_object_id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|_| Rejection::PiOfficeSessionDisposeReceiptMissing)?;
+            if content_digest.as_deref() != session_file_digest {
+                return Err(Rejection::PiOfficeSessionDisposeReceiptMissing);
+            }
+            match (
+                first_prompt.as_deref(),
+                first_user_prompt_kind,
+                first_user_prompt_digest,
+            ) {
+                (None, Some(1), None) | (Some(_), Some(2), Some(_))
+                    if first_prompt.as_deref() == first_user_prompt_digest =>
+                {
+                    Ok(())
+                }
+                _ => Err(Rejection::PiOfficeSessionDisposeReceiptMissing),
+            }
+        }
+        2 if first_prompt.is_none() => Ok(()),
+        _ => Err(Rejection::PiOfficeSessionDisposeReceiptMissing),
+    }
+}
+
+fn sql_pi_office_session_dispose_budget_disposition(
+    disposition: PiOfficeSessionDisposeBudgetDisposition,
+) -> (i64, Option<i64>, Option<i64>) {
+    match disposition {
+        PiOfficeSessionDisposeBudgetDisposition::Reconciled { .. } => (1, None, None),
+        PiOfficeSessionDisposeBudgetDisposition::Frozen {
+            cancellation_request_id,
+            postmortem_id,
+        } => (
+            2,
+            Some(cancellation_request_id.value()),
+            Some(postmortem_id.value()),
+        ),
+    }
+}
+
 /// The peer's `Settled` boundary is final for this exact Prompt correlation.
 /// Buffered evidence that arrived before it remains recordable before the
 /// terminal receipt, but no later usage observation may silently outrun the
@@ -3193,6 +4249,21 @@ fn pi_office_session_max_sequence(
                  WHERE pi_session_id = ?1
                  UNION ALL
                  SELECT settled_sequence FROM pi_office_turn_terminal_receipts
+                 WHERE pi_session_id = ?1
+                 UNION ALL
+                 SELECT accepted.command_result_sequence AS protocol_sequence
+                 FROM pi_office_session_dispose_acceptances accepted
+                 JOIN pi_office_session_dispose_deliveries delivery
+                   ON delivery.root_authority_office_session_id = accepted.root_authority_office_session_id
+                 WHERE delivery.pi_session_id = ?1
+                 UNION ALL
+                 SELECT protocol_sequence FROM pi_office_session_dispose_usage_receipts
+                 WHERE pi_session_id = ?1
+                 UNION ALL
+                 SELECT protocol_sequence FROM pi_office_session_dispose_usage_failures
+                 WHERE pi_session_id = ?1
+                 UNION ALL
+                 SELECT disposed_sequence AS protocol_sequence FROM pi_office_session_dispose_receipts
                  WHERE pi_session_id = ?1
              )",
             [pi_session_id],
@@ -9538,6 +10609,62 @@ fn request_fingerprint(request: &CommandRequest) -> Blake3Digest {
             put_i64(&mut bytes, *assistant_outcome as i64);
             put_i64(&mut bytes, *transcript_disposition as i64);
         }
+        CommandBody::AuthorizePiOfficeSessionDispose {
+            session_id,
+            correlation_identity,
+        } => {
+            put_i64(&mut bytes, session_id.value());
+            put_bytes(&mut bytes, correlation_identity.as_str().as_bytes());
+        }
+        CommandBody::RecordPiOfficeSessionDisposeDelivery {
+            session_id,
+            correlation_identity,
+        } => {
+            put_i64(&mut bytes, session_id.value());
+            put_bytes(&mut bytes, correlation_identity.as_str().as_bytes());
+        }
+        CommandBody::RecordPiOfficeSessionDisposeAccepted {
+            session_id,
+            correlation_identity,
+            command_result_sequence,
+        } => {
+            put_i64(&mut bytes, session_id.value());
+            put_bytes(&mut bytes, correlation_identity.as_str().as_bytes());
+            put_i64(&mut bytes, command_result_sequence.value());
+        }
+        CommandBody::RecordPiOfficeSessionDisposeUsage {
+            session_id,
+            correlation_identity,
+            protocol_sequence,
+            usage,
+        } => {
+            put_i64(&mut bytes, session_id.value());
+            put_bytes(&mut bytes, correlation_identity.as_str().as_bytes());
+            put_i64(&mut bytes, protocol_sequence.value());
+            put_pi_cumulative_usage(&mut bytes, *usage);
+        }
+        CommandBody::RecordPiOfficeSessionDisposeUsageFailure {
+            session_id,
+            correlation_identity,
+            protocol_sequence,
+            failure,
+        } => {
+            put_i64(&mut bytes, session_id.value());
+            put_bytes(&mut bytes, correlation_identity.as_str().as_bytes());
+            put_i64(&mut bytes, protocol_sequence.value());
+            put_pi_office_turn_usage_failure(&mut bytes, *failure);
+        }
+        CommandBody::RecordPiOfficeSessionDisposed {
+            session_id,
+            correlation_identity,
+            disposed_sequence,
+            transcript_receipt,
+        } => {
+            put_i64(&mut bytes, session_id.value());
+            put_bytes(&mut bytes, correlation_identity.as_str().as_bytes());
+            put_i64(&mut bytes, disposed_sequence.value());
+            put_pi_office_session_transcript_receipt(&mut bytes, transcript_receipt);
+        }
     }
     Blake3Digest::of_bytes(&bytes)
 }
@@ -10166,6 +11293,70 @@ fn event_fingerprint(event_id: EventId, command_id: &CommandId, body: &EventBody
             put_i64(&mut bytes, *disposition as i64);
             put_i64(&mut bytes, *assistant_outcome as i64);
         }
+        EventBody::PiOfficeSessionDisposeAuthorized {
+            session_id,
+            child_process_id,
+            correlation_identity,
+            authorized_generation,
+        } => {
+            put_i64(&mut bytes, session_id.value());
+            put_i64(&mut bytes, child_process_id.value());
+            put_bytes(&mut bytes, correlation_identity.as_str().as_bytes());
+            put_i64(&mut bytes, authorized_generation.value());
+        }
+        EventBody::PiOfficeSessionDisposeDelivered {
+            session_id,
+            child_process_id,
+            correlation_identity,
+        } => {
+            put_i64(&mut bytes, session_id.value());
+            put_i64(&mut bytes, child_process_id.value());
+            put_bytes(&mut bytes, correlation_identity.as_str().as_bytes());
+        }
+        EventBody::PiOfficeSessionDisposeAccepted {
+            session_id,
+            correlation_identity,
+            command_result_sequence,
+        } => {
+            put_i64(&mut bytes, session_id.value());
+            put_bytes(&mut bytes, correlation_identity.as_str().as_bytes());
+            put_i64(&mut bytes, command_result_sequence.value());
+        }
+        EventBody::PiOfficeSessionDisposeUsageRecorded {
+            session_id,
+            protocol_sequence,
+            cumulative_micro_usd,
+        } => {
+            put_i64(&mut bytes, session_id.value());
+            put_i64(&mut bytes, protocol_sequence.value());
+            put_i64(&mut bytes, cumulative_micro_usd.value());
+        }
+        EventBody::PiOfficeSessionDisposeUsageFrozen {
+            session_id,
+            budget_reservation_id,
+            cancellation_request_id,
+            postmortem_id,
+            failure,
+        } => {
+            put_i64(&mut bytes, session_id.value());
+            put_i64(&mut bytes, budget_reservation_id.value());
+            put_i64(&mut bytes, cancellation_request_id.value());
+            put_i64(&mut bytes, postmortem_id.value());
+            put_pi_office_turn_usage_failure(&mut bytes, *failure);
+        }
+        EventBody::PiOfficeSessionDisposed {
+            pi_office_session_dispose_receipt_id,
+            session_id,
+            budget_reservation_id,
+            observed_cumulative_micro_usd,
+            budget_disposition,
+        } => {
+            put_i64(&mut bytes, pi_office_session_dispose_receipt_id.value());
+            put_i64(&mut bytes, session_id.value());
+            put_i64(&mut bytes, budget_reservation_id.value());
+            put_i64(&mut bytes, observed_cumulative_micro_usd.value());
+            put_pi_office_session_dispose_budget_disposition(&mut bytes, *budget_disposition);
+        }
     }
     Blake3Digest::of_bytes(&bytes)
 }
@@ -10208,6 +11399,58 @@ fn put_pi_office_turn_usage_failure(bytes: &mut Vec<u8>, failure: PiOfficeTurnUs
         PiOfficeTurnUsageFailure::Unavailable(reason) => {
             put_i64(bytes, 2);
             put_i64(bytes, reason as i64);
+        }
+    }
+}
+
+fn put_pi_office_session_transcript_receipt(
+    bytes: &mut Vec<u8>,
+    receipt: &PiOfficeSessionTranscriptReceipt,
+) {
+    match receipt {
+        PiOfficeSessionTranscriptReceipt::Materialized {
+            session_file,
+            session_file_digest,
+            transcript_content_object_id,
+            first_user_prompt,
+        } => {
+            put_i64(bytes, 1);
+            put_bytes(bytes, session_file.as_str().as_bytes());
+            put_bytes(bytes, session_file_digest.as_bytes().as_slice());
+            put_i64(bytes, transcript_content_object_id.value());
+            match first_user_prompt {
+                PiOfficeSessionFirstUserPromptReceipt::Absent => put_i64(bytes, 1),
+                PiOfficeSessionFirstUserPromptReceipt::Verified { digest } => {
+                    put_i64(bytes, 2);
+                    put_bytes(bytes, digest.as_bytes().as_slice());
+                }
+            }
+        }
+        PiOfficeSessionTranscriptReceipt::UnmaterializedNoPrompt { session_file } => {
+            put_i64(bytes, 2);
+            put_bytes(bytes, session_file.as_str().as_bytes());
+        }
+    }
+}
+
+fn put_pi_office_session_dispose_budget_disposition(
+    bytes: &mut Vec<u8>,
+    disposition: PiOfficeSessionDisposeBudgetDisposition,
+) {
+    match disposition {
+        PiOfficeSessionDisposeBudgetDisposition::Reconciled {
+            observed_cumulative_micro_usd,
+        } => {
+            put_i64(bytes, 1);
+            put_i64(bytes, observed_cumulative_micro_usd.value());
+        }
+        PiOfficeSessionDisposeBudgetDisposition::Frozen {
+            cancellation_request_id,
+            postmortem_id,
+        } => {
+            put_i64(bytes, 2);
+            put_i64(bytes, cancellation_request_id.value());
+            put_i64(bytes, postmortem_id.value());
         }
     }
 }
@@ -10542,6 +11785,78 @@ fn insert_command_body(
             transaction.execute(
                 "INSERT INTO command_record_pi_office_turn_terminal VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 params![command_row_id, office_turn_id.value(), correlation_identity.as_str(), evidence_kind, agent_settled_sequence, terminal_evidence.final_accounting_sequence().value(), settled_sequence.value(), *disposition as i64, *assistant_outcome as i64, *transcript_disposition as i64],
+            )?;
+        }
+        CommandBody::AuthorizePiOfficeSessionDispose {
+            session_id,
+            correlation_identity,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_authorize_pi_office_session_dispose VALUES (?1, ?2, ?3)",
+                params![
+                    command_row_id,
+                    session_id.value(),
+                    correlation_identity.as_str()
+                ],
+            )?;
+        }
+        CommandBody::RecordPiOfficeSessionDisposeDelivery {
+            session_id,
+            correlation_identity,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_record_pi_office_session_dispose_delivery VALUES (?1, ?2, ?3)",
+                params![
+                    command_row_id,
+                    session_id.value(),
+                    correlation_identity.as_str()
+                ],
+            )?;
+        }
+        CommandBody::RecordPiOfficeSessionDisposeAccepted {
+            session_id,
+            correlation_identity,
+            command_result_sequence,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_record_pi_office_session_dispose_accepted VALUES (?1, ?2, ?3, ?4)",
+                params![command_row_id, session_id.value(), correlation_identity.as_str(), command_result_sequence.value()],
+            )?;
+        }
+        CommandBody::RecordPiOfficeSessionDisposeUsage {
+            session_id,
+            correlation_identity,
+            protocol_sequence,
+            usage,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_record_pi_office_session_dispose_usage VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![command_row_id, session_id.value(), correlation_identity.as_str(), protocol_sequence.value(), usage.input_tokens.value(), usage.output_tokens.value(), usage.cache_read_tokens.value(), usage.cache_write_tokens.value(), usage.total_tokens.value(), usage.provider_cost.as_big_endian_bytes().as_slice(), usage.ceiling_micro_usd.value()],
+            )?;
+        }
+        CommandBody::RecordPiOfficeSessionDisposeUsageFailure {
+            session_id,
+            correlation_identity,
+            protocol_sequence,
+            failure,
+        } => {
+            let (kind, unknown, unavailable) = sql_pi_office_turn_usage_failure(*failure);
+            transaction.execute(
+                "INSERT INTO command_record_pi_office_session_dispose_usage_failure VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![command_row_id, session_id.value(), correlation_identity.as_str(), protocol_sequence.value(), kind, unknown, unavailable],
+            )?;
+        }
+        CommandBody::RecordPiOfficeSessionDisposed {
+            session_id,
+            correlation_identity,
+            disposed_sequence,
+            transcript_receipt,
+        } => {
+            let (kind, session_file, digest, content, first_kind, first_digest) =
+                transcript_receipt_sql_values(transcript_receipt);
+            transaction.execute(
+                "INSERT INTO command_record_pi_office_session_disposed VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![command_row_id, session_id.value(), correlation_identity.as_str(), disposed_sequence.value(), kind, session_file, digest, content, first_kind, first_digest],
             )?;
         }
         CommandBody::RecordContentSealReceipt { digest } => {
@@ -11458,6 +12773,17 @@ fn insert_event_body(
     body: &EventBody,
 ) -> Result<(), StoreError> {
     match body {
+        EventBody::PiOfficeSessionDisposeAuthorized {
+            session_id,
+            child_process_id,
+            correlation_identity,
+            authorized_generation,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_pi_office_session_dispose_authorized VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![event_id.value(), session_id.value(), child_process_id.value(), correlation_identity.as_str(), authorized_generation.value()],
+            )?;
+        }
         EventBody::SocietyIdentityCreated { society_id } => {
             transaction.execute(
                 "INSERT INTO event_society_identity_created(event_id, society_id) VALUES (?1, ?2)",
@@ -12374,6 +13700,73 @@ fn insert_event_body(
                     *disposition as i64,
                     *assistant_outcome as i64
                 ],
+            )?;
+        }
+        EventBody::PiOfficeSessionDisposeDelivered {
+            session_id,
+            child_process_id,
+            correlation_identity,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_pi_office_session_dispose_delivered VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    event_id.value(),
+                    session_id.value(),
+                    child_process_id.value(),
+                    correlation_identity.as_str()
+                ],
+            )?;
+        }
+        EventBody::PiOfficeSessionDisposeAccepted {
+            session_id,
+            correlation_identity,
+            command_result_sequence,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_pi_office_session_dispose_accepted VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    event_id.value(),
+                    session_id.value(),
+                    correlation_identity.as_str(),
+                    command_result_sequence.value()
+                ],
+            )?;
+        }
+        EventBody::PiOfficeSessionDisposeUsageRecorded {
+            session_id,
+            protocol_sequence,
+            cumulative_micro_usd,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_pi_office_session_dispose_usage_recorded VALUES (?1, ?2, ?3, ?4)",
+                params![event_id.value(), session_id.value(), protocol_sequence.value(), cumulative_micro_usd.value()],
+            )?;
+        }
+        EventBody::PiOfficeSessionDisposeUsageFrozen {
+            session_id,
+            budget_reservation_id,
+            cancellation_request_id,
+            postmortem_id,
+            failure,
+        } => {
+            let (kind, unknown, unavailable) = sql_pi_office_turn_usage_failure(*failure);
+            transaction.execute(
+                "INSERT INTO event_pi_office_session_dispose_usage_frozen VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![event_id.value(), session_id.value(), budget_reservation_id.value(), cancellation_request_id.value(), postmortem_id.value(), kind, unknown, unavailable],
+            )?;
+        }
+        EventBody::PiOfficeSessionDisposed {
+            pi_office_session_dispose_receipt_id,
+            session_id,
+            budget_reservation_id,
+            observed_cumulative_micro_usd,
+            budget_disposition,
+        } => {
+            let (kind, cancellation_request_id, postmortem_id) =
+                sql_pi_office_session_dispose_budget_disposition(*budget_disposition);
+            transaction.execute(
+                "INSERT INTO event_pi_office_session_disposed VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![event_id.value(), pi_office_session_dispose_receipt_id.value(), session_id.value(), budget_reservation_id.value(), observed_cumulative_micro_usd.value(), kind, cancellation_request_id, postmortem_id],
             )?;
         }
     }
@@ -13295,6 +14688,155 @@ fn decode_event_body(
                 assistant_outcome: pi_office_turn_assistant_outcome_from_i64(row.3)?,
             }
         }
+        EventKind::PiOfficeSessionDisposeAuthorized => {
+            let row: (i64, i64, String, i64) = connection
+                .query_row(
+                    "SELECT root_authority_office_session_id, child_process_id,
+                        correlation_identity, authorized_generation
+                 FROM event_pi_office_session_dispose_authorized WHERE event_id = ?1",
+                    [event_id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                )
+                .optional()?
+                .ok_or(StoreError::LedgerCorruption(
+                    "missing Pi Office Dispose authorization event body",
+                ))?;
+            EventBody::PiOfficeSessionDisposeAuthorized {
+                session_id: RootAuthorityOfficeSessionId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                child_process_id: ChildProcessId::try_from(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                correlation_identity: PiCorrelationIdentity::parse(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                authorized_generation: AdmissionGeneration::try_from(row.3)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        EventKind::PiOfficeSessionDisposeDelivered => {
+            let row: (i64, i64, String) = connection.query_row(
+                "SELECT root_authority_office_session_id, child_process_id, correlation_identity
+                 FROM event_pi_office_session_dispose_delivered WHERE event_id = ?1",
+                [event_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Office Dispose delivery event body"))?;
+            EventBody::PiOfficeSessionDisposeDelivered {
+                session_id: RootAuthorityOfficeSessionId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                child_process_id: ChildProcessId::try_from(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                correlation_identity: PiCorrelationIdentity::parse(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        EventKind::PiOfficeSessionDisposeAccepted => {
+            let row: (i64, String, i64) = connection.query_row(
+                "SELECT root_authority_office_session_id, correlation_identity, command_result_sequence
+                 FROM event_pi_office_session_dispose_accepted WHERE event_id = ?1",
+                [event_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Office Dispose acceptance event body"))?;
+            EventBody::PiOfficeSessionDisposeAccepted {
+                session_id: RootAuthorityOfficeSessionId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                correlation_identity: PiCorrelationIdentity::parse(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                command_result_sequence: PiProtocolSequence::try_from(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        EventKind::PiOfficeSessionDisposeUsageRecorded => {
+            let row: (i64, i64, i64) = connection.query_row(
+                "SELECT root_authority_office_session_id, protocol_sequence, cumulative_ceiling_micros
+                 FROM event_pi_office_session_dispose_usage_recorded WHERE event_id = ?1",
+                [event_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Office Dispose usage event body"))?;
+            EventBody::PiOfficeSessionDisposeUsageRecorded {
+                session_id: RootAuthorityOfficeSessionId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                protocol_sequence: PiProtocolSequence::try_from(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                cumulative_micro_usd: UsdMicros::try_from(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        EventKind::PiOfficeSessionDisposeUsageFrozen => {
+            let row: (i64, i64, i64, i64, i64, Option<i64>, Option<i64>) = connection
+                .query_row(
+                    "SELECT root_authority_office_session_id, budget_reservation_id,
+                        cancellation_request_id, cost_postmortem_id, failure_kind,
+                        unknown_reason, unavailable_reason
+                 FROM event_pi_office_session_dispose_usage_frozen WHERE event_id = ?1",
+                    [event_id],
+                    |row| {
+                        Ok((
+                            row.get(0)?,
+                            row.get(1)?,
+                            row.get(2)?,
+                            row.get(3)?,
+                            row.get(4)?,
+                            row.get(5)?,
+                            row.get(6)?,
+                        ))
+                    },
+                )
+                .optional()?
+                .ok_or(StoreError::LedgerCorruption(
+                    "missing Pi Office Dispose usage freeze event body",
+                ))?;
+            EventBody::PiOfficeSessionDisposeUsageFrozen {
+                session_id: RootAuthorityOfficeSessionId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                budget_reservation_id: BudgetReservationId::try_from(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                cancellation_request_id: CancellationRequestId::try_from(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                postmortem_id: CostPostmortemId::try_from(row.3)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                failure: pi_office_turn_usage_failure_from_sql(row.4, row.5, row.6)?,
+            }
+        }
+        EventKind::PiOfficeSessionDisposed => {
+            let row: (i64, i64, i64, i64, i64, Option<i64>, Option<i64>) = connection
+                .query_row(
+                    "SELECT pi_office_session_dispose_receipt_id,
+                        root_authority_office_session_id, budget_reservation_id,
+                        observed_cumulative_micros, budget_disposition_kind,
+                        cancellation_request_id, cost_postmortem_id
+                 FROM event_pi_office_session_disposed WHERE event_id = ?1",
+                    [event_id],
+                    |row| {
+                        Ok((
+                            row.get(0)?,
+                            row.get(1)?,
+                            row.get(2)?,
+                            row.get(3)?,
+                            row.get(4)?,
+                            row.get(5)?,
+                            row.get(6)?,
+                        ))
+                    },
+                )
+                .optional()?
+                .ok_or(StoreError::LedgerCorruption(
+                    "missing Pi Office Disposed event body",
+                ))?;
+            EventBody::PiOfficeSessionDisposed {
+                pi_office_session_dispose_receipt_id: PiOfficeSessionDisposeReceiptId::try_from(
+                    row.0,
+                )
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+                session_id: RootAuthorityOfficeSessionId::try_from(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                budget_reservation_id: BudgetReservationId::try_from(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                observed_cumulative_micro_usd: UsdMicros::try_from(row.3)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                budget_disposition: pi_office_session_dispose_budget_disposition_from_sql(
+                    row.4, row.3, row.5, row.6,
+                )?,
+            }
+        }
     };
     let stored_fingerprint: Vec<u8> = connection.query_row(
         "SELECT event_fingerprint FROM events WHERE event_id = ?1",
@@ -13497,7 +15039,7 @@ fn replay_command_requests(
     Ok(commands)
 }
 
-const MATERIALIZED_TABLES: [&str; 89] = [
+const MATERIALIZED_TABLES: [&str; 95] = [
     "principals",
     "societies",
     "office_contracts",
@@ -13587,6 +15129,12 @@ const MATERIALIZED_TABLES: [&str; 89] = [
     "pi_office_turn_usage_receipts",
     "pi_office_turn_usage_failures",
     "pi_office_turn_terminal_receipts",
+    "pi_office_session_dispose_authorizations",
+    "pi_office_session_dispose_deliveries",
+    "pi_office_session_dispose_acceptances",
+    "pi_office_session_dispose_usage_receipts",
+    "pi_office_session_dispose_usage_failures",
+    "pi_office_session_dispose_receipts",
 ];
 
 fn materialized_state_digest(connection: &Connection) -> Result<Blake3Digest, StoreError> {
@@ -14801,6 +16349,121 @@ fn decode_command_body(
                 transcript_disposition: pi_office_turn_transcript_disposition_from_i64(row.8)?,
             }
         }
+        CommandKind::AuthorizePiOfficeSessionDispose => {
+            let row: (i64, String) = connection
+                .query_row(
+                    "SELECT root_authority_office_session_id, correlation_identity
+                 FROM command_authorize_pi_office_session_dispose WHERE command_row_id = ?1",
+                    [command_row_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?
+                .ok_or(StoreError::LedgerCorruption(
+                    "missing Pi Office Dispose authorization command body",
+                ))?;
+            CommandBody::AuthorizePiOfficeSessionDispose {
+                session_id: RootAuthorityOfficeSessionId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                correlation_identity: PiCorrelationIdentity::parse(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::RecordPiOfficeSessionDisposeDelivery => {
+            let row: (i64, String) = connection
+                .query_row(
+                    "SELECT root_authority_office_session_id, correlation_identity
+                 FROM command_record_pi_office_session_dispose_delivery WHERE command_row_id = ?1",
+                    [command_row_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?
+                .ok_or(StoreError::LedgerCorruption(
+                    "missing Pi Office Dispose delivery command body",
+                ))?;
+            CommandBody::RecordPiOfficeSessionDisposeDelivery {
+                session_id: RootAuthorityOfficeSessionId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                correlation_identity: PiCorrelationIdentity::parse(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::RecordPiOfficeSessionDisposeAccepted => {
+            let row: (i64, String, i64) = connection.query_row(
+                "SELECT root_authority_office_session_id, correlation_identity, command_result_sequence
+                 FROM command_record_pi_office_session_dispose_accepted WHERE command_row_id = ?1",
+                [command_row_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Office Dispose acceptance command body"))?;
+            CommandBody::RecordPiOfficeSessionDisposeAccepted {
+                session_id: RootAuthorityOfficeSessionId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                correlation_identity: PiCorrelationIdentity::parse(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                command_result_sequence: PiProtocolSequence::try_from(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::RecordPiOfficeSessionDisposeUsage => {
+            let row: (i64, String, i64, i64, i64, i64, i64, i64, Vec<u8>, i64) = connection.query_row(
+                "SELECT root_authority_office_session_id, correlation_identity, protocol_sequence,
+                        input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
+                        total_tokens, provider_cost_binary64, cumulative_ceiling_micros
+                 FROM command_record_pi_office_session_dispose_usage WHERE command_row_id = ?1",
+                [command_row_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?)),
+            ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Office Dispose usage command body"))?;
+            CommandBody::RecordPiOfficeSessionDisposeUsage {
+                session_id: RootAuthorityOfficeSessionId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                correlation_identity: PiCorrelationIdentity::parse(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                protocol_sequence: PiProtocolSequence::try_from(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                usage: pi_cumulative_usage_from_sql(
+                    row.3, row.4, row.5, row.6, row.7, &row.8, row.9,
+                )?,
+            }
+        }
+        CommandKind::RecordPiOfficeSessionDisposeUsageFailure => {
+            let row: (i64, String, i64, i64, Option<i64>, Option<i64>) = connection.query_row(
+                "SELECT root_authority_office_session_id, correlation_identity, protocol_sequence,
+                        failure_kind, unknown_reason, unavailable_reason
+                 FROM command_record_pi_office_session_dispose_usage_failure WHERE command_row_id = ?1",
+                [command_row_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
+            ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Office Dispose usage failure command body"))?;
+            CommandBody::RecordPiOfficeSessionDisposeUsageFailure {
+                session_id: RootAuthorityOfficeSessionId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                correlation_identity: PiCorrelationIdentity::parse(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                protocol_sequence: PiProtocolSequence::try_from(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                failure: pi_office_turn_usage_failure_from_sql(row.3, row.4, row.5)?,
+            }
+        }
+        CommandKind::RecordPiOfficeSessionDisposed => {
+            let row: PiOfficeSessionDisposedCommandSqlRow = connection.query_row(
+                "SELECT root_authority_office_session_id, correlation_identity, disposed_sequence,
+                        transcript_kind, session_file, session_file_digest,
+                        transcript_content_object_id, first_user_prompt_kind,
+                        first_user_prompt_digest
+                 FROM command_record_pi_office_session_disposed WHERE command_row_id = ?1",
+                [command_row_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?)),
+            ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Office Disposed command body"))?;
+            CommandBody::RecordPiOfficeSessionDisposed {
+                session_id: RootAuthorityOfficeSessionId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                correlation_identity: PiCorrelationIdentity::parse(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                disposed_sequence: PiProtocolSequence::try_from(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                transcript_receipt: pi_office_session_transcript_receipt_from_sql(
+                    row.3, row.4, row.5, row.6, row.7, row.8,
+                )?,
+            }
+        }
     };
     Ok(body)
 }
@@ -15287,6 +16950,12 @@ fn command_kind_from_i64(value: i64) -> Result<CommandKind, StoreError> {
         89 => Ok(CommandKind::RecordPiOfficeTurnUsage),
         90 => Ok(CommandKind::RecordPiOfficeTurnUsageFailure),
         91 => Ok(CommandKind::RecordPiOfficeTurnTerminal),
+        92 => Ok(CommandKind::AuthorizePiOfficeSessionDispose),
+        93 => Ok(CommandKind::RecordPiOfficeSessionDisposeDelivery),
+        94 => Ok(CommandKind::RecordPiOfficeSessionDisposeAccepted),
+        95 => Ok(CommandKind::RecordPiOfficeSessionDisposeUsage),
+        96 => Ok(CommandKind::RecordPiOfficeSessionDisposeUsageFailure),
+        97 => Ok(CommandKind::RecordPiOfficeSessionDisposed),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }
@@ -15384,6 +17053,12 @@ fn capability_from_i64(value: i64) -> Result<Capability, StoreError> {
         89 => Ok(Capability::RecordPiOfficeTurnUsage),
         90 => Ok(Capability::RecordPiOfficeTurnUsageFailure),
         91 => Ok(Capability::RecordPiOfficeTurnTerminal),
+        92 => Ok(Capability::AuthorizePiOfficeSessionDispose),
+        93 => Ok(Capability::RecordPiOfficeSessionDisposeDelivery),
+        94 => Ok(Capability::RecordPiOfficeSessionDisposeAccepted),
+        95 => Ok(Capability::RecordPiOfficeSessionDisposeUsage),
+        96 => Ok(Capability::RecordPiOfficeSessionDisposeUsageFailure),
+        97 => Ok(Capability::RecordPiOfficeSessionDisposed),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }
@@ -15553,6 +17228,73 @@ fn pi_office_turn_usage_failure_from_sql(
     }
 }
 
+fn pi_office_session_transcript_receipt_from_sql(
+    transcript_kind: i64,
+    session_file: String,
+    session_file_digest: Option<Vec<u8>>,
+    transcript_content_object_id: Option<i64>,
+    first_user_prompt_kind: Option<i64>,
+    first_user_prompt_digest: Option<Vec<u8>>,
+) -> Result<PiOfficeSessionTranscriptReceipt, StoreError> {
+    let session_file = CanonicalPiSessionTranscriptPath::parse(session_file)
+        .map_err(|_| StoreError::InvalidStoredValue)?;
+    match (
+        transcript_kind,
+        session_file_digest,
+        transcript_content_object_id,
+        first_user_prompt_kind,
+        first_user_prompt_digest,
+    ) {
+        (1, Some(session_file_digest), Some(content_object_id), Some(1), None) => {
+            Ok(PiOfficeSessionTranscriptReceipt::Materialized {
+                session_file,
+                session_file_digest: digest_from_stored_bytes(&session_file_digest)?,
+                transcript_content_object_id: ContentObjectId::try_from(content_object_id)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                first_user_prompt: PiOfficeSessionFirstUserPromptReceipt::Absent,
+            })
+        }
+        (1, Some(session_file_digest), Some(content_object_id), Some(2), Some(prompt_digest)) => {
+            Ok(PiOfficeSessionTranscriptReceipt::Materialized {
+                session_file,
+                session_file_digest: digest_from_stored_bytes(&session_file_digest)?,
+                transcript_content_object_id: ContentObjectId::try_from(content_object_id)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                first_user_prompt: PiOfficeSessionFirstUserPromptReceipt::Verified {
+                    digest: digest_from_stored_bytes(&prompt_digest)?,
+                },
+            })
+        }
+        (2, None, None, None, None) => {
+            Ok(PiOfficeSessionTranscriptReceipt::UnmaterializedNoPrompt { session_file })
+        }
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+
+fn pi_office_session_dispose_budget_disposition_from_sql(
+    kind: i64,
+    observed: i64,
+    cancellation_request_id: Option<i64>,
+    postmortem_id: Option<i64>,
+) -> Result<PiOfficeSessionDisposeBudgetDisposition, StoreError> {
+    match (kind, cancellation_request_id, postmortem_id) {
+        (1, None, None) => Ok(PiOfficeSessionDisposeBudgetDisposition::Reconciled {
+            observed_cumulative_micro_usd: UsdMicros::try_from(observed)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+        }),
+        (2, Some(cancellation_request_id), Some(postmortem_id)) => {
+            Ok(PiOfficeSessionDisposeBudgetDisposition::Frozen {
+                cancellation_request_id: CancellationRequestId::try_from(cancellation_request_id)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                postmortem_id: CostPostmortemId::try_from(postmortem_id)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            })
+        }
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+
 fn pi_cumulative_usage_from_sql(
     input: i64,
     output: i64,
@@ -15672,6 +17414,12 @@ fn event_kind_from_i64(value: i64) -> Result<EventKind, StoreError> {
         83 => Ok(EventKind::PiOfficeTurnUsageRecorded),
         84 => Ok(EventKind::PiOfficeTurnUsageFrozen),
         85 => Ok(EventKind::PiOfficeTurnTerminalRecorded),
+        86 => Ok(EventKind::PiOfficeSessionDisposeAuthorized),
+        87 => Ok(EventKind::PiOfficeSessionDisposeDelivered),
+        88 => Ok(EventKind::PiOfficeSessionDisposeAccepted),
+        89 => Ok(EventKind::PiOfficeSessionDisposeUsageRecorded),
+        90 => Ok(EventKind::PiOfficeSessionDisposeUsageFrozen),
+        91 => Ok(EventKind::PiOfficeSessionDisposed),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }

@@ -773,8 +773,10 @@ The host calls `session.prompt()`, `session.followUp()`, `session.steer()`,
 `session.abort()`, `session.subscribe()`, and `session.dispose()` directly.
 Task and Grand Architect actors therefore use the same SDK surface; “one-shot”
 versus “Office” is a V2 lifecycle policy, not two Pi CLI modes. The canonical Pi
-session file remains forensic transcript and usage evidence. Rust seals it and
-cross-checks its entries against streamed SDK events and typed usage snapshots.
+session file remains forensic transcript and usage evidence. At Office-session
+`Dispose`, Rust verifies the flush receipt and materialized file under owned
+filesystem custody, then seals its exact bytes as content; that seal is not a
+semantic transcript parse, submission, or evaluator result.
 
 The Grand Architect Office session begins with the exact Universe Seed and
 cycle brief. `OperationalNotice` batches normally enter through `followUp()`
@@ -825,9 +827,23 @@ failure, and terminal disposition are separate ordered facts under one
 session-wide sequence watermark. Only a
 `Completed`/`ObservedStop` terminal can atomically checkpoint its new cumulative
 cost delta and restore Office `Ready`; no per-turn reservation double-books the
-Society or Cycle envelope. The resident driver does not yet exercise these
-transitions, and Office-session Dispose remains responsible for future final
-usage, transcript sealing, and release of the unused parent reserve.
+Society or Cycle envelope. The resident driver has no scheduler/control-loop
+caller for Prompt projection. The generic Office-session Dispose foundation is
+now defined independently: `Authorize-before-write -> delivered -> accepted ->
+final Known/failure -> Disposed`. It authorizes before the physical write,
+records only a complete delivery, then requires final Known usage immediately
+after acceptance before the next transcript-flush `Disposed` receipt. That
+Known terminal reconciles the one parent reservation and releases its unused
+reserve; a known overrun or final accounting failure freezes the reservation,
+and the failure branch has no synthetic `Disposed` receipt. A materialized
+transcript is verified under daemon-owned filesystem custody and content-sealed
+before the terminal receipt; a no-Prompt session may still be materialized and
+sealed with an absent first prompt. Only the lazy missing-file arm has no
+content object, and neither absence arm may invent a first prompt or content.
+Child reap is separate process custody, not a Dispose consequence.
+
+This does not add post-restart recovery, workspace disposal, semantic
+submission, paid/native qualification, or an XSH end-to-end claim.
 
 Pipe EOF normally makes a still-inert host exit without constructing a session,
 but a daemon restart does not infer that physical outcome. A durable admission

@@ -30,8 +30,10 @@ use crate::content::{
     ContentObjectRegistration, ContentSealOperationId, ContentSealingAuthority, ContentSealingError,
 };
 use crate::pi_execution::{
-    OfficePiExecutionChild, OfficePiExecutionStart, OfficePiSpawnRegistration, PiExecutionDriver,
-    PiExecutionError, UnregisteredOfficePiChild,
+    OfficePiExecutionChild, OfficePiExecutionStart, OfficePiSessionDispose,
+    OfficePiSessionDisposeOutput, OfficePiSessionDisposeStart, OfficePiSpawnRegistration,
+    PiExecutionDriver, PiExecutionError, UnregisteredOfficePiChild,
+    VerifiedPiSessionDisposeTerminal, VerifiedPiSessionTranscript,
 };
 use crate::protocol::{
     ClientCommandBody, ClientCommandRequest, CorrelationId, DaemonStatus, ProtocolErrorCode,
@@ -142,8 +144,10 @@ pub struct Daemon {
     store: KernelStore,
     /// The resident daemon exclusively owns this physical content-store writer.
     /// Its only mutation method is crate-private and has no local-wire form.
-    #[allow(dead_code)]
     content_sealing: ContentSealingAuthority,
+    /// The reader bound paired with the only content writer. The Pi bridge
+    /// supplies a transcript only after this exact native byte limit.
+    content_seal_limit: ContentSealLimit,
     /// The daemon exclusively owns live Pi process physics.  The driver has
     /// no local-wire constructor and cannot survive a restart attach.
     #[allow(dead_code)]
@@ -423,6 +427,7 @@ impl Daemon {
             config,
             store,
             content_sealing,
+            content_seal_limit: content_limit,
             pi_execution: PiExecutionDriver::new(),
             listener,
             _lock: lock,
@@ -551,35 +556,110 @@ impl Daemon {
             .observe_session_ready(&mut self.store, child, now, deadline)
     }
 
+    /// Starts an M7 Office-session close only after the driver commits the
+    /// kernel's exact Dispose authorization. This is daemon-private: neither
+    /// local wire protocol can close an Office session or choose its Pi
+    /// correlation identity.
     #[allow(dead_code)]
-    pub(crate) fn begin_office_pi_dispose(
+    pub(crate) fn begin_office_pi_session_dispose(
         &mut self,
         child: &mut OfficePiExecutionChild,
-        correlation: society_pi::CorrelationIdentity,
+        start: OfficePiSessionDisposeStart,
         now: crate::supervision::MonotonicTick,
         deadline: crate::supervision::ControlWriteDeadline,
-    ) -> Result<crate::supervision::ControlWriteProgress, PiExecutionError> {
+    ) -> Result<
+        (
+            OfficePiSessionDispose,
+            crate::supervision::ControlWriteProgress,
+        ),
+        PiExecutionError,
+    > {
+        if self.mode == StartupMode::RecoveryFenced {
+            return Err(PiExecutionError::RecoveryFenced);
+        }
         self.pi_execution
-            .begin_dispose(child, correlation, now, deadline)
+            .begin_office_session_dispose(&mut self.store, child, start, now, deadline)
     }
 
+    /// Drives only a previously authorized Dispose suffix. A partial write
+    /// remains physically un-delivered and cannot be observed as a session
+    /// close.
     #[allow(dead_code)]
-    pub(crate) fn drive_office_pi_dispose_delivery(
+    pub(crate) fn drive_office_pi_session_dispose_delivery(
         &mut self,
         child: &mut OfficePiExecutionChild,
+        dispose: &mut OfficePiSessionDispose,
         now: crate::supervision::MonotonicTick,
     ) -> Result<crate::supervision::ControlWriteProgress, PiExecutionError> {
-        self.pi_execution.drive_dispose_delivery(child, now)
+        if self.mode == StartupMode::RecoveryFenced {
+            return Err(PiExecutionError::RecoveryFenced);
+        }
+        self.pi_execution.drive_office_session_dispose_delivery(
+            &mut self.store,
+            child,
+            dispose,
+            now,
+        )
     }
 
+    /// Projects one peer-sealed Dispose frame. A transcript candidate carries
+    /// only verified in-memory bytes; the driver cannot acquire the daemon's
+    /// physical content authority.
     #[allow(dead_code)]
-    pub(crate) fn observe_office_pi_disposed(
+    pub(crate) fn observe_office_pi_session_dispose_output(
         &mut self,
         child: &mut OfficePiExecutionChild,
+        dispose: &mut OfficePiSessionDispose,
         now: crate::supervision::MonotonicTick,
         deadline: crate::supervision::HandshakeDeadline,
-    ) -> Result<bool, PiExecutionError> {
-        self.pi_execution.observe_disposed(child, now, deadline)
+    ) -> Result<Option<OfficePiSessionDisposeOutput>, PiExecutionError> {
+        if self.mode == StartupMode::RecoveryFenced {
+            return Err(PiExecutionError::RecoveryFenced);
+        }
+        self.pi_execution.observe_office_session_dispose_output(
+            &mut self.store,
+            child,
+            dispose,
+            now,
+            deadline,
+            self.content_seal_limit,
+        )
+    }
+
+    /// Seals a peer-validated materialized transcript under resident custody,
+    /// then records the kernel closing receipt. The no-Prompt arm explicitly
+    /// bypasses the content store, so it cannot fabricate a ContentObject.
+    #[allow(dead_code)]
+    pub(crate) fn record_office_pi_session_disposed(
+        &mut self,
+        child: &mut OfficePiExecutionChild,
+        dispose: &mut OfficePiSessionDispose,
+        terminal: &VerifiedPiSessionDisposeTerminal,
+        now: crate::supervision::MonotonicTick,
+    ) -> Result<OfficePiSessionDisposeOutput, PiExecutionError> {
+        if self.mode == StartupMode::RecoveryFenced {
+            return Err(PiExecutionError::RecoveryFenced);
+        }
+        let sealed_content = match terminal.transcript() {
+            VerifiedPiSessionTranscript::Materialized(request) => Some(
+                self.content_sealing
+                    .seal_and_register(
+                        &mut self.store,
+                        request.content_operation(),
+                        request.bytes(),
+                    )
+                    .map_err(PiExecutionError::Content)?,
+            ),
+            VerifiedPiSessionTranscript::UnmaterializedNoPrompt { .. } => None,
+        };
+        self.pi_execution.record_office_session_disposed(
+            &mut self.store,
+            child,
+            dispose,
+            terminal,
+            sealed_content,
+            now,
+        )
     }
 
     #[allow(dead_code)]

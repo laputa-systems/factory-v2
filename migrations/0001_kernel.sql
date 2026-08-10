@@ -996,7 +996,7 @@ CREATE TABLE event_deterministic_experiment_closed (
 CREATE TABLE capability_grants (
     capability_grant_id INTEGER PRIMARY KEY,
     principal_id INTEGER NOT NULL REFERENCES principals(principal_id),
-    capability_kind INTEGER NOT NULL CHECK (capability_kind BETWEEN 1 AND 91),
+    capability_kind INTEGER NOT NULL CHECK (capability_kind BETWEEN 1 AND 97),
     office_occupancy_id INTEGER REFERENCES office_occupancies(office_occupancy_id),
     actor_instance_id INTEGER REFERENCES actor_instances(actor_instance_id),
     grant_state INTEGER NOT NULL CHECK (grant_state IN (1, 2)),
@@ -1045,9 +1045,9 @@ CREATE TABLE commands (
     command_id TEXT NOT NULL UNIQUE,
     principal_id INTEGER NOT NULL,
     capability_grant_id INTEGER NOT NULL,
-    capability_kind INTEGER NOT NULL CHECK (capability_kind BETWEEN 1 AND 91),
+    capability_kind INTEGER NOT NULL CHECK (capability_kind BETWEEN 1 AND 97),
     expected_generation INTEGER,
-    command_kind INTEGER NOT NULL CHECK (command_kind BETWEEN 1 AND 91),
+    command_kind INTEGER NOT NULL CHECK (command_kind BETWEEN 1 AND 97),
     request_fingerprint BLOB NOT NULL CHECK (length(request_fingerprint) = 32),
     command_status INTEGER NOT NULL CHECK (command_status IN (1, 2)),
     rejection_code INTEGER,
@@ -1058,7 +1058,7 @@ CREATE TABLE commands (
 CREATE TABLE events (
     event_id INTEGER PRIMARY KEY,
     command_row_id INTEGER NOT NULL UNIQUE REFERENCES commands(command_row_id),
-    event_kind INTEGER NOT NULL CHECK (event_kind BETWEEN 1 AND 85),
+    event_kind INTEGER NOT NULL CHECK (event_kind BETWEEN 1 AND 91),
     event_sequence INTEGER NOT NULL UNIQUE CHECK (event_sequence > 0),
     event_fingerprint BLOB NOT NULL CHECK (length(event_fingerprint) = 32)
 );
@@ -1687,6 +1687,277 @@ CREATE TABLE event_pi_office_turn_terminal_recorded (
         OR (disposition = 5 AND assistant_outcome = 5)
         OR (disposition = 6 AND assistant_outcome = 6))
 );
+-- M7 keeps the four peer Dispose boundaries independently durable. The
+-- trusted daemon may crash between any frames, so only the terminal receipt
+-- carrying final Known usage can release a Root Authority Office parent
+-- reservation. An unavailable accounting frame is a frozen recovery duty,
+-- not a synthetic Disposed receipt.
+CREATE TABLE pi_office_session_dispose_authorizations (
+    root_authority_office_session_id INTEGER PRIMARY KEY
+        REFERENCES root_authority_office_sessions(root_authority_office_session_id),
+    child_process_id INTEGER NOT NULL REFERENCES pi_child_processes(child_process_id),
+    pi_session_id INTEGER NOT NULL REFERENCES pi_child_sessions(pi_session_id),
+    correlation_identity TEXT NOT NULL,
+    authorized_generation INTEGER NOT NULL CHECK (authorized_generation >= 0),
+    authorized_by_command_id INTEGER NOT NULL REFERENCES commands(command_row_id),
+    UNIQUE (pi_session_id, correlation_identity)
+);
+CREATE TABLE pi_office_session_dispose_deliveries (
+    root_authority_office_session_id INTEGER PRIMARY KEY
+        REFERENCES pi_office_session_dispose_authorizations(root_authority_office_session_id),
+    child_process_id INTEGER NOT NULL REFERENCES pi_child_processes(child_process_id),
+    pi_session_id INTEGER NOT NULL REFERENCES pi_child_sessions(pi_session_id),
+    correlation_identity TEXT NOT NULL,
+    delivered_by_command_id INTEGER NOT NULL REFERENCES commands(command_row_id),
+    UNIQUE (pi_session_id, correlation_identity)
+);
+CREATE TABLE pi_office_session_dispose_acceptances (
+    root_authority_office_session_id INTEGER PRIMARY KEY
+        REFERENCES pi_office_session_dispose_deliveries(root_authority_office_session_id),
+    command_result_sequence INTEGER NOT NULL CHECK (command_result_sequence > 0),
+    accepted_by_command_id INTEGER NOT NULL REFERENCES commands(command_row_id),
+    UNIQUE (root_authority_office_session_id, command_result_sequence)
+);
+CREATE TABLE pi_office_session_dispose_usage_receipts (
+    root_authority_office_session_id INTEGER PRIMARY KEY
+        REFERENCES pi_office_session_dispose_acceptances(root_authority_office_session_id),
+    pi_session_id INTEGER NOT NULL REFERENCES pi_child_sessions(pi_session_id),
+    correlation_identity TEXT NOT NULL,
+    protocol_sequence INTEGER NOT NULL CHECK (protocol_sequence > 0),
+    input_tokens INTEGER NOT NULL CHECK (input_tokens >= 0),
+    output_tokens INTEGER NOT NULL CHECK (output_tokens >= 0),
+    cache_read_tokens INTEGER NOT NULL CHECK (cache_read_tokens >= 0),
+    cache_write_tokens INTEGER NOT NULL CHECK (cache_write_tokens >= 0),
+    total_tokens INTEGER NOT NULL CHECK (total_tokens >= 0),
+    provider_cost_binary64 BLOB NOT NULL CHECK (length(provider_cost_binary64) = 8),
+    cumulative_ceiling_micros INTEGER NOT NULL CHECK (cumulative_ceiling_micros >= 0),
+    recorded_by_command_id INTEGER NOT NULL REFERENCES commands(command_row_id),
+    UNIQUE (pi_session_id, protocol_sequence)
+);
+CREATE TABLE pi_office_session_dispose_usage_failures (
+    root_authority_office_session_id INTEGER PRIMARY KEY
+        REFERENCES pi_office_session_dispose_acceptances(root_authority_office_session_id),
+    pi_session_id INTEGER NOT NULL REFERENCES pi_child_sessions(pi_session_id),
+    correlation_identity TEXT NOT NULL,
+    protocol_sequence INTEGER NOT NULL CHECK (protocol_sequence > 0),
+    failure_kind INTEGER NOT NULL CHECK (failure_kind IN (1, 2)),
+    unknown_reason INTEGER,
+    unavailable_reason INTEGER,
+    budget_reservation_id INTEGER NOT NULL REFERENCES budget_reservations(budget_reservation_id),
+    cancellation_request_id INTEGER NOT NULL REFERENCES cancellation_requests(cancellation_request_id),
+    cost_postmortem_id INTEGER NOT NULL REFERENCES cost_postmortems(postmortem_id),
+    recorded_by_command_id INTEGER NOT NULL REFERENCES commands(command_row_id),
+    UNIQUE (pi_session_id, protocol_sequence),
+    CHECK ((failure_kind = 1 AND unknown_reason IN (1, 2, 3) AND unavailable_reason IS NULL)
+        OR (failure_kind = 2 AND unknown_reason IS NULL AND unavailable_reason IN (1, 2, 3, 4)))
+);
+CREATE TABLE pi_office_session_dispose_receipts (
+    pi_office_session_dispose_receipt_id INTEGER PRIMARY KEY,
+    root_authority_office_session_id INTEGER NOT NULL UNIQUE
+        REFERENCES pi_office_session_dispose_usage_receipts(root_authority_office_session_id),
+    child_process_id INTEGER NOT NULL REFERENCES pi_child_processes(child_process_id),
+    pi_session_id INTEGER NOT NULL REFERENCES pi_child_sessions(pi_session_id),
+    correlation_identity TEXT NOT NULL,
+    disposed_sequence INTEGER NOT NULL CHECK (disposed_sequence > 0),
+    transcript_kind INTEGER NOT NULL CHECK (transcript_kind IN (1, 2)),
+    session_file TEXT NOT NULL,
+    session_file_digest BLOB CHECK (session_file_digest IS NULL OR length(session_file_digest) = 32),
+    transcript_content_object_id INTEGER REFERENCES content_objects(content_object_id),
+    first_user_prompt_kind INTEGER,
+    first_user_prompt_digest BLOB CHECK (first_user_prompt_digest IS NULL OR length(first_user_prompt_digest) = 32),
+    budget_disposition_kind INTEGER NOT NULL CHECK (budget_disposition_kind IN (1, 2)),
+    cancellation_request_id INTEGER REFERENCES cancellation_requests(cancellation_request_id),
+    cost_postmortem_id INTEGER REFERENCES cost_postmortems(postmortem_id),
+    recorded_by_command_id INTEGER NOT NULL REFERENCES commands(command_row_id),
+    UNIQUE (pi_session_id, disposed_sequence),
+    CHECK ((transcript_kind = 1
+                AND session_file_digest IS NOT NULL
+                AND transcript_content_object_id IS NOT NULL
+                AND first_user_prompt_kind IN (1, 2)
+                AND ((first_user_prompt_kind = 1 AND first_user_prompt_digest IS NULL)
+                    OR (first_user_prompt_kind = 2 AND first_user_prompt_digest IS NOT NULL)))
+        OR (transcript_kind = 2
+                AND session_file_digest IS NULL
+                AND transcript_content_object_id IS NULL
+                AND first_user_prompt_kind IS NULL
+                AND first_user_prompt_digest IS NULL)),
+    CHECK ((budget_disposition_kind = 1
+                AND cancellation_request_id IS NULL AND cost_postmortem_id IS NULL)
+        OR (budget_disposition_kind = 2
+                AND cancellation_request_id IS NOT NULL AND cost_postmortem_id IS NOT NULL))
+);
+CREATE TABLE command_authorize_pi_office_session_dispose (
+    command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id),
+    root_authority_office_session_id INTEGER NOT NULL REFERENCES root_authority_office_sessions(root_authority_office_session_id),
+    correlation_identity TEXT NOT NULL
+);
+CREATE TABLE command_record_pi_office_session_dispose_delivery (
+    command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id),
+    root_authority_office_session_id INTEGER NOT NULL REFERENCES root_authority_office_sessions(root_authority_office_session_id),
+    correlation_identity TEXT NOT NULL
+);
+CREATE TABLE command_record_pi_office_session_dispose_accepted (
+    command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id),
+    root_authority_office_session_id INTEGER NOT NULL REFERENCES root_authority_office_sessions(root_authority_office_session_id),
+    correlation_identity TEXT NOT NULL,
+    command_result_sequence INTEGER NOT NULL CHECK (command_result_sequence > 0)
+);
+CREATE TABLE command_record_pi_office_session_dispose_usage (
+    command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id),
+    root_authority_office_session_id INTEGER NOT NULL REFERENCES root_authority_office_sessions(root_authority_office_session_id),
+    correlation_identity TEXT NOT NULL,
+    protocol_sequence INTEGER NOT NULL CHECK (protocol_sequence > 0),
+    input_tokens INTEGER NOT NULL CHECK (input_tokens >= 0),
+    output_tokens INTEGER NOT NULL CHECK (output_tokens >= 0),
+    cache_read_tokens INTEGER NOT NULL CHECK (cache_read_tokens >= 0),
+    cache_write_tokens INTEGER NOT NULL CHECK (cache_write_tokens >= 0),
+    total_tokens INTEGER NOT NULL CHECK (total_tokens >= 0),
+    provider_cost_binary64 BLOB NOT NULL CHECK (length(provider_cost_binary64) = 8),
+    cumulative_ceiling_micros INTEGER NOT NULL CHECK (cumulative_ceiling_micros >= 0)
+);
+CREATE TABLE command_record_pi_office_session_dispose_usage_failure (
+    command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id),
+    root_authority_office_session_id INTEGER NOT NULL REFERENCES root_authority_office_sessions(root_authority_office_session_id),
+    correlation_identity TEXT NOT NULL,
+    protocol_sequence INTEGER NOT NULL CHECK (protocol_sequence > 0),
+    failure_kind INTEGER NOT NULL CHECK (failure_kind IN (1, 2)),
+    unknown_reason INTEGER,
+    unavailable_reason INTEGER,
+    CHECK ((failure_kind = 1 AND unknown_reason IN (1, 2, 3) AND unavailable_reason IS NULL)
+        OR (failure_kind = 2 AND unknown_reason IS NULL AND unavailable_reason IN (1, 2, 3, 4)))
+);
+CREATE TABLE command_record_pi_office_session_disposed (
+    command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id),
+    root_authority_office_session_id INTEGER NOT NULL REFERENCES root_authority_office_sessions(root_authority_office_session_id),
+    correlation_identity TEXT NOT NULL,
+    disposed_sequence INTEGER NOT NULL CHECK (disposed_sequence > 0),
+    transcript_kind INTEGER NOT NULL CHECK (transcript_kind IN (1, 2)),
+    session_file TEXT NOT NULL,
+    session_file_digest BLOB CHECK (session_file_digest IS NULL OR length(session_file_digest) = 32),
+    transcript_content_object_id INTEGER REFERENCES content_objects(content_object_id),
+    first_user_prompt_kind INTEGER,
+    first_user_prompt_digest BLOB CHECK (first_user_prompt_digest IS NULL OR length(first_user_prompt_digest) = 32),
+    CHECK ((transcript_kind = 1
+                AND session_file_digest IS NOT NULL
+                AND transcript_content_object_id IS NOT NULL
+                AND first_user_prompt_kind IN (1, 2)
+                AND ((first_user_prompt_kind = 1 AND first_user_prompt_digest IS NULL)
+                    OR (first_user_prompt_kind = 2 AND first_user_prompt_digest IS NOT NULL)))
+        OR (transcript_kind = 2
+                AND session_file_digest IS NULL
+                AND transcript_content_object_id IS NULL
+                AND first_user_prompt_kind IS NULL
+                AND first_user_prompt_digest IS NULL))
+);
+CREATE TABLE event_pi_office_session_dispose_authorized (
+    event_id INTEGER PRIMARY KEY REFERENCES events(event_id),
+    root_authority_office_session_id INTEGER NOT NULL REFERENCES root_authority_office_sessions(root_authority_office_session_id),
+    child_process_id INTEGER NOT NULL REFERENCES pi_child_processes(child_process_id),
+    correlation_identity TEXT NOT NULL,
+    authorized_generation INTEGER NOT NULL CHECK (authorized_generation >= 0)
+);
+CREATE TABLE event_pi_office_session_dispose_delivered (
+    event_id INTEGER PRIMARY KEY REFERENCES events(event_id),
+    root_authority_office_session_id INTEGER NOT NULL REFERENCES root_authority_office_sessions(root_authority_office_session_id),
+    child_process_id INTEGER NOT NULL REFERENCES pi_child_processes(child_process_id),
+    correlation_identity TEXT NOT NULL
+);
+CREATE TABLE event_pi_office_session_dispose_accepted (
+    event_id INTEGER PRIMARY KEY REFERENCES events(event_id),
+    root_authority_office_session_id INTEGER NOT NULL REFERENCES root_authority_office_sessions(root_authority_office_session_id),
+    correlation_identity TEXT NOT NULL,
+    command_result_sequence INTEGER NOT NULL CHECK (command_result_sequence > 0)
+);
+CREATE TABLE event_pi_office_session_dispose_usage_recorded (
+    event_id INTEGER PRIMARY KEY REFERENCES events(event_id),
+    root_authority_office_session_id INTEGER NOT NULL REFERENCES root_authority_office_sessions(root_authority_office_session_id),
+    protocol_sequence INTEGER NOT NULL CHECK (protocol_sequence > 0),
+    cumulative_ceiling_micros INTEGER NOT NULL CHECK (cumulative_ceiling_micros >= 0)
+);
+CREATE TABLE event_pi_office_session_dispose_usage_frozen (
+    event_id INTEGER PRIMARY KEY REFERENCES events(event_id),
+    root_authority_office_session_id INTEGER NOT NULL REFERENCES root_authority_office_sessions(root_authority_office_session_id),
+    budget_reservation_id INTEGER NOT NULL REFERENCES budget_reservations(budget_reservation_id),
+    cancellation_request_id INTEGER NOT NULL REFERENCES cancellation_requests(cancellation_request_id),
+    cost_postmortem_id INTEGER NOT NULL REFERENCES cost_postmortems(postmortem_id),
+    failure_kind INTEGER NOT NULL CHECK (failure_kind IN (1, 2)),
+    unknown_reason INTEGER,
+    unavailable_reason INTEGER,
+    CHECK ((failure_kind = 1 AND unknown_reason IN (1, 2, 3) AND unavailable_reason IS NULL)
+        OR (failure_kind = 2 AND unknown_reason IS NULL AND unavailable_reason IN (1, 2, 3, 4)))
+);
+CREATE TABLE event_pi_office_session_disposed (
+    event_id INTEGER PRIMARY KEY REFERENCES events(event_id),
+    pi_office_session_dispose_receipt_id INTEGER NOT NULL REFERENCES pi_office_session_dispose_receipts(pi_office_session_dispose_receipt_id),
+    root_authority_office_session_id INTEGER NOT NULL REFERENCES root_authority_office_sessions(root_authority_office_session_id),
+    budget_reservation_id INTEGER NOT NULL REFERENCES budget_reservations(budget_reservation_id),
+    observed_cumulative_micros INTEGER NOT NULL CHECK (observed_cumulative_micros >= 0),
+    budget_disposition_kind INTEGER NOT NULL CHECK (budget_disposition_kind IN (1, 2)),
+    cancellation_request_id INTEGER REFERENCES cancellation_requests(cancellation_request_id),
+    cost_postmortem_id INTEGER REFERENCES cost_postmortems(postmortem_id),
+    CHECK ((budget_disposition_kind = 1
+                AND cancellation_request_id IS NULL AND cost_postmortem_id IS NULL)
+        OR (budget_disposition_kind = 2
+                AND cancellation_request_id IS NOT NULL AND cost_postmortem_id IS NOT NULL))
+);
+-- A session has one cumulative protocol-sequence namespace. The four
+-- named accounting tables deliberately remain normalized, so reciprocal
+-- fresh-schema triggers forbid raw-SQL construction of contradictory Known
+-- and Unknown/Unavailable facts at the same sequence.
+DROP TRIGGER pi_usage_receipt_sequence_not_failure;
+DROP TRIGGER pi_usage_failure_sequence_not_receipt;
+CREATE TRIGGER pi_usage_receipt_sequence_not_other_accounting
+BEFORE INSERT ON pi_office_turn_usage_receipts
+WHEN EXISTS (
+    SELECT 1 FROM pi_office_turn_usage_failures
+    WHERE pi_session_id = NEW.pi_session_id AND protocol_sequence = NEW.protocol_sequence
+    UNION ALL
+    SELECT 1 FROM pi_office_session_dispose_usage_receipts
+    WHERE pi_session_id = NEW.pi_session_id AND protocol_sequence = NEW.protocol_sequence
+    UNION ALL
+    SELECT 1 FROM pi_office_session_dispose_usage_failures
+    WHERE pi_session_id = NEW.pi_session_id AND protocol_sequence = NEW.protocol_sequence
+)
+BEGIN SELECT RAISE(ABORT, 'Pi usage/failure sequence collision'); END;
+CREATE TRIGGER pi_usage_failure_sequence_not_other_accounting
+BEFORE INSERT ON pi_office_turn_usage_failures
+WHEN EXISTS (
+    SELECT 1 FROM pi_office_turn_usage_receipts
+    WHERE pi_session_id = NEW.pi_session_id AND protocol_sequence = NEW.protocol_sequence
+    UNION ALL
+    SELECT 1 FROM pi_office_session_dispose_usage_receipts
+    WHERE pi_session_id = NEW.pi_session_id AND protocol_sequence = NEW.protocol_sequence
+    UNION ALL
+    SELECT 1 FROM pi_office_session_dispose_usage_failures
+    WHERE pi_session_id = NEW.pi_session_id AND protocol_sequence = NEW.protocol_sequence
+)
+BEGIN SELECT RAISE(ABORT, 'Pi usage/failure sequence collision'); END;
+CREATE TRIGGER pi_dispose_usage_receipt_sequence_not_other_accounting
+BEFORE INSERT ON pi_office_session_dispose_usage_receipts
+WHEN EXISTS (
+    SELECT 1 FROM pi_office_turn_usage_receipts
+    WHERE pi_session_id = NEW.pi_session_id AND protocol_sequence = NEW.protocol_sequence
+    UNION ALL
+    SELECT 1 FROM pi_office_turn_usage_failures
+    WHERE pi_session_id = NEW.pi_session_id AND protocol_sequence = NEW.protocol_sequence
+    UNION ALL
+    SELECT 1 FROM pi_office_session_dispose_usage_failures
+    WHERE pi_session_id = NEW.pi_session_id AND protocol_sequence = NEW.protocol_sequence
+)
+BEGIN SELECT RAISE(ABORT, 'Pi usage/failure sequence collision'); END;
+CREATE TRIGGER pi_dispose_usage_failure_sequence_not_other_accounting
+BEFORE INSERT ON pi_office_session_dispose_usage_failures
+WHEN EXISTS (
+    SELECT 1 FROM pi_office_turn_usage_receipts
+    WHERE pi_session_id = NEW.pi_session_id AND protocol_sequence = NEW.protocol_sequence
+    UNION ALL
+    SELECT 1 FROM pi_office_turn_usage_failures
+    WHERE pi_session_id = NEW.pi_session_id AND protocol_sequence = NEW.protocol_sequence
+    UNION ALL
+    SELECT 1 FROM pi_office_session_dispose_usage_receipts
+    WHERE pi_session_id = NEW.pi_session_id AND protocol_sequence = NEW.protocol_sequence
+)
+BEGIN SELECT RAISE(ABORT, 'Pi usage/failure sequence collision'); END;
 INSERT INTO principals VALUES(1,1,'bootstrap_principal',1);
 INSERT INTO principals VALUES(2,2,'kernel_service',1);
 INSERT INTO execution_profiles VALUES(1,1,1);
@@ -1739,6 +2010,12 @@ INSERT INTO capability_grants VALUES(45,2,88,NULL,NULL,1,3,NULL,NULL);
 INSERT INTO capability_grants VALUES(46,2,89,NULL,NULL,1,3,NULL,NULL);
 INSERT INTO capability_grants VALUES(47,2,90,NULL,NULL,1,3,NULL,NULL);
 INSERT INTO capability_grants VALUES(48,2,91,NULL,NULL,1,3,NULL,NULL);
-PRAGMA user_version = 11;
+INSERT INTO capability_grants VALUES(49,2,92,NULL,NULL,1,3,NULL,NULL);
+INSERT INTO capability_grants VALUES(50,2,93,NULL,NULL,1,3,NULL,NULL);
+INSERT INTO capability_grants VALUES(51,2,94,NULL,NULL,1,3,NULL,NULL);
+INSERT INTO capability_grants VALUES(52,2,95,NULL,NULL,1,3,NULL,NULL);
+INSERT INTO capability_grants VALUES(53,2,96,NULL,NULL,1,3,NULL,NULL);
+INSERT INTO capability_grants VALUES(54,2,97,NULL,NULL,1,3,NULL,NULL);
+PRAGMA user_version = 12;
 COMMIT;
 PRAGMA foreign_keys = ON;

@@ -113,6 +113,34 @@ Prompt-correlated Known usage fact immediately followed by `Settled`. The
 kernel never fabricates an agent event to make those shapes look alike, and a
 non-ready or protocol-failed terminal cannot reopen Office authority.
 
+Office-session disposal has its own durable closing grammar:
+`Authorize-before-write -> delivered -> accepted -> final Known/failure ->
+Disposed`. The authorization freezes the exact Ready session, child, Pi
+session, correlation, and generation before a Dispose byte enters the host
+pipe; delivery records only a complete physical JSONL write. After host
+acceptance, the very next sequence is one final cumulative Known usage fact or
+a typed accounting failure. Only Known usage may be followed by the next
+`Disposed` receipt. That receipt binds the same correlation and a peer-checked
+transcript flush. For a materialized transcript, daemon custody verifies the
+owned session path and exact digest, reads the bounded regular file without
+following its final path component, and sends its bytes to the daemon's sole
+content writer; the terminal receipt requires that resulting content identity
+and digest. A no-Prompt session may still have a materialized transcript with
+an explicitly absent first prompt, which is custody-sealed normally; only the
+lazy missing-file arm is unmaterialized and has no content object. Neither arm
+may invent a first prompt or content where it is absent.
+
+The final Known `Disposed` transition reconciles the single existing
+Office-session parent reservation: it charges any final delta and releases its
+unused reserve, or freezes a known overrun with its cancellation/postmortem
+duty. A final accounting failure freezes the parent and starts containment; it
+has no `Disposed` successor and awaits a later recovery tranche. Session
+disposal neither proves process exit nor reaps the child—direct-child reap is
+separate OS-custody evidence. This same-lifetime foundation has no resident
+scheduler/control-loop caller, post-restart recovery, workspace disposal,
+semantic submission, paid/native qualification, or end-to-end application
+claim.
+
 An execution profile is a qualified runtime identity and readiness state, not
 a caller-selected executable path. A product application may select only an
 already admitted profile through typed application policy; it cannot alter the

@@ -5,6 +5,14 @@
 // supervisor process physics.  Session-identity suffixes select deterministic
 // race fixtures; production code never selects behavior this way.
 
+import { writeFileSync } from "node:fs";
+
+// The checked-in provider-free double needs the same byte digest primitive as
+// the pinned host only to make a materialized transcript receipt internally
+// truthful. This is the adapter's already-pinned exact dependency; no model,
+// SDK, or network surface is imported by the fixture.
+import { blake3 } from "../../packages/society-pi-host/node_modules/@noble/hashes/blake3.js";
+
 const argumentsByFlag = new Map();
 for (let index = 2; index < process.argv.length; index += 2) {
 	argumentsByFlag.set(process.argv[index], process.argv[index + 1]);
@@ -32,6 +40,19 @@ if (sessionIdentity.includes("m5-never-session-ready-ignore-term")) {
 	const keepAlive = setInterval(() => {}, 60_000);
 	process.once("exit", () => clearInterval(keepAlive));
 }
+if (sessionIdentity.includes("m5-setup-fault-ignore-term")) {
+	// The post-spawn setup-failure regression closes stdin before it begins its
+	// emergency schedule. Keep the direct child alive through TERM so the test
+	// exercises the documented TERM -> KILL -> direct-reap ordering, rather
+	// than racing a voluntary EOF exit and a recycled process-group identity.
+	const keepAlive = setInterval(() => {}, 60_000);
+	process.once("exit", () => clearInterval(keepAlive));
+	// The supervisor deliberately cannot initialize the Pi peer for this
+	// injected setup fault. This private, test-only workspace marker proves the
+	// child installed its TERM handler before the Rust regression advances the
+	// logical emergency deadline; it is not host protocol evidence.
+	writeFileSync(".m5-setup-fault-ready", "ready\n", { mode: 0o600 });
+}
 if (sessionIdentity.includes("m6-usage-unavailable-pre-agent-settled-ignore-term")) {
 	// The paired M6 regression needs an owned live process through both
 	// automatic-containment deadlines. EOF must not turn it into an
@@ -42,6 +63,13 @@ if (sessionIdentity.includes("m6-usage-unavailable-pre-agent-settled-ignore-term
 if (sessionIdentity.includes("m6-protocol-failed-final-known-ignore-term")) {
 	// Keep this protocol-failed terminal fixture alive long enough to prove the
 	// driver contains and reaps it, rather than receiving a voluntary EOF exit.
+	const keepAlive = setInterval(() => {}, 60_000);
+	process.once("exit", () => clearInterval(keepAlive));
+}
+if (sessionIdentity.includes("m7-dispose-usage-unavailable-ignore-term")) {
+	// The Dispose failure bridge must prove deadline-driven TERM/KILL and
+	// ordered reaping after the exact UsageUnavailable freeze, rather than
+	// racing a voluntary stdin EOF exit.
 	const keepAlive = setInterval(() => {}, 60_000);
 	process.once("exit", () => clearInterval(keepAlive));
 }
@@ -56,6 +84,8 @@ let createPayload;
 let disposed = false;
 let promptCount = 0;
 let pendingPromptTerminal;
+let firstPromptRendering;
+let transcriptBytes;
 
 emit({ event: "AdapterReady", pid: process.pid, spawnNonce, runtime });
 if (sessionIdentity.includes("never-read-stdin")) {
@@ -193,8 +223,10 @@ function accept(frame) {
 			if (sessionIdentity.includes("exit-after-session-ready")) {
 				// The test-only Rust scheduling seam pauses after it has durably
 				// recorded this exact protocol fact. The direct child then exits
-				// before the separate Office-ready liveness probe.
-				setTimeout(() => process.exit(0), 1);
+				// before the separate Office-ready liveness probe. Leave enough
+				// time for a loaded provider-free test process to observe and
+				// commit SessionReady before the deterministic pause begins.
+				setTimeout(() => process.exit(0), 100);
 			}
 			return;
 		}
@@ -220,6 +252,14 @@ function accept(frame) {
 			}
 			accepted("Prompt", frame.correlationIdentity);
 			promptCount += 1;
+			if (firstPromptRendering === undefined) {
+				firstPromptRendering = frame.payload.text;
+				transcriptBytes = Buffer.from(
+					`provider-free-session-v3\n${createPayload.cwd}\n${firstPromptRendering}\n`,
+					"utf8",
+				);
+				writeFileSync(sessionTranscriptPath(), transcriptBytes, { mode: 0o600 });
+			}
 			if (sessionIdentity.includes("m6-exit-after-prompt-accepted")) {
 				setImmediate(() => process.exit(0));
 				return;
@@ -337,41 +377,80 @@ function accept(frame) {
 		}
 		case "Dispose":
 			accepted("Dispose", frame.correlationIdentity);
+			if (sessionIdentity.includes("m7-dispose-usage-unavailable")) {
+				// This is the actual host ordering for typed unusable cumulative
+				// accounting: the frame itself terminally fences the peer, so no
+				// later Disposed receipt can be trusted or projected.
+				emit({
+					event: "UsageSnapshot",
+					correlationIdentity: frame.correlationIdentity,
+					usage: { kind: "Unavailable", reason: "invalid_sdk_usage" },
+				});
+				return;
+			}
+			if (sessionIdentity.includes("m7-dispose-missing-final-usage")) {
+				// Schema-valid terminal coordinates without the mandatory forced
+				// final Usage frame. The Rust peer must fence this exact Disposed
+				// sequence; the daemon may freeze but must never close the session.
+				emit({
+					event: "Disposed",
+					correlationIdentity: frame.correlationIdentity,
+					transcriptFlushReceipt: transcriptFlushReceipt(),
+				});
+				disposed = true;
+				return;
+			}
 			emit({
 				event: "UsageSnapshot",
 				correlationIdentity: frame.correlationIdentity,
-				usage: {
-					kind: "Known",
-					totals: {
-						inputTokens: 0,
-						outputTokens: 0,
-						cacheReadTokens: 0,
-						cacheWriteTokens: 0,
-						totalTokens: 0,
-						providerCost: {
-							encoding: "ieee754_binary64_be_hex_v1",
-							binary64BigEndianHex: "0000000000000000",
-							rounding: "ceil_to_micro_usd",
-						},
-					},
-				},
+				// The host's forced final Dispose snapshot is cumulative. After a
+				// completed prompt it commonly repeats the same total, which is
+				// still terminal evidence even though the peer normalizes it as
+				// an explicit idempotent zero delta.
+				usage: knownUsage(promptCount),
 			});
 			emit({
 				event: "Disposed",
 				correlationIdentity: frame.correlationIdentity,
-				transcriptFlushReceipt: {
-					format: "pi_session_manager_jsonl_v3",
-					sessionIdentity,
-					sessionFile: `${createPayload.sessionDirectory}/double-session.jsonl`,
-					materialization: "unmaterialized_no_prompt",
-					firstUserPrompt: { kind: "absent" },
-				},
+				transcriptFlushReceipt: transcriptFlushReceipt(),
 			});
 			disposed = true;
 			return;
 		default:
 			throw new Error(`unexpected provider-free command ${frame.command}`);
 	}
+}
+
+function sessionTranscriptPath() {
+	return `${createPayload.sessionDirectory}/double-session.jsonl`;
+}
+
+function blake3Hex(bytes) {
+	return Buffer.from(blake3(bytes)).toString("hex");
+}
+
+function transcriptFlushReceipt() {
+	if (firstPromptRendering === undefined || transcriptBytes === undefined) {
+		return {
+			format: "pi_session_manager_jsonl_v3",
+			sessionIdentity,
+			sessionFile: sessionTranscriptPath(),
+			materialization: "unmaterialized_no_prompt",
+			firstUserPrompt: { kind: "absent" },
+		};
+	}
+	return {
+		format: "pi_session_manager_jsonl_v3",
+		sessionIdentity,
+		sessionFile: sessionTranscriptPath(),
+		materialization: "observed",
+		sessionFileBlake3: blake3Hex(transcriptBytes),
+		headerCwd: createPayload.cwd,
+		firstUserPrompt: {
+			kind: "verified",
+			digest: blake3Hex(Buffer.from(firstPromptRendering, "utf8")),
+		},
+	};
 }
 
 function knownUsage(turn) {

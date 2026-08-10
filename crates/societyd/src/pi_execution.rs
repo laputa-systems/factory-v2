@@ -9,14 +9,22 @@
 //! spawning, reading or writing a pipe, signalling, waiting, or sealing
 //! bytes.
 
+use std::{
+    fs::{self, OpenOptions},
+    io::Read,
+    os::unix::fs::{MetadataExt, OpenOptionsExt},
+};
+
+use society_content::ContentSealLimit;
 use society_kernel::{
-    AdmissionGeneration, Blake3Digest as KernelDigest, BudgetReservationId, CanonicalWorkspacePath,
-    Capability, ChildProcessId, ChildStreamKind, ChildStreamSealCompleteness, CommandBody,
-    CommandDisposition, CommandId, CommandRequest, ContentObjectId, DirectChildWaitStatus,
-    EventBody, EventId, ExecutionProfileId, ExpectedGeneration, KernelStore, NativeChildPid,
-    NativeWorkspaceId as KernelWorkspaceId, OfficeTurnId,
-    OwnedProcessGroupId as KernelProcessGroupId, PiBoundarySessionIdentity, PiChildOwner,
-    PiChildSpawnAdmissionId, PiCorrelationIdentity, PiCumulativeUsage,
+    AdmissionGeneration, Blake3Digest as KernelDigest, BudgetReservationId,
+    CanonicalPiSessionTranscriptPath, CanonicalWorkspacePath, Capability, ChildProcessId,
+    ChildStreamKind, ChildStreamSealCompleteness, CommandBody, CommandDisposition, CommandId,
+    CommandRequest, ContentObjectId, DirectChildWaitStatus, EventBody, EventId, ExecutionProfileId,
+    ExpectedGeneration, KernelStore, NativeChildPid, NativeWorkspaceId as KernelWorkspaceId,
+    OfficeTurnId, OwnedProcessGroupId as KernelProcessGroupId, PiBoundarySessionIdentity,
+    PiChildOwner, PiChildSpawnAdmissionId, PiCorrelationIdentity, PiCumulativeUsage,
+    PiOfficeSessionFirstUserPromptReceipt, PiOfficeSessionTranscriptReceipt,
     PiOfficeTurnAssistantOutcome, PiOfficeTurnDisposition, PiOfficeTurnTerminalEvidence,
     PiOfficeTurnTranscriptDisposition, PiOfficeTurnUsageFailure,
     PiOfficeTurnUsageUnavailableReason, PiOfficeTurnUsageUnknownReason, PiProtocolSequence,
@@ -26,15 +34,19 @@ use society_kernel::{
     SupervisorEpochIdentity,
 };
 use society_pi::{
-    AssistantStopReason, BoundarySequence, CommandName, CommandResult, CorrelationIdentity,
-    FinalAssistantOutcome, InboundCommand, InboundFrame, OutboundEvent, ProjectedAgentEvent,
-    PromptPayload, PromptPurpose, SessionIdentity, SessionKind, SettledClassification,
-    TurnDisposition, UsageObservation, UsageUnavailableReason,
+    AbsolutePath, AssistantStopReason, BoundarySequence, CommandName, CommandResult,
+    CorrelationIdentity, FinalAssistantOutcome, FirstUserPromptReceipt, InboundCommand,
+    InboundFrame, OutboundEvent, ProjectedAgentEvent, PromptPayload, PromptPurpose,
+    SessionIdentity, SessionKind, SettledClassification, TranscriptFlushReceiptV1, TurnDisposition,
+    UsageObservation, UsageUnavailableReason,
 };
 use thiserror::Error;
 
 use crate::{
-    content::{ContentSealOperationId, ContentSealingAuthority, ContentSealingError},
+    content::{
+        ContentObjectRegistration, ContentSealOperationId, ContentSealingAuthority,
+        ContentSealingError,
+    },
     supervision::{
         ControlWriteDeadline, ControlWriteProgress, HandshakeDeadline, InertChildFacts,
         MonotonicTick, PeerFrameValidation, PiSpawnRequest, PiSupervisor, PostSpawnSetupFailure,
@@ -46,6 +58,7 @@ use crate::{
 
 const COMMAND_PREFIX: &str = "pi-execution-v1/";
 const OFFICE_TURN_COMMAND_PREFIX: &str = "pi-office-turn-v1/";
+const OFFICE_SESSION_DISPOSE_COMMAND_PREFIX: &str = "pi-office-session-dispose-v1/";
 const MAX_OPERATION_LABEL_BYTES: usize = 36;
 
 #[cfg(feature = "test-support")]
@@ -195,6 +208,72 @@ impl PiOfficeTurnOperationId {
     }
 }
 
+/// Retry-stable command slots for one closing Root Authority Office session.
+/// They deliberately do not share the M5 child or M6 turn command domains:
+/// a transcript materialization cannot be replayed as a prior prompt fact.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PiOfficeSessionDisposeCommand {
+    Authorize,
+    RecordDelivery,
+    RecordAccepted,
+    RecordKnownUsage { sequence: PiProtocolSequence },
+    RecordUsageFailure { sequence: PiProtocolSequence },
+    RecordDisposed,
+}
+
+impl std::fmt::Display for PiOfficeSessionDisposeCommand {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Authorize => formatter.write_str("authorize"),
+            Self::RecordDelivery => formatter.write_str("record-delivery"),
+            Self::RecordAccepted => formatter.write_str("record-accepted"),
+            Self::RecordKnownUsage { sequence } => {
+                write!(formatter, "record-known-usage-{}", sequence.value())
+            }
+            Self::RecordUsageFailure { sequence } => {
+                write!(formatter, "record-usage-failure-{}", sequence.value())
+            }
+            Self::RecordDisposed => formatter.write_str("record-disposed"),
+        }
+    }
+}
+
+/// Opaque daemon-internal identity for the entire closing session receipt
+/// chain. The caller selects one canonical operation label, while this type
+/// derives every kernel and content-seal command identity from it. Retrying a
+/// live daemon therefore cannot splice a transcript from another session or
+/// use a new command identity after physical disposal has begun.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct PiOfficeSessionDisposeOperationId(String);
+
+impl PiOfficeSessionDisposeOperationId {
+    pub(crate) fn parse(value: impl Into<String>) -> Result<Self, PiExecutionError> {
+        let value = value.into();
+        let _ = PiExecutionOperationId::parse(value.clone())?;
+        Ok(Self(value))
+    }
+
+    fn command_id(
+        &self,
+        command: PiOfficeSessionDisposeCommand,
+    ) -> Result<CommandId, PiExecutionError> {
+        CommandId::parse(format!(
+            "{OFFICE_SESSION_DISPOSE_COMMAND_PREFIX}{}/{command}",
+            self.0
+        ))
+        .map_err(|_| PiExecutionError::InvalidOperationIdentity)
+    }
+
+    fn transcript_content_operation(
+        &self,
+        digest: KernelDigest,
+    ) -> Result<ContentSealOperationId, PiExecutionError> {
+        let label = format!("pi-dispose-transcript-{}", self.0);
+        ContentSealOperationId::parse(label, digest)
+            .map_err(|_| PiExecutionError::InvalidOperationIdentity)
+    }
+}
+
 const fn stream_label(stream: ChildStreamKind) -> &'static str {
     match stream {
         ChildStreamKind::AdmittedControl => "admitted-control",
@@ -276,6 +355,11 @@ pub(crate) struct OfficePiExecutionChild {
     supervised_child_id: SupervisedChildId,
     child_process_id: ChildProcessId,
     office_session_id: RootAuthorityOfficeSessionId,
+    /// Native paths remain daemon-private process custody facts. The kernel
+    /// receives only a canonical transcript path after peer validation and a
+    /// no-follow same-user file read below.
+    workspace_directory: AbsolutePath,
+    session_directory: AbsolutePath,
     pi_session_identity: PiBoundarySessionIdentity,
     spawn_nonce: KernelSpawnNonce,
     expected_generation: AdmissionGeneration,
@@ -339,6 +423,161 @@ pub(crate) struct OfficePiTurn {
     agent_settled_sequence: Option<PiProtocolSequence>,
     latest_known_accounting_sequence: Option<PiProtocolSequence>,
     final_accounting_sequence: Option<PiProtocolSequence>,
+}
+
+/// Inputs already selected by trusted Office scheduling for the one closing
+/// Pi session. The session identity itself stays on the registered child; a
+/// caller cannot replace it while reusing this correlation or operation.
+#[derive(Clone, Debug)]
+pub(crate) struct OfficePiSessionDisposeStart {
+    pub(crate) operation: PiOfficeSessionDisposeOperationId,
+    pub(crate) correlation_identity: PiCorrelationIdentity,
+    /// The current Operating Cycle admission generation selected by trusted
+    /// scheduling immediately before Dispose authorization. It is distinct
+    /// from the child spawn generation: Quiesce advances the cycle before an
+    /// idle Office session may close.
+    pub(crate) expected_generation: AdmissionGeneration,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OfficePiSessionDisposePhase {
+    DeliveryPending,
+    AwaitingAcceptance,
+    AwaitingFinalAccounting,
+    AwaitingDisposed,
+    UsageFrozen,
+    Disposed,
+}
+
+/// Daemon-private custody for the closing Pi session receipt chain. A typed
+/// usage inability deliberately has no `Disposed` successor: Pi v1 fences on
+/// that frame, and leaving the session open preserves the frozen parent for a
+/// later recovery tranche.
+#[derive(Clone, Debug)]
+pub(crate) struct OfficePiSessionDispose {
+    operation: PiOfficeSessionDisposeOperationId,
+    correlation_identity: PiCorrelationIdentity,
+    /// Frozen only after the kernel accepted `Authorize...`. Every later
+    /// delivery/usage/terminal receipt must name this exact generation even
+    /// if another cancellation transition advances the live cycle later.
+    expected_generation: AdmissionGeneration,
+    phase: OfficePiSessionDisposePhase,
+    accepted_sequence: Option<PiProtocolSequence>,
+    final_accounting_sequence: Option<PiProtocolSequence>,
+}
+
+/// A peer-validated materialized SessionManager transcript, opened by the
+/// daemon under the session workspace's filesystem custody rules. It remains
+/// an in-memory request for the daemon's sole content writer; this type
+/// carries no content-object identity until that writer has physically sealed
+/// the exact bytes.
+#[derive(Clone, Debug)]
+pub(crate) struct VerifiedPiSessionTranscriptSealRequest {
+    content_operation: ContentSealOperationId,
+    session_file: CanonicalPiSessionTranscriptPath,
+    session_file_digest: KernelDigest,
+    first_user_prompt: PiOfficeSessionFirstUserPromptReceipt,
+    bytes: Vec<u8>,
+}
+
+impl VerifiedPiSessionTranscriptSealRequest {
+    pub(crate) fn content_operation(&self) -> &ContentSealOperationId {
+        &self.content_operation
+    }
+
+    pub(crate) fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    fn kernel_receipt_with_content(
+        &self,
+        content_object_id: ContentObjectId,
+        sealed_digest: KernelDigest,
+    ) -> Result<PiOfficeSessionTranscriptReceipt, PiExecutionError> {
+        if sealed_digest != self.session_file_digest {
+            return Err(PiExecutionError::TranscriptDigestMismatch);
+        }
+        Ok(PiOfficeSessionTranscriptReceipt::Materialized {
+            session_file: self.session_file.clone(),
+            session_file_digest: self.session_file_digest,
+            transcript_content_object_id: content_object_id,
+            first_user_prompt: self.first_user_prompt,
+        })
+    }
+}
+
+/// The only two peer-valid transcript materialization states. In particular,
+/// `UnmaterializedNoPrompt` cannot be passed to the content writer, so a
+/// header-only or absent Pi session file never fabricates a ContentObject.
+#[derive(Clone, Debug)]
+pub(crate) enum VerifiedPiSessionTranscript {
+    Materialized(VerifiedPiSessionTranscriptSealRequest),
+    UnmaterializedNoPrompt {
+        session_file: CanonicalPiSessionTranscriptPath,
+    },
+}
+
+impl VerifiedPiSessionTranscript {
+    fn kernel_receipt_with_content(
+        &self,
+        sealed_content: Option<ContentObjectRegistration>,
+    ) -> Result<PiOfficeSessionTranscriptReceipt, PiExecutionError> {
+        match self {
+            Self::Materialized(request) => {
+                let sealed_content =
+                    sealed_content.ok_or(PiExecutionError::TranscriptContentMissing)?;
+                request.kernel_receipt_with_content(
+                    sealed_content.content_object_id,
+                    sealed_content.digest,
+                )
+            }
+            Self::UnmaterializedNoPrompt { session_file } => {
+                if sealed_content.is_some() {
+                    return Err(PiExecutionError::TranscriptContentUnexpected);
+                }
+                Ok(PiOfficeSessionTranscriptReceipt::UnmaterializedNoPrompt {
+                    session_file: session_file.clone(),
+                })
+            }
+        }
+    }
+}
+
+/// One peer-accepted session-closing coordinate. Keeping the transcript and
+/// its exact `Disposed` sequence together prevents a caller from sealing one
+/// terminal file while attempting to commit another sequence.
+#[derive(Clone, Debug)]
+pub(crate) struct VerifiedPiSessionDisposeTerminal {
+    transcript: VerifiedPiSessionTranscript,
+    disposed_sequence: PiProtocolSequence,
+}
+
+impl VerifiedPiSessionDisposeTerminal {
+    pub(crate) fn transcript(&self) -> &VerifiedPiSessionTranscript {
+        &self.transcript
+    }
+
+    pub(crate) const fn disposed_sequence(&self) -> PiProtocolSequence {
+        self.disposed_sequence
+    }
+}
+
+/// One frame-at-a-time projection result for the closed Office-session
+/// Dispose chain. It names only durable facts that can be recorded from a
+/// peer-sealed raw stdout frame; it never turns transcript bytes into a
+/// content object itself.
+#[derive(Clone, Debug)]
+pub(crate) enum OfficePiSessionDisposeOutput {
+    DeliveryRecorded,
+    Accepted,
+    KnownUsageRecorded,
+    UsageFrozen,
+    /// The host's peer-validated terminal transcript has been opened under
+    /// daemon filesystem custody. The daemon must seal materialized bytes
+    /// through its sole content authority (or prove the unmaterialized arm)
+    /// before asking this driver to record the kernel terminal.
+    TranscriptReady(Box<VerifiedPiSessionDisposeTerminal>),
+    Disposed,
 }
 
 /// The one-frame-at-a-time resident result of projecting peer evidence. It is
@@ -726,6 +965,8 @@ impl PiExecutionDriver {
             supervised_child_id: spawned.child_process_id,
             child_process_id,
             office_session_id: start.office_session_id,
+            workspace_directory: start.spawn_request.workspace.directory().clone(),
+            session_directory: start.spawn_request.create_session.session_directory.clone(),
             pi_session_identity,
             spawn_nonce,
             expected_generation: registration_generation,
@@ -1171,9 +1412,548 @@ impl PiExecutionDriver {
             .map(Some)
     }
 
-    /// This bounded bridge disposes only a session with no active M6 Office
-    /// turn, then leaves reaping/sealing to the caller's nonblocking
-    /// control-loop ticks.
+    /// Authorizes the one closing Dispose control before any byte can enter
+    /// the host pipe, then begins the nonblocking physical write. The kernel
+    /// freezes the exact session/correlation/current-generation relation in
+    /// its `AuthorizePiOfficeSessionDispose` command; this prevents a stale
+    /// or wrong-cycle caller from physically closing a session and learning
+    /// only afterwards that delivery was not durable authority.
+    ///
+    /// No content writer is involved here: transcript materialization is a
+    /// later peer-sealed stdout fact.
+    pub(crate) fn begin_office_session_dispose(
+        &mut self,
+        store: &mut KernelStore,
+        child: &mut OfficePiExecutionChild,
+        start: OfficePiSessionDisposeStart,
+        now: MonotonicTick,
+        deadline: ControlWriteDeadline,
+    ) -> Result<(OfficePiSessionDispose, ControlWriteProgress), PiExecutionError> {
+        if child.phase != OfficePiExecutionPhase::OfficeReadyRecorded {
+            return Err(PiExecutionError::InvalidLifecycle);
+        }
+        let correlation = CorrelationIdentity::parse(start.correlation_identity.as_str())
+            .map_err(|_| PiExecutionError::IdentityConversion)?;
+        let authorized = execute_office_session_dispose_command(
+            store,
+            &start.operation,
+            PiOfficeSessionDisposeCommand::Authorize,
+            Capability::AuthorizePiOfficeSessionDispose,
+            ExpectedGeneration::Exact(start.expected_generation),
+            CommandBody::AuthorizePiOfficeSessionDispose {
+                session_id: child.office_session_id,
+                correlation_identity: start.correlation_identity.clone(),
+            },
+        );
+        match authorized {
+            Ok(EventBody::PiOfficeSessionDisposeAuthorized {
+                session_id,
+                child_process_id,
+                correlation_identity,
+                authorized_generation,
+            }) if session_id == child.office_session_id
+                && child_process_id == child.child_process_id
+                && correlation_identity == start.correlation_identity
+                && authorized_generation == start.expected_generation => {}
+            Ok(_) => {
+                // An accepted authorization with another child/session is an
+                // internal cross-boundary contradiction. No Dispose byte has
+                // been written, but this resident may no longer safely use
+                // the live child for Office work.
+                self.begin_registered_boundary_containment(child, now);
+                return Err(PiExecutionError::UnexpectedKernelEvent);
+            }
+            Err(error) => {
+                // A rejected/stale authorization has no native side effect.
+                // In particular, do not turn a current Office session into a
+                // cancellation merely because a caller offered old authority.
+                return Err(error);
+            }
+        }
+        let mut dispose = OfficePiSessionDispose {
+            operation: start.operation,
+            correlation_identity: start.correlation_identity,
+            expected_generation: start.expected_generation,
+            phase: OfficePiSessionDisposePhase::DeliveryPending,
+            accepted_sequence: None,
+            final_accounting_sequence: None,
+        };
+        let progress = match self.supervisor.send_dispose(
+            &child.supervised_child_id,
+            correlation,
+            society_pi::DisposeReason::CycleReconciliation,
+            now,
+            deadline,
+        ) {
+            Ok(progress) => progress,
+            Err(error) => {
+                self.begin_registered_boundary_containment(child, now);
+                return Err(PiExecutionError::Supervision(error));
+            }
+        };
+        child.phase = match progress {
+            ControlWriteProgress::Pending => OfficePiExecutionPhase::DisposeDeliveryPending,
+            ControlWriteProgress::Delivered => OfficePiExecutionPhase::DisposeRequested,
+        };
+        if progress == ControlWriteProgress::Delivered {
+            self.record_office_session_dispose_delivery(store, child, &mut dispose, now)?;
+        }
+        Ok((dispose, progress))
+    }
+
+    /// Drains the one already-authorized Dispose suffix. A `Pending` write is
+    /// not a durable delivery and remains unable to observe host output.
+    pub(crate) fn drive_office_session_dispose_delivery(
+        &mut self,
+        store: &mut KernelStore,
+        child: &mut OfficePiExecutionChild,
+        dispose: &mut OfficePiSessionDispose,
+        now: MonotonicTick,
+    ) -> Result<ControlWriteProgress, PiExecutionError> {
+        if child.phase != OfficePiExecutionPhase::DisposeDeliveryPending
+            || dispose.phase != OfficePiSessionDisposePhase::DeliveryPending
+        {
+            return Err(PiExecutionError::InvalidLifecycle);
+        }
+        let progress = match self
+            .supervisor
+            .drive_control_write(&child.supervised_child_id, now)
+        {
+            Ok(progress) => progress,
+            Err(error) => {
+                self.begin_registered_boundary_containment(child, now);
+                return Err(PiExecutionError::Supervision(error));
+            }
+        };
+        if progress == ControlWriteProgress::Delivered {
+            child.phase = OfficePiExecutionPhase::DisposeRequested;
+            self.record_office_session_dispose_delivery(store, child, dispose, now)?;
+        }
+        Ok(progress)
+    }
+
+    /// Projects exactly one peer-sealed Dispose stdout frame. Materialized
+    /// transcript bytes are returned as a closed in-memory seal request; this
+    /// driver never opens the daemon's content object store or fabricates an
+    /// object identity.
+    pub(crate) fn observe_office_session_dispose_output(
+        &mut self,
+        store: &mut KernelStore,
+        child: &mut OfficePiExecutionChild,
+        dispose: &mut OfficePiSessionDispose,
+        now: MonotonicTick,
+        deadline: HandshakeDeadline,
+        transcript_seal_limit: ContentSealLimit,
+    ) -> Result<Option<OfficePiSessionDisposeOutput>, PiExecutionError> {
+        if child.phase != OfficePiExecutionPhase::DisposeRequested
+            || !matches!(
+                dispose.phase,
+                OfficePiSessionDisposePhase::AwaitingAcceptance
+                    | OfficePiSessionDisposePhase::AwaitingFinalAccounting
+                    | OfficePiSessionDisposePhase::AwaitingDisposed
+            )
+        {
+            return Err(PiExecutionError::InvalidLifecycle);
+        }
+        let output = match self.observe_disposal_output(child, now, deadline) {
+            Ok(None) => return Ok(None),
+            Ok(Some(output)) => output,
+            Err(error) => return Err(error),
+        };
+        self.project_office_session_dispose_output(
+            store,
+            child,
+            dispose,
+            output,
+            now,
+            transcript_seal_limit,
+        )
+        .map(Some)
+    }
+
+    /// Completes a peer-validated Dispose transcript only after the daemon's
+    /// sole physical content writer supplied the global object identity for a
+    /// materialized receipt. The unmaterialized arm rejects any supplied
+    /// object, making it impossible to invent content for a no-Prompt session.
+    pub(crate) fn record_office_session_disposed(
+        &mut self,
+        store: &mut KernelStore,
+        child: &mut OfficePiExecutionChild,
+        dispose: &mut OfficePiSessionDispose,
+        terminal: &VerifiedPiSessionDisposeTerminal,
+        sealed_content: Option<ContentObjectRegistration>,
+        now: MonotonicTick,
+    ) -> Result<OfficePiSessionDisposeOutput, PiExecutionError> {
+        if child.phase != OfficePiExecutionPhase::DisposeRequested
+            || dispose.phase != OfficePiSessionDisposePhase::AwaitingDisposed
+            || dispose.final_accounting_sequence.is_none_or(|usage| {
+                usage.value().checked_add(1) != Some(terminal.disposed_sequence.value())
+            })
+        {
+            self.begin_registered_boundary_containment(child, now);
+            return Err(PiExecutionError::DisposeEvidenceOrder);
+        }
+        let transcript_receipt = terminal
+            .transcript
+            .kernel_receipt_with_content(sealed_content)?;
+        let event = execute_office_session_dispose_command(
+            store,
+            &dispose.operation,
+            PiOfficeSessionDisposeCommand::RecordDisposed,
+            Capability::RecordPiOfficeSessionDisposed,
+            ExpectedGeneration::Exact(dispose.expected_generation),
+            CommandBody::RecordPiOfficeSessionDisposed {
+                session_id: child.office_session_id,
+                correlation_identity: dispose.correlation_identity.clone(),
+                disposed_sequence: terminal.disposed_sequence,
+                transcript_receipt,
+            },
+        );
+        match event {
+            Ok(EventBody::PiOfficeSessionDisposed { session_id, .. })
+                if session_id == child.office_session_id =>
+            {
+                dispose.phase = OfficePiSessionDisposePhase::Disposed;
+                child.phase = OfficePiExecutionPhase::Disposed;
+                Ok(OfficePiSessionDisposeOutput::Disposed)
+            }
+            Ok(_) => {
+                self.begin_registered_boundary_containment(child, now);
+                Err(PiExecutionError::UnexpectedKernelEvent)
+            }
+            Err(error) => {
+                self.begin_registered_boundary_containment(child, now);
+                Err(error)
+            }
+        }
+    }
+
+    /// Records the physical-write boundary only after `PiSupervisor` has
+    /// drained the complete JSONL Dispose frame. A logical control admission
+    /// or a partial pipe suffix is deliberately not a delivery receipt.
+    fn record_office_session_dispose_delivery(
+        &mut self,
+        store: &mut KernelStore,
+        child: &mut OfficePiExecutionChild,
+        dispose: &mut OfficePiSessionDispose,
+        now: MonotonicTick,
+    ) -> Result<(), PiExecutionError> {
+        let event = execute_office_session_dispose_command(
+            store,
+            &dispose.operation,
+            PiOfficeSessionDisposeCommand::RecordDelivery,
+            Capability::RecordPiOfficeSessionDisposeDelivery,
+            ExpectedGeneration::Exact(dispose.expected_generation),
+            CommandBody::RecordPiOfficeSessionDisposeDelivery {
+                session_id: child.office_session_id,
+                correlation_identity: dispose.correlation_identity.clone(),
+            },
+        );
+        match event {
+            Ok(EventBody::PiOfficeSessionDisposeDelivered {
+                session_id,
+                child_process_id,
+                correlation_identity,
+            }) if session_id == child.office_session_id
+                && child_process_id == child.child_process_id
+                && correlation_identity == dispose.correlation_identity =>
+            {
+                dispose.phase = OfficePiSessionDisposePhase::AwaitingAcceptance;
+                Ok(())
+            }
+            Ok(_) => {
+                self.begin_registered_boundary_containment(child, now);
+                Err(PiExecutionError::UnexpectedKernelEvent)
+            }
+            Err(error) => {
+                // A physical write without its matching durable receipt is a
+                // safety boundary: no later host output can be attributed to
+                // this resident's session close.
+                self.begin_registered_boundary_containment(child, now);
+                Err(error)
+            }
+        }
+    }
+
+    /// Projects a single byte-sealed, strict-schema-decoded closing frame.
+    /// The peer's semantic validation remains authoritative for lifecycle
+    /// order. The kernel receives only the narrow named facts it can own:
+    /// accepted Dispose, one final cumulative usage/failure, and a transcript
+    /// candidate whose bytes are still held outside the content store.
+    fn project_office_session_dispose_output(
+        &mut self,
+        store: &mut KernelStore,
+        child: &mut OfficePiExecutionChild,
+        dispose: &mut OfficePiSessionDispose,
+        output: SealedDecodedPeerFrame,
+        now: MonotonicTick,
+        transcript_seal_limit: ContentSealLimit,
+    ) -> Result<OfficePiSessionDisposeOutput, PiExecutionError> {
+        let sequence = kernel_protocol_sequence(output.frame().sequence)?;
+        let expected_correlation =
+            CorrelationIdentity::parse(dispose.correlation_identity.as_str())
+                .map_err(|_| PiExecutionError::IdentityConversion)?;
+        if output.frame().correlation_identity.as_ref() != Some(&expected_correlation) {
+            self.begin_registered_boundary_containment(child, now);
+            return Err(PiExecutionError::DisposeEvidenceOrder);
+        }
+
+        if let PeerFrameValidation::Rejected(error) = output.validation() {
+            // A schema-valid Disposed immediately after acceptance is an
+            // observed sequence but lacks the forced final accounting frame.
+            // Preserve that exact inability rather than inventing a missing
+            // Usage snapshot or accepting the terminal close.
+            if matches!(
+                (&output.frame().event, error),
+                (
+                    OutboundEvent::Disposed { .. },
+                    society_pi::PeerError::MissingTerminalEvidence
+                )
+            ) && dispose.phase == OfficePiSessionDisposePhase::AwaitingFinalAccounting
+            {
+                return self.record_office_session_dispose_usage_failure(
+                    store,
+                    child,
+                    dispose,
+                    sequence,
+                    PiOfficeTurnUsageFailure::Unknown(
+                        PiOfficeTurnUsageUnknownReason::MissingFinalUsageSnapshot,
+                    ),
+                    now,
+                );
+            }
+            self.begin_registered_boundary_containment(child, now);
+            return Err(PiExecutionError::PeerFatalWithoutAccountingFact);
+        }
+
+        match (&output.frame().event, output.observation()) {
+            (
+                OutboundEvent::CommandResult(CommandResult::Accepted {
+                    command: CommandName::Dispose,
+                    ..
+                }),
+                None,
+            ) => {
+                if dispose.phase != OfficePiSessionDisposePhase::AwaitingAcceptance {
+                    self.begin_registered_boundary_containment(child, now);
+                    return Err(PiExecutionError::DisposeEvidenceOrder);
+                }
+                let event = execute_office_session_dispose_command(
+                    store,
+                    &dispose.operation,
+                    PiOfficeSessionDisposeCommand::RecordAccepted,
+                    Capability::RecordPiOfficeSessionDisposeAccepted,
+                    ExpectedGeneration::Exact(dispose.expected_generation),
+                    CommandBody::RecordPiOfficeSessionDisposeAccepted {
+                        session_id: child.office_session_id,
+                        correlation_identity: dispose.correlation_identity.clone(),
+                        command_result_sequence: sequence,
+                    },
+                );
+                match event {
+                    Ok(EventBody::PiOfficeSessionDisposeAccepted {
+                        session_id,
+                        correlation_identity,
+                        command_result_sequence,
+                    }) if session_id == child.office_session_id
+                        && correlation_identity == dispose.correlation_identity
+                        && command_result_sequence == sequence =>
+                    {
+                        dispose.accepted_sequence = Some(sequence);
+                        dispose.phase = OfficePiSessionDisposePhase::AwaitingFinalAccounting;
+                        Ok(OfficePiSessionDisposeOutput::Accepted)
+                    }
+                    Ok(_) => {
+                        self.begin_registered_boundary_containment(child, now);
+                        Err(PiExecutionError::UnexpectedKernelEvent)
+                    }
+                    Err(error) => {
+                        self.begin_registered_boundary_containment(child, now);
+                        Err(error)
+                    }
+                }
+            }
+            (
+                OutboundEvent::CommandResult(CommandResult::Rejected {
+                    command: CommandName::Dispose,
+                    ..
+                }),
+                None,
+            ) => {
+                self.begin_registered_boundary_containment(child, now);
+                Err(PiExecutionError::DisposeRejectedByHost)
+            }
+            (
+                OutboundEvent::UsageSnapshot {
+                    usage: UsageObservation::Known(totals),
+                },
+                // Known totals remain terminal evidence even if the peer's
+                // normalized delta is the explicit zero/idempotent delta.
+                // The kernel independently verifies full cumulative
+                // nondecrease across the session namespace.
+                _,
+            ) => {
+                if dispose.phase != OfficePiSessionDisposePhase::AwaitingFinalAccounting
+                    || dispose.accepted_sequence.is_none_or(|accepted| {
+                        accepted.value().checked_add(1) != Some(sequence.value())
+                    })
+                {
+                    self.begin_registered_boundary_containment(child, now);
+                    return Err(PiExecutionError::DisposeEvidenceOrder);
+                }
+                let usage = kernel_cumulative_usage(totals)?;
+                let event = execute_office_session_dispose_command(
+                    store,
+                    &dispose.operation,
+                    PiOfficeSessionDisposeCommand::RecordKnownUsage { sequence },
+                    Capability::RecordPiOfficeSessionDisposeUsage,
+                    ExpectedGeneration::Exact(dispose.expected_generation),
+                    CommandBody::RecordPiOfficeSessionDisposeUsage {
+                        session_id: child.office_session_id,
+                        correlation_identity: dispose.correlation_identity.clone(),
+                        protocol_sequence: sequence,
+                        usage,
+                    },
+                );
+                match event {
+                    Ok(EventBody::PiOfficeSessionDisposeUsageRecorded {
+                        session_id,
+                        protocol_sequence,
+                        ..
+                    }) if session_id == child.office_session_id
+                        && protocol_sequence == sequence =>
+                    {
+                        dispose.final_accounting_sequence = Some(sequence);
+                        dispose.phase = OfficePiSessionDisposePhase::AwaitingDisposed;
+                        Ok(OfficePiSessionDisposeOutput::KnownUsageRecorded)
+                    }
+                    Ok(_) => {
+                        self.begin_registered_boundary_containment(child, now);
+                        Err(PiExecutionError::UnexpectedKernelEvent)
+                    }
+                    Err(error) => {
+                        self.begin_registered_boundary_containment(child, now);
+                        Err(error)
+                    }
+                }
+            }
+            (
+                OutboundEvent::UsageSnapshot {
+                    usage: UsageObservation::Unavailable(reason),
+                },
+                Some(society_pi::PeerObservation::UsageUnavailable { reason: observed }),
+            ) if reason == observed => self.record_office_session_dispose_usage_failure(
+                store,
+                child,
+                dispose,
+                sequence,
+                kernel_usage_failure(*reason),
+                now,
+            ),
+            (
+                OutboundEvent::Disposed {
+                    transcript_flush_receipt,
+                },
+                Some(society_pi::PeerObservation::Disposed),
+            ) => {
+                if dispose.phase != OfficePiSessionDisposePhase::AwaitingDisposed
+                    || dispose
+                        .final_accounting_sequence
+                        .is_none_or(|usage| usage.value().checked_add(1) != Some(sequence.value()))
+                {
+                    self.begin_registered_boundary_containment(child, now);
+                    return Err(PiExecutionError::DisposeEvidenceOrder);
+                }
+                let transcript = project_verified_session_transcript(
+                    &dispose.operation,
+                    &child.workspace_directory,
+                    &child.session_directory,
+                    transcript_flush_receipt,
+                    transcript_seal_limit,
+                );
+                match transcript {
+                    Ok(transcript) => Ok(OfficePiSessionDisposeOutput::TranscriptReady(Box::new(
+                        VerifiedPiSessionDisposeTerminal {
+                            transcript,
+                            disposed_sequence: sequence,
+                        },
+                    ))),
+                    Err(error) => {
+                        self.begin_registered_boundary_containment(child, now);
+                        Err(error)
+                    }
+                }
+            }
+            (OutboundEvent::Fatal { .. }, _) => {
+                self.begin_registered_boundary_containment(child, now);
+                Err(PiExecutionError::PeerFatalWithoutAccountingFact)
+            }
+            _ => {
+                self.begin_registered_boundary_containment(child, now);
+                Err(PiExecutionError::DisposeEvidenceOrder)
+            }
+        }
+    }
+
+    /// Records an exact accounting inability at the observed closing sequence,
+    /// freezes the parent through the kernel, and starts physical containment.
+    /// A frozen Dispose chain has no `Disposed` successor.
+    fn record_office_session_dispose_usage_failure(
+        &mut self,
+        store: &mut KernelStore,
+        child: &mut OfficePiExecutionChild,
+        dispose: &mut OfficePiSessionDispose,
+        protocol_sequence: PiProtocolSequence,
+        failure: PiOfficeTurnUsageFailure,
+        now: MonotonicTick,
+    ) -> Result<OfficePiSessionDisposeOutput, PiExecutionError> {
+        if dispose.phase != OfficePiSessionDisposePhase::AwaitingFinalAccounting
+            || dispose.accepted_sequence.is_none_or(|accepted| {
+                accepted.value().checked_add(1) != Some(protocol_sequence.value())
+            })
+        {
+            self.begin_registered_boundary_containment(child, now);
+            return Err(PiExecutionError::DisposeEvidenceOrder);
+        }
+        let event = execute_office_session_dispose_command(
+            store,
+            &dispose.operation,
+            PiOfficeSessionDisposeCommand::RecordUsageFailure {
+                sequence: protocol_sequence,
+            },
+            Capability::RecordPiOfficeSessionDisposeUsageFailure,
+            ExpectedGeneration::Exact(dispose.expected_generation),
+            CommandBody::RecordPiOfficeSessionDisposeUsageFailure {
+                session_id: child.office_session_id,
+                correlation_identity: dispose.correlation_identity.clone(),
+                protocol_sequence,
+                failure,
+            },
+        );
+        match event {
+            Ok(EventBody::PiOfficeSessionDisposeUsageFrozen { session_id, .. })
+                if session_id == child.office_session_id =>
+            {
+                dispose.phase = OfficePiSessionDisposePhase::UsageFrozen;
+                self.begin_registered_boundary_containment(child, now);
+                Ok(OfficePiSessionDisposeOutput::UsageFrozen)
+            }
+            Ok(_) => {
+                self.begin_registered_boundary_containment(child, now);
+                Err(PiExecutionError::UnexpectedKernelEvent)
+            }
+            Err(error) => {
+                self.begin_registered_boundary_containment(child, now);
+                Err(error)
+            }
+        }
+    }
+
+    /// Retired M5 fixture helper. Production has exactly one Office Dispose
+    /// path: `begin_office_session_dispose`, whose kernel authorization
+    /// precedes every physical control byte. Keep this only for the narrow
+    /// pre-M7 process-physics regression fixtures until those are retired.
+    #[cfg(test)]
     pub(crate) fn begin_dispose(
         &mut self,
         child: &mut OfficePiExecutionChild,
@@ -1204,9 +1984,8 @@ impl PiExecutionDriver {
         Ok(progress)
     }
 
-    /// Drains the already-admitted Dispose frame without permitting another
-    /// command to overtake it. `Disposed` observation is illegal until this
-    /// returns `Delivered` and changes the closed phase.
+    /// Retired M5 fixture helper paired with `begin_dispose` above.
+    #[cfg(test)]
     pub(crate) fn drive_dispose_delivery(
         &mut self,
         child: &mut OfficePiExecutionChild,
@@ -1231,26 +2010,45 @@ impl PiExecutionDriver {
         Ok(progress)
     }
 
+    /// Reads one peer-sealed disposal frame without advancing the daemon's
+    /// child phase. The forthcoming durable session-dispose chain must commit
+    /// the exact accepted/usage/transcript fact before `Disposed` becomes a
+    /// daemon-visible terminal state; this native method deliberately keeps
+    /// that commit boundary with its caller.
+    pub(crate) fn observe_disposal_output(
+        &mut self,
+        child: &mut OfficePiExecutionChild,
+        now: MonotonicTick,
+        deadline: HandshakeDeadline,
+    ) -> Result<Option<SealedDecodedPeerFrame>, PiExecutionError> {
+        if child.phase != OfficePiExecutionPhase::DisposeRequested {
+            return Err(PiExecutionError::InvalidLifecycle);
+        }
+        match self
+            .supervisor
+            .observe_disposal_output_at(&child.supervised_child_id, now, deadline)
+        {
+            Ok(output) => Ok(output),
+            Err(error) => {
+                self.begin_registered_boundary_containment(child, now);
+                Err(PiExecutionError::Supervision(error))
+            }
+        }
+    }
+
+    /// Retired M5 fixture helper. Production projects the raw sealed frame
+    /// through the M7 receipt chain before it may mark this child disposed.
+    #[cfg(test)]
     pub(crate) fn observe_disposed(
         &mut self,
         child: &mut OfficePiExecutionChild,
         now: MonotonicTick,
         deadline: HandshakeDeadline,
     ) -> Result<bool, PiExecutionError> {
-        if child.phase != OfficePiExecutionPhase::DisposeRequested {
-            return Err(PiExecutionError::InvalidLifecycle);
-        }
-        let disposed =
-            match self
-                .supervisor
-                .observe_disposed_at(&child.supervised_child_id, now, deadline)
-            {
-                Ok(disposed) => disposed,
-                Err(error) => {
-                    self.begin_registered_boundary_containment(child, now);
-                    return Err(PiExecutionError::Supervision(error));
-                }
-            };
+        let output = self.observe_disposal_output(child, now, deadline)?;
+        let disposed = output
+            .as_ref()
+            .is_some_and(|frame| matches!(&frame.frame().event, OutboundEvent::Disposed { .. }));
         if disposed {
             child.phase = OfficePiExecutionPhase::Disposed;
         }
@@ -2266,6 +3064,41 @@ fn execute_office_turn_command(
     Ok(store.ledger_event(event_id)?.body)
 }
 
+/// Executes one retry-stable KERNEL-service command in the closing Office
+/// session namespace. This remains separate from the M5 child and M6 turn
+/// namespaces so a terminal session receipt cannot collide with a prior
+/// Prompt operation merely because their textual labels match.
+fn execute_office_session_dispose_command(
+    store: &mut KernelStore,
+    operation: &PiOfficeSessionDisposeOperationId,
+    command: PiOfficeSessionDisposeCommand,
+    capability: Capability,
+    expected_generation: ExpectedGeneration,
+    body: CommandBody,
+) -> Result<EventBody, PiExecutionError> {
+    let capability_grant_id = store
+        .active_capability_grant(PrincipalId::KERNEL, capability)?
+        .ok_or(PiExecutionError::KernelServiceCapabilityMissing { capability })?;
+    let receipt = store.execute(CommandRequest {
+        command_id: operation.command_id(command)?,
+        principal_id: PrincipalId::KERNEL,
+        capability_grant_id,
+        capability,
+        expected_generation,
+        body,
+    })?;
+    let event_id = match receipt.disposition {
+        CommandDisposition::Accepted(event_id) => event_id,
+        CommandDisposition::Rejected(rejection) => {
+            return Err(PiExecutionError::KernelCommandRejected {
+                capability,
+                rejection,
+            });
+        }
+    };
+    Ok(store.ledger_event(event_id)?.body)
+}
+
 fn kernel_protocol_sequence(
     value: BoundarySequence,
 ) -> Result<PiProtocolSequence, PiExecutionError> {
@@ -2548,8 +3381,15 @@ fn kernel_stream_completeness(capture: &TransientStreamCapture) -> ChildStreamSe
 fn kernel_digest_from_boundary(
     capture: &TransientStreamCapture,
 ) -> Result<KernelDigest, PiExecutionError> {
+    kernel_digest_from_hex(capture.blake3.as_str())
+}
+
+/// Converts only the already schema-validated lowercase BLAKE3 spelling from
+/// the Pi boundary. The kernel stores bytes, so no display decimal/string is
+/// carried into a durable transcript or stream receipt.
+fn kernel_digest_from_hex(text: &str) -> Result<KernelDigest, PiExecutionError> {
     let mut bytes = [0_u8; 32];
-    let text = capture.blake3.as_str().as_bytes();
+    let text = text.as_bytes();
     let (pairs, remainder) = text.as_chunks::<2>();
     if !remainder.is_empty() || pairs.len() != bytes.len() {
         return Err(PiExecutionError::BoundaryDigestInvalid);
@@ -2560,6 +3400,219 @@ fn kernel_digest_from_boundary(
         bytes[index] = (high << 4) | low;
     }
     Ok(KernelDigest::from_bytes(bytes))
+}
+
+/// Converts a peer-accepted transcript flush receipt into one of the two
+/// daemon-private content requests. The `BoundaryPeer` has already verified
+/// session identity, configured session-file identity, session-directory
+/// relation, header CWD, and the first Prompt rendering digest. This function
+/// adds the separate native custody proof before *any* content writer sees
+/// the bytes.
+fn project_verified_session_transcript(
+    operation: &PiOfficeSessionDisposeOperationId,
+    workspace_directory: &AbsolutePath,
+    session_directory: &AbsolutePath,
+    receipt: &TranscriptFlushReceiptV1,
+    seal_limit: ContentSealLimit,
+) -> Result<VerifiedPiSessionTranscript, PiExecutionError> {
+    match receipt {
+        TranscriptFlushReceiptV1::Materialized {
+            session_file,
+            session_file_blake3,
+            first_user_prompt,
+            ..
+        } => {
+            let session_file = canonical_transcript_path(session_file)?;
+            let expected_digest = kernel_digest_from_hex(session_file_blake3.as_str())?;
+            let bytes = read_verified_transcript_bytes(
+                workspace_directory,
+                session_directory,
+                session_file.as_str(),
+                seal_limit,
+            )?;
+            if KernelDigest::of_bytes(&bytes) != expected_digest {
+                return Err(PiExecutionError::TranscriptDigestMismatch);
+            }
+            let first_user_prompt = match first_user_prompt {
+                FirstUserPromptReceipt::Absent => PiOfficeSessionFirstUserPromptReceipt::Absent,
+                FirstUserPromptReceipt::Verified { digest } => {
+                    PiOfficeSessionFirstUserPromptReceipt::Verified {
+                        digest: kernel_digest_from_hex(digest.as_str())?,
+                    }
+                }
+            };
+            Ok(VerifiedPiSessionTranscript::Materialized(
+                VerifiedPiSessionTranscriptSealRequest {
+                    content_operation: operation.transcript_content_operation(expected_digest)?,
+                    session_file,
+                    session_file_digest: expected_digest,
+                    first_user_prompt,
+                    bytes,
+                },
+            ))
+        }
+        TranscriptFlushReceiptV1::UnmaterializedNoPrompt { session_file, .. } => {
+            Ok(VerifiedPiSessionTranscript::UnmaterializedNoPrompt {
+                session_file: canonical_transcript_path(session_file)?,
+            })
+        }
+    }
+}
+
+fn canonical_transcript_path(
+    session_file: &AbsolutePath,
+) -> Result<CanonicalPiSessionTranscriptPath, PiExecutionError> {
+    CanonicalPiSessionTranscriptPath::parse(session_file.as_str())
+        .map_err(|_| PiExecutionError::TranscriptPathNotCanonical)
+}
+
+/// Opens a materialized Pi transcript once, without following the final path
+/// component, and returns at most the exact content-store seal limit. The
+/// caller never trusts a host-supplied filename alone: all paths must remain
+/// canonical direct descendants of the native workspace/session directories
+/// that this child received before CreateSession.
+fn read_verified_transcript_bytes(
+    workspace_directory: &AbsolutePath,
+    session_directory: &AbsolutePath,
+    session_file: &str,
+    seal_limit: ContentSealLimit,
+) -> Result<Vec<u8>, PiExecutionError> {
+    let session_file = AbsolutePath::parse(session_file)
+        .map_err(|_| PiExecutionError::TranscriptPathNotCanonical)?;
+    if !session_directory.is_strict_descendant_of(workspace_directory)
+        || !session_file.is_strict_descendant_of(session_directory)
+    {
+        return Err(PiExecutionError::TranscriptOutsideOwnedWorkspace);
+    }
+
+    let canonical_workspace = canonical_owned_directory(workspace_directory)?;
+    let canonical_session_directory = canonical_owned_directory(session_directory)?;
+    if !path_is_strict_descendant(&canonical_session_directory, &canonical_workspace) {
+        return Err(PiExecutionError::TranscriptOutsideOwnedWorkspace);
+    }
+
+    // Reject a final symlink before canonicalizing.  Canonicalizing first
+    // would make a symlink-to-an-in-tree file look like a normal receipt and
+    // would weaken the explicit no-follow custody boundary below.
+    let listed_before_open = fs::symlink_metadata(session_file.as_path())
+        .map_err(PiExecutionError::TranscriptFilesystem)?;
+    if !same_user_regular_file(&listed_before_open) {
+        return Err(PiExecutionError::TranscriptFileUnsafe);
+    }
+
+    // A materialized receipt is supposed to report a resolved canonical path.
+    // Require it directly rather than allowing an ancestor symlink to change
+    // the document selected by a later content seal.
+    let resolved_before_open =
+        fs::canonicalize(session_file.as_path()).map_err(PiExecutionError::TranscriptFilesystem)?;
+    let resolved_before_open = resolved_before_open
+        .to_str()
+        .ok_or(PiExecutionError::TranscriptPathNotCanonical)?;
+    if resolved_before_open != session_file.as_str()
+        || !path_is_strict_descendant(resolved_before_open, &canonical_session_directory)
+    {
+        return Err(PiExecutionError::TranscriptOutsideOwnedWorkspace);
+    }
+
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(session_file.as_path())
+        .map_err(|error| match error.raw_os_error() {
+            Some(libc::ELOOP) => PiExecutionError::TranscriptFileUnsafe,
+            _ => PiExecutionError::TranscriptFilesystem(error),
+        })?;
+    let opened = file
+        .metadata()
+        .map_err(PiExecutionError::TranscriptFilesystem)?;
+    if !same_user_regular_file(&opened) {
+        return Err(PiExecutionError::TranscriptFileUnsafe);
+    }
+
+    // The path is checked again after opening. Comparing inode/device pins the
+    // bytes we will read to the current no-follow directory entry rather than
+    // a replaced same-named file selected during the earlier realpath check.
+    let listed_after_open = fs::symlink_metadata(session_file.as_path())
+        .map_err(PiExecutionError::TranscriptFilesystem)?;
+    if !same_user_regular_file(&listed_after_open)
+        || listed_after_open.dev() != opened.dev()
+        || listed_after_open.ino() != opened.ino()
+    {
+        return Err(PiExecutionError::TranscriptFileUnsafe);
+    }
+    let resolved_after_open =
+        fs::canonicalize(session_file.as_path()).map_err(PiExecutionError::TranscriptFilesystem)?;
+    let resolved_after_open = resolved_after_open
+        .to_str()
+        .ok_or(PiExecutionError::TranscriptPathNotCanonical)?;
+    if resolved_after_open != session_file.as_str()
+        || !path_is_strict_descendant(resolved_after_open, &canonical_session_directory)
+    {
+        return Err(PiExecutionError::TranscriptOutsideOwnedWorkspace);
+    }
+
+    let read_limit = seal_limit
+        .bytes()
+        .checked_add(1)
+        .ok_or(PiExecutionError::TranscriptLimitInvalid)?;
+    let mut bytes = Vec::new();
+    file.take(read_limit)
+        .read_to_end(&mut bytes)
+        .map_err(PiExecutionError::TranscriptFilesystem)?;
+    if u64::try_from(bytes.len()).map_err(|_| PiExecutionError::TranscriptLimitInvalid)?
+        > seal_limit.bytes()
+    {
+        return Err(PiExecutionError::TranscriptSizeLimitExceeded);
+    }
+    Ok(bytes)
+}
+
+fn canonical_owned_directory(directory: &AbsolutePath) -> Result<String, PiExecutionError> {
+    let listed = fs::symlink_metadata(directory.as_path())
+        .map_err(PiExecutionError::TranscriptFilesystem)?;
+    if listed.file_type().is_symlink() || !same_user_directory(&listed) {
+        return Err(PiExecutionError::TranscriptOutsideOwnedWorkspace);
+    }
+    let resolved =
+        fs::canonicalize(directory.as_path()).map_err(PiExecutionError::TranscriptFilesystem)?;
+    let resolved = resolved
+        .to_str()
+        .ok_or(PiExecutionError::TranscriptPathNotCanonical)?
+        .to_owned();
+    if resolved != directory.as_str() {
+        return Err(PiExecutionError::TranscriptOutsideOwnedWorkspace);
+    }
+    Ok(resolved)
+}
+
+fn path_is_strict_descendant(path: &str, base: &str) -> bool {
+    path.starts_with(base) && path.as_bytes().get(base.len()) == Some(&b'/')
+}
+
+fn same_user_regular_file(metadata: &fs::Metadata) -> bool {
+    metadata.is_file()
+        && !metadata.file_type().is_symlink()
+        && metadata.uid() == effective_uid()
+        // The daemon owns transcript custody. A group/world-readable file
+        // can leak the peer-projected transcript, and an extra hard link can
+        // alias an unrelated same-user document into the owned session tree.
+        && metadata.mode() & 0o077 == 0
+        && metadata.nlink() == 1
+}
+
+fn same_user_directory(metadata: &fs::Metadata) -> bool {
+    metadata.is_dir()
+        && !metadata.file_type().is_symlink()
+        && metadata.uid() == effective_uid()
+        // NativeWorkspace creates these directories with 0700. Retaining
+        // that proof here prevents a host from redirecting a valid lexical
+        // path into a group/world-visible custody boundary.
+        && metadata.mode() & 0o077 == 0
+}
+
+fn effective_uid() -> libc::uid_t {
+    // SAFETY: `geteuid` has no preconditions and does not retain pointers.
+    unsafe { libc::geteuid() }
 }
 
 const fn hex_nibble(value: u8) -> Option<u8> {
@@ -2609,8 +3662,30 @@ pub(crate) enum PiExecutionError {
     PromptTerminalEvidenceMissing,
     #[error("the Pi host rejected an already delivered Office Prompt")]
     PromptRejectedByHost,
+    #[error("Pi Dispose evidence arrived outside the closed session-finalization order")]
+    DisposeEvidenceOrder,
+    #[error("the Pi host rejected an already delivered Office-session Dispose")]
+    DisposeRejectedByHost,
     #[error("the Pi host became fatal without an exact M6 accounting-failure frame")]
     PeerFatalWithoutAccountingFact,
+    #[error("peer-reported Pi transcript path is not canonical")]
+    TranscriptPathNotCanonical,
+    #[error("Pi transcript escaped the child-owned workspace/session directory")]
+    TranscriptOutsideOwnedWorkspace,
+    #[error("Pi transcript is not a same-user regular no-follow file")]
+    TranscriptFileUnsafe,
+    #[error("Pi transcript read failed: {0}")]
+    TranscriptFilesystem(#[source] std::io::Error),
+    #[error("Pi transcript exceeds the daemon content-seal limit")]
+    TranscriptSizeLimitExceeded,
+    #[error("Pi transcript limit could not be represented by the native reader")]
+    TranscriptLimitInvalid,
+    #[error("Pi transcript bytes do not match the peer-validated BLAKE3 receipt")]
+    TranscriptDigestMismatch,
+    #[error("materialized Pi transcript has no physical content-object registration")]
+    TranscriptContentMissing,
+    #[error("unmaterialized Pi transcript must not create a content object")]
+    TranscriptContentUnexpected,
     #[error("Pi Create authorization gate was not called by the supervisor")]
     CreateGateNotInvoked,
     #[error("AdapterReady facts did not match the durable child identity")]
@@ -2655,7 +3730,7 @@ mod tests {
 
     use std::{
         fs,
-        os::unix::fs::PermissionsExt,
+        os::unix::fs::{PermissionsExt, symlink},
         path::{Path, PathBuf},
         process::Command,
         sync::atomic::{AtomicU64, Ordering},
@@ -2685,13 +3760,17 @@ mod tests {
         ModelApi, ModelCatalogPolicyV1, ModelId, ModelInput, ModelSelection, NodeRuntimeVersion,
         NonNegativeInteger, OpenRouterBaseUrl, PiSdkVersion, PositiveInteger, ProjectTrust,
         Provider, QueueMode, RetryPolicyV1, RuntimeIdentity, SessionIdentity, SessionKind,
-        SpawnNonce, ThinkingLevel, ToolProfile, Transport, UsdPerMillionDecimal,
+        SpawnNonce, ThinkingLevel, ToolProfile, TranscriptFlushReceiptV1, Transport,
+        UsdPerMillionDecimal,
     };
 
     use super::{
-        OfficePiExecutionStart, OfficePiSpawnRegistration, OfficePiTurnOutput, OfficePiTurnStart,
-        PiExecutionDriver, PiExecutionOperationId, PiOfficeTurnCommand, PiOfficeTurnOperationId,
-        SealedOfficePrompt,
+        OfficePiExecutionStart, OfficePiSessionDisposeOutput, OfficePiSessionDisposeStart,
+        OfficePiSpawnRegistration, OfficePiTurnOutput, OfficePiTurnStart, PiExecutionDriver,
+        PiExecutionOperationId, PiOfficeSessionDisposeCommand, PiOfficeSessionDisposeOperationId,
+        PiOfficeTurnCommand, PiOfficeTurnOperationId, SealedOfficePrompt,
+        VerifiedPiSessionTranscript, project_verified_session_transcript,
+        read_verified_transcript_bytes,
     };
     use crate::{
         content::{ContentSealOperationId, ContentSealingAuthority},
@@ -2851,6 +3930,718 @@ mod tests {
         assert!(reconciled, "direct child must be reaped and sealed");
         assert_eq!(child.phase(), "reconciled");
         rejected_open_office_turn(&mut store, office.session_id, "after-child-finalization");
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn m7_dispose_authorizes_at_quiesced_generation_then_records_unmaterialized_terminal() {
+        let fixture = NativeFixture::new("m7-dispose-unmaterialized");
+        let mut store = KernelStore::open_in_memory().unwrap();
+        let office = found_office_start(&mut store, "m7-dispose-unmaterialized");
+        let mut driver = PiExecutionDriver::new();
+        let mut child = ready_office_child(
+            &mut driver,
+            &mut store,
+            &fixture,
+            &office,
+            "m7-dispose-unmaterialized-child",
+        );
+
+        // Spawn/session readiness occurred at generation zero. Quiesce moves
+        // the current cycle to generation one, which is the only authority
+        // accepted for the closing Dispose chain.
+        let dispose_generation = quiesce_office_cycle(&mut store, office.cycle_id);
+        let (mut dispose, progress) = driver
+            .begin_office_session_dispose(
+                &mut store,
+                &mut child,
+                office_session_dispose_start(
+                    "m7-dispose-unmaterialized",
+                    "m7-dispose-unmaterialized-correlation",
+                    dispose_generation,
+                ),
+                MonotonicTick::from_milliseconds(1_001),
+                ControlWriteDeadline::at(MonotonicTick::from_milliseconds(2_000)),
+            )
+            .unwrap();
+        if progress == crate::supervision::ControlWriteProgress::Pending {
+            for tick in 1_002..2_000 {
+                if driver
+                    .drive_office_session_dispose_delivery(
+                        &mut store,
+                        &mut child,
+                        &mut dispose,
+                        MonotonicTick::from_milliseconds(tick),
+                    )
+                    .unwrap()
+                    == crate::supervision::ControlWriteProgress::Delivered
+                {
+                    break;
+                }
+            }
+        }
+
+        let mut saw_accepted = false;
+        let mut saw_known = false;
+        let mut disposed = false;
+        for tick in 1_002..3_000 {
+            let Some(output) = driver
+                .observe_office_session_dispose_output(
+                    &mut store,
+                    &mut child,
+                    &mut dispose,
+                    MonotonicTick::from_milliseconds(tick),
+                    HandshakeDeadline::at(MonotonicTick::from_milliseconds(3_000)),
+                    ContentSealLimit::new(4 * 1024 * 1024).unwrap(),
+                )
+                .unwrap()
+            else {
+                thread::sleep(Duration::from_millis(1));
+                continue;
+            };
+            match output {
+                OfficePiSessionDisposeOutput::Accepted => saw_accepted = true,
+                OfficePiSessionDisposeOutput::KnownUsageRecorded => saw_known = true,
+                OfficePiSessionDisposeOutput::TranscriptReady(terminal) => {
+                    assert!(matches!(
+                        terminal.transcript(),
+                        VerifiedPiSessionTranscript::UnmaterializedNoPrompt { .. }
+                    ));
+                    assert!(matches!(
+                        driver
+                            .record_office_session_disposed(
+                                &mut store,
+                                &mut child,
+                                &mut dispose,
+                                &terminal,
+                                None,
+                                MonotonicTick::from_milliseconds(tick),
+                            )
+                            .unwrap(),
+                        OfficePiSessionDisposeOutput::Disposed
+                    ));
+                    disposed = true;
+                    break;
+                }
+                other => panic!("unexpected M7 Dispose output: {other:?}"),
+            }
+        }
+        assert!(saw_accepted);
+        assert!(saw_known);
+        assert!(disposed);
+        assert_eq!(child.phase(), "disposed");
+
+        let event_id = match store
+            .command_receipt(
+                &dispose
+                    .operation
+                    .command_id(PiOfficeSessionDisposeCommand::RecordDisposed)
+                    .unwrap(),
+            )
+            .unwrap()
+            .unwrap()
+            .disposition
+        {
+            CommandDisposition::Accepted(event_id) => event_id,
+            other => panic!("M7 terminal command must be accepted: {other:?}"),
+        };
+        assert!(matches!(
+            store.ledger_event(event_id).unwrap().body,
+            society_kernel::EventBody::PiOfficeSessionDisposed { session_id, .. }
+                if session_id == office.session_id
+        ));
+
+        let content = ContentSealingAuthority::open(
+            ContentStoreRoot::parse(fixture.root.join("m7-dispose-unmaterialized-content"))
+                .unwrap(),
+            ContentSealLimit::new(4 * 1024 * 1024).unwrap(),
+        )
+        .unwrap();
+        for tick in 3_000..4_000 {
+            if driver
+                .poll_reap_and_reconcile(
+                    &mut store,
+                    &content,
+                    &mut child,
+                    MonotonicTick::from_milliseconds(tick),
+                )
+                .unwrap()
+            {
+                break;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(child.phase(), "reconciled");
+        drop(child);
+        drop(driver);
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn m7_dispose_seals_the_peer_validated_materialized_transcript_before_terminal_commit() {
+        let fixture = NativeFixture::new("m7-dispose-materialized");
+        let mut store = KernelStore::open_in_memory().unwrap();
+        let office = found_office_start(&mut store, "m7-dispose-materialized");
+        let mut driver = PiExecutionDriver::new();
+        let mut child = ready_office_child(
+            &mut driver,
+            &mut store,
+            &fixture,
+            &office,
+            "m7-dispose-materialized-child",
+        );
+
+        let prompt_text = "the exact first Office prompt becomes transcript custody";
+        let prompt_content = seal_prompt_content(
+            &mut store,
+            &fixture,
+            "m7-dispose-materialized-prompt-content",
+            prompt_text,
+        );
+        let (turn_id, frontier_event_id) = open_office_turn(
+            &mut store,
+            office.session_id,
+            "m7-dispose-materialized-open-turn",
+        );
+        let (mut turn, prompt_progress) = driver
+            .authorize_and_begin_office_turn_prompt(
+                &mut store,
+                &mut child,
+                office_turn_start(
+                    "m7-dispose-materialized-turn",
+                    turn_id,
+                    "m7-dispose-materialized-prompt-correlation",
+                    prompt_content.content_object_id,
+                    prompt_content.digest,
+                    prompt_text,
+                    frontier_event_id,
+                ),
+                MonotonicTick::from_milliseconds(100),
+                ControlWriteDeadline::at(MonotonicTick::from_milliseconds(1_000)),
+            )
+            .unwrap();
+        if prompt_progress == crate::supervision::ControlWriteProgress::Pending {
+            drive_prompt_until_delivered(
+                &mut driver,
+                &mut store,
+                &mut child,
+                &mut turn,
+                101,
+                1_000,
+            );
+        }
+        assert!(
+            drive_turn_until_terminal(&mut driver, &mut store, &mut child, &mut turn, 101, 2_000,)
+                .contains(&OfficePiTurnOutput::SettledReady)
+        );
+        assert_eq!(child.phase(), "office_ready_recorded");
+
+        let dispose_generation = quiesce_office_cycle(&mut store, office.cycle_id);
+        let (mut dispose, progress) = driver
+            .begin_office_session_dispose(
+                &mut store,
+                &mut child,
+                office_session_dispose_start(
+                    "m7-dispose-materialized",
+                    "m7-dispose-materialized-correlation",
+                    dispose_generation,
+                ),
+                MonotonicTick::from_milliseconds(2_001),
+                ControlWriteDeadline::at(MonotonicTick::from_milliseconds(3_000)),
+            )
+            .unwrap();
+        if progress == crate::supervision::ControlWriteProgress::Pending {
+            for tick in 2_002..3_000 {
+                if driver
+                    .drive_office_session_dispose_delivery(
+                        &mut store,
+                        &mut child,
+                        &mut dispose,
+                        MonotonicTick::from_milliseconds(tick),
+                    )
+                    .unwrap()
+                    == crate::supervision::ControlWriteProgress::Delivered
+                {
+                    break;
+                }
+            }
+        }
+
+        let transcript_content = ContentSealingAuthority::open(
+            ContentStoreRoot::parse(fixture.root.join("m7-dispose-materialized-content")).unwrap(),
+            ContentSealLimit::new(4 * 1024 * 1024).unwrap(),
+        )
+        .unwrap();
+        let mut committed = false;
+        for tick in 2_002..4_000 {
+            let Some(output) = driver
+                .observe_office_session_dispose_output(
+                    &mut store,
+                    &mut child,
+                    &mut dispose,
+                    MonotonicTick::from_milliseconds(tick),
+                    HandshakeDeadline::at(MonotonicTick::from_milliseconds(4_000)),
+                    ContentSealLimit::new(4 * 1024 * 1024).unwrap(),
+                )
+                .unwrap()
+            else {
+                thread::sleep(Duration::from_millis(1));
+                continue;
+            };
+            if let OfficePiSessionDisposeOutput::TranscriptReady(terminal) = output {
+                let sealed_content = match terminal.transcript() {
+                    VerifiedPiSessionTranscript::Materialized(request) => {
+                        // Crash seam: physical sealing may complete before
+                        // the terminal Dispose command is even attempted.
+                        // Retrying within this still-owned daemon uses the
+                        // same derived operation identity and resolves to the
+                        // one global ContentObject before terminal commit.
+                        let physically_sealed = transcript_content
+                            .seal_and_register(
+                                &mut store,
+                                request.content_operation(),
+                                request.bytes(),
+                            )
+                            .unwrap();
+                        let retry = transcript_content
+                            .seal_and_register(
+                                &mut store,
+                                request.content_operation(),
+                                request.bytes(),
+                            )
+                            .unwrap();
+                        assert_eq!(retry.content_object_id, physically_sealed.content_object_id);
+                        assert_eq!(retry.digest, physically_sealed.digest);
+                        Some(retry)
+                    }
+                    VerifiedPiSessionTranscript::UnmaterializedNoPrompt { .. } => {
+                        panic!("a completed Prompt must materialize the transcript")
+                    }
+                };
+                assert!(matches!(
+                    driver
+                        .record_office_session_disposed(
+                            &mut store,
+                            &mut child,
+                            &mut dispose,
+                            &terminal,
+                            sealed_content,
+                            MonotonicTick::from_milliseconds(tick),
+                        )
+                        .unwrap(),
+                    OfficePiSessionDisposeOutput::Disposed
+                ));
+                committed = true;
+                break;
+            }
+        }
+        assert!(
+            committed,
+            "materialized transcript must commit only after physical seal"
+        );
+        assert_eq!(child.phase(), "disposed");
+        for tick in 4_000..5_000 {
+            if driver
+                .poll_reap_and_reconcile(
+                    &mut store,
+                    &transcript_content,
+                    &mut child,
+                    MonotonicTick::from_milliseconds(tick),
+                )
+                .unwrap()
+            {
+                break;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(child.phase(), "reconciled");
+        drop(child);
+        drop(driver);
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn m7_dispose_usage_unavailable_freezes_without_fabricating_a_disposed_session() {
+        let fixture = NativeFixture::new("m7-dispose-usage-unavailable-ignore-term");
+        let mut store = KernelStore::open_in_memory().unwrap();
+        let office = found_office_start(&mut store, "m7-dispose-usage-unavailable-ignore-term");
+        let mut driver = PiExecutionDriver::new();
+        let mut child = ready_office_child(
+            &mut driver,
+            &mut store,
+            &fixture,
+            &office,
+            "m7-dispose-usage-unavailable-child",
+        );
+        let generation = quiesce_office_cycle(&mut store, office.cycle_id);
+        let (mut dispose, progress) = driver
+            .begin_office_session_dispose(
+                &mut store,
+                &mut child,
+                office_session_dispose_start(
+                    "m7-dispose-usage-unavailable",
+                    "m7-dispose-usage-unavailable-correlation",
+                    generation,
+                ),
+                MonotonicTick::from_milliseconds(1_001),
+                ControlWriteDeadline::at(MonotonicTick::from_milliseconds(2_000)),
+            )
+            .unwrap();
+        if progress == crate::supervision::ControlWriteProgress::Pending {
+            for tick in 1_002..2_000 {
+                if driver
+                    .drive_office_session_dispose_delivery(
+                        &mut store,
+                        &mut child,
+                        &mut dispose,
+                        MonotonicTick::from_milliseconds(tick),
+                    )
+                    .unwrap()
+                    == crate::supervision::ControlWriteProgress::Delivered
+                {
+                    break;
+                }
+            }
+        }
+        let mut froze = false;
+        let mut frozen_at = 0;
+        for tick in 1_002..3_000 {
+            let output = driver
+                .observe_office_session_dispose_output(
+                    &mut store,
+                    &mut child,
+                    &mut dispose,
+                    MonotonicTick::from_milliseconds(tick),
+                    HandshakeDeadline::at(MonotonicTick::from_milliseconds(3_000)),
+                    ContentSealLimit::new(4 * 1024 * 1024).unwrap(),
+                )
+                .unwrap();
+            if matches!(output, Some(OfficePiSessionDisposeOutput::UsageFrozen)) {
+                froze = true;
+                frozen_at = tick;
+                break;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert!(
+            froze,
+            "validated UsageUnavailable must freeze the parent first"
+        );
+        assert_eq!(child.phase(), "boundary_containment_required");
+        assert!(
+            store
+                .command_receipt(
+                    &dispose
+                        .operation
+                        .command_id(PiOfficeSessionDisposeCommand::RecordDisposed)
+                        .unwrap(),
+                )
+                .unwrap()
+                .is_none()
+        );
+
+        driver
+            .drive_boundary_containment(&child, MonotonicTick::from_milliseconds(frozen_at + 1_000))
+            .unwrap();
+        driver
+            .drive_boundary_containment(&child, MonotonicTick::from_milliseconds(frozen_at + 3_000))
+            .unwrap();
+        reconcile_child(
+            &mut driver,
+            &mut store,
+            &fixture,
+            &mut child,
+            frozen_at + 3_001,
+        );
+        drop(child);
+        drop(driver);
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn m7_missing_forced_dispose_usage_freezes_at_the_observed_disposed_sequence() {
+        let fixture = NativeFixture::new("m7-dispose-missing-final-usage");
+        let mut store = KernelStore::open_in_memory().unwrap();
+        let office = found_office_start(&mut store, "m7-dispose-missing-final-usage");
+        let mut driver = PiExecutionDriver::new();
+        let mut child = ready_office_child(
+            &mut driver,
+            &mut store,
+            &fixture,
+            &office,
+            "m7-dispose-missing-final-usage-child",
+        );
+        let generation = quiesce_office_cycle(&mut store, office.cycle_id);
+        let (mut dispose, progress) = driver
+            .begin_office_session_dispose(
+                &mut store,
+                &mut child,
+                office_session_dispose_start(
+                    "m7-dispose-missing-final-usage",
+                    "m7-dispose-missing-final-usage-correlation",
+                    generation,
+                ),
+                MonotonicTick::from_milliseconds(1_001),
+                ControlWriteDeadline::at(MonotonicTick::from_milliseconds(2_000)),
+            )
+            .unwrap();
+        if progress == crate::supervision::ControlWriteProgress::Pending {
+            for tick in 1_002..2_000 {
+                if driver
+                    .drive_office_session_dispose_delivery(
+                        &mut store,
+                        &mut child,
+                        &mut dispose,
+                        MonotonicTick::from_milliseconds(tick),
+                    )
+                    .unwrap()
+                    == crate::supervision::ControlWriteProgress::Delivered
+                {
+                    break;
+                }
+            }
+        }
+        let mut froze = false;
+        for tick in 1_002..3_000 {
+            let output = driver
+                .observe_office_session_dispose_output(
+                    &mut store,
+                    &mut child,
+                    &mut dispose,
+                    MonotonicTick::from_milliseconds(tick),
+                    HandshakeDeadline::at(MonotonicTick::from_milliseconds(3_000)),
+                    ContentSealLimit::new(4 * 1024 * 1024).unwrap(),
+                )
+                .unwrap();
+            if matches!(output, Some(OfficePiSessionDisposeOutput::UsageFrozen)) {
+                froze = true;
+                break;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert!(
+            froze,
+            "peer-rejected Disposed retains its exact Unknown failure"
+        );
+        assert_eq!(child.phase(), "boundary_containment_required");
+        assert!(
+            store
+                .command_receipt(
+                    &dispose
+                        .operation
+                        .command_id(PiOfficeSessionDisposeCommand::RecordDisposed)
+                        .unwrap(),
+                )
+                .unwrap()
+                .is_none()
+        );
+        drop(child);
+        drop(driver);
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn m7_stale_dispose_generation_is_rejected_before_any_host_control_write() {
+        let fixture = NativeFixture::new("m7-dispose-stale-generation");
+        let mut store = KernelStore::open_in_memory().unwrap();
+        let office = found_office_start(&mut store, "m7-dispose-stale-generation");
+        let mut driver = PiExecutionDriver::new();
+        let mut child = ready_office_child(
+            &mut driver,
+            &mut store,
+            &fixture,
+            &office,
+            "m7-dispose-stale-generation-child",
+        );
+        let current_generation = quiesce_office_cycle(&mut store, office.cycle_id);
+
+        let stale = driver.begin_office_session_dispose(
+            &mut store,
+            &mut child,
+            office_session_dispose_start(
+                "m7-dispose-stale-generation",
+                "m7-dispose-stale-generation-correlation",
+                AdmissionGeneration::INITIAL,
+            ),
+            MonotonicTick::from_milliseconds(1_001),
+            ControlWriteDeadline::at(MonotonicTick::from_milliseconds(2_000)),
+        );
+        assert!(matches!(
+            stale,
+            Err(super::PiExecutionError::KernelCommandRejected {
+                capability: Capability::AuthorizePiOfficeSessionDispose,
+                rejection: Rejection::StaleAdmissionGeneration,
+            })
+        ));
+        // The authorizer was the only pre-write call. No stale Dispose frame
+        // entered the host, so this child remains an otherwise live Office
+        // session rather than an accidental native close.
+        assert_eq!(child.phase(), "office_ready_recorded");
+
+        // This distinct current-generation operation proves the preceding
+        // failed authorization did not send/queue a hidden Dispose control.
+        let (_dispose, progress) = driver
+            .begin_office_session_dispose(
+                &mut store,
+                &mut child,
+                office_session_dispose_start(
+                    "m7-dispose-current-after-stale",
+                    "m7-dispose-current-after-stale-correlation",
+                    current_generation,
+                ),
+                MonotonicTick::from_milliseconds(1_002),
+                ControlWriteDeadline::at(MonotonicTick::from_milliseconds(2_000)),
+            )
+            .unwrap();
+        assert!(matches!(
+            progress,
+            crate::supervision::ControlWriteProgress::Pending
+                | crate::supervision::ControlWriteProgress::Delivered
+        ));
+        // The test has proven admission order; let Drop retain process
+        // custody rather than deleting the workspace while a child exists.
+        drop(child);
+        drop(driver);
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn transcript_reader_rejects_permissive_or_hard_linked_files_and_nonprivate_directories() {
+        let fixture = NativeFixture::new("m7-transcript-custody");
+        let workspace_directory = fixture.workspace.directory().clone();
+        let session_directory = absolute(workspace_directory.as_path().join("sessions"));
+        let transcript_path = session_directory.as_path().join("receipt.jsonl");
+        fs::write(&transcript_path, b"private transcript").unwrap();
+        fs::set_permissions(&transcript_path, fs::Permissions::from_mode(0o600)).unwrap();
+        let transcript = absolute(transcript_path.clone());
+        let limit = ContentSealLimit::new(4 * 1024).unwrap();
+
+        assert_eq!(
+            read_verified_transcript_bytes(
+                &workspace_directory,
+                &session_directory,
+                transcript.as_str(),
+                limit,
+            )
+            .unwrap(),
+            b"private transcript"
+        );
+
+        fs::set_permissions(&transcript_path, fs::Permissions::from_mode(0o640)).unwrap();
+        assert!(matches!(
+            read_verified_transcript_bytes(
+                &workspace_directory,
+                &session_directory,
+                transcript.as_str(),
+                limit,
+            ),
+            Err(super::PiExecutionError::TranscriptFileUnsafe)
+        ));
+
+        fs::set_permissions(&transcript_path, fs::Permissions::from_mode(0o600)).unwrap();
+        let alias = session_directory.as_path().join("receipt-alias.jsonl");
+        fs::hard_link(&transcript_path, &alias).unwrap();
+        assert!(matches!(
+            read_verified_transcript_bytes(
+                &workspace_directory,
+                &session_directory,
+                transcript.as_str(),
+                limit,
+            ),
+            Err(super::PiExecutionError::TranscriptFileUnsafe)
+        ));
+        fs::remove_file(alias).unwrap();
+
+        fs::write(&transcript_path, vec![b'x'; 4_097]).unwrap();
+        fs::set_permissions(&transcript_path, fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(matches!(
+            read_verified_transcript_bytes(
+                &workspace_directory,
+                &session_directory,
+                transcript.as_str(),
+                ContentSealLimit::new(4 * 1024).unwrap(),
+            ),
+            Err(super::PiExecutionError::TranscriptSizeLimitExceeded)
+        ));
+        fs::write(&transcript_path, b"private transcript").unwrap();
+        fs::set_permissions(&transcript_path, fs::Permissions::from_mode(0o600)).unwrap();
+
+        let alternate = session_directory.as_path().join("alternate-receipt.jsonl");
+        fs::write(&alternate, b"private transcript").unwrap();
+        fs::set_permissions(&alternate, fs::Permissions::from_mode(0o600)).unwrap();
+        fs::remove_file(&transcript_path).unwrap();
+        symlink(&alternate, &transcript_path).unwrap();
+        assert!(matches!(
+            read_verified_transcript_bytes(
+                &workspace_directory,
+                &session_directory,
+                transcript.as_str(),
+                limit,
+            ),
+            Err(super::PiExecutionError::TranscriptFileUnsafe)
+        ));
+        fs::remove_file(&transcript_path).unwrap();
+        fs::write(&transcript_path, b"private transcript").unwrap();
+        fs::set_permissions(&transcript_path, fs::Permissions::from_mode(0o600)).unwrap();
+
+        let stale_digest = Blake3Digest::parse("0".repeat(64)).unwrap();
+        let receipt = TranscriptFlushReceiptV1::Materialized {
+            session_identity: SessionIdentity::parse("transcript-custody-session").unwrap(),
+            session_file: transcript.clone(),
+            session_file_blake3: stale_digest,
+            header_cwd: workspace_directory.clone(),
+            first_user_prompt: society_pi::FirstUserPromptReceipt::Absent,
+        };
+        assert!(matches!(
+            project_verified_session_transcript(
+                &PiOfficeSessionDisposeOperationId::parse("transcript-custody").unwrap(),
+                &workspace_directory,
+                &session_directory,
+                &receipt,
+                limit,
+            ),
+            Err(super::PiExecutionError::TranscriptDigestMismatch)
+        ));
+
+        fs::set_permissions(
+            session_directory.as_path(),
+            fs::Permissions::from_mode(0o750),
+        )
+        .unwrap();
+        assert!(matches!(
+            read_verified_transcript_bytes(
+                &workspace_directory,
+                &session_directory,
+                transcript.as_str(),
+                limit,
+            ),
+            Err(super::PiExecutionError::TranscriptOutsideOwnedWorkspace)
+        ));
+        fs::set_permissions(
+            session_directory.as_path(),
+            fs::Permissions::from_mode(0o700),
+        )
+        .unwrap();
+
+        fs::set_permissions(
+            workspace_directory.as_path(),
+            fs::Permissions::from_mode(0o750),
+        )
+        .unwrap();
+        assert!(matches!(
+            read_verified_transcript_bytes(
+                &workspace_directory,
+                &session_directory,
+                transcript.as_str(),
+                limit,
+            ),
+            Err(super::PiExecutionError::TranscriptOutsideOwnedWorkspace)
+        ));
+        fs::set_permissions(
+            workspace_directory.as_path(),
+            fs::Permissions::from_mode(0o700),
+        )
+        .unwrap();
         fixture.cleanup();
     }
 
@@ -3948,7 +5739,7 @@ mod tests {
         if progress == crate::supervision::ControlWriteProgress::Pending {
             drive_create_until_delivered(&mut driver, &mut store, &mut child, 2, 1_000);
         }
-        driver.pause_before_office_ready_liveness_for_test(Duration::from_millis(20));
+        driver.pause_before_office_ready_liveness_for_test(Duration::from_millis(150));
         let outcome = loop {
             match driver.observe_session_ready(
                 &mut store,
@@ -4462,11 +6253,11 @@ mod tests {
     #[cfg(feature = "test-support")]
     #[test]
     fn post_spawn_setup_failure_is_registered_then_contained_not_recorded_as_not_spawned() {
-        let fixture = NativeFixture::new("m5-registered-setup-failure");
+        let fixture = NativeFixture::new("m5-setup-fault-ignore-term");
         let mut store = KernelStore::open_in_memory().unwrap();
-        let office = found_office_start(&mut store, "m5-registered-setup-failure");
+        let office = found_office_start(&mut store, "m5-setup-fault-ignore-term");
         let start = OfficePiExecutionStart {
-            operation: PiExecutionOperationId::parse("m5-registered-setup-failure").unwrap(),
+            operation: PiExecutionOperationId::parse("m5-setup-fault-ignore-term").unwrap(),
             operating_cycle_id: office.cycle_id,
             office_session_id: office.session_id,
             budget_reservation_id: BudgetReservationId::new(1).unwrap(),
@@ -4493,11 +6284,33 @@ mod tests {
         };
         assert_eq!(child.phase(), "post_spawn_setup_contained");
 
-        // The emergency schedule is deterministic. Its Term/Kill receipts
-        // are retained and then persisted before the direct wait, proving the
-        // spawned child did not fall through the NotSpawned shortcut.
+        // The fault path closes stdin before it starts automatic containment.
+        // This double deliberately ignores that EOF and TERM, so the test
+        // waits for its private readiness marker before it advances both
+        // documented emergency deadlines. Without that synchronization, a
+        // voluntary EOF exit or a TERM sent before Node installs its handler
+        // can turn this into a PID/PGID reuse race rather than testing ordered
+        // automatic containment.
+        let ready_marker = fixture
+            .workspace
+            .directory()
+            .as_path()
+            .join(".m5-setup-fault-ready");
+        for _ in 0..1_000 {
+            if ready_marker.exists() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert!(
+            ready_marker.exists(),
+            "fault fixture never reached readiness"
+        );
         driver
             .drive_boundary_containment(&child, MonotonicTick::from_milliseconds(1_000))
+            .unwrap();
+        driver
+            .drive_boundary_containment(&child, MonotonicTick::from_milliseconds(3_000))
             .unwrap();
         let content = ContentSealingAuthority::open(
             ContentStoreRoot::parse(fixture.root.join("content")).unwrap(),
@@ -4522,6 +6335,29 @@ mod tests {
         }
         assert!(reconciled);
         assert_eq!(child.phase(), "reconciled");
+        for (ordinal, action) in [
+            (0, society_kernel::ProcessSignalAction::Terminate),
+            (1, society_kernel::ProcessSignalAction::Kill),
+        ] {
+            let command = child
+                .operation
+                .command_id(super::PiExecutionCommand::RecordSignal { ordinal })
+                .unwrap();
+            let receipt = store.command_receipt(&command).unwrap().unwrap();
+            let CommandDisposition::Accepted(event_id) = receipt.disposition else {
+                panic!("automatic containment signal must be durably accepted")
+            };
+            assert!(matches!(
+                store.ledger_event(event_id).unwrap().body,
+                society_kernel::EventBody::ProcessSignalReceiptRecorded {
+                    action: observed,
+                    delivery: society_kernel::ProcessSignalDelivery::Delivered,
+                    ..
+                } if observed == action
+            ));
+        }
+        drop(child);
+        drop(driver);
         fixture.cleanup();
     }
 
@@ -4965,6 +6801,34 @@ mod tests {
         (turn_id, event_id)
     }
 
+    fn quiesce_office_cycle(
+        store: &mut KernelStore,
+        cycle_id: OperatingCycleId,
+    ) -> AdmissionGeneration {
+        accepted(
+            store,
+            "m7-quiesce-office-cycle",
+            PrincipalId::new(3).unwrap(),
+            Capability::QuiesceOperatingCycle,
+            ExpectedGeneration::Exact(AdmissionGeneration::INITIAL),
+            CommandBody::QuiesceOperatingCycle { cycle_id },
+        );
+        AdmissionGeneration::INITIAL.increment().unwrap()
+    }
+
+    fn office_session_dispose_start(
+        operation: &str,
+        correlation: &str,
+        expected_generation: AdmissionGeneration,
+    ) -> OfficePiSessionDisposeStart {
+        OfficePiSessionDisposeStart {
+            operation: PiOfficeSessionDisposeOperationId::parse(operation).unwrap(),
+            correlation_identity: society_kernel::PiCorrelationIdentity::parse(correlation)
+                .unwrap(),
+            expected_generation,
+        }
+    }
+
     fn office_turn_start(
         operation: &str,
         office_turn_id: OfficeTurnId,
@@ -5072,6 +6936,8 @@ mod tests {
             let session_dir = workspace.directory().as_path().join("sessions");
             fs::create_dir(&agent).unwrap();
             fs::create_dir(&session_dir).unwrap();
+            fs::set_permissions(&agent, fs::Permissions::from_mode(0o700)).unwrap();
+            fs::set_permissions(&session_dir, fs::Permissions::from_mode(0o700)).unwrap();
             let auth = agent.join("auth.json");
             let models = agent.join("models.json");
             fs::write(&auth, "{}").unwrap();

@@ -12,18 +12,19 @@ use rusqlite::Connection;
 use society_kernel::{
     AdmissionGeneration, AdversarialReviewId, ApplicationIdentity, ApplicationMissionInput,
     ApplicationName, ApplicationRevisionId, ApplicationRevisionOrdinal, Blake3Digest,
-    BudgetFreezeReason, BudgetReservationId, CancellationRequestId, CanonicalWorkspacePath,
-    Capability, CausalEpisodeId, ChildProcessId, CommandBody, CommandDisposition, CommandId,
-    CommandReceipt, CommandRequest, CostObservation, CostPostmortemResolution,
-    CostUnavailableReason, CostUnknownReason, EpisodeState, EventBody, ExpectedGeneration,
-    GraphEdgeKind, GraphRevisionBody, GraphRevisionId, HypothesisRevisionText, KernelStore,
-    MissionPrinciple, MissionPrincipleKind, MissionPrincipleText, MissionPrinciples,
-    MissionStatement, NativeChildPid, NativeWorkspaceId, NorthStarBoundaryCommitmentQuestion,
-    NorthStarChangeQuestion, NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet,
-    NorthStarRevisitQuestion, ObservationRevisionText, OfficeSessionTerminalState, OfficeTurnId,
-    OfficeTurnPurpose, OperatingCycleId, OperatingCycleState, OperatingCycleTreatment,
-    OwnedProcessGroupId, PiBoundarySessionIdentity, PiChildOwner, PiChildSpawnAdmissionId,
-    PiCorrelationIdentity, PiCumulativeUsage, PiOfficeTurnAssistantOutcome,
+    BudgetFreezeReason, BudgetReservationId, CancellationRequestId,
+    CanonicalPiSessionTranscriptPath, CanonicalWorkspacePath, Capability, CausalEpisodeId,
+    ChildProcessId, CommandBody, CommandDisposition, CommandId, CommandReceipt, CommandRequest,
+    CostObservation, CostPostmortemResolution, CostUnavailableReason, CostUnknownReason,
+    EpisodeState, EventBody, ExpectedGeneration, GraphEdgeKind, GraphRevisionBody, GraphRevisionId,
+    HypothesisRevisionText, KernelStore, MissionPrinciple, MissionPrincipleKind,
+    MissionPrincipleText, MissionPrinciples, MissionStatement, NativeChildPid, NativeWorkspaceId,
+    NorthStarBoundaryCommitmentQuestion, NorthStarChangeQuestion,
+    NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet, NorthStarRevisitQuestion,
+    ObservationRevisionText, OfficeSessionTerminalState, OfficeTurnId, OfficeTurnPurpose,
+    OperatingCycleId, OperatingCycleState, OperatingCycleTreatment, OwnedProcessGroupId,
+    PiBoundarySessionIdentity, PiChildOwner, PiChildSpawnAdmissionId, PiCorrelationIdentity,
+    PiCumulativeUsage, PiOfficeSessionTranscriptReceipt, PiOfficeTurnAssistantOutcome,
     PiOfficeTurnDisposition, PiOfficeTurnTerminalEvidence, PiOfficeTurnTerminalReceiptId,
     PiOfficeTurnTranscriptDisposition, PiOfficeTurnUsageFailure,
     PiOfficeTurnUsageUnavailableReason, PiProtocolSequence, PiTokenCount, PostmortemActionKind,
@@ -441,6 +442,71 @@ fn ready_supervised_office_session(
         generation,
         CommandBody::RecordOfficeSessionReady { session_id },
     );
+}
+
+/// Builds the idle, quiesced parent boundary which a physical Dispose write
+/// must authorize before it touches the peer. The returned generation is the
+/// one frozen into that authorization: late delivery evidence may use it even
+/// if a later cancellation advances the cycle generation.
+fn authorized_dispose_session(
+    store: &mut KernelStore,
+    label: &str,
+    reservation_amount: UsdMicros,
+) -> (
+    PrincipalId,
+    OperatingCycleId,
+    RootAuthorityOfficeSessionId,
+    ExpectedGeneration,
+    PiCorrelationIdentity,
+) {
+    let (root_authority, cycle_id) = found_cycle(store);
+    let initial = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
+    let session_id = RootAuthorityOfficeSessionId::new(1).unwrap();
+    accepted(
+        store,
+        &format!("{label}-start-office-session"),
+        root_authority,
+        Capability::StartRootAuthorityOfficeSession,
+        initial,
+        CommandBody::StartRootAuthorityOfficeSession { cycle_id },
+    );
+    ready_supervised_office_session(
+        store,
+        root_authority,
+        cycle_id,
+        session_id,
+        label,
+        reservation_amount,
+    );
+    accepted(
+        store,
+        &format!("{label}-quiesce-before-dispose"),
+        root_authority,
+        Capability::QuiesceOperatingCycle,
+        initial,
+        CommandBody::QuiesceOperatingCycle { cycle_id },
+    );
+    let authorized_generation =
+        ExpectedGeneration::Exact(AdmissionGeneration::try_from(1).unwrap());
+    let correlation = PiCorrelationIdentity::parse(format!("{label}-dispose-correlation")).unwrap();
+    accepted(
+        store,
+        &format!("{label}-authorize-dispose"),
+        PrincipalId::KERNEL,
+        Capability::AuthorizePiOfficeSessionDispose,
+        authorized_generation,
+        CommandBody::AuthorizePiOfficeSessionDispose {
+            session_id,
+            correlation_identity: correlation.clone(),
+        },
+    );
+    (
+        root_authority,
+        cycle_id,
+        session_id,
+        authorized_generation,
+        correlation,
+    )
 }
 
 #[test]
@@ -1084,7 +1150,7 @@ fn current_schema_reopens_after_atomic_fresh_bootstrap() {
         connection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        11
+        12
     );
     drop(connection);
     drop(KernelStore::open(&path).unwrap());
@@ -1093,7 +1159,7 @@ fn current_schema_reopens_after_atomic_fresh_bootstrap() {
         reopened
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        11
+        12
     );
     assert_eq!(
         reopened
@@ -1116,9 +1182,9 @@ fn current_schema_reopens_after_atomic_fresh_bootstrap() {
 }
 
 #[test]
-fn historical_schema_ten_is_rejected_without_current_schema_mutation() {
+fn historical_schema_eleven_is_rejected_without_current_schema_mutation() {
     let path = std::env::temp_dir().join(format!(
-        "society-historical-schema-ten-{}-{}.sqlite",
+        "society-historical-schema-eleven-{}-{}.sqlite",
         std::process::id(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -1126,32 +1192,32 @@ fn historical_schema_ten_is_rejected_without_current_schema_mutation() {
             .as_nanos()
     ));
     let historical = Connection::open(&path).unwrap();
-    // Schema ten was the immediately preceding fresh-only identity. Schema
-    // eleven must not mistake its stricter terminal shape for current data.
+    // Schema eleven was the immediately preceding fresh-only identity. Schema
+    // twelve must not mistake its durable Dispose shape for current data.
     historical
         .execute_batch(
-            "CREATE TABLE previous_v10_ledger_marker (entry_id INTEGER PRIMARY KEY);
-             INSERT INTO previous_v10_ledger_marker VALUES (1);
-             PRAGMA user_version = 10;",
+            "CREATE TABLE previous_v11_ledger_marker (entry_id INTEGER PRIMARY KEY);
+             INSERT INTO previous_v11_ledger_marker VALUES (1);
+             PRAGMA user_version = 11;",
         )
         .unwrap();
     drop(historical);
 
     assert!(matches!(
         KernelStore::open(&path),
-        Err(StoreError::UnsupportedSchemaVersion(10))
+        Err(StoreError::UnsupportedSchemaVersion(11))
     ));
     let inspection = Connection::open(&path).unwrap();
     assert_eq!(
         inspection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        10
+        11
     );
     assert_eq!(
         inspection
             .query_row(
-                "SELECT COUNT(*) FROM previous_v10_ledger_marker",
+                "SELECT COUNT(*) FROM previous_v11_ledger_marker",
                 [],
                 |row| { row.get::<_, i64>(0) }
             )
@@ -2377,6 +2443,944 @@ fn changed_typed_body_reusing_a_command_id_is_an_idempotency_conflict() {
         Err(society_kernel::StoreError::IdempotencyConflict)
     ));
     assert_eq!(store.command_count().unwrap(), count_after_first);
+}
+
+#[test]
+fn pi_office_session_dispose_orders_peer_facts_and_reconciles_its_parent_budget() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("society-m7-dispose-{unique}.sqlite3"));
+    let mut store = KernelStore::open(&path).unwrap();
+    let (root_authority, cycle_id) = found_cycle(&mut store);
+    let initial = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
+    let session_id = RootAuthorityOfficeSessionId::new(1).unwrap();
+    accepted(
+        &mut store,
+        "m7-start-office-session",
+        root_authority,
+        Capability::StartRootAuthorityOfficeSession,
+        initial,
+        CommandBody::StartRootAuthorityOfficeSession { cycle_id },
+    );
+    ready_supervised_office_session(
+        &mut store,
+        root_authority,
+        cycle_id,
+        session_id,
+        "m7-dispose",
+        UsdMicros::new(100).unwrap(),
+    );
+    let first_prompt_digest = Blake3Digest::of_bytes(b"m7 first durable prompt");
+    accepted(
+        &mut store,
+        "m7-seal-first-prompt",
+        PrincipalId::KERNEL,
+        Capability::RecordContentSealReceipt,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::RecordContentSealReceipt {
+            digest: first_prompt_digest,
+        },
+    );
+    accepted(
+        &mut store,
+        "m7-register-first-prompt",
+        PrincipalId::KERNEL,
+        Capability::RegisterContentObject,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::RegisterContentObject {
+            content_seal_receipt_id: society_kernel::ContentSealReceiptId::new(1).unwrap(),
+        },
+    );
+    let opened = accepted(
+        &mut store,
+        "m7-open-first-turn",
+        root_authority,
+        Capability::OpenOfficeTurn,
+        initial,
+        CommandBody::OpenOfficeTurn {
+            session_id,
+            purpose: OfficeTurnPurpose::OrdinaryWork,
+        },
+    );
+    let frontier_event_id = match opened.disposition {
+        CommandDisposition::Accepted(event_id) => event_id,
+        other => panic!("unexpected first turn receipt: {other:?}"),
+    };
+    let first_turn = OfficeTurnId::new(1).unwrap();
+    let first_correlation = PiCorrelationIdentity::parse("m7-first-prompt").unwrap();
+    accepted(
+        &mut store,
+        "m7-authorize-first-prompt",
+        PrincipalId::KERNEL,
+        Capability::AuthorizePiOfficeTurnPrompt,
+        initial,
+        CommandBody::AuthorizePiOfficeTurnPrompt {
+            office_turn_id: first_turn,
+            correlation_identity: first_correlation.clone(),
+            prompt_content_object_id: society_kernel::ContentObjectId::new(1).unwrap(),
+            prompt_digest: first_prompt_digest,
+            frontier_event_id,
+        },
+    );
+    accepted(
+        &mut store,
+        "m7-deliver-first-prompt",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeTurnPromptDelivery,
+        initial,
+        CommandBody::RecordPiOfficeTurnPromptDelivery {
+            office_turn_id: first_turn,
+            correlation_identity: first_correlation.clone(),
+            prompt_digest: first_prompt_digest,
+        },
+    );
+    accepted(
+        &mut store,
+        "m7-accept-first-prompt",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeTurnPromptAccepted,
+        initial,
+        CommandBody::RecordPiOfficeTurnPromptAccepted {
+            office_turn_id: first_turn,
+            correlation_identity: first_correlation.clone(),
+            command_result_sequence: PiProtocolSequence::try_from(10).unwrap(),
+        },
+    );
+    let first_usage = PiCumulativeUsage {
+        input_tokens: PiTokenCount::try_from(1).unwrap(),
+        output_tokens: PiTokenCount::try_from(1).unwrap(),
+        cache_read_tokens: PiTokenCount::try_from(1).unwrap(),
+        cache_write_tokens: PiTokenCount::try_from(1).unwrap(),
+        total_tokens: PiTokenCount::try_from(4).unwrap(),
+        provider_cost: ProviderCostBinary64::from_big_endian(0.000004_f64.to_bits().to_be_bytes())
+            .unwrap(),
+        ceiling_micro_usd: UsdMicros::new(4).unwrap(),
+    };
+    accepted(
+        &mut store,
+        "m7-record-first-usage",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeTurnUsage,
+        initial,
+        CommandBody::RecordPiOfficeTurnUsage {
+            office_turn_id: first_turn,
+            correlation_identity: first_correlation.clone(),
+            protocol_sequence: PiProtocolSequence::try_from(14).unwrap(),
+            usage: first_usage,
+        },
+    );
+    accepted(
+        &mut store,
+        "m7-record-first-terminal",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeTurnTerminal,
+        initial,
+        CommandBody::RecordPiOfficeTurnTerminal {
+            office_turn_id: first_turn,
+            correlation_identity: first_correlation,
+            terminal_evidence: PiOfficeTurnTerminalEvidence::ObservedAssistant {
+                agent_settled_sequence: PiProtocolSequence::try_from(13).unwrap(),
+                final_accounting_sequence: PiProtocolSequence::try_from(14).unwrap(),
+            },
+            settled_sequence: PiProtocolSequence::try_from(15).unwrap(),
+            disposition: PiOfficeTurnDisposition::Completed,
+            assistant_outcome: PiOfficeTurnAssistantOutcome::ObservedStop,
+            transcript_disposition:
+                PiOfficeTurnTranscriptDisposition::DeferredUntilOfficeSessionDispose,
+        },
+    );
+    accepted(
+        &mut store,
+        "m7-settle-first-turn",
+        PrincipalId::KERNEL,
+        Capability::SettleOfficeTurn,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::SettleOfficeTurn {
+            turn_id: first_turn,
+            terminal_receipt_id: PiOfficeTurnTerminalReceiptId::new(1).unwrap(),
+        },
+    );
+    let transcript_digest = Blake3Digest::of_bytes(b"m7 verified transcript bytes");
+    accepted(
+        &mut store,
+        "m7-seal-transcript",
+        PrincipalId::KERNEL,
+        Capability::RecordContentSealReceipt,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::RecordContentSealReceipt {
+            digest: transcript_digest,
+        },
+    );
+    accepted(
+        &mut store,
+        "m7-register-transcript",
+        PrincipalId::KERNEL,
+        Capability::RegisterContentObject,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::RegisterContentObject {
+            content_seal_receipt_id: society_kernel::ContentSealReceiptId::new(2).unwrap(),
+        },
+    );
+    accepted(
+        &mut store,
+        "m7-quiesce-before-dispose",
+        root_authority,
+        Capability::QuiesceOperatingCycle,
+        initial,
+        CommandBody::QuiesceOperatingCycle { cycle_id },
+    );
+    let quiesced = ExpectedGeneration::Exact(AdmissionGeneration::try_from(1).unwrap());
+
+    let correlation = PiCorrelationIdentity::parse("m7-dispose-correlation").unwrap();
+    rejected(
+        &mut store,
+        "m7-reject-stale-dispose-authorization",
+        PrincipalId::KERNEL,
+        Capability::AuthorizePiOfficeSessionDispose,
+        initial,
+        CommandBody::AuthorizePiOfficeSessionDispose {
+            session_id,
+            correlation_identity: PiCorrelationIdentity::parse("m7-stale-dispose").unwrap(),
+        },
+        Rejection::StaleAdmissionGeneration,
+    );
+    accepted(
+        &mut store,
+        "m7-authorize-dispose",
+        PrincipalId::KERNEL,
+        Capability::AuthorizePiOfficeSessionDispose,
+        quiesced,
+        CommandBody::AuthorizePiOfficeSessionDispose {
+            session_id,
+            correlation_identity: correlation.clone(),
+        },
+    );
+    rejected(
+        &mut store,
+        "m7-authorized-dispose-fences-new-turns",
+        root_authority,
+        Capability::OpenOfficeTurn,
+        quiesced,
+        CommandBody::OpenOfficeTurn {
+            session_id,
+            purpose: OfficeTurnPurpose::OrdinaryWork,
+        },
+        Rejection::InvalidLifecycleTransition,
+    );
+    rejected(
+        &mut store,
+        "m7-reject-accepted-before-delivery",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeSessionDisposeAccepted,
+        quiesced,
+        CommandBody::RecordPiOfficeSessionDisposeAccepted {
+            session_id,
+            correlation_identity: correlation.clone(),
+            command_result_sequence: PiProtocolSequence::try_from(20).unwrap(),
+        },
+        Rejection::PiOfficeSessionDisposeBindingMismatch,
+    );
+    accepted(
+        &mut store,
+        "m7-record-dispose-delivery",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeSessionDisposeDelivery,
+        quiesced,
+        CommandBody::RecordPiOfficeSessionDisposeDelivery {
+            session_id,
+            correlation_identity: correlation.clone(),
+        },
+    );
+    rejected(
+        &mut store,
+        "m7-reject-wrong-dispose-correlation",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeSessionDisposeAccepted,
+        quiesced,
+        CommandBody::RecordPiOfficeSessionDisposeAccepted {
+            session_id,
+            correlation_identity: PiCorrelationIdentity::parse("m7-wrong-dispose-correlation")
+                .unwrap(),
+            command_result_sequence: PiProtocolSequence::try_from(20).unwrap(),
+        },
+        Rejection::PiOfficeSessionDisposeBindingMismatch,
+    );
+    accepted(
+        &mut store,
+        "m7-record-dispose-accepted",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeSessionDisposeAccepted,
+        quiesced,
+        CommandBody::RecordPiOfficeSessionDisposeAccepted {
+            session_id,
+            correlation_identity: correlation.clone(),
+            command_result_sequence: PiProtocolSequence::try_from(20).unwrap(),
+        },
+    );
+    let final_usage = PiCumulativeUsage {
+        input_tokens: PiTokenCount::try_from(1).unwrap(),
+        output_tokens: PiTokenCount::try_from(1).unwrap(),
+        cache_read_tokens: PiTokenCount::try_from(1).unwrap(),
+        cache_write_tokens: PiTokenCount::try_from(1).unwrap(),
+        total_tokens: PiTokenCount::try_from(4).unwrap(),
+        provider_cost: ProviderCostBinary64::from_big_endian(0.0000085_f64.to_bits().to_be_bytes())
+            .unwrap(),
+        ceiling_micro_usd: UsdMicros::new(9).unwrap(),
+    };
+    rejected(
+        &mut store,
+        "m7-reject-final-usage-below-charged-checkpoint",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeSessionDisposeUsage,
+        quiesced,
+        CommandBody::RecordPiOfficeSessionDisposeUsage {
+            session_id,
+            correlation_identity: correlation.clone(),
+            protocol_sequence: PiProtocolSequence::try_from(21).unwrap(),
+            usage: PiCumulativeUsage {
+                input_tokens: PiTokenCount::try_from(1).unwrap(),
+                output_tokens: PiTokenCount::try_from(1).unwrap(),
+                cache_read_tokens: PiTokenCount::try_from(1).unwrap(),
+                cache_write_tokens: PiTokenCount::try_from(1).unwrap(),
+                total_tokens: PiTokenCount::try_from(4).unwrap(),
+                provider_cost: ProviderCostBinary64::from_big_endian(
+                    0.0000025_f64.to_bits().to_be_bytes(),
+                )
+                .unwrap(),
+                ceiling_micro_usd: UsdMicros::new(3).unwrap(),
+            },
+        },
+        Rejection::PiOfficeSessionDisposeUsageNotMonotonic,
+    );
+    accepted(
+        &mut store,
+        "m7-record-final-known-usage",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeSessionDisposeUsage,
+        quiesced,
+        CommandBody::RecordPiOfficeSessionDisposeUsage {
+            session_id,
+            correlation_identity: correlation.clone(),
+            protocol_sequence: PiProtocolSequence::try_from(21).unwrap(),
+            usage: final_usage,
+        },
+    );
+    rejected(
+        &mut store,
+        "m7-reject-nonmonotonic-dispose-sequence",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeSessionDisposed,
+        quiesced,
+        CommandBody::RecordPiOfficeSessionDisposed {
+            session_id,
+            correlation_identity: correlation.clone(),
+            disposed_sequence: PiProtocolSequence::try_from(21).unwrap(),
+            transcript_receipt: PiOfficeSessionTranscriptReceipt::Materialized {
+                session_file: CanonicalPiSessionTranscriptPath::parse(
+                    "/tmp/m7-dispose-session.jsonl",
+                )
+                .unwrap(),
+                session_file_digest: transcript_digest,
+                transcript_content_object_id: society_kernel::ContentObjectId::new(2).unwrap(),
+                first_user_prompt:
+                    society_kernel::PiOfficeSessionFirstUserPromptReceipt::Verified {
+                        digest: first_prompt_digest,
+                    },
+            },
+        },
+        Rejection::PiOfficeSessionDisposeUsageNotMonotonic,
+    );
+    rejected(
+        &mut store,
+        "m7-reject-unmaterialized-dispose-after-prompt",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeSessionDisposed,
+        quiesced,
+        CommandBody::RecordPiOfficeSessionDisposed {
+            session_id,
+            correlation_identity: correlation.clone(),
+            disposed_sequence: PiProtocolSequence::try_from(22).unwrap(),
+            transcript_receipt: PiOfficeSessionTranscriptReceipt::UnmaterializedNoPrompt {
+                session_file: CanonicalPiSessionTranscriptPath::parse(
+                    "/tmp/m7-dispose-session.jsonl",
+                )
+                .unwrap(),
+            },
+        },
+        Rejection::PiOfficeSessionDisposeReceiptMissing,
+    );
+    let disposed_body = CommandBody::RecordPiOfficeSessionDisposed {
+        session_id,
+        correlation_identity: correlation.clone(),
+        disposed_sequence: PiProtocolSequence::try_from(22).unwrap(),
+        transcript_receipt: PiOfficeSessionTranscriptReceipt::Materialized {
+            session_file: CanonicalPiSessionTranscriptPath::parse("/tmp/m7-dispose-session.jsonl")
+                .unwrap(),
+            session_file_digest: transcript_digest,
+            transcript_content_object_id: society_kernel::ContentObjectId::new(2).unwrap(),
+            first_user_prompt: society_kernel::PiOfficeSessionFirstUserPromptReceipt::Verified {
+                digest: first_prompt_digest,
+            },
+        },
+    };
+    let terminal = accepted(
+        &mut store,
+        "m7-record-disposed",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeSessionDisposed,
+        quiesced,
+        disposed_body.clone(),
+    );
+    let duplicate = submit(
+        &mut store,
+        "m7-record-disposed",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeSessionDisposed,
+        quiesced,
+        disposed_body,
+    );
+    assert_eq!(duplicate.disposition, terminal.disposition);
+    assert!(duplicate.idempotent);
+    let terminal_event = match terminal.disposition {
+        CommandDisposition::Accepted(event_id) => store.ledger_event(event_id).unwrap(),
+        other => panic!("unexpected Dispose terminal receipt: {other:?}"),
+    };
+    assert!(matches!(
+        terminal_event.body,
+        EventBody::PiOfficeSessionDisposed {
+            session_id: observed_session,
+            observed_cumulative_micro_usd,
+            ..
+        } if observed_session == session_id && observed_cumulative_micro_usd == UsdMicros::new(9).unwrap()
+    ));
+    rejected(
+        &mut store,
+        "m7-dispose-terminal-does-not-pretend-child-reaped-or-workspace-disposed",
+        PrincipalId::KERNEL,
+        Capability::RecordCycleDrained,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::RecordCycleDrained { cycle_id },
+        Rejection::InvalidLifecycleTransition,
+    );
+    drop(store);
+
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT reservation_state, charged_micros FROM budget_reservations WHERE budget_reservation_id = 1",
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .unwrap(),
+        (2, 9),
+    );
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT lifecycle_state FROM root_authority_office_sessions WHERE root_authority_office_session_id = 1",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+        8,
+    );
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT envelope.reserved_micros, envelope.spent_micros
+                 FROM budget_envelopes envelope
+                 JOIN budget_envelope_constraints budget_constraint
+                   ON budget_constraint.budget_envelope_id = envelope.budget_envelope_id
+                 WHERE budget_constraint.operating_cycle_id = ?1",
+                [cycle_id.value()],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .unwrap(),
+        (0, 9),
+    );
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT COALESCE(SUM(amount_micros), 0)
+                 FROM budget_reservation_charges WHERE budget_reservation_id = 1",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+        0,
+        "the parent reservation released its remaining 91 micros"
+    );
+    let collision = connection
+        .execute(
+            "INSERT INTO pi_office_turn_usage_receipts(
+                 office_turn_id, pi_office_turn_prompt_authorization_id,
+                 pi_session_id, correlation_identity, protocol_sequence,
+                 input_tokens, output_tokens, cache_read_tokens,
+                 cache_write_tokens, total_tokens, provider_cost_binary64,
+                 cumulative_ceiling_micros, recorded_by_command_id
+             ) VALUES (
+                 1, 1, 1, 'm7-first-prompt', 21,
+                 0, 0, 0, 0, 0, X'0000000000000000', 0,
+                 (SELECT command_row_id FROM commands
+                  WHERE command_id = 'm7-record-final-known-usage')
+             )",
+            [],
+        )
+        .unwrap_err();
+    assert!(
+        collision
+            .to_string()
+            .contains("Pi usage/failure sequence collision"),
+        "raw SQL may not insert a turn Known fact at the Dispose Known sequence: {collision}"
+    );
+    drop(connection);
+
+    let replayed = KernelStore::open(&path).unwrap();
+    replayed.replay_ledger().unwrap();
+    drop(replayed);
+    let tampering = Connection::open(&path).unwrap();
+    tampering
+        .execute(
+            "UPDATE command_record_pi_office_session_dispose_accepted
+             SET command_result_sequence = 19
+             WHERE command_row_id = (
+                SELECT command_row_id FROM commands
+                WHERE command_id = 'm7-record-dispose-accepted'
+             )",
+            [],
+        )
+        .unwrap();
+    drop(tampering);
+    let tampered = KernelStore::open(&path).unwrap();
+    assert!(matches!(
+        tampered.replay_ledger(),
+        Err(StoreError::LedgerCorruption(
+            "command request fingerprint mismatch"
+        ))
+    ));
+    drop(tampered);
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn pi_office_session_dispose_usage_failure_freezes_without_fabricating_terminal_closure() {
+    let mut store = KernelStore::open_in_memory().unwrap();
+    let (_root_authority, _cycle_id, session_id, authorized_generation, correlation) =
+        authorized_dispose_session(
+            &mut store,
+            "m7-dispose-failure",
+            UsdMicros::new(100).unwrap(),
+        );
+    accepted(
+        &mut store,
+        "m7-dispose-failure-delivery",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeSessionDisposeDelivery,
+        authorized_generation,
+        CommandBody::RecordPiOfficeSessionDisposeDelivery {
+            session_id,
+            correlation_identity: correlation.clone(),
+        },
+    );
+    accepted(
+        &mut store,
+        "m7-dispose-failure-accepted",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeSessionDisposeAccepted,
+        authorized_generation,
+        CommandBody::RecordPiOfficeSessionDisposeAccepted {
+            session_id,
+            correlation_identity: correlation.clone(),
+            command_result_sequence: PiProtocolSequence::try_from(4).unwrap(),
+        },
+    );
+    accepted(
+        &mut store,
+        "m7-dispose-failure-unavailable",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeSessionDisposeUsageFailure,
+        authorized_generation,
+        CommandBody::RecordPiOfficeSessionDisposeUsageFailure {
+            session_id,
+            correlation_identity: correlation.clone(),
+            protocol_sequence: PiProtocolSequence::try_from(5).unwrap(),
+            failure: PiOfficeTurnUsageFailure::Unavailable(
+                PiOfficeTurnUsageUnavailableReason::InvalidSdkUsage,
+            ),
+        },
+    );
+    rejected(
+        &mut store,
+        "m7-dispose-failure-reject-terminal-after-fatal-peer",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeSessionDisposed,
+        authorized_generation,
+        CommandBody::RecordPiOfficeSessionDisposed {
+            session_id,
+            correlation_identity: correlation,
+            disposed_sequence: PiProtocolSequence::try_from(6).unwrap(),
+            transcript_receipt: PiOfficeSessionTranscriptReceipt::UnmaterializedNoPrompt {
+                session_file: CanonicalPiSessionTranscriptPath::parse(
+                    "/tmp/m7-dispose-failure.jsonl",
+                )
+                .unwrap(),
+            },
+        },
+        Rejection::PiOfficeSessionDisposeReceiptMissing,
+    );
+    assert!(store.replay_ledger().unwrap().iter().any(|event| matches!(
+        event.body,
+        EventBody::PiOfficeSessionDisposeUsageFrozen {
+            session_id: observed_session,
+            failure: PiOfficeTurnUsageFailure::Unavailable(
+                PiOfficeTurnUsageUnavailableReason::InvalidSdkUsage,
+            ),
+            ..
+        } if observed_session == session_id
+    )));
+}
+
+#[test]
+fn pi_office_session_dispose_accepts_a_materialized_no_prompt_transcript_with_absent_receipt() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "society-m7-materialized-no-prompt-{unique}.sqlite3"
+    ));
+    let mut store = KernelStore::open(&path).unwrap();
+    let (_root_authority, _cycle_id, session_id, authorized_generation, correlation) =
+        authorized_dispose_session(
+            &mut store,
+            "m7-dispose-materialized-no-prompt",
+            UsdMicros::new(100).unwrap(),
+        );
+    let transcript_digest = Blake3Digest::of_bytes(b"m7 materialized no-prompt transcript");
+    accepted(
+        &mut store,
+        "m7-dispose-materialized-no-prompt-seal",
+        PrincipalId::KERNEL,
+        Capability::RecordContentSealReceipt,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::RecordContentSealReceipt {
+            digest: transcript_digest,
+        },
+    );
+    accepted(
+        &mut store,
+        "m7-dispose-materialized-no-prompt-register",
+        PrincipalId::KERNEL,
+        Capability::RegisterContentObject,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::RegisterContentObject {
+            content_seal_receipt_id: society_kernel::ContentSealReceiptId::new(1).unwrap(),
+        },
+    );
+    accepted(
+        &mut store,
+        "m7-dispose-materialized-no-prompt-delivery",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeSessionDisposeDelivery,
+        authorized_generation,
+        CommandBody::RecordPiOfficeSessionDisposeDelivery {
+            session_id,
+            correlation_identity: correlation.clone(),
+        },
+    );
+    accepted(
+        &mut store,
+        "m7-dispose-materialized-no-prompt-accepted",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeSessionDisposeAccepted,
+        authorized_generation,
+        CommandBody::RecordPiOfficeSessionDisposeAccepted {
+            session_id,
+            correlation_identity: correlation.clone(),
+            command_result_sequence: PiProtocolSequence::try_from(4).unwrap(),
+        },
+    );
+    accepted(
+        &mut store,
+        "m7-dispose-materialized-no-prompt-known-usage",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeSessionDisposeUsage,
+        authorized_generation,
+        CommandBody::RecordPiOfficeSessionDisposeUsage {
+            session_id,
+            correlation_identity: correlation.clone(),
+            protocol_sequence: PiProtocolSequence::try_from(5).unwrap(),
+            usage: PiCumulativeUsage {
+                input_tokens: PiTokenCount::try_from(0).unwrap(),
+                output_tokens: PiTokenCount::try_from(0).unwrap(),
+                cache_read_tokens: PiTokenCount::try_from(0).unwrap(),
+                cache_write_tokens: PiTokenCount::try_from(0).unwrap(),
+                total_tokens: PiTokenCount::try_from(0).unwrap(),
+                provider_cost: ProviderCostBinary64::from_big_endian(0_f64.to_bits().to_be_bytes())
+                    .unwrap(),
+                ceiling_micro_usd: UsdMicros::ZERO,
+            },
+        },
+    );
+    let materialized = |first_user_prompt| CommandBody::RecordPiOfficeSessionDisposed {
+        session_id,
+        correlation_identity: correlation.clone(),
+        disposed_sequence: PiProtocolSequence::try_from(6).unwrap(),
+        transcript_receipt: PiOfficeSessionTranscriptReceipt::Materialized {
+            session_file: CanonicalPiSessionTranscriptPath::parse(
+                "/tmp/m7-materialized-no-prompt.jsonl",
+            )
+            .unwrap(),
+            session_file_digest: transcript_digest,
+            transcript_content_object_id: society_kernel::ContentObjectId::new(1).unwrap(),
+            first_user_prompt,
+        },
+    };
+    rejected(
+        &mut store,
+        "m7-dispose-materialized-no-prompt-reject-verified",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeSessionDisposed,
+        authorized_generation,
+        materialized(
+            society_kernel::PiOfficeSessionFirstUserPromptReceipt::Verified {
+                digest: transcript_digest,
+            },
+        ),
+        Rejection::PiOfficeSessionDisposeReceiptMissing,
+    );
+    accepted(
+        &mut store,
+        "m7-dispose-materialized-no-prompt-absent",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeSessionDisposed,
+        authorized_generation,
+        materialized(society_kernel::PiOfficeSessionFirstUserPromptReceipt::Absent),
+    );
+    assert!(store.replay_ledger().is_ok());
+    assert!(store.validate_replayed_materialized_state().is_ok());
+    drop(store);
+
+    let tamper = Connection::open(&path).unwrap();
+    tamper
+        .execute(
+            "UPDATE pi_office_session_dispose_receipts
+             SET session_file = '/tmp/m7-forged-materialized-no-prompt.jsonl'
+             WHERE root_authority_office_session_id = 1",
+            [],
+        )
+        .unwrap();
+    drop(tamper);
+    let reopened = KernelStore::open(&path).unwrap();
+    assert!(reopened.replay_ledger().is_ok());
+    assert!(matches!(
+        reopened.validate_replayed_materialized_state(),
+        Err(StoreError::LedgerCorruption(_))
+    ));
+    drop(reopened);
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn pi_office_session_dispose_known_overrun_records_terminal_then_freezes_parent() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("society-m7-dispose-overrun-{unique}.sqlite3"));
+    let mut store = KernelStore::open(&path).unwrap();
+    let (_root_authority, _cycle_id, session_id, authorized_generation, correlation) =
+        authorized_dispose_session(
+            &mut store,
+            "m7-dispose-overrun",
+            UsdMicros::new(100).unwrap(),
+        );
+    accepted(
+        &mut store,
+        "m7-dispose-overrun-delivery",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeSessionDisposeDelivery,
+        authorized_generation,
+        CommandBody::RecordPiOfficeSessionDisposeDelivery {
+            session_id,
+            correlation_identity: correlation.clone(),
+        },
+    );
+    accepted(
+        &mut store,
+        "m7-dispose-overrun-accepted",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeSessionDisposeAccepted,
+        authorized_generation,
+        CommandBody::RecordPiOfficeSessionDisposeAccepted {
+            session_id,
+            correlation_identity: correlation.clone(),
+            command_result_sequence: PiProtocolSequence::try_from(4).unwrap(),
+        },
+    );
+    accepted(
+        &mut store,
+        "m7-dispose-overrun-known-usage",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeSessionDisposeUsage,
+        authorized_generation,
+        CommandBody::RecordPiOfficeSessionDisposeUsage {
+            session_id,
+            correlation_identity: correlation.clone(),
+            protocol_sequence: PiProtocolSequence::try_from(5).unwrap(),
+            usage: PiCumulativeUsage {
+                input_tokens: PiTokenCount::try_from(0).unwrap(),
+                output_tokens: PiTokenCount::try_from(0).unwrap(),
+                cache_read_tokens: PiTokenCount::try_from(0).unwrap(),
+                cache_write_tokens: PiTokenCount::try_from(0).unwrap(),
+                total_tokens: PiTokenCount::try_from(0).unwrap(),
+                provider_cost: ProviderCostBinary64::from_big_endian(
+                    0.0001005_f64.to_bits().to_be_bytes(),
+                )
+                .unwrap(),
+                ceiling_micro_usd: UsdMicros::new(101).unwrap(),
+            },
+        },
+    );
+    let terminal = accepted(
+        &mut store,
+        "m7-dispose-overrun-terminal",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeSessionDisposed,
+        authorized_generation,
+        CommandBody::RecordPiOfficeSessionDisposed {
+            session_id,
+            correlation_identity: correlation,
+            disposed_sequence: PiProtocolSequence::try_from(6).unwrap(),
+            transcript_receipt: PiOfficeSessionTranscriptReceipt::UnmaterializedNoPrompt {
+                session_file: CanonicalPiSessionTranscriptPath::parse(
+                    "/tmp/m7-dispose-overrun.jsonl",
+                )
+                .unwrap(),
+            },
+        },
+    );
+    let event_id = match terminal.disposition {
+        CommandDisposition::Accepted(event_id) => event_id,
+        other => panic!("unexpected known-overrun terminal receipt: {other:?}"),
+    };
+    assert!(matches!(
+        store.ledger_event(event_id).unwrap().body,
+        EventBody::PiOfficeSessionDisposed {
+            budget_disposition: society_kernel::PiOfficeSessionDisposeBudgetDisposition::Frozen { .. },
+            ..
+        }
+    ));
+    drop(store);
+    let inspection = Connection::open(&path).unwrap();
+    assert_eq!(
+        inspection
+            .query_row(
+                "SELECT reservation_state FROM budget_reservations WHERE budget_reservation_id = 1",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+        3
+    );
+    assert_eq!(
+        inspection
+            .query_row(
+                "SELECT lifecycle_state FROM root_authority_office_sessions WHERE root_authority_office_session_id = 1",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+        10
+    );
+    drop(inspection);
+    let replayed = KernelStore::open(&path).unwrap();
+    assert!(replayed.replay_ledger().is_ok());
+    drop(replayed);
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn pi_office_session_dispose_late_peer_evidence_uses_frozen_authorization_generation() {
+    let mut store = KernelStore::open_in_memory().unwrap();
+    let (root_authority, cycle_id, session_id, authorized_generation, correlation) =
+        authorized_dispose_session(&mut store, "m7-dispose-late", UsdMicros::new(100).unwrap());
+    accepted(
+        &mut store,
+        "m7-dispose-late-cancel-after-authorization",
+        root_authority,
+        Capability::RequestCancellation,
+        authorized_generation,
+        CommandBody::RequestCancellation {
+            cycle_id,
+            mode: society_kernel::CancellationMode::GracefulCancel,
+        },
+    );
+    accepted(
+        &mut store,
+        "m7-dispose-late-delivery",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeSessionDisposeDelivery,
+        authorized_generation,
+        CommandBody::RecordPiOfficeSessionDisposeDelivery {
+            session_id,
+            correlation_identity: correlation.clone(),
+        },
+    );
+    accepted(
+        &mut store,
+        "m7-dispose-late-accepted",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeSessionDisposeAccepted,
+        authorized_generation,
+        CommandBody::RecordPiOfficeSessionDisposeAccepted {
+            session_id,
+            correlation_identity: correlation.clone(),
+            command_result_sequence: PiProtocolSequence::try_from(4).unwrap(),
+        },
+    );
+    accepted(
+        &mut store,
+        "m7-dispose-late-known-usage",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeSessionDisposeUsage,
+        authorized_generation,
+        CommandBody::RecordPiOfficeSessionDisposeUsage {
+            session_id,
+            correlation_identity: correlation.clone(),
+            protocol_sequence: PiProtocolSequence::try_from(5).unwrap(),
+            usage: PiCumulativeUsage {
+                input_tokens: PiTokenCount::try_from(0).unwrap(),
+                output_tokens: PiTokenCount::try_from(0).unwrap(),
+                cache_read_tokens: PiTokenCount::try_from(0).unwrap(),
+                cache_write_tokens: PiTokenCount::try_from(0).unwrap(),
+                total_tokens: PiTokenCount::try_from(0).unwrap(),
+                provider_cost: ProviderCostBinary64::from_big_endian(0_f64.to_bits().to_be_bytes())
+                    .unwrap(),
+                ceiling_micro_usd: UsdMicros::ZERO,
+            },
+        },
+    );
+    accepted(
+        &mut store,
+        "m7-dispose-late-terminal",
+        PrincipalId::KERNEL,
+        Capability::RecordPiOfficeSessionDisposed,
+        authorized_generation,
+        CommandBody::RecordPiOfficeSessionDisposed {
+            session_id,
+            correlation_identity: correlation,
+            disposed_sequence: PiProtocolSequence::try_from(6).unwrap(),
+            transcript_receipt: PiOfficeSessionTranscriptReceipt::UnmaterializedNoPrompt {
+                session_file: CanonicalPiSessionTranscriptPath::parse("/tmp/m7-dispose-late.jsonl")
+                    .unwrap(),
+            },
+        },
+    );
+    assert!(store.replay_ledger().is_ok());
 }
 
 #[test]

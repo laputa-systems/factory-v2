@@ -105,6 +105,22 @@ invented `AgentSettled`. Only completed/observed-stop may restore Office Ready;
 failed and protocol-failed terminals remain non-ready, and protocol failure
 also removes further session authority.
 
+### Office-session Dispose chain
+
+The durable close grammar for one idle `RootAuthorityOfficeSession`:
+`Authorize-before-write -> delivered -> accepted -> final Known/failure ->
+Disposed`. Authorization precedes every host-pipe byte; delivery means the
+complete physical Dispose frame was written, not merely admitted. The accepted
+result is followed immediately by one final cumulative Known usage observation
+or one typed accounting failure. Only the Known branch can carry the next
+`Disposed` transcript-flush receipt. A materialized receipt binds an
+owned-custody, content-sealed transcript and may explicitly mark its first
+prompt absent. Only the lazy missing-file no-Prompt receipt is unmaterialized
+and cannot fabricate content; neither absence arm may invent a first prompt.
+The final Known terminal reconciles or freezes the existing parent reservation.
+A failure freezes it without a synthetic
+`Disposed` receipt. It does not establish process exit or direct-child reap.
+
 ### Content object and content seal receipt
 
 A global immutable byte identity and the narrow kernel attestation that the

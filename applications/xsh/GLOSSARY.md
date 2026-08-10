@@ -93,9 +93,9 @@ is not a derived demand signal and cannot be created by signal pressure alone.
 ### Canonical fresh schema
 
 The one atomic embedded-SQL bootstrap accepted by the prototype kernel. The
-current schema has `PRAGMA user_version = 10`; version zero means an empty
+current schema has `PRAGMA user_version = 12`; version zero means an empty
 database eligible for bootstrap, while historical prototype versions one
-through nine are rejected without mutation. This is deliberate prototype
+through eleven are rejected without mutation. This is deliberate prototype
 replacement, not an upgrade or compatibility claim.
 
 ### Cancellation propagation
@@ -494,10 +494,11 @@ delete it.
 The only V2 protocol boundary allowed to use JSON. Rust and the pinned
 TypeScript `society-pi-host` exchange a closed JSONL control/event protocol;
 Pi's SDK `SessionManager` writes its canonical JSONL transcript; bounded actors
-emit one closed-schema `submission.json`. The Rust kernel seals and parses
-those bytes into typed values before they can affect SQLite state. No Pi CLI
-mode and no other durable V2 workflow uses JSON payloads, columns, manifests,
-or projections.
+emit one closed-schema `submission.json`. The Rust peer parses closed Pi
+control/event JSONL with Pi-boundary-only `miniserde`; it treats a
+SessionManager transcript as separately custody-verified content to seal, not
+as a semantic submission. No Pi CLI mode and no other durable V2 workflow uses
+JSON payloads, columns, manifests, or projections.
 
 ### Pi Abort control receipt
 
@@ -535,8 +536,10 @@ It computes the charge from exact session-cumulative usage relative to the
 prior checkpoint, debits that delta from the existing Office-session parent
 reservation, and rechecks the live `SessionReady` child, cycle generation, and
 cancellation state before returning the Office to `Ready`. The parent remains
-reserved until a future typed `Dispose` reconciliation releases its unused
-remainder.
+reserved until the implemented Office-session `Dispose` chain records final
+Known usage and its transcript receipt, then reconciles the final delta and
+releases the unused remainder; a typed final accounting failure freezes it
+instead.
 
 ### Pi Office turn prompt authorization
 
@@ -555,8 +558,8 @@ disposition and assistant outcome to either exact final cumulative usage or an
 exact accounting-failure receipt under the session-wide protocol sequence.
 Only `Completed` with `ObservedStop` is currently eligible for the atomic cost
 checkpoint and return to Office `Ready`; other valid outcomes remain durable
-non-ready blockers. Transcript verification is explicitly deferred until the
-future Office-session `Dispose` boundary.
+non-ready blockers. Transcript verification and physical content sealing occur
+at the implemented Office-session `Dispose` boundary, not at turn settlement.
 
 ### Pi SDK host
 
@@ -569,11 +572,12 @@ adapter but has no database, capability, budget, scheduling, or Git authority.
 ### Pi transcript flush receipt
 
 A closed host-boundary observation emitted only after Pi session disposal and
-transcript verification. It distinguishes an intentionally unmaterialized
-pre-prompt session from a canonical SessionManager JSONL file whose session
-identity, real path, header cwd and timestamp, file digest, and first user
-prompt have been checked. It proves what the host observed; Rust must still
-seal and admit the bytes.
+transcript verification. A canonical SessionManager JSONL file is materialized
+and custody-sealed even when its first user prompt is explicitly absent. Only
+the lazy missing-file no-Prompt arm is unmaterialized and lacks a content
+object; neither absence arm may invent a first prompt or content. A materialized
+receipt checks session identity, real path, header cwd and timestamp, and file
+digest. It proves what the host observed; Rust must still seal the bytes.
 
 ### Pi supervisor
 
@@ -610,10 +614,18 @@ workspace disposal, or execution-profile qualification.
 The M6 kernel foundation now owns durable deterministic Office-turn prompt,
 usage, accounting-failure, terminal, and incremental parent-reservation
 transitions. It does not yet make `PiSupervisor` send a prompt or translate
-`society-pi` observations: the resident bridge stops after provider-free
-session readiness and disposal. Final transcript sealing, semantic submission,
-Office-session Dispose accounting, release of unused parent reserve, and
-settlement of non-ready turns remain separate later transitions.
+`society-pi` observations for a Prompt: the resident bridge has no scheduler or
+control-loop call site. The implemented generic Office-session Dispose path is
+`Authorize-before-write -> delivered -> accepted -> final Known/failure ->
+Disposed`: only final Known plus the next transcript-flush receipt can
+reconcile and release the unused parent reserve; a final failure freezes it and
+has no synthetic `Disposed` successor. A materialized transcript is
+custody-verified and content-sealed before its terminal receipt; a no-Prompt
+session may be materialized with an absent first prompt, while only the lazy
+missing-file arm has no content object. Neither absence arm may invent a first
+prompt or content. Direct-child reap remains separate.
+There is still no post-restart recovery, workspace disposal, semantic
+submission, paid/native qualification, or XSH end-to-end execution claim.
 
 ### Portfolio
 
