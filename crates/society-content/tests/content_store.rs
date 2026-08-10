@@ -14,8 +14,8 @@ use std::{
 };
 
 use society_content::{
-    ContentDigest, ContentObjectStore, ContentSealDisposition, ContentSealLimit, ContentStoreError,
-    ContentStoreRoot,
+    ContentDigest, ContentObjectStore, ContentReadLimit, ContentSealDisposition, ContentSealLimit,
+    ContentStoreError, ContentStoreRoot,
 };
 
 fn temporary_parent(label: &str) -> PathBuf {
@@ -79,6 +79,74 @@ fn seals_exact_bytes_once_and_reopen_verifies_the_same_identity() {
             .next()
             .is_none()
     );
+    fs::remove_dir_all(parent).unwrap();
+}
+
+#[test]
+fn verified_read_releases_only_exact_bounded_object_bytes() {
+    let parent = temporary_parent("verified-read");
+    let store = open_store(&parent);
+    let bytes = b"sealed evaluator artifact bytes";
+    let receipt = store.seal_bytes(bytes, limit()).unwrap();
+
+    let mut released = Vec::new();
+    let read = store
+        .copy_verified_to(
+            receipt.digest,
+            ContentReadLimit::new(64).unwrap(),
+            &mut released,
+        )
+        .unwrap();
+    assert_eq!(read.digest(), receipt.digest);
+    assert_eq!(read.byte_count(), bytes.len() as u64);
+    assert_eq!(released, bytes);
+    let mut over_limit = Vec::new();
+    assert!(matches!(
+        store.copy_verified_to(
+            receipt.digest,
+            ContentReadLimit::new(8).unwrap(),
+            &mut over_limit
+        ),
+        Err(ContentStoreError::ReadLimitExceeded)
+    ));
+    assert!(over_limit.is_empty());
+
+    let path = object_path(&parent, receipt.digest);
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(matches!(
+        store.copy_verified_to(
+            receipt.digest,
+            ContentReadLimit::new(64).unwrap(),
+            &mut Vec::new()
+        ),
+        Err(ContentStoreError::UnsafeStoredObject)
+    ));
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+
+    fs::write(&path, b"same-size-tampered-evaluator-bytes").unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    let mut tampered = Vec::new();
+    assert!(matches!(
+        store.copy_verified_to(
+            receipt.digest,
+            ContentReadLimit::new(64).unwrap(),
+            &mut tampered
+        ),
+        Err(ContentStoreError::StoredDigestMismatch)
+    ));
+
+    fs::remove_file(&path).unwrap();
+    let redirect_target = parent.join("verified-read-redirect-target");
+    fs::write(&redirect_target, bytes).unwrap();
+    symlink(&redirect_target, &path).unwrap();
+    assert!(matches!(
+        store.copy_verified_to(
+            receipt.digest,
+            ContentReadLimit::new(64).unwrap(),
+            &mut Vec::new()
+        ),
+        Err(ContentStoreError::UnsafeStoredObject)
+    ));
     fs::remove_dir_all(parent).unwrap();
 }
 

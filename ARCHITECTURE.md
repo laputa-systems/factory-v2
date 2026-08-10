@@ -70,6 +70,10 @@ recovery. The supervisor carries `MissionSourceRendering` only with that
 mission command; no public or supervisor generic content mutation or
 content-writer authority exists. This establishes byte identity and custody only, not producer
 provenance, semantic/evidence admission, or a complete application execution.
+The same owned store can stream one object through an explicit read bound while
+rehashing the same no-follow file handle. A successful read receipt proves only
+the copied digest and byte count; the caller discards every failed destination,
+and executable qualification or semantic role remains a separate authority.
 
 ## Trusted substrate
 

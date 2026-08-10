@@ -62,7 +62,8 @@ RSI.md                     research source conversation
 
 Cargo.toml                 generic Rust workspace manifest
 crates/society-kernel/     trusted domain, ledger, and SQLite authority
-crates/society-content/    physical byte-seal store without evidence meaning
+crates/society-content/    physical byte-seal and bounded verified-read store
+                           without evidence meaning
 crates/society-pi/         typed Rust peer for the SDK-host boundary
 crates/societyd/           resident authority, generic NativeChild custody,
                            optional Pi sidecar, and monitor

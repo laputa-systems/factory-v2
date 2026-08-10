@@ -150,7 +150,9 @@ A failure freezes it without a synthetic
 A global immutable byte identity and the narrow kernel attestation that the
 physical content boundary has sealed it. Sealing establishes byte identity
 only; it does not establish producer, schema, provenance, evidence, or graph
-meaning.
+meaning. A bounded verified-read receipt likewise establishes only the digest
+and byte count copied from the owned store; it confers no executable or
+semantic authority.
 
 ### Admitted evidence
 

@@ -149,6 +149,23 @@ impl ContentSealLimit {
     }
 }
 
+/// Caller-selected transfer bound for releasing one physically verified
+/// object from the content store. It is distinct from the ingest limit:
+/// reading an existing object must not silently inherit the bound of an
+/// unrelated seal operation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ContentReadLimit(u64);
+
+impl ContentReadLimit {
+    pub const fn new(bytes: u64) -> Option<Self> {
+        if bytes == 0 { None } else { Some(Self(bytes)) }
+    }
+
+    pub const fn bytes(self) -> u64 {
+        self.0
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ContentSealDisposition {
     Created,
@@ -164,6 +181,25 @@ pub struct ContentSealReceipt {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ContentVerificationReceipt {
     pub digest: ContentDigest,
+}
+
+/// Receipt for one bounded stream copy whose complete bytes matched the
+/// requested physical BLAKE3 identity. It is not provenance, executable
+/// qualification, or evidence admission.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ContentReadReceipt {
+    digest: ContentDigest,
+    byte_count: u64,
+}
+
+impl ContentReadReceipt {
+    pub const fn digest(&self) -> ContentDigest {
+        self.digest
+    }
+
+    pub const fn byte_count(&self) -> u64 {
+        self.byte_count
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -310,6 +346,54 @@ impl ContentObjectStore {
         Ok(ContentVerificationReceipt { digest })
     }
 
+    /// Copies one immutable object under an explicit bound while recomputing
+    /// the requested digest on the same no-follow file handle. The caller must
+    /// discard its destination if this method returns an error because a
+    /// digest mismatch is knowable only after the complete stream. A success
+    /// receipt proves the copied byte count and physical identity only; later
+    /// code must establish semantic role and executable/profile authority.
+    pub fn copy_verified_to(
+        &self,
+        digest: ContentDigest,
+        limit: ContentReadLimit,
+        destination: &mut impl Write,
+    ) -> Result<ContentReadReceipt, ContentStoreError> {
+        let path = self.object_path(digest)?;
+        let mut object = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(path)
+            .map_err(|error| match error.raw_os_error() {
+                Some(libc::ELOOP) => ContentStoreError::UnsafeStoredObject,
+                _ => ContentStoreError::Io(error),
+            })?;
+        validate_object_metadata(&object.metadata()?)?;
+        let mut hasher = Hasher::new();
+        let mut observed = 0_u64;
+        let mut buffer = [0_u8; 16 * 1024];
+        loop {
+            let read = object.read(&mut buffer)?;
+            if read == 0 {
+                break;
+            }
+            observed = observed
+                .checked_add(read as u64)
+                .ok_or(ContentStoreError::ReadLimitExceeded)?;
+            if observed > limit.bytes() {
+                return Err(ContentStoreError::ReadLimitExceeded);
+            }
+            hasher.update(&buffer[..read]);
+            destination.write_all(&buffer[..read])?;
+        }
+        if ContentDigest(*hasher.finalize().as_bytes()) != digest {
+            return Err(ContentStoreError::StoredDigestMismatch);
+        }
+        Ok(ContentReadReceipt {
+            digest,
+            byte_count: observed,
+        })
+    }
+
     fn object_path(&self, digest: ContentDigest) -> Result<PathBuf, ContentStoreError> {
         let hex = digest.to_hex();
         let shard = self.digest_root.join(&hex[..2]);
@@ -334,6 +418,8 @@ pub enum ContentStoreError {
     StoredDigestMismatch,
     #[error("input exceeded the admitted content seal limit")]
     SealLimitExceeded,
+    #[error("stored content exceeded the caller's verified-read limit")]
+    ReadLimitExceeded,
     #[error("temporary content identity space is exhausted")]
     TemporaryIdentityExhausted,
 }
