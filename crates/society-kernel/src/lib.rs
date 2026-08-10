@@ -10,5 +10,6 @@ mod store;
 pub use domain::*;
 pub use store::{
     ContentIdentityState, DeterministicEvaluatorNativeChildAdmission,
+    DeterministicEvaluatorScheduleClaim, DeterministicEvaluatorScheduleClaimRequest,
     InstallFoundingMissionPreflight, KernelStore, StoreError,
 };

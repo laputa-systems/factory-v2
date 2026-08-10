@@ -920,6 +920,9 @@ pub enum Capability {
     /// is explicitly non-monetized.
     AdmitDeterministicEvaluatorNativeChild = 98,
     RecordDeterministicEvaluatorNativeChildSpawn = 99,
+    /// Binds one reaped deterministic evaluator child's complete stdout to a
+    /// fresh forensic occurrence. The output object is derived, never chosen.
+    RegisterDeterministicEvaluatorForensicManifest = 100,
 }
 
 impl Capability {
@@ -981,7 +984,7 @@ impl Capability {
         Self::FinalizeDeterministicExperiment,
     ];
 
-    pub const KERNEL_SERVICE: [Self; 48] = [
+    pub const KERNEL_SERVICE: [Self; 49] = [
         Self::RecordCycleDrained,
         Self::RecordOfficeSessionReady,
         Self::SettleOfficeTurn,
@@ -1030,6 +1033,7 @@ impl Capability {
         Self::RecordPiOfficeSessionDisposed,
         Self::AdmitDeterministicEvaluatorNativeChild,
         Self::RecordDeterministicEvaluatorNativeChildSpawn,
+        Self::RegisterDeterministicEvaluatorForensicManifest,
     ];
 
     pub const fn requires_consumption(self) -> bool {
@@ -2383,6 +2387,14 @@ pub enum CommandBody {
         retention_access_class: RetentionAccessClass,
         evaluator_output_content_object_id: ContentObjectId,
     },
+    /// The resident scheduler may only turn the complete stdout seal of its
+    /// exact evaluator child into a forensic occurrence. Experiment, revision,
+    /// input manifest, stream seal, and output object are all derived from the
+    /// durable admission; no application or daemon-selected output joins here.
+    RegisterDeterministicEvaluatorForensicManifest {
+        operating_cycle_id: OperatingCycleId,
+        native_child_spawn_admission_id: NativeChildSpawnAdmissionId,
+    },
     RegisterDeterministicExperiment {
         operating_cycle_id: OperatingCycleId,
         project_id: ProjectId,
@@ -2705,6 +2717,9 @@ impl CommandBody {
             Self::RecordContentSealReceipt { .. } => CommandKind::RecordContentSealReceipt,
             Self::RegisterContentObject { .. } => CommandKind::RegisterContentObject,
             Self::RegisterForensicManifest { .. } => CommandKind::RegisterForensicManifest,
+            Self::RegisterDeterministicEvaluatorForensicManifest { .. } => {
+                CommandKind::RegisterDeterministicEvaluatorForensicManifest
+            }
             Self::RegisterDeterministicExperiment { .. } => {
                 CommandKind::RegisterDeterministicExperiment
             }
@@ -2843,6 +2858,9 @@ impl CommandBody {
             Self::RecordContentSealReceipt { .. } => Capability::RecordContentSealReceipt,
             Self::RegisterContentObject { .. } => Capability::RegisterContentObject,
             Self::RegisterForensicManifest { .. } => Capability::RegisterForensicManifest,
+            Self::RegisterDeterministicEvaluatorForensicManifest { .. } => {
+                Capability::RegisterDeterministicEvaluatorForensicManifest
+            }
             Self::RegisterDeterministicExperiment { .. } => {
                 Capability::RegisterDeterministicExperiment
             }
@@ -3012,6 +3030,7 @@ pub enum CommandKind {
     RecordPiOfficeSessionDisposed = 97,
     AdmitDeterministicEvaluatorNativeChild = 98,
     RecordDeterministicEvaluatorNativeChildSpawn = 99,
+    RegisterDeterministicEvaluatorForensicManifest = 100,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -3376,6 +3395,13 @@ pub enum EventBody {
         producing_deterministic_experiment_id: DeterministicExperimentId,
         evaluator_output_content_object_id: ContentObjectId,
     },
+    DeterministicEvaluatorForensicManifestRegistered {
+        forensic_manifest_id: ForensicManifestId,
+        deterministic_experiment_id: DeterministicExperimentId,
+        native_child_spawn_admission_id: NativeChildSpawnAdmissionId,
+        native_child_stream_seal_id: NativeChildStreamSealId,
+        evaluator_output_content_object_id: ContentObjectId,
+    },
     DeterministicExperimentRegistered {
         deterministic_experiment_id: DeterministicExperimentId,
         evaluator_revision_id: EvaluatorRevisionId,
@@ -3655,6 +3681,7 @@ pub enum EventKind {
     PiOfficeSessionDisposed = 91,
     DeterministicEvaluatorNativeChildAdmitted = 92,
     DeterministicEvaluatorNativeChildSpawnRecorded = 93,
+    DeterministicEvaluatorForensicManifestRegistered = 94,
 }
 
 impl EventBody {
@@ -3723,6 +3750,9 @@ impl EventBody {
             Self::ContentSealReceiptRecorded { .. } => EventKind::ContentSealReceiptRecorded,
             Self::ContentObjectRegistered { .. } => EventKind::ContentObjectRegistered,
             Self::ForensicManifestRegistered { .. } => EventKind::ForensicManifestRegistered,
+            Self::DeterministicEvaluatorForensicManifestRegistered { .. } => {
+                EventKind::DeterministicEvaluatorForensicManifestRegistered
+            }
             Self::DeterministicExperimentRegistered { .. } => {
                 EventKind::DeterministicExperimentRegistered
             }

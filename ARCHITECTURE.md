@@ -129,9 +129,15 @@ requirements. The only current evaluator process treatment is a verified
 direct executable with one verified input-manifest argument and an empty
 environment. It rejects shebang scripts and supplies no interpreter or shell
 launcher, retains bounded stdout/stderr, and permits sealing only after direct
-reap and owned-group absence. This is a private, unscheduled custody
-pre-bridge: there is no resident evaluator scheduler, public execution command,
-semantic evidence admission, or application execution claim.
+reap and owned-group absence. The kernel's daemon-facing scheduler claim treats
+an existing registered deterministic experiment as the sole scheduling
+authorization, chooses the oldest eligible experiment, and atomically derives
+its exact evaluator/input/workspace admission. After native finalization, a
+second constrained transition derives the forensic output from that child's
+complete stdout seal while also requiring complete stderr; callers cannot
+substitute an unrelated global object. The resident serving loop still has no
+call site for this claim, and there is no public execution command, semantic
+evidence admission, or application execution claim.
 
 Office Prompt completion also has two deliberately distinct closed sequence
 shapes. Observed assistant results require `AgentSettled`, a later exact final

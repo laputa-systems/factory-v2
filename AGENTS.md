@@ -100,9 +100,14 @@ post-reap receipt shape. Pi composes that custody nucleus through a strict
 session/protocol sidecar rather than defining the base process identity. A
 daemon-private deterministic-evaluator pre-bridge admits only a verified direct
 executable, its verified input-manifest path, a fixed argv grammar, and an
-empty environment; it is unscheduled and has no supervisor/public execution
-command. It does not run an application evaluator, seal semantic evidence, or
-claim an end-to-end application result.
+empty environment. `KernelStore::claim_registered_deterministic_evaluator`
+atomically derives the oldest eligible experiment's native admission from its
+already durable registration; applications do not issue scheduling authority.
+After a finalized child has complete stdout and stderr seals, the kernel derives
+the forensic output occurrence from that exact admission rather than accepting
+an arbitrary global object. The resident serving loop does not yet call this
+claim, and no supervisor/public execution command or end-to-end application
+result exists.
 
 ## Nearest hard judges
 

@@ -65,7 +65,7 @@ const CURRENT_SCHEMA: &str = include_str!("../../../migrations/0001_kernel.sql")
 // Historical prototype schemas used versions one through thirteen. The collapsed
 // fresh schema deliberately occupies a noncolliding identity, so an old
 // ledger cannot be mistaken for current trusted physics.
-const CURRENT_SCHEMA_VERSION: i64 = 14;
+const CURRENT_SCHEMA_VERSION: i64 = 15;
 
 struct PiChildSpawnAdmissionInput<'a> {
     operating_cycle_id: OperatingCycleId,
@@ -177,7 +177,7 @@ type PiOfficeSessionDisposedCommandSqlRow = (
     Option<Vec<u8>>,
 );
 
-const COMMAND_BODY_TABLES: [&str; 99] = [
+const COMMAND_BODY_TABLES: [&str; 100] = [
     "command_create_society_identity",
     "command_install_root_authority_office",
     "command_install_founding_mission",
@@ -277,9 +277,10 @@ const COMMAND_BODY_TABLES: [&str; 99] = [
     "command_record_pi_office_session_disposed",
     "command_admit_deterministic_evaluator_native_child",
     "command_record_deterministic_evaluator_native_child_spawn",
+    "command_register_deterministic_evaluator_forensic_manifest",
 ];
 
-const EVENT_BODY_TABLES: [&str; 93] = [
+const EVENT_BODY_TABLES: [&str; 94] = [
     "event_society_identity_created",
     "event_root_authority_office_installed",
     "event_founding_mission_installed",
@@ -373,6 +374,7 @@ const EVENT_BODY_TABLES: [&str; 93] = [
     "event_pi_office_session_disposed",
     "event_deterministic_evaluator_native_child_admitted",
     "event_deterministic_evaluator_native_child_spawn_recorded",
+    "event_deterministic_evaluator_forensic_manifest_registered",
 ];
 
 const GRAPH_REVISION_BODY_TABLES: [&str; 2] = ["observation_revisions", "hypothesis_revisions"];
@@ -398,6 +400,8 @@ type DeterministicEvaluatorAdmissionSqlRow = (
     i64,
     Vec<u8>,
     Vec<u8>,
+    i64,
+    i64,
 );
 
 type DeterministicEvaluatorSpawnAdmissionSqlRow = (
@@ -407,6 +411,19 @@ type DeterministicEvaluatorSpawnAdmissionSqlRow = (
     Option<i64>,
     Option<i64>,
     Option<i64>,
+    Option<i64>,
+);
+
+type DeterministicEvaluatorScheduleClaimSqlRow = (
+    i64,
+    Option<i64>,
+    i64,
+    i64,
+    i64,
+    Option<String>,
+    Option<String>,
+    Option<i64>,
+    Option<String>,
     Option<i64>,
 );
 
@@ -428,6 +445,8 @@ pub struct DeterministicEvaluatorNativeChildAdmission {
     admission_generation: AdmissionGeneration,
     evaluator_digest: Blake3Digest,
     input_manifest_digest: Blake3Digest,
+    evaluator_content_object_id: ContentObjectId,
+    input_manifest_content_object_id: ContentObjectId,
 }
 
 impl DeterministicEvaluatorNativeChildAdmission {
@@ -470,6 +489,92 @@ impl DeterministicEvaluatorNativeChildAdmission {
     pub const fn input_manifest_digest(&self) -> Blake3Digest {
         self.input_manifest_digest
     }
+    pub const fn evaluator_content_object_id(&self) -> ContentObjectId {
+        self.evaluator_content_object_id
+    }
+    pub const fn input_manifest_content_object_id(&self) -> ContentObjectId {
+        self.input_manifest_content_object_id
+    }
+}
+
+/// One idempotent resident scheduler operation. It does not carry an
+/// experiment, evaluator, input, output, or executable identity: the kernel
+/// chooses the oldest currently eligible registered experiment and derives
+/// its fixture execution profile.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeterministicEvaluatorScheduleClaimRequest {
+    command_id: CommandId,
+    native_workspace_id: NativeWorkspaceId,
+    canonical_workspace_path: CanonicalWorkspacePath,
+    supervisor_epoch_id: SupervisorEpochId,
+    supervisor_epoch_identity: SupervisorEpochIdentity,
+}
+
+impl DeterministicEvaluatorScheduleClaimRequest {
+    pub fn new(
+        command_id: CommandId,
+        native_workspace_id: NativeWorkspaceId,
+        canonical_workspace_path: CanonicalWorkspacePath,
+        supervisor_epoch_id: SupervisorEpochId,
+        supervisor_epoch_identity: SupervisorEpochIdentity,
+    ) -> Self {
+        Self {
+            command_id,
+            native_workspace_id,
+            canonical_workspace_path,
+            supervisor_epoch_id,
+            supervisor_epoch_identity,
+        }
+    }
+}
+
+/// The exact durable result of a scheduler claim. `admission` remains the
+/// post-claim verification query used by native custody; the two content
+/// identities let the daemon materialize only the sealed evaluator and input
+/// bytes that this claim resolved.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DeterministicEvaluatorScheduleClaim {
+    /// The child has not been spawned or invalidated and may be passed to the
+    /// daemon's exact materialization/spawn custody bridge.
+    SpawnAuthorized(Box<DeterministicEvaluatorNativeChildAdmission>),
+    /// The same idempotent operation already made a durable admission, but it
+    /// is no longer spawn-authoritative (it was spawned or invalidated). This
+    /// is normal retry information, never evidence of ledger corruption.
+    AlreadyClaimed {
+        native_child_spawn_admission_id: NativeChildSpawnAdmissionId,
+    },
+}
+
+impl DeterministicEvaluatorScheduleClaim {
+    pub fn admission(&self) -> Option<&DeterministicEvaluatorNativeChildAdmission> {
+        match self {
+            Self::SpawnAuthorized(admission) => Some(admission),
+            Self::AlreadyClaimed { .. } => None,
+        }
+    }
+
+    pub const fn native_child_spawn_admission_id(&self) -> NativeChildSpawnAdmissionId {
+        match self {
+            Self::SpawnAuthorized(admission) => admission.native_child_spawn_admission_id(),
+            Self::AlreadyClaimed {
+                native_child_spawn_admission_id,
+            } => *native_child_spawn_admission_id,
+        }
+    }
+
+    pub const fn evaluator_content_object_id(&self) -> Option<ContentObjectId> {
+        match self {
+            Self::SpawnAuthorized(admission) => Some(admission.evaluator_content_object_id()),
+            Self::AlreadyClaimed { .. } => None,
+        }
+    }
+
+    pub const fn input_manifest_content_object_id(&self) -> Option<ContentObjectId> {
+        match self {
+            Self::SpawnAuthorized(admission) => Some(admission.input_manifest_content_object_id()),
+            Self::AlreadyClaimed { .. } => None,
+        }
+    }
 }
 
 /// The only durable recovery states for one physical BLAKE3 identity.
@@ -510,6 +615,8 @@ pub enum StoreError {
     UnsupportedSchemaVersion(i64),
     #[error("command id was already used with a different typed request")]
     IdempotencyConflict,
+    #[error("deterministic evaluator schedule claim rejected: {0:?}")]
+    DeterministicEvaluatorScheduleClaimRejected(Rejection),
     #[error("operating cycle {0:?} was not found")]
     OperatingCycleNotFound(OperatingCycleId),
     #[error("ledger event {0:?} was not found")]
@@ -628,6 +735,7 @@ impl KernelStore {
                     workspace.canonical_workspace_path, admission.supervisor_epoch_id,
                     epoch.supervisor_epoch_identity, admission.admission_generation,
                     evaluator_seal.digest, input_seal.digest
+                    , evaluator.content_object_id, input.content_object_id
                FROM native_child_spawn_admissions admission
                JOIN workspaces workspace ON workspace.workspace_id = admission.workspace_id
                JOIN supervisor_epochs epoch ON epoch.supervisor_epoch_id = admission.supervisor_epoch_id
@@ -656,7 +764,7 @@ impl KernelStore {
                               AND experiment.input_manifest_id = admission.input_manifest_id
                               AND experiment.lifecycle_state = 1)",
             [native_child_spawn_admission_id.value()],
-            |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,r.get(8)?,r.get(9)?,r.get(10)?,r.get(11)?)),
+            |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,r.get(8)?,r.get(9)?,r.get(10)?,r.get(11)?,r.get(12)?,r.get(13)?)),
         ).optional()?;
         let Some(row) = row else {
             // A structurally exact evaluator admission can legitimately stop
@@ -715,17 +823,176 @@ impl KernelStore {
                 .map_err(|_| StoreError::InvalidStoredValue)?,
             evaluator_digest: digest_from_stored_bytes(&row.10)?,
             input_manifest_digest: digest_from_stored_bytes(&row.11)?,
+            evaluator_content_object_id: ContentObjectId::try_from(row.12)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+            input_manifest_content_object_id: ContentObjectId::try_from(row.13)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
         }))
+    }
+
+    /// Claims the oldest eligible registered deterministic experiment and
+    /// records its existing native-child admission before the daemon may
+    /// materialize a workspace or spawn. Registration is the sole scheduling
+    /// authorization: this input deliberately has no application authority,
+    /// evaluator/input identity, output identity, or executable path.
+    pub fn claim_registered_deterministic_evaluator(
+        &mut self,
+        claim: DeterministicEvaluatorScheduleClaimRequest,
+    ) -> Result<Option<DeterministicEvaluatorScheduleClaim>, StoreError> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+
+        if let Some(admission_id) =
+            existing_deterministic_evaluator_schedule_claim(&transaction, &claim)?
+        {
+            transaction.commit()?;
+            return Ok(Some(
+                self.deterministic_evaluator_native_child_admission(admission_id)?
+                    .map(Box::new)
+                    .map(DeterministicEvaluatorScheduleClaim::SpawnAuthorized)
+                    .unwrap_or(DeterministicEvaluatorScheduleClaim::AlreadyClaimed {
+                        native_child_spawn_admission_id: admission_id,
+                    }),
+            ));
+        }
+
+        let epoch_matches: bool = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM supervisor_epochs
+               WHERE supervisor_epoch_id = ?1 AND supervisor_epoch_identity = ?2)",
+            params![
+                claim.supervisor_epoch_id.value(),
+                claim.supervisor_epoch_identity.as_str(),
+            ],
+            |row| row.get::<_, i64>(0),
+        )? != 0;
+        if !epoch_matches {
+            return Err(StoreError::DeterministicEvaluatorScheduleClaimRejected(
+                Rejection::ChildSpawnAdmissionInvalid,
+            ));
+        }
+
+        let candidate: Option<(i64, i64, i64, i64, i64)> = transaction
+            .query_row(
+                "SELECT experiment.deterministic_experiment_id,
+                        experiment.operating_cycle_id,
+                        experiment.evaluator_revision_id,
+                        experiment.input_manifest_id,
+                        cycle.admission_generation
+                   FROM deterministic_experiments experiment
+                   JOIN operating_cycles cycle
+                     ON cycle.operating_cycle_id = experiment.operating_cycle_id
+                  WHERE experiment.lifecycle_state = ?1
+                    AND cycle.lifecycle_state = ?2
+                    AND cycle.treatment = ?3
+                    AND NOT EXISTS(
+                        SELECT 1 FROM native_child_spawn_admissions admission
+                         WHERE admission.deterministic_experiment_id = experiment.deterministic_experiment_id
+                    )
+                  ORDER BY experiment.deterministic_experiment_id ASC
+                  LIMIT 1",
+                params![
+                    DeterministicExperimentState::Registered as i64,
+                    OperatingCycleState::Running as i64,
+                    OperatingCycleTreatment::DeterministicEvaluatorFixtureV1 as i64,
+                ],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            )
+            .optional()?;
+        let Some((experiment, cycle, evaluator, input, generation)) = candidate else {
+            transaction.commit()?;
+            return Ok(None);
+        };
+
+        let capability_grant_id: i64 = transaction
+            .query_row(
+                "SELECT capability_grant_id FROM capability_grants
+                  WHERE principal_id = ?1 AND capability_kind = ?2 AND grant_state = 1",
+                params![
+                    PrincipalId::KERNEL.value(),
+                    Capability::AdmitDeterministicEvaluatorNativeChild as i64,
+                ],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or(StoreError::LedgerCorruption(
+                "kernel service lacks deterministic evaluator admission capability",
+            ))?;
+        let request = CommandRequest {
+            command_id: claim.command_id.clone(),
+            principal_id: PrincipalId::KERNEL,
+            capability_grant_id: crate::CapabilityGrantId::try_from(capability_grant_id)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+            capability: Capability::AdmitDeterministicEvaluatorNativeChild,
+            expected_generation: ExpectedGeneration::Exact(
+                AdmissionGeneration::try_from(generation)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            ),
+            body: CommandBody::AdmitDeterministicEvaluatorNativeChild {
+                operating_cycle_id: OperatingCycleId::try_from(cycle)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                deterministic_experiment_id: DeterministicExperimentId::try_from(experiment)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                evaluator_revision_id: EvaluatorRevisionId::try_from(evaluator)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                input_manifest_id: InputManifestId::try_from(input)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                execution_profile_id:
+                    ExecutionProfileId::DETERMINISTIC_EVALUATOR_PROCESS_FIXTURE_V1,
+                native_workspace_id: claim.native_workspace_id.clone(),
+                canonical_workspace_path: claim.canonical_workspace_path.clone(),
+                supervisor_epoch_id: claim.supervisor_epoch_id,
+                supervisor_epoch_identity: claim.supervisor_epoch_identity.clone(),
+            },
+        };
+        let receipt = Self::execute_in_transaction(&transaction, request)?;
+        let CommandDisposition::Accepted(_) = receipt.disposition else {
+            transaction.commit()?;
+            let CommandDisposition::Rejected(rejection) = receipt.disposition else {
+                unreachable!("command dispositions are closed")
+            };
+            return Err(StoreError::DeterministicEvaluatorScheduleClaimRejected(
+                rejection,
+            ));
+        };
+        let admission_id: i64 = transaction.query_row(
+            "SELECT native_child_spawn_admission_id FROM native_child_spawn_admissions
+              WHERE deterministic_experiment_id = ?1",
+            [experiment],
+            |row| row.get(0),
+        )?;
+        let admission_id = NativeChildSpawnAdmissionId::try_from(admission_id)
+            .map_err(|_| StoreError::InvalidStoredValue)?;
+        transaction.commit()?;
+        self.deterministic_evaluator_native_child_admission(admission_id)?
+            .map(Box::new)
+            .map(DeterministicEvaluatorScheduleClaim::SpawnAuthorized)
+            .ok_or(StoreError::LedgerCorruption(
+                "accepted evaluator schedule claim has no live admission",
+            ))
+            .map(Some)
     }
 
     /// Accepts a closed command exactly once. An equal duplicate returns its
     /// original receipt; a changed request using the same command identity is
     /// rejected before any state transition is reconsidered.
     pub fn execute(&mut self, request: CommandRequest) -> Result<CommandReceipt, StoreError> {
-        let fingerprint = request_fingerprint(&request);
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let receipt = Self::execute_in_transaction(&transaction, request)?;
+        transaction.commit()?;
+        Ok(receipt)
+    }
+
+    /// Runs the closed-command append inside an already-exclusive transaction.
+    /// The resident scheduler uses this to select a durable queue member and
+    /// record its existing native-child admission as one atomic transition.
+    fn execute_in_transaction(
+        transaction: &Transaction<'_>,
+        request: CommandRequest,
+    ) -> Result<CommandReceipt, StoreError> {
+        let fingerprint = request_fingerprint(&request);
 
         if let Some((stored_fingerprint, status, event_id, rejection)) = transaction
             .query_row(
@@ -766,7 +1033,6 @@ impl KernelStore {
                 },
                 _ => return Err(StoreError::LedgerCorruption("unknown command status")),
             };
-            transaction.commit()?;
             return Ok(receipt);
         }
 
@@ -797,23 +1063,23 @@ impl KernelStore {
         // accepted installations must carry the resolved object below.
         let source_content_object_id = match &request.body {
             CommandBody::InstallFoundingMission { mission } => {
-                mission_source_content_object_id(&transaction, mission.source_rendering_digest).ok()
+                mission_source_content_object_id(transaction, mission.source_rendering_digest).ok()
             }
             _ => None,
         };
         insert_command_body(
-            &transaction,
+            transaction,
             command_row_id,
             &request.body,
             source_content_object_id,
         )?;
 
         transaction.execute_batch("SAVEPOINT apply_command")?;
-        let transition = apply_command(&transaction, command_row_id, &request);
+        let transition = apply_command(transaction, command_row_id, &request);
         let receipt = match transition? {
             Ok(event_body) => {
                 let event_id = insert_event(
-                    &transaction,
+                    transaction,
                     command_row_id,
                     &request.command_id,
                     &event_body,
@@ -842,7 +1108,6 @@ impl KernelStore {
                 }
             }
         };
-        transaction.commit()?;
         Ok(receipt)
     }
 
@@ -1157,6 +1422,82 @@ impl KernelStore {
     }
 }
 
+fn existing_deterministic_evaluator_schedule_claim(
+    transaction: &Transaction<'_>,
+    claim: &DeterministicEvaluatorScheduleClaimRequest,
+) -> Result<Option<NativeChildSpawnAdmissionId>, StoreError> {
+    let row: Option<DeterministicEvaluatorScheduleClaimSqlRow> = transaction
+        .query_row(
+            "SELECT command.command_status, command.rejection_code,
+                    command.principal_id, command.capability_kind, command.command_kind,
+                    body.native_workspace_id, body.canonical_workspace_path,
+                    body.supervisor_epoch_id, body.supervisor_epoch_identity,
+                    admission.native_child_spawn_admission_id
+               FROM commands command
+          LEFT JOIN command_admit_deterministic_evaluator_native_child body
+                 ON body.command_row_id = command.command_row_id
+          LEFT JOIN native_child_spawn_admissions admission
+                 ON admission.admitted_by_command_id = command.command_row_id
+              WHERE command.command_id = ?1",
+            [claim.command_id.as_str()],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                    row.get(8)?,
+                    row.get(9)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((
+        status,
+        rejection,
+        principal,
+        capability,
+        command_kind,
+        workspace,
+        path,
+        epoch,
+        identity,
+        admission,
+    )) = row
+    else {
+        return Ok(None);
+    };
+    let same_claim = principal == PrincipalId::KERNEL.value()
+        && capability == Capability::AdmitDeterministicEvaluatorNativeChild as i64
+        && command_kind == CommandKind::AdmitDeterministicEvaluatorNativeChild as i64
+        && workspace.as_deref() == Some(claim.native_workspace_id.as_str())
+        && path.as_deref() == Some(claim.canonical_workspace_path.as_str())
+        && epoch == Some(claim.supervisor_epoch_id.value())
+        && identity.as_deref() == Some(claim.supervisor_epoch_identity.as_str());
+    if !same_claim {
+        return Err(StoreError::IdempotencyConflict);
+    }
+    match status {
+        1 => NativeChildSpawnAdmissionId::try_from(admission.ok_or(
+            StoreError::LedgerCorruption("accepted evaluator schedule claim has no admission"),
+        )?)
+        .map(Some)
+        .map_err(|_| StoreError::InvalidStoredValue),
+        2 => Err(StoreError::DeterministicEvaluatorScheduleClaimRejected(
+            rejection_from_i64(rejection.ok_or(StoreError::LedgerCorruption(
+                "rejected evaluator schedule claim has no rejection",
+            ))?)?,
+        )),
+        _ => Err(StoreError::LedgerCorruption(
+            "unknown evaluator schedule claim command status",
+        )),
+    }
+}
+
 fn preflight_founding_mission_request(
     transaction: &Transaction<'_>,
     request: &CommandRequest,
@@ -1405,6 +1746,9 @@ fn command_operating_cycle_for_treatment(
         | CommandBody::RegisterForensicManifest {
             operating_cycle_id, ..
         }
+        | CommandBody::RegisterDeterministicEvaluatorForensicManifest {
+            operating_cycle_id, ..
+        }
         | CommandBody::RegisterDeterministicExperiment {
             operating_cycle_id, ..
         }
@@ -1568,6 +1912,7 @@ fn apply_command(
             | CommandBody::RegisterOutcomeObligation { .. }
             | CommandBody::ResolveOutcomeObligation { .. }
             | CommandBody::RegisterForensicManifest { .. }
+            | CommandBody::RegisterDeterministicEvaluatorForensicManifest { .. }
             | CommandBody::RegisterDeterministicExperiment { .. }
             | CommandBody::RecordDeterministicEvaluationReceipt { .. }
             | CommandBody::AdmitDeterministicEvidence { .. }
@@ -2246,6 +2591,16 @@ fn apply_command(
             *capture_policy,
             *retention_access_class,
             *evaluator_output_content_object_id,
+        ),
+        CommandBody::RegisterDeterministicEvaluatorForensicManifest {
+            operating_cycle_id,
+            native_child_spawn_admission_id,
+        } => register_deterministic_evaluator_forensic_manifest(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *operating_cycle_id,
+            *native_child_spawn_admission_id,
         ),
         CommandBody::RegisterDeterministicExperiment {
             operating_cycle_id,
@@ -7894,6 +8249,24 @@ fn register_forensic_manifest(
     if experiment_cycle != operating_cycle_id.value() {
         return Err(Rejection::ForensicManifestBindingMismatch);
     }
+    let scheduler_admission_exists: bool = transaction
+        .query_row(
+            "SELECT EXISTS(
+                 SELECT 1 FROM native_child_spawn_admissions
+                  WHERE deterministic_experiment_id = ?1
+             )",
+            [producing_deterministic_experiment_id.value()],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|_| Rejection::ForensicManifestBindingMismatch)?
+        != 0;
+    if scheduler_admission_exists {
+        // Once the resident scheduler has claimed an experiment, its output
+        // may enter a manifest only through the derived stdout-seal command
+        // below. The generic occurrence command cannot recombine that child
+        // with another sealed object.
+        return Err(Rejection::ForensicManifestBindingMismatch);
+    }
     let project_id = ProjectId::try_from(project).map_err(|_| Rejection::SubjectNotFound)?;
     let object_exists: bool = transaction
         .query_row(
@@ -7936,6 +8309,156 @@ fn register_forensic_manifest(
         producing_deterministic_experiment_id,
         evaluator_output_content_object_id,
     })
+}
+
+fn register_deterministic_evaluator_forensic_manifest(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    operating_cycle_id: OperatingCycleId,
+    native_child_spawn_admission_id: NativeChildSpawnAdmissionId,
+) -> Result<EventBody, Rejection> {
+    let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
+    // The accepted child must have reached the full physical terminal: both
+    // output streams are complete and it has been finalized after direct reap.
+    // We derive only stdout as the evaluator result; stderr remains a required
+    // custody receipt, never a silent optional diagnostic channel.
+    let row: Option<(i64, i64, i64, i64, i64, i64, i64)> = transaction
+        .query_row(
+            "SELECT experiment.project_id,
+                    experiment.deterministic_experiment_id,
+                    admission.evaluator_revision_id,
+                    admission.input_manifest_id,
+                    child.native_child_id,
+                    stdout.native_child_stream_seal_id,
+                    stdout.retained_content_object_id
+               FROM native_child_spawn_admissions admission
+               JOIN deterministic_experiments experiment
+                 ON experiment.deterministic_experiment_id = admission.deterministic_experiment_id
+                AND experiment.operating_cycle_id = admission.operating_cycle_id
+                AND experiment.evaluator_revision_id = admission.evaluator_revision_id
+                AND experiment.input_manifest_id = admission.input_manifest_id
+               JOIN native_children child
+                 ON child.native_child_spawn_admission_id = admission.native_child_spawn_admission_id
+               JOIN native_child_stream_seals stdout
+                 ON stdout.native_child_id = child.native_child_id
+                AND stdout.stream_kind = ?1
+                AND stdout.completeness = ?2
+               JOIN native_child_stream_seals stderr
+                 ON stderr.native_child_id = child.native_child_id
+                AND stderr.stream_kind = ?3
+                AND stderr.completeness = ?2
+              WHERE admission.native_child_spawn_admission_id = ?4
+                AND admission.operating_cycle_id = ?5
+                AND admission.actor_attempt_id IS NULL
+                AND admission.root_authority_office_session_id IS NULL
+                AND admission.deterministic_experiment_id IS NOT NULL
+                AND admission.evaluator_revision_id IS NOT NULL
+                AND admission.input_manifest_id IS NOT NULL
+                AND admission.budget_reservation_id IS NULL
+                AND admission.lifecycle_state = ?6
+                AND experiment.lifecycle_state = ?7
+                AND child.lifecycle_state = ?8
+                AND NOT EXISTS(
+                    SELECT 1 FROM pi_child_spawn_sidecars sidecar
+                     WHERE sidecar.native_child_spawn_admission_id = admission.native_child_spawn_admission_id
+                )",
+            params![
+                ChildStreamKind::Stdout as i64,
+                ChildStreamSealCompleteness::Complete as i64,
+                ChildStreamKind::Stderr as i64,
+                native_child_spawn_admission_id.value(),
+                operating_cycle_id.value(),
+                NativeChildSpawnAdmissionState::Spawned as i64,
+                DeterministicExperimentState::Registered as i64,
+                ChildProcessState::Finalized as i64,
+            ],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|_| Rejection::ForensicManifestBindingMismatch)?;
+    let Some((project, experiment, evaluator, input, child, stdout_seal, output)) = row else {
+        return Err(Rejection::ForensicManifestBindingMismatch);
+    };
+    transaction
+        .execute(
+            "INSERT INTO forensic_manifests(
+             producing_deterministic_experiment_id, capture_policy,
+             retention_access_class, registered_by_command_id
+         ) VALUES (?1, ?2, ?3, ?4)",
+            params![
+                experiment,
+                ForensicManifestCapturePolicy::DeterministicExperimentEvaluatorV1 as i64,
+                RetentionAccessClass::ForensicRestricted as i64,
+                command_row_id,
+            ],
+        )
+        .map_err(|_| Rejection::ForensicManifestBindingMismatch)?;
+    let forensic_manifest_id = id_from_last_insert::<ForensicManifestId>(transaction)?;
+    transaction
+        .execute(
+            "INSERT INTO forensic_manifest_objects(
+             forensic_manifest_id, member_ordinal, object_role,
+             media_schema_contract, content_object_id
+         ) VALUES (?1, 1, 1, ?2, ?3)",
+            params![
+                forensic_manifest_id.value(),
+                ContentMediaSchemaContract::DeterministicEvaluatorOutputV1 as i64,
+                output,
+            ],
+        )
+        .map_err(|_| Rejection::ForensicManifestBindingMismatch)?;
+    transaction
+        .execute(
+            "INSERT INTO deterministic_evaluator_forensic_manifest_bindings(
+             forensic_manifest_id, deterministic_experiment_id,
+             native_child_spawn_admission_id, native_child_id,
+             evaluator_revision_id, input_manifest_id,
+             native_child_stream_seal_id, evaluator_output_content_object_id,
+             registered_by_command_id
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                forensic_manifest_id.value(),
+                experiment,
+                native_child_spawn_admission_id.value(),
+                child,
+                evaluator,
+                input,
+                stdout_seal,
+                output,
+                command_row_id,
+            ],
+        )
+        .map_err(|_| Rejection::ForensicManifestBindingMismatch)?;
+    record_coordination_provenance(
+        transaction,
+        command_row_id,
+        cycle,
+        operating_cycle_id,
+        Some(ProjectId::try_from(project).map_err(|_| Rejection::SubjectNotFound)?),
+    )?;
+    Ok(
+        EventBody::DeterministicEvaluatorForensicManifestRegistered {
+            forensic_manifest_id,
+            deterministic_experiment_id: DeterministicExperimentId::try_from(experiment)
+                .map_err(|_| Rejection::ForensicManifestBindingMismatch)?,
+            native_child_spawn_admission_id,
+            native_child_stream_seal_id: NativeChildStreamSealId::try_from(stdout_seal)
+                .map_err(|_| Rejection::ForensicManifestBindingMismatch)?,
+            evaluator_output_content_object_id: ContentObjectId::try_from(output)
+                .map_err(|_| Rejection::ForensicManifestBindingMismatch)?,
+        },
+    )
 }
 
 fn content_object_exists(
@@ -8101,6 +8624,48 @@ fn record_deterministic_evaluation_receipt(
     ).map_err(|_| Rejection::DeterministicEvaluationBindingMismatch)?;
     if !output_in_manifest {
         return Err(Rejection::DeterministicEvaluationBindingMismatch);
+    }
+    // A generic forensic occurrence predating scheduling remains auditable,
+    // but it cannot become the result of a claimed evaluator. Once an exact
+    // evaluator admission exists, its receipt must name the manifest/output
+    // occurrence derived from that admission's finalized stdout custody.
+    let scheduler_claimed: bool = transaction
+        .query_row(
+            "SELECT EXISTS(
+                 SELECT 1 FROM native_child_spawn_admissions
+                  WHERE deterministic_experiment_id = ?1
+             )",
+            [deterministic_experiment_id.value()],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|_| Rejection::DeterministicEvaluationBindingMismatch)?
+        != 0;
+    if scheduler_claimed {
+        let exact_derived_occurrence: bool = transaction
+            .query_row(
+                "SELECT EXISTS(
+                     SELECT 1
+                       FROM deterministic_evaluator_forensic_manifest_bindings binding
+                      WHERE binding.forensic_manifest_id = ?1
+                        AND binding.deterministic_experiment_id = ?2
+                        AND binding.evaluator_revision_id = ?3
+                        AND binding.input_manifest_id = ?4
+                        AND binding.evaluator_output_content_object_id = ?5
+                 )",
+                params![
+                    forensic_manifest_id.value(),
+                    deterministic_experiment_id.value(),
+                    evaluator_revision_id.value(),
+                    input_manifest_id.value(),
+                    evaluator_output_content_object_id.value(),
+                ],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(|_| Rejection::DeterministicEvaluationBindingMismatch)?
+            != 0;
+        if !exact_derived_occurrence {
+            return Err(Rejection::DeterministicEvaluationBindingMismatch);
+        }
     }
     transaction.execute(
         "INSERT INTO deterministic_evaluation_receipts(deterministic_experiment_id, evaluator_revision_id, input_manifest_id, forensic_manifest_id, evaluator_output_content_object_id, attested_by_command_id)
@@ -10986,6 +11551,13 @@ fn request_fingerprint(request: &CommandRequest) -> Blake3Digest {
             put_i64(&mut bytes, *retention_access_class as i64);
             put_i64(&mut bytes, evaluator_output_content_object_id.value());
         }
+        CommandBody::RegisterDeterministicEvaluatorForensicManifest {
+            operating_cycle_id,
+            native_child_spawn_admission_id,
+        } => {
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, native_child_spawn_admission_id.value());
+        }
         CommandBody::RegisterDeterministicExperiment {
             operating_cycle_id,
             project_id,
@@ -11925,6 +12497,19 @@ fn event_fingerprint(event_id: EventId, command_id: &CommandId, body: &EventBody
             put_i64(&mut bytes, producing_deterministic_experiment_id.value());
             put_i64(&mut bytes, evaluator_output_content_object_id.value());
         }
+        EventBody::DeterministicEvaluatorForensicManifestRegistered {
+            forensic_manifest_id,
+            deterministic_experiment_id,
+            native_child_spawn_admission_id,
+            native_child_stream_seal_id,
+            evaluator_output_content_object_id,
+        } => {
+            put_i64(&mut bytes, forensic_manifest_id.value());
+            put_i64(&mut bytes, deterministic_experiment_id.value());
+            put_i64(&mut bytes, native_child_spawn_admission_id.value());
+            put_i64(&mut bytes, native_child_stream_seal_id.value());
+            put_i64(&mut bytes, evaluator_output_content_object_id.value());
+        }
         EventBody::DeterministicExperimentRegistered {
             deterministic_experiment_id,
             evaluator_revision_id,
@@ -12794,6 +13379,19 @@ fn insert_command_body(
                     *capture_policy as i64,
                     *retention_access_class as i64,
                     evaluator_output_content_object_id.value()
+                ],
+            )?;
+        }
+        CommandBody::RegisterDeterministicEvaluatorForensicManifest {
+            operating_cycle_id,
+            native_child_spawn_admission_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_register_deterministic_evaluator_forensic_manifest VALUES (?1, ?2, ?3)",
+                params![
+                    command_row_id,
+                    operating_cycle_id.value(),
+                    native_child_spawn_admission_id.value(),
                 ],
             )?;
         }
@@ -14264,6 +14862,26 @@ fn insert_event_body(
                 ],
             )?;
         }
+        EventBody::DeterministicEvaluatorForensicManifestRegistered {
+            forensic_manifest_id,
+            deterministic_experiment_id,
+            native_child_spawn_admission_id,
+            native_child_stream_seal_id,
+            evaluator_output_content_object_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_deterministic_evaluator_forensic_manifest_registered
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    event_id.value(),
+                    forensic_manifest_id.value(),
+                    deterministic_experiment_id.value(),
+                    native_child_spawn_admission_id.value(),
+                    native_child_stream_seal_id.value(),
+                    evaluator_output_content_object_id.value(),
+                ],
+            )?;
+        }
         EventBody::DeterministicExperimentRegistered {
             deterministic_experiment_id,
             evaluator_revision_id,
@@ -15322,6 +15940,43 @@ fn decode_event_body(
                     .map_err(|_| StoreError::InvalidStoredValue)?,
             }
         }
+        EventKind::DeterministicEvaluatorForensicManifestRegistered => {
+            let row: (i64, i64, i64, i64, i64) = connection
+                .query_row(
+                    "SELECT forensic_manifest_id, deterministic_experiment_id,
+                            native_child_spawn_admission_id,
+                            native_child_stream_seal_id,
+                            evaluator_output_content_object_id
+                       FROM event_deterministic_evaluator_forensic_manifest_registered
+                      WHERE event_id = ?1",
+                    [event_id],
+                    |row| {
+                        Ok((
+                            row.get(0)?,
+                            row.get(1)?,
+                            row.get(2)?,
+                            row.get(3)?,
+                            row.get(4)?,
+                        ))
+                    },
+                )
+                .optional()?
+                .ok_or(StoreError::LedgerCorruption(
+                    "missing deterministic evaluator forensic manifest event body",
+                ))?;
+            EventBody::DeterministicEvaluatorForensicManifestRegistered {
+                forensic_manifest_id: ForensicManifestId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                deterministic_experiment_id: DeterministicExperimentId::try_from(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                native_child_spawn_admission_id: NativeChildSpawnAdmissionId::try_from(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                native_child_stream_seal_id: NativeChildStreamSealId::try_from(row.3)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                evaluator_output_content_object_id: ContentObjectId::try_from(row.4)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
         EventKind::DeterministicExperimentRegistered => {
             let (experiment, evaluator, input): (i64,i64,i64) = connection.query_row("SELECT deterministic_experiment_id, evaluator_revision_id, input_manifest_id FROM event_deterministic_experiment_registered WHERE event_id = ?1", [event_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing deterministic experiment event body"))?;
             EventBody::DeterministicExperimentRegistered {
@@ -16112,7 +16767,7 @@ fn replay_command_requests(
     Ok(commands)
 }
 
-const MATERIALIZED_TABLES: [&str; 96] = [
+const MATERIALIZED_TABLES: [&str; 97] = [
     "principals",
     "societies",
     "office_contracts",
@@ -16173,6 +16828,7 @@ const MATERIALIZED_TABLES: [&str; 96] = [
     "content_objects",
     "forensic_manifests",
     "forensic_manifest_objects",
+    "deterministic_evaluator_forensic_manifest_bindings",
     "evaluator_revisions",
     "input_manifests",
     "deterministic_experiments",
@@ -17055,6 +17711,26 @@ fn decode_command_body(
                 capture_policy: forensic_manifest_capture_policy_from_i64(policy)?,
                 retention_access_class: retention_access_class_from_i64(retention)?,
                 evaluator_output_content_object_id: ContentObjectId::try_from(output)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::RegisterDeterministicEvaluatorForensicManifest => {
+            let (cycle, admission): (i64, i64) = connection
+                .query_row(
+                    "SELECT operating_cycle_id, native_child_spawn_admission_id
+                       FROM command_register_deterministic_evaluator_forensic_manifest
+                      WHERE command_row_id = ?1",
+                    [command_row_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?
+                .ok_or(StoreError::LedgerCorruption(
+                    "missing deterministic evaluator forensic manifest command body",
+                ))?;
+            CommandBody::RegisterDeterministicEvaluatorForensicManifest {
+                operating_cycle_id: OperatingCycleId::try_from(cycle)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                native_child_spawn_admission_id: NativeChildSpawnAdmissionId::try_from(admission)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
             }
         }
@@ -18083,6 +18759,7 @@ fn command_kind_from_i64(value: i64) -> Result<CommandKind, StoreError> {
         97 => Ok(CommandKind::RecordPiOfficeSessionDisposed),
         98 => Ok(CommandKind::AdmitDeterministicEvaluatorNativeChild),
         99 => Ok(CommandKind::RecordDeterministicEvaluatorNativeChildSpawn),
+        100 => Ok(CommandKind::RegisterDeterministicEvaluatorForensicManifest),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }
@@ -18188,6 +18865,7 @@ fn capability_from_i64(value: i64) -> Result<Capability, StoreError> {
         97 => Ok(Capability::RecordPiOfficeSessionDisposed),
         98 => Ok(Capability::AdmitDeterministicEvaluatorNativeChild),
         99 => Ok(Capability::RecordDeterministicEvaluatorNativeChildSpawn),
+        100 => Ok(Capability::RegisterDeterministicEvaluatorForensicManifest),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }
@@ -18551,6 +19229,7 @@ fn event_kind_from_i64(value: i64) -> Result<EventKind, StoreError> {
         91 => Ok(EventKind::PiOfficeSessionDisposed),
         92 => Ok(EventKind::DeterministicEvaluatorNativeChildAdmitted),
         93 => Ok(EventKind::DeterministicEvaluatorNativeChildSpawnRecorded),
+        94 => Ok(EventKind::DeterministicEvaluatorForensicManifestRegistered),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }

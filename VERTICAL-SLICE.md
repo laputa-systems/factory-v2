@@ -119,10 +119,16 @@ nucleus for PID/PGID ownership, liveness, signalling, direct wait, and bounded
 streams. Pi is a strict optional session/protocol sidecar over that base. A
 daemon-private deterministic-evaluator pre-bridge accepts only a verified
 direct executable, a verified input manifest, fixed argv, and an empty
-environment, with sealing allowed only after reap and group absence. It has no
-resident scheduler or public execution command and does not yet run an
-application evaluator, project output into semantic evidence, or complete this
-slice.
+environment, with sealing allowed only after reap and group absence. The
+kernel now has an idempotent daemon-facing claim which treats an already
+registered deterministic experiment as the sole scheduling authorization and
+derives the oldest eligible experiment's exact evaluator/input/workspace
+admission. Once its child is finalized with complete stdout and stderr seals,
+the kernel derives the forensic output occurrence from that exact stdout seal;
+an arbitrary global content object cannot be substituted. The resident serving
+loop has no call site for this claim yet, and there is no public execution
+command, application evaluator run, semantic evidence admission, or completed
+slice claim.
 
 The fresh bootstrap names its single generic root-governance relation
 `FoundingMission`, `RootAuthorityOffice`, and `RootAuthorityOfficeSession`.

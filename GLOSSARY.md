@@ -160,6 +160,15 @@ A typed observation or sealed content object given a semantic role under a
 named evaluator, scope, and admitting authority. Admission does not make the
 claim true, sufficient, or culturally inherited.
 
+### Deterministic evaluator schedule claim
+
+A daemon-facing kernel transaction that selects the oldest eligible registered
+deterministic experiment and derives its exact native-child admission. The
+experiment registration is the authority; an application does not supply an
+execution request, path, evaluator identity, or output. A completed evaluator
+occurrence is later derived only from the same finalized child with complete
+stdout and stderr seals.
+
 ### Event ledger
 
 The append-only record of accepted commands, transitions, resources, and

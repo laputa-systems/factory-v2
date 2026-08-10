@@ -924,6 +924,14 @@ CREATE TABLE command_register_forensic_manifest (
     retention_access_class INTEGER NOT NULL CHECK (retention_access_class IN (1, 2)),
     evaluator_output_content_object_id INTEGER NOT NULL
 );
+-- The scheduler-facing output path names only an already-admitted child. The
+-- kernel derives its experiment, evaluator/input revisions, complete stdout
+-- seal, and retained object, preventing record recombination by a caller.
+CREATE TABLE command_register_deterministic_evaluator_forensic_manifest (
+    command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id),
+    operating_cycle_id INTEGER NOT NULL,
+    native_child_spawn_admission_id INTEGER NOT NULL
+);
 CREATE TABLE command_register_deterministic_experiment (
     command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id),
     operating_cycle_id INTEGER NOT NULL,
@@ -976,6 +984,14 @@ CREATE TABLE event_forensic_manifest_registered (
     producing_deterministic_experiment_id INTEGER NOT NULL REFERENCES deterministic_experiments(deterministic_experiment_id),
     evaluator_output_content_object_id INTEGER NOT NULL REFERENCES content_objects(content_object_id)
 );
+CREATE TABLE event_deterministic_evaluator_forensic_manifest_registered (
+    event_id INTEGER PRIMARY KEY REFERENCES events(event_id),
+    forensic_manifest_id INTEGER NOT NULL REFERENCES forensic_manifests(forensic_manifest_id),
+    deterministic_experiment_id INTEGER NOT NULL REFERENCES deterministic_experiments(deterministic_experiment_id),
+    native_child_spawn_admission_id INTEGER NOT NULL REFERENCES native_child_spawn_admissions(native_child_spawn_admission_id),
+    native_child_stream_seal_id INTEGER NOT NULL REFERENCES native_child_stream_seals(native_child_stream_seal_id),
+    evaluator_output_content_object_id INTEGER NOT NULL REFERENCES content_objects(content_object_id)
+);
 CREATE TABLE event_deterministic_experiment_registered (
     event_id INTEGER PRIMARY KEY REFERENCES events(event_id),
     deterministic_experiment_id INTEGER NOT NULL REFERENCES deterministic_experiments(deterministic_experiment_id),
@@ -1002,7 +1018,7 @@ CREATE TABLE event_deterministic_experiment_finalized (
 CREATE TABLE capability_grants (
     capability_grant_id INTEGER PRIMARY KEY,
     principal_id INTEGER NOT NULL REFERENCES principals(principal_id),
-    capability_kind INTEGER NOT NULL CHECK (capability_kind BETWEEN 1 AND 99),
+    capability_kind INTEGER NOT NULL CHECK (capability_kind BETWEEN 1 AND 100),
     office_occupancy_id INTEGER REFERENCES office_occupancies(office_occupancy_id),
     actor_instance_id INTEGER REFERENCES actor_instances(actor_instance_id),
     grant_state INTEGER NOT NULL CHECK (grant_state IN (1, 2)),
@@ -1051,9 +1067,9 @@ CREATE TABLE commands (
     command_id TEXT NOT NULL UNIQUE,
     principal_id INTEGER NOT NULL,
     capability_grant_id INTEGER NOT NULL,
-    capability_kind INTEGER NOT NULL CHECK (capability_kind BETWEEN 1 AND 99),
+    capability_kind INTEGER NOT NULL CHECK (capability_kind BETWEEN 1 AND 100),
     expected_generation INTEGER,
-    command_kind INTEGER NOT NULL CHECK (command_kind BETWEEN 1 AND 99),
+    command_kind INTEGER NOT NULL CHECK (command_kind BETWEEN 1 AND 100),
     request_fingerprint BLOB NOT NULL CHECK (length(request_fingerprint) = 32),
     command_status INTEGER NOT NULL CHECK (command_status IN (1, 2)),
     rejection_code INTEGER,
@@ -1064,7 +1080,7 @@ CREATE TABLE commands (
 CREATE TABLE events (
     event_id INTEGER PRIMARY KEY,
     command_row_id INTEGER NOT NULL UNIQUE REFERENCES commands(command_row_id),
-    event_kind INTEGER NOT NULL CHECK (event_kind BETWEEN 1 AND 93),
+    event_kind INTEGER NOT NULL CHECK (event_kind BETWEEN 1 AND 94),
     event_sequence INTEGER NOT NULL UNIQUE CHECK (event_sequence > 0),
     event_fingerprint BLOB NOT NULL CHECK (length(event_fingerprint) = 32)
 );
@@ -1285,6 +1301,21 @@ CREATE TABLE native_child_stream_seals (
     completeness INTEGER NOT NULL CHECK (completeness IN (1, 2, 3)),
     sealed_by_command_id INTEGER NOT NULL REFERENCES commands(command_row_id),
     UNIQUE(native_child_id, stream_kind)
+);
+-- A scheduler-produced forensic occurrence is the exact complete stdout seal
+-- from the exact evaluator child, not an independently supplied object.
+CREATE TABLE deterministic_evaluator_forensic_manifest_bindings (
+    forensic_manifest_id INTEGER PRIMARY KEY REFERENCES forensic_manifests(forensic_manifest_id),
+    deterministic_experiment_id INTEGER NOT NULL REFERENCES deterministic_experiments(deterministic_experiment_id),
+    native_child_spawn_admission_id INTEGER NOT NULL UNIQUE
+        REFERENCES native_child_spawn_admissions(native_child_spawn_admission_id),
+    native_child_id INTEGER NOT NULL UNIQUE REFERENCES native_children(native_child_id),
+    evaluator_revision_id INTEGER NOT NULL REFERENCES evaluator_revisions(evaluator_revision_id),
+    input_manifest_id INTEGER NOT NULL REFERENCES input_manifests(input_manifest_id),
+    native_child_stream_seal_id INTEGER NOT NULL UNIQUE
+        REFERENCES native_child_stream_seals(native_child_stream_seal_id),
+    evaluator_output_content_object_id INTEGER NOT NULL REFERENCES content_objects(content_object_id),
+    registered_by_command_id INTEGER NOT NULL REFERENCES commands(command_row_id)
 );
 CREATE TABLE cancellation_propagations (
     cancellation_propagation_id INTEGER PRIMARY KEY,
@@ -2097,6 +2128,7 @@ INSERT INTO capability_grants VALUES(53,2,96,NULL,NULL,1,3,NULL,NULL);
 INSERT INTO capability_grants VALUES(54,2,97,NULL,NULL,1,3,NULL,NULL);
 INSERT INTO capability_grants VALUES(55,2,98,NULL,NULL,1,3,NULL,NULL);
 INSERT INTO capability_grants VALUES(56,2,99,NULL,NULL,1,3,NULL,NULL);
-PRAGMA user_version = 14;
+INSERT INTO capability_grants VALUES(57,2,100,NULL,NULL,1,3,NULL,NULL);
+PRAGMA user_version = 15;
 COMMIT;
 PRAGMA foreign_keys = ON;

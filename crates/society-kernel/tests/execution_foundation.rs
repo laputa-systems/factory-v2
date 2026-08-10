@@ -18,7 +18,8 @@ use society_kernel::{
     CanonicalWorkspacePath, Capability, ChildRecoveryObservation, ChildStreamKind,
     ChildStreamSealCompleteness, CommandBody, CommandDisposition, CommandId, CommandReceipt,
     CommandRequest, ContentObjectId, ContentSealReceiptId, ContextPackPurpose,
-    DeterministicEvaluationReceiptId, DeterministicExperimentId, DevelopmentalAttractor,
+    DeterministicEvaluationReceiptId, DeterministicEvaluatorScheduleClaim,
+    DeterministicEvaluatorScheduleClaimRequest, DeterministicExperimentId, DevelopmentalAttractor,
     DirectChildWaitStatus, EvaluatorRevisionId, EventBody, EventId, EvidenceApplicability,
     EvidenceLimitationText, EvidenceSemanticRole, ExecutionProfileId, ExpectedGeneration,
     ForensicManifestCapturePolicy, ForensicManifestId, GraphRevisionBody, GraphRevisionId,
@@ -448,6 +449,23 @@ fn deterministic_evaluator_native_child_is_not_a_pi_child() {
             input_manifest_content_object_id: ContentObjectId::new(3).unwrap(),
         },
     );
+    // This intentionally precedes scheduling. It remains a generic forensic
+    // occurrence, but it must never be usable as the output receipt once this
+    // experiment has an exact evaluator-child claim.
+    accepted(
+        &mut store,
+        "evaluator-pre-schedule-generic-manifest",
+        PrincipalId::KERNEL,
+        Capability::RegisterForensicManifest,
+        generation,
+        CommandBody::RegisterForensicManifest {
+            operating_cycle_id: cycle,
+            producing_deterministic_experiment_id: DeterministicExperimentId::new(1).unwrap(),
+            capture_policy: ForensicManifestCapturePolicy::DeterministicExperimentEvaluatorV1,
+            retention_access_class: RetentionAccessClass::ForensicRestricted,
+            evaluator_output_content_object_id: ContentObjectId::new(2).unwrap(),
+        },
+    );
     let epoch_identity = SupervisorEpochIdentity::parse("evaluator-native-epoch").unwrap();
     accepted(
         &mut store,
@@ -460,32 +478,35 @@ fn deterministic_evaluator_native_child_is_not_a_pi_child() {
             supervisor_epoch_identity: epoch_identity.clone(),
         },
     );
-    let evaluator_generation = ExpectedGeneration::Exact(
-        store
-            .current_operating_cycle_admission_generation(cycle)
-            .unwrap(),
+    let schedule_request = DeterministicEvaluatorScheduleClaimRequest::new(
+        CommandId::parse("evaluator-schedule-claim").unwrap(),
+        NativeWorkspaceId::parse("evaluator-native-workspace").unwrap(),
+        CanonicalWorkspacePath::parse("/tmp/evaluator-native-workspace").unwrap(),
+        SupervisorEpochId::new(1).unwrap(),
+        epoch_identity.clone(),
     );
-    accepted(
-        &mut store,
-        "evaluator-admit",
-        PrincipalId::KERNEL,
-        Capability::AdmitDeterministicEvaluatorNativeChild,
-        evaluator_generation,
-        CommandBody::AdmitDeterministicEvaluatorNativeChild {
-            operating_cycle_id: cycle,
-            deterministic_experiment_id: DeterministicExperimentId::new(1).unwrap(),
-            evaluator_revision_id: EvaluatorRevisionId::new(1).unwrap(),
-            input_manifest_id: InputManifestId::new(1).unwrap(),
-            execution_profile_id: ExecutionProfileId::DETERMINISTIC_EVALUATOR_PROCESS_FIXTURE_V1,
-            native_workspace_id: NativeWorkspaceId::parse("evaluator-native-workspace").unwrap(),
-            canonical_workspace_path: CanonicalWorkspacePath::parse(
-                "/tmp/evaluator-native-workspace",
-            )
-            .unwrap(),
-            supervisor_epoch_id: SupervisorEpochId::new(1).unwrap(),
-            supervisor_epoch_identity: epoch_identity.clone(),
-        },
+    let claimed = store
+        .claim_registered_deterministic_evaluator(schedule_request.clone())
+        .unwrap()
+        .unwrap();
+    let DeterministicEvaluatorScheduleClaim::SpawnAuthorized(admission) = &claimed else {
+        panic!("fresh scheduler claim must remain spawn-authoritative");
+    };
+    assert_eq!(admission.operating_cycle_id(), cycle);
+    assert_eq!(
+        claimed.evaluator_content_object_id(),
+        Some(ContentObjectId::new(2).unwrap())
     );
+    assert_eq!(
+        claimed.input_manifest_content_object_id(),
+        Some(ContentObjectId::new(3).unwrap())
+    );
+    let spawned_retry_request = schedule_request.clone();
+    let repeated_claim = store
+        .claim_registered_deterministic_evaluator(schedule_request)
+        .unwrap()
+        .unwrap();
+    assert_eq!(repeated_claim, claimed);
     let admission_id = NativeChildSpawnAdmissionId::new(1).unwrap();
     let admission = store
         .deterministic_evaluator_native_child_admission(admission_id)
@@ -535,6 +556,14 @@ fn deterministic_evaluator_native_child_is_not_a_pi_child() {
             process_group_id: OwnedProcessGroupId::try_from(9031).unwrap(),
         },
     );
+    assert!(matches!(
+        store
+            .claim_registered_deterministic_evaluator(spawned_retry_request)
+            .unwrap(),
+        Some(DeterministicEvaluatorScheduleClaim::AlreadyClaimed {
+            native_child_spawn_admission_id,
+        }) if native_child_spawn_admission_id == admission_id
+    ));
     let child = NativeChildId::new(1).unwrap();
     rejected(
         &mut store,
@@ -619,6 +648,18 @@ fn deterministic_evaluator_native_child_is_not_a_pi_child() {
         },
         Rejection::ChildLifecycleReceiptMissing,
     );
+    rejected(
+        &mut store,
+        "evaluator-manifest-requires-finalized-two-stream-child",
+        PrincipalId::KERNEL,
+        Capability::RegisterDeterministicEvaluatorForensicManifest,
+        generation,
+        CommandBody::RegisterDeterministicEvaluatorForensicManifest {
+            operating_cycle_id: cycle,
+            native_child_spawn_admission_id: admission_id,
+        },
+        Rejection::ForensicManifestBindingMismatch,
+    );
     accepted(
         &mut store,
         "evaluator-stderr",
@@ -633,6 +674,18 @@ fn deterministic_evaluator_native_child_is_not_a_pi_child() {
             completeness: ChildStreamSealCompleteness::Complete,
         },
     );
+    rejected(
+        &mut store,
+        "evaluator-manifest-requires-finalized-child-after-both-streams",
+        PrincipalId::KERNEL,
+        Capability::RegisterDeterministicEvaluatorForensicManifest,
+        generation,
+        CommandBody::RegisterDeterministicEvaluatorForensicManifest {
+            operating_cycle_id: cycle,
+            native_child_spawn_admission_id: admission_id,
+        },
+        Rejection::ForensicManifestBindingMismatch,
+    );
     accepted(
         &mut store,
         "evaluator-two-stream-finalize",
@@ -641,6 +694,117 @@ fn deterministic_evaluator_native_child_is_not_a_pi_child() {
         generation,
         CommandBody::FinalizeChildProcess {
             native_child_id: child,
+        },
+    );
+    accepted(
+        &mut store,
+        "evaluator-seal-recombined-output",
+        PrincipalId::KERNEL,
+        Capability::RecordContentSealReceipt,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::RecordContentSealReceipt {
+            digest: Blake3Digest::of_bytes(b"recombined-evaluator-output"),
+        },
+    );
+    accepted(
+        &mut store,
+        "evaluator-register-recombined-output",
+        PrincipalId::KERNEL,
+        Capability::RegisterContentObject,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::RegisterContentObject {
+            content_seal_receipt_id: ContentSealReceiptId::new(4).unwrap(),
+        },
+    );
+    rejected(
+        &mut store,
+        "evaluator-generic-manifest-cannot-recombine-scheduled-output",
+        PrincipalId::KERNEL,
+        Capability::RegisterForensicManifest,
+        generation,
+        CommandBody::RegisterForensicManifest {
+            operating_cycle_id: cycle,
+            producing_deterministic_experiment_id: DeterministicExperimentId::new(1).unwrap(),
+            capture_policy: ForensicManifestCapturePolicy::DeterministicExperimentEvaluatorV1,
+            retention_access_class: RetentionAccessClass::ForensicRestricted,
+            evaluator_output_content_object_id: ContentObjectId::new(4).unwrap(),
+        },
+        Rejection::ForensicManifestBindingMismatch,
+    );
+    let manifest_receipt = accepted(
+        &mut store,
+        "evaluator-derived-forensic-manifest",
+        PrincipalId::KERNEL,
+        Capability::RegisterDeterministicEvaluatorForensicManifest,
+        generation,
+        CommandBody::RegisterDeterministicEvaluatorForensicManifest {
+            operating_cycle_id: cycle,
+            native_child_spawn_admission_id: admission_id,
+        },
+    );
+    let manifest_event_id = match manifest_receipt.disposition {
+        CommandDisposition::Accepted(event_id) => event_id,
+        other => panic!("accepted helper returned {other:?}"),
+    };
+    assert!(matches!(
+        store.ledger_event(manifest_event_id).unwrap().body,
+        EventBody::DeterministicEvaluatorForensicManifestRegistered {
+            forensic_manifest_id,
+            deterministic_experiment_id,
+            native_child_spawn_admission_id,
+            native_child_stream_seal_id,
+            evaluator_output_content_object_id,
+        } if forensic_manifest_id == ForensicManifestId::new(2).unwrap()
+            && deterministic_experiment_id == DeterministicExperimentId::new(1).unwrap()
+            && native_child_spawn_admission_id == admission_id
+            && native_child_stream_seal_id == society_kernel::NativeChildStreamSealId::new(1).unwrap()
+            && evaluator_output_content_object_id == ContentObjectId::new(2).unwrap()
+    ));
+    rejected(
+        &mut store,
+        "evaluator-receipt-rejects-pre-schedule-unbound-manifest",
+        PrincipalId::KERNEL,
+        Capability::RecordDeterministicEvaluationReceipt,
+        generation,
+        CommandBody::RecordDeterministicEvaluationReceipt {
+            operating_cycle_id: cycle,
+            deterministic_experiment_id: DeterministicExperimentId::new(1).unwrap(),
+            evaluator_revision_id: EvaluatorRevisionId::new(1).unwrap(),
+            input_manifest_id: InputManifestId::new(1).unwrap(),
+            forensic_manifest_id: ForensicManifestId::new(1).unwrap(),
+            evaluator_output_content_object_id: ContentObjectId::new(2).unwrap(),
+        },
+        Rejection::DeterministicEvaluationBindingMismatch,
+    );
+    rejected(
+        &mut store,
+        "evaluator-receipt-rejects-recombined-output",
+        PrincipalId::KERNEL,
+        Capability::RecordDeterministicEvaluationReceipt,
+        generation,
+        CommandBody::RecordDeterministicEvaluationReceipt {
+            operating_cycle_id: cycle,
+            deterministic_experiment_id: DeterministicExperimentId::new(1).unwrap(),
+            evaluator_revision_id: EvaluatorRevisionId::new(1).unwrap(),
+            input_manifest_id: InputManifestId::new(1).unwrap(),
+            forensic_manifest_id: ForensicManifestId::new(2).unwrap(),
+            evaluator_output_content_object_id: ContentObjectId::new(4).unwrap(),
+        },
+        Rejection::DeterministicEvaluationBindingMismatch,
+    );
+    accepted(
+        &mut store,
+        "evaluator-receipt-records-derived-output",
+        PrincipalId::KERNEL,
+        Capability::RecordDeterministicEvaluationReceipt,
+        generation,
+        CommandBody::RecordDeterministicEvaluationReceipt {
+            operating_cycle_id: cycle,
+            deterministic_experiment_id: DeterministicExperimentId::new(1).unwrap(),
+            evaluator_revision_id: EvaluatorRevisionId::new(1).unwrap(),
+            input_manifest_id: InputManifestId::new(1).unwrap(),
+            forensic_manifest_id: ForensicManifestId::new(2).unwrap(),
+            evaluator_output_content_object_id: ContentObjectId::new(2).unwrap(),
         },
     );
     assert!(
@@ -690,27 +854,22 @@ fn deterministic_evaluator_native_child_is_not_a_pi_child() {
             input_manifest_content_object_id: ContentObjectId::new(3).unwrap(),
         },
     );
-    accepted(
-        &mut store,
-        "cancelled-evaluator-admit",
-        PrincipalId::KERNEL,
-        Capability::AdmitDeterministicEvaluatorNativeChild,
-        generation,
-        CommandBody::AdmitDeterministicEvaluatorNativeChild {
-            operating_cycle_id: cycle,
-            deterministic_experiment_id: DeterministicExperimentId::new(2).unwrap(),
-            evaluator_revision_id: EvaluatorRevisionId::new(1).unwrap(),
-            input_manifest_id: InputManifestId::new(1).unwrap(),
-            execution_profile_id: ExecutionProfileId::DETERMINISTIC_EVALUATOR_PROCESS_FIXTURE_V1,
-            native_workspace_id: NativeWorkspaceId::parse("cancelled-evaluator-workspace").unwrap(),
-            canonical_workspace_path: CanonicalWorkspacePath::parse(
-                "/tmp/cancelled-evaluator-workspace",
+    assert!(matches!(
+        store
+            .claim_registered_deterministic_evaluator(
+                DeterministicEvaluatorScheduleClaimRequest::new(
+                    CommandId::parse("cancelled-evaluator-schedule-claim").unwrap(),
+                    NativeWorkspaceId::parse("cancelled-evaluator-workspace").unwrap(),
+                    CanonicalWorkspacePath::parse("/tmp/cancelled-evaluator-workspace").unwrap(),
+                    SupervisorEpochId::new(1).unwrap(),
+                    epoch_identity.clone(),
+                ),
             )
             .unwrap(),
-            supervisor_epoch_id: SupervisorEpochId::new(1).unwrap(),
-            supervisor_epoch_identity: epoch_identity,
-        },
-    );
+        Some(DeterministicEvaluatorScheduleClaim::SpawnAuthorized(admission))
+            if admission.native_child_spawn_admission_id() == NativeChildSpawnAdmissionId::new(2).unwrap()
+                && admission.deterministic_experiment_id() == DeterministicExperimentId::new(2).unwrap()
+    ));
     rejected(
         &mut store,
         "cancelled-evaluator-reason-requires-cancellation",
@@ -738,29 +897,25 @@ fn deterministic_evaluator_native_child_is_not_a_pi_child() {
             input_manifest_content_object_id: ContentObjectId::new(3).unwrap(),
         },
     );
-    accepted(
-        &mut store,
-        "failed-during-cancellation-admit",
-        PrincipalId::KERNEL,
-        Capability::AdmitDeterministicEvaluatorNativeChild,
-        generation,
-        CommandBody::AdmitDeterministicEvaluatorNativeChild {
-            operating_cycle_id: cycle,
-            deterministic_experiment_id: DeterministicExperimentId::new(3).unwrap(),
-            evaluator_revision_id: EvaluatorRevisionId::new(1).unwrap(),
-            input_manifest_id: InputManifestId::new(1).unwrap(),
-            execution_profile_id: ExecutionProfileId::DETERMINISTIC_EVALUATOR_PROCESS_FIXTURE_V1,
-            native_workspace_id: NativeWorkspaceId::parse("failed-during-cancellation-workspace")
-                .unwrap(),
-            canonical_workspace_path: CanonicalWorkspacePath::parse(
-                "/tmp/failed-during-cancellation-workspace",
+    assert!(matches!(
+        store
+            .claim_registered_deterministic_evaluator(
+                DeterministicEvaluatorScheduleClaimRequest::new(
+                    CommandId::parse("failed-during-cancellation-schedule-claim").unwrap(),
+                    NativeWorkspaceId::parse("failed-during-cancellation-workspace").unwrap(),
+                    CanonicalWorkspacePath::parse(
+                        "/tmp/failed-during-cancellation-workspace",
+                    )
+                    .unwrap(),
+                    SupervisorEpochId::new(1).unwrap(),
+                    epoch_identity,
+                ),
             )
             .unwrap(),
-            supervisor_epoch_id: SupervisorEpochId::new(1).unwrap(),
-            supervisor_epoch_identity: SupervisorEpochIdentity::parse("evaluator-native-epoch")
-                .unwrap(),
-        },
-    );
+        Some(DeterministicEvaluatorScheduleClaim::SpawnAuthorized(admission))
+            if admission.native_child_spawn_admission_id() == NativeChildSpawnAdmissionId::new(3).unwrap()
+                && admission.deterministic_experiment_id() == DeterministicExperimentId::new(3).unwrap()
+    ));
     accepted(
         &mut store,
         "cancelled-evaluator-request",
@@ -877,7 +1032,12 @@ fn deterministic_evaluator_native_child_is_not_a_pi_child() {
     drop(store);
     let tampered = Connection::open(&path).unwrap();
     tampered
-        .execute("UPDATE native_children SET child_identity = 'tampered-evaluator' WHERE native_child_id = 1", [])
+        .execute(
+            "UPDATE deterministic_evaluator_forensic_manifest_bindings
+                SET evaluator_output_content_object_id = 4
+              WHERE forensic_manifest_id = 2",
+            [],
+        )
         .unwrap();
     drop(tampered);
     assert!(
