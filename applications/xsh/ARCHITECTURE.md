@@ -536,8 +536,10 @@ The application now supplies `vs001-direct-evaluator-adapter`, a separately
 compiled direct executable whose first candidate is deliberately narrow:
 `CurationContract` only. The adapter reads the verified input-manifest file,
 parses seven closed length-framed TSV members in their fixed order, evaluates
-the existing C1 curation contract in Rust, and writes its canonical observation
-to stdout. It starts no shell or child, accepts no external path from the
+the existing C1 curation contract in Rust, and writes its canonical two-member
+output package to stdout. The package retains both the aggregate observation
+and the separately typed raw-evidence escalation relation, including a named
+question/object request. It starts no shell or child, accepts no external path from the
 manifest, and depends on no XSH/Xsht binary, source checkout, `PATH`, or host
 tool. The direct profile consequently has one bounded input object rather than
 a false multi-file package provenance claim.
@@ -557,6 +559,19 @@ that verified manifest path in its private workspace, and invoke the fixed
 `--input-manifest` ABI. This application construction carries no path,
 environment, child ID, receipt, content object, evaluator revision, authority,
 or evidence claim.
+
+The corresponding C1 stdout interpretation stays equally narrow and wholly in
+the application. `interpret_curation_direct_stdout_v1` receives only a byte
+slice and its caller-declared BLAKE3 value. It rejects empty, oversized,
+changed, and noncanonical renderings, then returns the closed
+`CurationDirectSemanticResultV1` (`Accepted` with the complete typed curation
+outputs, or one fixed XSH rejection reason). Equality with the declaration
+is a local byte-substitution check, not a claim about execution, custody,
+sealing, provenance, reaping, or evidence admission. The generic side need not
+know the TSV schema, semantic values, or rejection vocabulary. This pure parser
+is an application consumer/check of the self-validating direct evaluator's
+canonical package, not a second process. It does not make the current direct
+candidate scheduled or executable through generic custody.
 
 ## Three forms of durable truth
 

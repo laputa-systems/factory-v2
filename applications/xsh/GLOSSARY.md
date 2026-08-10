@@ -168,6 +168,16 @@ schema, row set, order, digest encoding, and closed value vocabulary. Successful
 decoding does not establish evaluator execution, actor identity, process
 reaping, disclosure authority, curation acceptance, or evidence admission.
 
+### Direct curation stdout interpretation
+
+The bounded XSH-only conversion of the C1 direct evaluator's two-member
+length-framed stdout package to `CurationDirectSemanticResultV1`. The parser
+checks only supplied bytes against their declared BLAKE3 value and the fixed
+aggregate-observation plus raw-escalation grammar; it has no
+generic receipt, path, process status, authority, or evidence role. `Accepted`
+is a typed application observation, not evidence admission or proof that an
+evaluator ran.
+
 ### Constitutional inheritance
 
 The exact `UniverseSeed` revision, constitutional rules, and Grand Architect

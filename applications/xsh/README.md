@@ -33,7 +33,10 @@ documented in `circuits/vs-001-spawn-stderr/README.md`.
 is the self-contained `CurationContract` evaluator: it accepts exactly
 `--input-manifest <verified absolute path>`, reads one bounded length-framed
 file, evaluates the seven fixed curation TSV members in Rust, and writes the
-canonical curation observation to stdout. The adapter has no child process,
+canonical two-member curation output package to stdout. Its fixed members are
+the aggregate curation observation and the raw-evidence-escalation observation,
+so a named request retains its question/object identity rather than being
+reduced to a flag. The adapter has no child process,
 shell, external path, XSH/Xsht binary, source checkout, host-tool, durable ID,
 receipt, or authority.
 
@@ -44,8 +47,20 @@ future generic bridge may seal the direct adapter and this one manifest file,
 then invoke the fixed ABI, but that bridge and evidence admission remain
 separate.
 
-The generic direct-executable custody driver is daemon-private and currently
-unscheduled, so this application construction cannot enter it yet.
+The generic direct-executable custody coordinator and claim path are
+daemon-private and provider-free integration-tested. They have no resident
+serving-loop call site, and no XSH evaluator is registered or scheduled, so
+this application construction cannot enter them yet.
+
+`interpret_curation_direct_stdout_v1` is the matching application-owned output
+port for that one direct C1 candidate. Given only completed stdout bytes and a
+declared BLAKE3 value, it bounds the rendering, rejects a byte mismatch, and
+maps the exact two-member curation package grammar to the closed
+`CurationDirectSemanticResultV1` vocabulary. It does not receive a custody
+identifier, path, process result, receipt, or generic authority, and its
+`Accepted` value is not evidence admission. This pure interpreter is an
+application consumer/check of the direct evaluator's canonical package, not a
+second process or a generic authority.
 
 Application ownership is recorded in [`AGENTS.md`](AGENTS.md). The preserved
 application architecture, canonical vocabulary, executable VS-001 contract,

@@ -85,8 +85,12 @@ frontier_members <decimal-byte-length>
 ```
 
 The role order, canonical decimal length, and every member byte are checked
-before semantic evaluation. The output is the existing
-`CurationContractObservationV1/tsv-v1` observation. Its checked-in positive
+before semantic evaluation. The stdout output is a path-free length-framed
+`Vs001CurationDirectOutputPackageV1` with exactly two members in order:
+`contract_observation` and `raw_evidence_escalation_observation`. Those are the
+existing `CurationContractObservationV1/tsv-v1` and
+`CurationRawEvidenceEscalationObservationV1/tsv-v1` relations, so a named raw
+request preserves its fixed question/object identity. Its checked-in positive
 and negative fixtures cross-check the Rust evaluator against
 `run-curation-contract-judge.sh`; this neither admits an account nor proves an
 adapter build, generic sealing, or evidence admission. The remaining VS-001

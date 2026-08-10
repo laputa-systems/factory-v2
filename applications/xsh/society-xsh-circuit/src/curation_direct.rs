@@ -10,9 +10,12 @@ use crate::{CanonicalEvaluatorInputRenderingV1, EvaluatorPortError, Vs001Evaluat
 
 const INPUT_SCHEMA: &[u8] = b"# schema: Vs001CurationDirectInputManifestV1/framed-v1";
 pub const MAX_DIRECT_CURATION_MANIFEST_BYTES: usize = 128 * 1024;
+pub const MAX_DIRECT_CURATION_STDOUT_BYTES: usize = 4 * 1024;
 const CURATION_OBSERVATION_SCHEMA: &str = "# schema: CurationContractObservationV1/tsv-v1";
 const CURATION_OBSERVATION_HEADER: &str =
     "account_kind\tpurpose\thypothesis_coverage\tcounterevidence\tpreserved_conflict\tunknowns\texclusions\traw_escalations\tfrontier_admission\tdisposition";
+pub const VS001_CURATION_DIRECT_OUTPUT_PACKAGE_SCHEMA: &str =
+    "# schema: Vs001CurationDirectOutputPackageV1/framed-v1";
 const MAX_RELATION_BYTES: usize = 32 * 1024;
 
 /// Fixed member roles for the one self-contained curation evaluator package.
@@ -64,6 +67,29 @@ impl Vs001CurationInputRoleV1 {
             Self::Exclusions => "exclusions",
             Self::RawEvidenceEscalations => "raw_evidence_escalations",
             Self::FrontierMembers => "frontier_members",
+        }
+    }
+}
+
+/// Fixed byte members of the direct C1 stdout package. The package contains
+/// both relations that the shell judge writes as separate files, so a named
+/// raw-evidence request cannot be collapsed to only its aggregate state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Vs001CurationDirectOutputRoleV1 {
+    ContractObservation,
+    RawEvidenceEscalationObservation,
+}
+
+impl Vs001CurationDirectOutputRoleV1 {
+    pub const ORDERED: [Self; 2] = [
+        Self::ContractObservation,
+        Self::RawEvidenceEscalationObservation,
+    ];
+
+    pub const fn wire_name(self) -> &'static str {
+        match self {
+            Self::ContractObservation => "contract_observation",
+            Self::RawEvidenceEscalationObservation => "raw_evidence_escalation_observation",
         }
     }
 }
@@ -232,10 +258,38 @@ pub struct DirectCurationContractObservationV1 {
 }
 
 impl DirectCurationContractObservationV1 {
-    pub fn canonical_tsv(self) -> String {
+    fn canonical_contract_observation_tsv(self) -> String {
         format!(
             "{CURATION_OBSERVATION_SCHEMA}\n{CURATION_OBSERVATION_HEADER}\ndecision_curation\tauthorize_spawn_stderr_prototype\th1_h2_h3_with_dissent\tdeclared\tpreserved\tdeclared\tsemantic\t{}\tfrontier_constrained\tacceptance_ready\n",
             self.raw_escalations.as_wire(),
+        )
+    }
+
+    fn canonical_raw_evidence_escalation_tsv(self) -> &'static str {
+        match self.raw_escalations {
+            RawEvidenceEscalationStateV1::NoneRequested => concat!(
+                "# schema: CurationRawEvidenceEscalationObservationV1/tsv-v1\n",
+                "ordinal\tquestion_ref\tobject_ref\n"
+            ),
+            RawEvidenceEscalationStateV1::NamedRequestPresent => concat!(
+                "# schema: CurationRawEvidenceEscalationObservationV1/tsv-v1\n",
+                "ordinal\tquestion_ref\tobject_ref\n",
+                "1\tresolve_detached_contract_intent\traw_pi_session_object\n"
+            ),
+        }
+    }
+
+    /// The path-free, length-framed stdout package for the direct C1 adapter.
+    /// It preserves both relations emitted by the shell judge in a closed order.
+    pub fn canonical_stdout_package(self) -> String {
+        let observation = self.canonical_contract_observation_tsv();
+        let raw_evidence_escalation = self.canonical_raw_evidence_escalation_tsv();
+        format!(
+            "{VS001_CURATION_DIRECT_OUTPUT_PACKAGE_SCHEMA}\n{}\t{}\n{observation}{}\t{}\n{raw_evidence_escalation}",
+            Vs001CurationDirectOutputRoleV1::ContractObservation.wire_name(),
+            observation.len(),
+            Vs001CurationDirectOutputRoleV1::RawEvidenceEscalationObservation.wire_name(),
+            raw_evidence_escalation.len(),
         )
     }
 }

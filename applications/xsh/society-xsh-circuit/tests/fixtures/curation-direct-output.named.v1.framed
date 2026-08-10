@@ -1,0 +1,9 @@
+# schema: Vs001CurationDirectOutputPackageV1/framed-v1
+contract_observation	360
+# schema: CurationContractObservationV1/tsv-v1
+account_kind	purpose	hypothesis_coverage	counterevidence	preserved_conflict	unknowns	exclusions	raw_escalations	frontier_admission	disposition
+decision_curation	authorize_spawn_stderr_prototype	h1_h2_h3_with_dissent	declared	preserved	declared	semantic	named_request_present	frontier_constrained	acceptance_ready
+raw_evidence_escalation_observation	149
+# schema: CurationRawEvidenceEscalationObservationV1/tsv-v1
+ordinal	question_ref	object_ref
+1	resolve_detached_contract_intent	raw_pi_session_object

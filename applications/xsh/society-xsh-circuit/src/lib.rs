@@ -10,10 +10,12 @@ use society_content::ContentDigest;
 use thiserror::Error;
 
 mod curation_direct;
+mod curation_stdout;
 mod evaluator_port;
 mod vs001;
 
 pub use curation_direct::*;
+pub use curation_stdout::*;
 pub use evaluator_port::*;
 pub use vs001::*;
 

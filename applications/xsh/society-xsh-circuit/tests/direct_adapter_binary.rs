@@ -65,7 +65,7 @@ fn compiled_adapter_accepts_only_the_fixed_verified_manifest_abi() {
     assert!(accepted.status.success());
     assert_eq!(
         accepted.stdout,
-        include_bytes!("fixtures/curation-contract-observation.none.v1.tsv"),
+        include_bytes!("fixtures/curation-direct-output.none.v1.framed"),
     );
     assert!(accepted.stderr.is_empty());
 

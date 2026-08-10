@@ -44,7 +44,7 @@ fn run() -> Result<(), String> {
         input
             .evaluate()
             .map_err(|error| error.to_string())?
-            .canonical_tsv()
+            .canonical_stdout_package()
     );
     Ok(())
 }

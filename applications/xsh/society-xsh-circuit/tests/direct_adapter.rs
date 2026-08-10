@@ -1,8 +1,10 @@
 #![allow(clippy::unwrap_used)]
 
+use society_content::ContentDigest;
 use society_xsh_circuit::{
-    Vs001CurationDirectEvaluatorPackageV1, Vs001CurationInputRoleV1,
-    Vs001DirectEvaluatorInputManifestV1, Vs001EvaluatorProgramV1,
+    interpret_curation_direct_stdout_v1, CurationDirectSemanticResultV1,
+    Vs001CurationDirectEvaluatorPackageV1, Vs001CurationDirectOutputRoleV1,
+    Vs001CurationInputRoleV1, Vs001DirectEvaluatorInputManifestV1, Vs001EvaluatorProgramV1,
 };
 
 macro_rules! curation_bytes {
@@ -85,27 +87,69 @@ fn curation_direct_package_has_only_the_seven_length_framed_member_roles() {
 }
 
 #[test]
-fn direct_curation_adapter_matches_the_checked_in_shell_judge_observation() {
+fn curation_direct_stdout_package_has_only_the_two_shell_output_roles_in_order() {
+    assert_eq!(
+        Vs001CurationDirectOutputRoleV1::ORDERED,
+        [
+            Vs001CurationDirectOutputRoleV1::ContractObservation,
+            Vs001CurationDirectOutputRoleV1::RawEvidenceEscalationObservation,
+        ]
+    );
+    assert_eq!(
+        Vs001CurationDirectOutputRoleV1::ContractObservation.wire_name(),
+        "contract_observation"
+    );
+    assert_eq!(
+        Vs001CurationDirectOutputRoleV1::RawEvidenceEscalationObservation.wire_name(),
+        "raw_evidence_escalation_observation"
+    );
+}
+
+#[test]
+fn direct_curation_adapter_preserves_both_checked_in_shell_judge_outputs_without_paths() {
     let manifest = valid_curation_manifest();
     let input = Vs001DirectEvaluatorInputManifestV1::parse(&manifest).unwrap();
 
     assert_eq!(input.program(), Vs001EvaluatorProgramV1::CurationContract);
     assert_eq!(input.canonical_rendering().bytes(), manifest);
     assert_eq!(
-        input.evaluate().unwrap().canonical_tsv().as_bytes(),
-        include_bytes!("fixtures/curation-contract-observation.none.v1.tsv"),
+        input
+            .evaluate()
+            .unwrap()
+            .canonical_stdout_package()
+            .as_bytes(),
+        include_bytes!("fixtures/curation-direct-output.none.v1.framed"),
     );
 }
 
 #[test]
-fn direct_curation_adapter_preserves_the_checked_in_named_escalation_output() {
+fn direct_curation_adapter_preserves_the_checked_in_named_escalation_identity() {
     let input =
         Vs001DirectEvaluatorInputManifestV1::parse(&named_escalation_curation_manifest()).unwrap();
 
     assert_eq!(
-        input.evaluate().unwrap().canonical_tsv().as_bytes(),
-        include_bytes!("fixtures/curation-contract-observation.named.v1.tsv"),
+        input
+            .evaluate()
+            .unwrap()
+            .canonical_stdout_package()
+            .as_bytes(),
+        include_bytes!("fixtures/curation-direct-output.named.v1.framed"),
     );
+}
+
+#[test]
+fn direct_curation_evaluation_round_trips_through_its_closed_stdout_interpreter() {
+    let input =
+        Vs001DirectEvaluatorInputManifestV1::parse(&named_escalation_curation_manifest()).unwrap();
+    let stdout = input.evaluate().unwrap().canonical_stdout_package();
+    let digest = ContentDigest::of_bytes(stdout.as_bytes());
+
+    assert!(matches!(
+        interpret_curation_direct_stdout_v1(stdout.as_bytes(), digest),
+        CurationDirectSemanticResultV1::Accepted(observation)
+            if observation.stdout_blake3 == digest
+                && observation.outputs.raw_evidence_escalation.request().is_some()
+    ));
 }
 
 #[test]

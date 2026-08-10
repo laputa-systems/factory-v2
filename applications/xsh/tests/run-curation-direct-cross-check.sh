@@ -48,6 +48,17 @@ write_manifest() {
   } > "$manifest"
 }
 
+write_output_package() {
+  shell_output=$1
+  destination=$2
+  {
+    printf '%s\n' '# schema: Vs001CurationDirectOutputPackageV1/framed-v1'
+    write_frame contract_observation "$shell_output/curation-contract-observation.v1.tsv"
+    write_frame raw_evidence_escalation_observation \
+      "$shell_output/curation-raw-evidence-escalations.v1.tsv"
+  } > "$destination"
+}
+
 copy_account() {
   source=$1
   destination=$2
@@ -60,8 +71,9 @@ run_positive() {
   source=$2
   account_dir="$test_root/$name-account"
   manifest="$test_root/$name-input.v1"
-  direct_output="$test_root/$name-direct.tsv"
+  direct_output="$test_root/$name-direct.framed"
   shell_output="$test_root/$name-shell"
+  expected_output="$test_root/$name-expected.framed"
   copy_account "$source" "$account_dir"
   write_manifest "$account_dir" "$manifest"
   env -i "$adapter" --input-manifest "$manifest" > "$direct_output"
@@ -69,8 +81,9 @@ run_positive() {
     --account-dir "$account_dir" \
     --frontier-members "$fixture_root/frontier-c1-members.v1.tsv" \
     --out "$shell_output" >/dev/null
-  cmp -s "$direct_output" "$shell_output/curation-contract-observation.v1.tsv" || \
-    fail 'direct adapter output differs from shell curation observation'
+  write_output_package "$shell_output" "$expected_output"
+  cmp -s "$direct_output" "$expected_output" || \
+    fail 'direct adapter output package differs from the two shell curation outputs'
 }
 
 run_negative() {
@@ -106,4 +119,4 @@ run_negative exclusions-duplicate exclusions.v1.tsv \
 run_negative conflicts-extra preserved-conflicts.v1.tsv \
   "$fixture_root/negative-preserved-conflicts-extra-row.v1.tsv"
 
-printf '%s\n' 'direct curation adapter matches the shell curation judge on checked-in fixtures'
+printf '%s\n' 'direct curation adapter preserves both shell curation outputs on checked-in fixtures'

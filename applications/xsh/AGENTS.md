@@ -42,15 +42,18 @@ which this application may consume but may not modify through application code.
   closed application invocation description. A later daemon-private bridge may
   revalidate those artifacts against an already durable generic admission, use
   the native custody core, and seal fully reaped output before invoking a
-  separate closed evidence path. No such resident scheduler path exists yet.
+  separate closed evidence path. A daemon-private provider-free coordinator and
+  claim path is integration-tested, but no resident serving-loop call site or
+  application execution authority exists yet.
   The port cannot choose a durable child identity, invoke or supervise a child,
   seal bytes, write SQLite, or admit evidence; generic crates must not name XSH
   evaluator semantics.
 - `society-xsh-circuit/src/bin/vs001-direct-evaluator-adapter.rs` is the sole
   intentional application I/O exception. It may read one already verified,
-  bounded direct-candidate manifest and write its closed observation to stdout.
-  It must not start a child. Its pure parser/evaluator remains in
-  `curation_direct.rs`; no application library, contract, or ordinary adapter
+  bounded direct-candidate manifest and write its closed two-member output
+  package to stdout. It must not start a child. Its pure input evaluator remains
+  in `curation_direct.rs`, and the pure output interpreter remains in
+  `curation_stdout.rs`; no application library, contract, or ordinary adapter
   test may access the filesystem, start a child, or use SQLite. The dedicated
   executable integration test may create its isolated input fixture and invoke
   that binary, but retains the same authority and SQLite prohibition. The
