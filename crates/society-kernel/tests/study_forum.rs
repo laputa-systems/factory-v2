@@ -853,6 +853,12 @@ fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
             .any(|window| window == false_claim.as_str().as_bytes())
     );
     assert!(
+        !reset_rendering
+            .windows(b"message id=".len())
+            .any(|window| window == b"message id="),
+        "a reset actor receives thread ordinals, never global message IDs whose gaps leak another arm"
+    );
+    assert!(
         store
             .forum_read_receipt_rendering_for_obligation(retained_receipt, reset_successor)
             .is_err()

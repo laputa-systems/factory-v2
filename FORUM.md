@@ -231,7 +231,7 @@ Rendering includes:
 
 - Forum and Thread identity;
 - requested ordinal range;
-- exact Message identity, author occurrence, kind, and body length;
+- Thread-local Message ordinal, author occurrence, kind, and body length;
 - reply, supersession, and retraction markers;
 - explicit warning that peer content is untrusted and non-authoritative; and
 - a fixed rendering revision whose exact bytes are retained with the receipt.

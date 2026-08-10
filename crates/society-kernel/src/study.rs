@@ -2169,7 +2169,7 @@ fn forum_rendering(
         .map_err(|_| Rejection::SubjectNotFound)?;
     for row in rows {
         let (
-            message_id,
+            _message_id,
             ordinal,
             author,
             service,
@@ -2181,7 +2181,7 @@ fn forum_rendering(
             publication,
         ) = row.map_err(|_| Rejection::SubjectNotFound)?;
         let header = format!(
-            "--- message id={message_id} ordinal={ordinal} author_occurrence={} service_origin={service} kind={kind} reply_to={} supersedes={} state={publication} body_blake3=",
+            "--- message ordinal={ordinal} author_occurrence={} service_origin={service} kind={kind} reply_to={} supersedes={} state={publication} body_blake3=",
             author.map_or("none".to_owned(), |value| value.to_string()),
             reply.map_or("none".to_owned(), |value| value.to_string()),
             supersedes.map_or("none".to_owned(), |value| value.to_string()),
