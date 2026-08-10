@@ -864,9 +864,13 @@ CREATE TABLE forensic_manifest_objects (
 );
 CREATE TABLE evaluator_revisions (
     evaluator_revision_id INTEGER PRIMARY KEY,
-    content_object_id INTEGER NOT NULL UNIQUE REFERENCES content_objects(content_object_id),
+    application_revision_id INTEGER NOT NULL REFERENCES application_revisions(application_revision_id),
+    content_object_id INTEGER NOT NULL REFERENCES content_objects(content_object_id),
     media_schema_contract INTEGER NOT NULL CHECK (media_schema_contract = 1),
-    registered_by_command_id INTEGER NOT NULL REFERENCES commands(command_row_id)
+    execution_contract INTEGER NOT NULL CHECK (execution_contract = 1),
+    output_contract INTEGER NOT NULL CHECK (output_contract = 1),
+    registered_by_command_id INTEGER NOT NULL REFERENCES commands(command_row_id),
+    UNIQUE(application_revision_id, content_object_id)
 );
 CREATE TABLE input_manifests (
     input_manifest_id INTEGER PRIMARY KEY,
@@ -905,7 +909,7 @@ CREATE TABLE evidence_admissions (
     related_graph_revision_id INTEGER NOT NULL REFERENCES object_revisions(graph_revision_id),
     semantic_role INTEGER NOT NULL CHECK (semantic_role = 1),
     applicability INTEGER NOT NULL CHECK (applicability = 1),
-    limitation_text TEXT NOT NULL,
+    limitation_kind INTEGER NOT NULL CHECK (limitation_kind = 1),
     admitted_by_command_id INTEGER NOT NULL REFERENCES commands(command_row_id)
 );
 CREATE TABLE command_record_content_seal_receipt (
@@ -953,15 +957,7 @@ CREATE TABLE command_record_deterministic_evaluation_receipt (
 CREATE TABLE command_admit_deterministic_evidence (
     command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id),
     operating_cycle_id INTEGER NOT NULL,
-    deterministic_evaluation_receipt_id INTEGER NOT NULL,
-    deterministic_experiment_id INTEGER NOT NULL,
-    evaluator_revision_id INTEGER NOT NULL,
-    input_manifest_id INTEGER NOT NULL,
-    evaluator_output_content_object_id INTEGER NOT NULL,
-    related_graph_revision_id INTEGER NOT NULL,
-    semantic_role INTEGER NOT NULL CHECK (semantic_role = 1),
-    applicability INTEGER NOT NULL CHECK (applicability = 1),
-    limitation_text TEXT NOT NULL
+    deterministic_evaluation_receipt_id INTEGER NOT NULL
 );
 CREATE TABLE command_finalize_deterministic_experiment (
     command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id),
@@ -1008,7 +1004,8 @@ CREATE TABLE event_deterministic_evidence_admitted (
     evidence_admission_id INTEGER NOT NULL REFERENCES evidence_admissions(evidence_admission_id),
     deterministic_evaluation_receipt_id INTEGER NOT NULL REFERENCES deterministic_evaluation_receipts(deterministic_evaluation_receipt_id),
     semantic_role INTEGER NOT NULL CHECK (semantic_role = 1),
-    applicability INTEGER NOT NULL CHECK (applicability = 1)
+    applicability INTEGER NOT NULL CHECK (applicability = 1),
+    limitation_kind INTEGER NOT NULL CHECK (limitation_kind = 1)
 );
 CREATE TABLE event_deterministic_experiment_finalized (
     event_id INTEGER PRIMARY KEY REFERENCES events(event_id),
@@ -2129,6 +2126,6 @@ INSERT INTO capability_grants VALUES(54,2,97,NULL,NULL,1,3,NULL,NULL);
 INSERT INTO capability_grants VALUES(55,2,98,NULL,NULL,1,3,NULL,NULL);
 INSERT INTO capability_grants VALUES(56,2,99,NULL,NULL,1,3,NULL,NULL);
 INSERT INTO capability_grants VALUES(57,2,100,NULL,NULL,1,3,NULL,NULL);
-PRAGMA user_version = 15;
+PRAGMA user_version = 16;
 COMMIT;
 PRAGMA foreign_keys = ON;

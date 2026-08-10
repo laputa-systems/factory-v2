@@ -21,7 +21,7 @@ use society_kernel::{
     DeterministicEvaluationReceiptId, DeterministicEvaluatorScheduleClaim,
     DeterministicEvaluatorScheduleClaimRequest, DeterministicExperimentId, DevelopmentalAttractor,
     DirectChildWaitStatus, EvaluatorRevisionId, EventBody, EventId, EvidenceApplicability,
-    EvidenceLimitationText, EvidenceSemanticRole, ExecutionProfileId, ExpectedGeneration,
+    EvidenceLimitationKind, EvidenceSemanticRole, ExecutionProfileId, ExpectedGeneration,
     ForensicManifestCapturePolicy, ForensicManifestId, GraphRevisionBody, GraphRevisionId,
     HypothesisRevisionText, InputManifestId, KernelStore, MissionPrinciple, MissionPrincipleKind,
     MissionPrincipleText, MissionPrinciples, MissionStatement, NativeChildId, NativeChildPid,
@@ -342,6 +342,158 @@ fn active_project(
         },
     );
     project_id
+}
+
+struct DeterministicEvaluatorCustodyFixture<'a> {
+    generation: ExpectedGeneration,
+    cycle: OperatingCycleId,
+    epoch_id: SupervisorEpochId,
+    epoch_identity: &'a SupervisorEpochIdentity,
+    pid: i32,
+    stdout_content_object_id: ContentObjectId,
+    stdout_digest: Blake3Digest,
+    stderr_content_object_id: ContentObjectId,
+    stderr_digest: Blake3Digest,
+}
+
+fn claim_and_finalize_deterministic_evaluator(
+    store: &mut KernelStore,
+    label: &str,
+    fixture: DeterministicEvaluatorCustodyFixture<'_>,
+) -> (
+    DeterministicExperimentId,
+    EvaluatorRevisionId,
+    InputManifestId,
+    ForensicManifestId,
+) {
+    let claim = store
+        .claim_registered_deterministic_evaluator(DeterministicEvaluatorScheduleClaimRequest::new(
+            CommandId::parse(format!("{label}-claim")).unwrap(),
+            NativeWorkspaceId::parse(format!("{label}-workspace")).unwrap(),
+            CanonicalWorkspacePath::parse(format!("/tmp/{label}-workspace")).unwrap(),
+            fixture.epoch_id,
+            fixture.epoch_identity.clone(),
+        ))
+        .unwrap()
+        .unwrap();
+    let DeterministicEvaluatorScheduleClaim::SpawnAuthorized(admission) = claim else {
+        panic!("fresh evaluator claim must authorize one exact spawn");
+    };
+    assert_eq!(admission.operating_cycle_id(), fixture.cycle);
+    let admission_id = admission.native_child_spawn_admission_id();
+    let deterministic_experiment_id = admission.deterministic_experiment_id();
+    let evaluator_revision_id = admission.evaluator_revision_id();
+    let input_manifest_id = admission.input_manifest_id();
+    let spawn_receipt = accepted(
+        store,
+        &format!("{label}-spawn"),
+        PrincipalId::KERNEL,
+        Capability::RecordDeterministicEvaluatorNativeChildSpawn,
+        fixture.generation,
+        CommandBody::RecordDeterministicEvaluatorNativeChildSpawn {
+            native_child_spawn_admission_id: admission_id,
+            child_identity: SupervisedChildIdentity::parse(format!("{label}-child")).unwrap(),
+            direct_child_pid: NativeChildPid::try_from(fixture.pid).unwrap(),
+            process_group_id: OwnedProcessGroupId::try_from(fixture.pid).unwrap(),
+        },
+    );
+    let spawn_event_id = match spawn_receipt.disposition {
+        CommandDisposition::Accepted(event_id) => event_id,
+        other => panic!("accepted helper returned {other:?}"),
+    };
+    let native_child_id = match store.ledger_event(spawn_event_id).unwrap().body {
+        EventBody::DeterministicEvaluatorNativeChildSpawnRecorded {
+            native_child_id,
+            native_child_spawn_admission_id,
+        } if native_child_spawn_admission_id == admission_id => native_child_id,
+        other => panic!("wrong evaluator spawn body: {other:?}"),
+    };
+    accepted(
+        store,
+        &format!("{label}-reap"),
+        PrincipalId::KERNEL,
+        Capability::RecordDirectChildReap,
+        fixture.generation,
+        CommandBody::RecordDirectChildReap {
+            native_child_id,
+            wait_status: DirectChildWaitStatus::Exited {
+                exit_code: ProcessExitCode::try_from(0).unwrap(),
+            },
+            group_liveness_before_cleanup: ProcessGroupLiveness::Absent,
+            group_liveness_after_cleanup: ProcessGroupLiveness::Absent,
+        },
+    );
+    for (stream_kind, digest, retained_content_object_id, suffix) in [
+        (
+            ChildStreamKind::Stdout,
+            fixture.stdout_digest,
+            fixture.stdout_content_object_id,
+            "stdout",
+        ),
+        (
+            ChildStreamKind::Stderr,
+            fixture.stderr_digest,
+            fixture.stderr_content_object_id,
+            "stderr",
+        ),
+    ] {
+        accepted(
+            store,
+            &format!("{label}-{suffix}"),
+            PrincipalId::KERNEL,
+            Capability::RecordChildStreamSeal,
+            fixture.generation,
+            CommandBody::RecordChildStreamSeal {
+                native_child_id,
+                stream_kind,
+                full_observed_digest: digest,
+                retained_content_object_id,
+                completeness: ChildStreamSealCompleteness::Complete,
+            },
+        );
+    }
+    accepted(
+        store,
+        &format!("{label}-finalize"),
+        PrincipalId::KERNEL,
+        Capability::FinalizeChildProcess,
+        fixture.generation,
+        CommandBody::FinalizeChildProcess { native_child_id },
+    );
+    let manifest_receipt = accepted(
+        store,
+        &format!("{label}-derived-manifest"),
+        PrincipalId::KERNEL,
+        Capability::RegisterDeterministicEvaluatorForensicManifest,
+        fixture.generation,
+        CommandBody::RegisterDeterministicEvaluatorForensicManifest {
+            operating_cycle_id: fixture.cycle,
+            native_child_spawn_admission_id: admission_id,
+        },
+    );
+    let manifest_event_id = match manifest_receipt.disposition {
+        CommandDisposition::Accepted(event_id) => event_id,
+        other => panic!("accepted helper returned {other:?}"),
+    };
+    let forensic_manifest_id = match store.ledger_event(manifest_event_id).unwrap().body {
+        EventBody::DeterministicEvaluatorForensicManifestRegistered {
+            forensic_manifest_id,
+            deterministic_experiment_id: event_experiment_id,
+            evaluator_output_content_object_id,
+            ..
+        } if event_experiment_id == deterministic_experiment_id
+            && evaluator_output_content_object_id == fixture.stdout_content_object_id =>
+        {
+            forensic_manifest_id
+        }
+        other => panic!("wrong evaluator forensic body: {other:?}"),
+    };
+    (
+        deterministic_experiment_id,
+        evaluator_revision_id,
+        input_manifest_id,
+        forensic_manifest_id,
+    )
 }
 
 #[test]
@@ -843,6 +995,132 @@ fn deterministic_evaluator_native_child_is_not_a_pi_child() {
             evaluator_output_content_object_id: ContentObjectId::new(2).unwrap(),
         },
     );
+    // Success is a closed, generic process fact. A receipt from an otherwise
+    // exact evaluator child cannot become evidence after a nonzero or
+    // signaled direct reap, and it cannot cross an application-revision /
+    // project-alignment boundary.
+    drop(store);
+    let nonzero_reap_path = path.with_extension("nonzero-evaluator-reap.sqlite");
+    fs::copy(&path, &nonzero_reap_path).unwrap();
+    let nonzero_reap = Connection::open(&nonzero_reap_path).unwrap();
+    nonzero_reap
+        .execute(
+            "UPDATE native_child_reap_receipts SET status_value = 1 WHERE native_child_id = 1",
+            [],
+        )
+        .unwrap();
+    drop(nonzero_reap);
+    let mut nonzero_reap_store = KernelStore::open(&nonzero_reap_path).unwrap();
+    rejected(
+        &mut nonzero_reap_store,
+        "evaluator-evidence-rejects-nonzero-reap",
+        PrincipalId::KERNEL,
+        Capability::AdmitDeterministicEvidence,
+        generation,
+        CommandBody::AdmitDeterministicEvidence {
+            operating_cycle_id: cycle,
+            deterministic_evaluation_receipt_id: DeterministicEvaluationReceiptId::new(1).unwrap(),
+        },
+        Rejection::DeterministicEvaluationBindingMismatch,
+    );
+    drop(nonzero_reap_store);
+    fs::remove_file(nonzero_reap_path).unwrap();
+
+    let signaled_reap_path = path.with_extension("signaled-evaluator-reap.sqlite");
+    fs::copy(&path, &signaled_reap_path).unwrap();
+    let signaled_reap = Connection::open(&signaled_reap_path).unwrap();
+    signaled_reap
+        .execute(
+            "UPDATE native_child_reap_receipts
+                SET wait_status_kind = 2, status_value = 15
+              WHERE native_child_id = 1",
+            [],
+        )
+        .unwrap();
+    drop(signaled_reap);
+    let mut signaled_reap_store = KernelStore::open(&signaled_reap_path).unwrap();
+    rejected(
+        &mut signaled_reap_store,
+        "evaluator-evidence-rejects-signaled-reap",
+        PrincipalId::KERNEL,
+        Capability::AdmitDeterministicEvidence,
+        generation,
+        CommandBody::AdmitDeterministicEvidence {
+            operating_cycle_id: cycle,
+            deterministic_evaluation_receipt_id: DeterministicEvaluationReceiptId::new(1).unwrap(),
+        },
+        Rejection::DeterministicEvaluationBindingMismatch,
+    );
+    drop(signaled_reap_store);
+    fs::remove_file(signaled_reap_path).unwrap();
+
+    let alignment_mismatch_path = path.with_extension("evaluator-alignment-mismatch.sqlite");
+    fs::copy(&path, &alignment_mismatch_path).unwrap();
+    let alignment_mismatch = Connection::open(&alignment_mismatch_path).unwrap();
+    alignment_mismatch
+        .execute(
+            "INSERT INTO application_revisions(
+                 application_id, revision_ordinal, mission_statement,
+                 source_rendering_digest, source_content_object_id, installed_by_command_id
+             )
+             SELECT application_id, 2, mission_statement,
+                    source_rendering_digest, source_content_object_id, installed_by_command_id
+               FROM application_revisions
+              WHERE application_revision_id = 1",
+            [],
+        )
+        .unwrap();
+    alignment_mismatch
+        .execute(
+            "UPDATE evaluator_revisions
+                SET application_revision_id = 2
+              WHERE evaluator_revision_id = 1",
+            [],
+        )
+        .unwrap();
+    drop(alignment_mismatch);
+    let mut alignment_mismatch_store = KernelStore::open(&alignment_mismatch_path).unwrap();
+    rejected(
+        &mut alignment_mismatch_store,
+        "evaluator-evidence-rejects-project-application-revision-mismatch",
+        PrincipalId::KERNEL,
+        Capability::AdmitDeterministicEvidence,
+        generation,
+        CommandBody::AdmitDeterministicEvidence {
+            operating_cycle_id: cycle,
+            deterministic_evaluation_receipt_id: DeterministicEvaluationReceiptId::new(1).unwrap(),
+        },
+        Rejection::DeterministicEvaluationBindingMismatch,
+    );
+    drop(alignment_mismatch_store);
+    fs::remove_file(alignment_mismatch_path).unwrap();
+
+    let mut store = KernelStore::open(&path).unwrap();
+    let evidence_receipt = accepted(
+        &mut store,
+        "evaluator-evidence-admits-exact-successful-receipt",
+        PrincipalId::KERNEL,
+        Capability::AdmitDeterministicEvidence,
+        generation,
+        CommandBody::AdmitDeterministicEvidence {
+            operating_cycle_id: cycle,
+            deterministic_evaluation_receipt_id: DeterministicEvaluationReceiptId::new(1).unwrap(),
+        },
+    );
+    let evidence_event_id = match evidence_receipt.disposition {
+        CommandDisposition::Accepted(event_id) => event_id,
+        other => panic!("accepted helper returned {other:?}"),
+    };
+    assert!(matches!(
+        store.ledger_event(evidence_event_id).unwrap().body,
+        EventBody::DeterministicEvidenceAdmitted {
+            deterministic_evaluation_receipt_id,
+            semantic_role: EvidenceSemanticRole::DeterministicObservation,
+            applicability: EvidenceApplicability::TestsTargetHypothesis,
+            limitation_kind: EvidenceLimitationKind::ApplicationSemanticsUninterpreted,
+            ..
+        } if deterministic_evaluation_receipt_id == DeterministicEvaluationReceiptId::new(1).unwrap()
+    ));
     assert!(
         store
             .deterministic_evaluator_native_child_admission(admission_id)
@@ -851,7 +1129,7 @@ fn deterministic_evaluator_native_child_is_not_a_pi_child() {
     );
     let failed_receipt = accepted(
         &mut store,
-        "evaluator-process-failure-finalizes-experiment",
+        "evaluator-evidence-finalizes-experiment-closed",
         root_authority,
         Capability::FinalizeDeterministicExperiment,
         generation,
@@ -868,7 +1146,7 @@ fn deterministic_evaluator_native_child_is_not_a_pi_child() {
         store.ledger_event(failed_event_id).unwrap().body,
         EventBody::DeterministicExperimentFinalized {
             deterministic_experiment_id,
-            terminal_state: society_kernel::DeterministicExperimentState::Failed,
+            terminal_state: society_kernel::DeterministicExperimentState::Closed,
         } if deterministic_experiment_id == DeterministicExperimentId::new(1).unwrap()
     ));
 
@@ -1820,10 +2098,9 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
         },
     );
 
-    // M4 separates a content-store receipt, durable ContentObject identity,
-    // deterministic evaluator binding, forensic manifest, and semantic
-    // admission. None of these commands executes Pi or an evaluator; the
-    // kernel-service facts are narrow receipt seams for later integration.
+    // M4 couples the Pi-host fixture's Actor work with a separate,
+    // provider-free evaluator child. The two profile routes share a cycle but
+    // never a child owner, session identity, or budget reservation.
     let evaluator_digest = Blake3Digest::of_bytes(b"m4-evaluator-revision");
     accepted(
         &mut store,
@@ -1981,6 +2258,52 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
             evaluator_output_content_object_id: ContentObjectId::new(4).unwrap(),
         },
     );
+    let evaluator_epoch_identity = SupervisorEpochIdentity::parse("m4-evaluator-epoch").unwrap();
+    accepted(
+        &mut store,
+        "m4-evaluator-epoch",
+        PrincipalId::KERNEL,
+        Capability::OpenSupervisorEpoch,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::OpenSupervisorEpoch {
+            supervisor_epoch_id: SupervisorEpochId::new(1).unwrap(),
+            supervisor_epoch_identity: evaluator_epoch_identity.clone(),
+        },
+    );
+    let (claimed_first_experiment, first_evaluator, first_input, first_manifest) =
+        claim_and_finalize_deterministic_evaluator(
+            &mut store,
+            "m4-first-evaluator",
+            DeterministicEvaluatorCustodyFixture {
+                generation,
+                cycle,
+                epoch_id: SupervisorEpochId::new(1).unwrap(),
+                epoch_identity: &evaluator_epoch_identity,
+                pid: 9171,
+                stdout_content_object_id: ContentObjectId::new(4).unwrap(),
+                stdout_digest: Blake3Digest::of_bytes(b"m4-identical-evaluator-output"),
+                stderr_content_object_id: ContentObjectId::new(3).unwrap(),
+                stderr_digest: Blake3Digest::of_bytes(b"m4-input-manifest"),
+            },
+        );
+    assert_eq!(claimed_first_experiment, first_experiment);
+    let (claimed_second_experiment, second_evaluator, second_input, second_manifest) =
+        claim_and_finalize_deterministic_evaluator(
+            &mut store,
+            "m4-second-evaluator",
+            DeterministicEvaluatorCustodyFixture {
+                generation,
+                cycle,
+                epoch_id: SupervisorEpochId::new(1).unwrap(),
+                epoch_identity: &evaluator_epoch_identity,
+                pid: 9172,
+                stdout_content_object_id: ContentObjectId::new(4).unwrap(),
+                stdout_digest: Blake3Digest::of_bytes(b"m4-identical-evaluator-output"),
+                stderr_content_object_id: ContentObjectId::new(3).unwrap(),
+                stderr_digest: Blake3Digest::of_bytes(b"m4-input-manifest"),
+            },
+        );
+    assert_eq!(claimed_second_experiment, second_experiment);
     rejected(
         &mut store,
         "m4-evaluation-wrong-evaluator",
@@ -2050,9 +2373,9 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
         CommandBody::RecordDeterministicEvaluationReceipt {
             operating_cycle_id: cycle,
             deterministic_experiment_id: first_experiment,
-            evaluator_revision_id: EvaluatorRevisionId::new(1).unwrap(),
-            input_manifest_id: InputManifestId::new(1).unwrap(),
-            forensic_manifest_id: ForensicManifestId::new(1).unwrap(),
+            evaluator_revision_id: first_evaluator,
+            input_manifest_id: first_input,
+            forensic_manifest_id: first_manifest,
             evaluator_output_content_object_id: ContentObjectId::new(4).unwrap(),
         },
     );
@@ -2065,17 +2388,6 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
         CommandBody::AdmitDeterministicEvidence {
             operating_cycle_id: cycle,
             deterministic_evaluation_receipt_id: DeterministicEvaluationReceiptId::new(1).unwrap(),
-            deterministic_experiment_id: first_experiment,
-            evaluator_revision_id: EvaluatorRevisionId::new(1).unwrap(),
-            input_manifest_id: InputManifestId::new(1).unwrap(),
-            evaluator_output_content_object_id: ContentObjectId::new(4).unwrap(),
-            related_graph_revision_id: target,
-            semantic_role: EvidenceSemanticRole::DeterministicObservation,
-            applicability: EvidenceApplicability::TestsTargetHypothesis,
-            limitation: EvidenceLimitationText::parse(
-                "Receipt binds a deterministic evaluator identity but does not assert truth or curation.",
-            )
-            .unwrap(),
         },
     );
     accepted(
@@ -2087,9 +2399,9 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
         CommandBody::RecordDeterministicEvaluationReceipt {
             operating_cycle_id: cycle,
             deterministic_experiment_id: second_experiment,
-            evaluator_revision_id: EvaluatorRevisionId::new(1).unwrap(),
-            input_manifest_id: InputManifestId::new(1).unwrap(),
-            forensic_manifest_id: ForensicManifestId::new(2).unwrap(),
+            evaluator_revision_id: second_evaluator,
+            input_manifest_id: second_input,
+            forensic_manifest_id: second_manifest,
             evaluator_output_content_object_id: ContentObjectId::new(4).unwrap(),
         },
     );
@@ -2102,17 +2414,6 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
         CommandBody::AdmitDeterministicEvidence {
             operating_cycle_id: cycle,
             deterministic_evaluation_receipt_id: DeterministicEvaluationReceiptId::new(2).unwrap(),
-            deterministic_experiment_id: second_experiment,
-            evaluator_revision_id: EvaluatorRevisionId::new(1).unwrap(),
-            input_manifest_id: InputManifestId::new(1).unwrap(),
-            evaluator_output_content_object_id: ContentObjectId::new(4).unwrap(),
-            related_graph_revision_id: target,
-            semantic_role: EvidenceSemanticRole::DeterministicObservation,
-            applicability: EvidenceApplicability::TestsTargetHypothesis,
-            limitation: EvidenceLimitationText::parse(
-                "The same bytes are independently bound to this second deterministic run.",
-            )
-            .unwrap(),
         },
     );
     let self_validation = CommandRequest {
@@ -2345,7 +2646,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(shared_output_occurrences, 2);
+    assert_eq!(shared_output_occurrences, 4);
     let distinct_producing_runs: i64 = inspect
         .query_row(
             "SELECT COUNT(DISTINCT manifest.producing_deterministic_experiment_id)
@@ -2391,7 +2692,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
     );
     inspect
         .execute(
-            "UPDATE evidence_admissions SET limitation_text = 'tampered M4 limitation'",
+            "UPDATE evidence_admissions SET evaluator_output_content_object_id = 5",
             [],
         )
         .unwrap();
@@ -2405,8 +2706,8 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
     let repair_content = Connection::open(&path).unwrap();
     repair_content
         .execute(
-            "UPDATE evidence_admissions SET limitation_text = ?1",
-            ["Receipt binds a deterministic evaluator identity but does not assert truth or curation."],
+            "UPDATE evidence_admissions SET evaluator_output_content_object_id = 4",
+            [],
         )
         .unwrap();
     drop(repair_content);

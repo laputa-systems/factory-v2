@@ -130,10 +130,19 @@ signal, reap, and later owned-group liveness facts, seals complete stdout and
 stderr only after group absence, finalizes the child, and invokes the
 kernel-derived forensic-manifest and deterministic-receipt transitions. The
 forensic output is the exact stdout seal and requires the exact complete stderr
-seal; an arbitrary global content object cannot be substituted. The resident
-serving loop has no call site for this coordinator yet, and there is no public
+seal; an arbitrary global content object cannot be substituted.
+
+The kernel now scopes evaluator revisions to the Project's aligned application
+revision and narrows `AdmitDeterministicEvidence` to the exact evaluation
+receipt. It derives all lineage and accepts only a scheduler-claimed,
+finalized, two-stream child whose direct wait status is exit zero. The durable
+result is the closed generic role `DeterministicObservation`, applicability
+`TestsTargetHypothesis`, and limitation
+`ApplicationSemanticsUninterpreted`; the kernel does not parse the application
+package or persist its vocabulary. The daemon coordinator and resident serving
+loop have no call site for this evidence transition yet, and there is no public
 execution command, post-restart reconciliation, workspace disposal,
-application semantic evidence admission, or completed slice claim.
+application-semantic admission, or completed slice claim.
 
 The fresh bootstrap names its single generic root-governance relation
 `FoundingMission`, `RootAuthorityOffice`, and `RootAuthorityOfficeSession`.

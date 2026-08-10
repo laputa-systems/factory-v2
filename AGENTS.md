@@ -107,9 +107,15 @@ fixed paths, uses the fixed argv and empty environment, records native custody,
 seals both streams after reap and group absence, finalizes the child, and asks
 the kernel to derive the forensic output occurrence from that exact stdout
 seal. Applications neither issue scheduling authority nor select an output
-object. This path is provider-free and integration-tested, but the resident
-serving loop does not yet call it; there is no supervisor/public execution
-command, post-restart reconciliation, semantic evidence admission, or
+object. For an application-scoped evaluator revision, the kernel's narrowed
+evidence command accepts only the exact claimed receipt whose finalized child
+has complete stdout/stderr seals and a direct exit status of zero. It derives
+the generic `DeterministicObservation` role, hypothesis applicability, and
+`ApplicationSemanticsUninterpreted` limitation rather than accepting caller-
+assembled lineage or parsing application output. This path is provider-free
+and integration-tested, but the daemon coordinator and resident serving loop do
+not yet invoke evidence admission; there is no supervisor/public execution
+command, post-restart reconciliation, application-semantic admission, or
 end-to-end application result.
 
 ## Nearest hard judges

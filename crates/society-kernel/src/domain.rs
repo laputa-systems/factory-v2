@@ -427,7 +427,6 @@ coordination_text!(PostmortemActionProposalText);
 coordination_text!(ActorConfigurationName);
 coordination_text!(WorkAssignmentText);
 coordination_text!(OutcomeObligationText);
-coordination_text!(EvidenceLimitationText);
 
 macro_rules! mission_text {
     ($name:ident) => {
@@ -1770,6 +1769,24 @@ pub enum ContentMediaSchemaContract {
     DeterministicEvaluatorOutputV1 = 3,
 }
 
+/// The one direct process grammar the generic evaluator custody bridge may
+/// execute. Its application-owned program receives only the fixed
+/// `--input-manifest` file in a daemon-owned workspace.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum EvaluatorExecutionContract {
+    DirectExecutableFixedInputManifestV1 = 1,
+}
+
+/// The generic success boundary for a registered application evaluator. The
+/// kernel never parses its stdout grammar; exit zero only attests that the
+/// exact sealed application contract produced its canonical observation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum EvaluatorOutputContract {
+    ExitZeroCanonicalObservationV1 = 1,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(i64)]
 pub enum RetentionAccessClass {
@@ -1807,6 +1824,15 @@ pub enum EvidenceSemanticRole {
 #[repr(i64)]
 pub enum EvidenceApplicability {
     TestsTargetHypothesis = 1,
+}
+
+/// Every currently admitted evaluator observation remains limited by the
+/// fact that its application-owned grammar is opaque to generic physics.
+/// This records the boundary without admitting application vocabulary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum EvidenceLimitationKind {
+    ApplicationSemanticsUninterpreted = 1,
 }
 
 /// This is a kernel-service terminal attestation, not a claim that Pi or a
@@ -2416,14 +2442,6 @@ pub enum CommandBody {
     AdmitDeterministicEvidence {
         operating_cycle_id: OperatingCycleId,
         deterministic_evaluation_receipt_id: DeterministicEvaluationReceiptId,
-        deterministic_experiment_id: DeterministicExperimentId,
-        evaluator_revision_id: EvaluatorRevisionId,
-        input_manifest_id: InputManifestId,
-        evaluator_output_content_object_id: ContentObjectId,
-        related_graph_revision_id: GraphRevisionId,
-        semantic_role: EvidenceSemanticRole,
-        applicability: EvidenceApplicability,
-        limitation: EvidenceLimitationText,
     },
     FinalizeDeterministicExperiment {
         operating_cycle_id: OperatingCycleId,
@@ -3416,6 +3434,7 @@ pub enum EventBody {
         deterministic_evaluation_receipt_id: DeterministicEvaluationReceiptId,
         semantic_role: EvidenceSemanticRole,
         applicability: EvidenceApplicability,
+        limitation_kind: EvidenceLimitationKind,
     },
     DeterministicExperimentFinalized {
         deterministic_experiment_id: DeterministicExperimentId,

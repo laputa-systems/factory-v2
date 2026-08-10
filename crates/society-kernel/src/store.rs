@@ -23,13 +23,13 @@ use crate::{
     CostPostmortemId, CostPostmortemResolution, CostPostmortemState, CostUnavailableReason,
     CostUnknownReason, DeterministicEvaluationReceiptId, DeterministicExperimentId,
     DeterministicExperimentState, DevelopmentalAttractor, DirectChildWaitStatus, EpisodeState,
-    EvaluatorRevisionId, EventBody, EventId, EventKind, EvidenceAdmissionId,
-    EvidenceLimitationText, EvidenceSemanticRole, ExecutionProfileId, ExecutionProfileKind,
-    ExecutionProfileReadiness, ExpectedGeneration, ForensicManifestCapturePolicy,
-    ForensicManifestId, FoundingMissionId, GraphEdgeId, GraphEdgeKind, GraphObjectId,
-    GraphObjectKind, GraphRevisionBody, GraphRevisionId, GraphRevisionState,
-    HypothesisRevisionText, InputManifestId, LedgerEvent, MissionPrinciple, MissionPrincipleKind,
-    MissionPrincipleText, MissionPrinciples, MissionStatement, NativeChildId,
+    EvaluatorExecutionContract, EvaluatorOutputContract, EvaluatorRevisionId, EventBody, EventId,
+    EventKind, EvidenceAdmissionId, EvidenceLimitationKind, EvidenceSemanticRole,
+    ExecutionProfileId, ExecutionProfileKind, ExecutionProfileReadiness, ExpectedGeneration,
+    ForensicManifestCapturePolicy, ForensicManifestId, FoundingMissionId, GraphEdgeId,
+    GraphEdgeKind, GraphObjectId, GraphObjectKind, GraphRevisionBody, GraphRevisionId,
+    GraphRevisionState, HypothesisRevisionText, InputManifestId, LedgerEvent, MissionPrinciple,
+    MissionPrincipleKind, MissionPrincipleText, MissionPrinciples, MissionStatement, NativeChildId,
     NativeChildLivenessObservationId, NativeChildNotSpawnedReason, NativeChildOwner,
     NativeChildPid, NativeChildReapReceiptId, NativeChildRecoveryReceiptId,
     NativeChildSpawnAdmissionId, NativeChildSpawnAdmissionState, NativeChildStreamSealId,
@@ -65,7 +65,7 @@ const CURRENT_SCHEMA: &str = include_str!("../../../migrations/0001_kernel.sql")
 // Historical prototype schemas used versions one through thirteen. The collapsed
 // fresh schema deliberately occupies a noncolliding identity, so an old
 // ledger cannot be mistaken for current trusted physics.
-const CURRENT_SCHEMA_VERSION: i64 = 15;
+const CURRENT_SCHEMA_VERSION: i64 = 16;
 
 struct PiChildSpawnAdmissionInput<'a> {
     operating_cycle_id: OperatingCycleId,
@@ -753,7 +753,7 @@ impl KernelStore {
                 AND admission.evaluator_revision_id IS NOT NULL AND admission.input_manifest_id IS NOT NULL
                 AND admission.budget_reservation_id IS NULL
                 AND admission.lifecycle_state = 1
-                AND cycle.treatment = 4 AND cycle.lifecycle_state = 3
+                AND cycle.treatment IN (2, 3, 4) AND cycle.lifecycle_state = 3
                 AND cycle.admission_generation = admission.admission_generation
                 AND profile.profile_kind = 3 AND profile.readiness = 1
                 AND NOT EXISTS(SELECT 1 FROM pi_child_spawn_sidecars sidecar WHERE sidecar.native_child_spawn_admission_id = admission.native_child_spawn_admission_id)
@@ -884,7 +884,7 @@ impl KernelStore {
                      ON cycle.operating_cycle_id = experiment.operating_cycle_id
                   WHERE experiment.lifecycle_state = ?1
                     AND cycle.lifecycle_state = ?2
-                    AND cycle.treatment = ?3
+                    AND cycle.treatment IN (?3, ?4, ?5)
                     AND NOT EXISTS(
                         SELECT 1 FROM native_child_spawn_admissions admission
                          WHERE admission.deterministic_experiment_id = experiment.deterministic_experiment_id
@@ -894,6 +894,8 @@ impl KernelStore {
                 params![
                     DeterministicExperimentState::Registered as i64,
                     OperatingCycleState::Running as i64,
+                    OperatingCycleTreatment::PinnedPiSdkLiveV1 as i64,
+                    OperatingCycleTreatment::DeterministicPiHostFixtureV1 as i64,
                     OperatingCycleTreatment::DeterministicEvaluatorFixtureV1 as i64,
                 ],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
@@ -2641,28 +2643,12 @@ fn apply_command(
         CommandBody::AdmitDeterministicEvidence {
             operating_cycle_id,
             deterministic_evaluation_receipt_id,
-            deterministic_experiment_id,
-            evaluator_revision_id,
-            input_manifest_id,
-            evaluator_output_content_object_id,
-            related_graph_revision_id,
-            semantic_role,
-            applicability,
-            limitation,
         } => admit_deterministic_evidence(
             transaction,
             command_row_id,
             request.expected_generation,
             *operating_cycle_id,
             *deterministic_evaluation_receipt_id,
-            *deterministic_experiment_id,
-            *evaluator_revision_id,
-            *input_manifest_id,
-            *evaluator_output_content_object_id,
-            *related_graph_revision_id,
-            *semantic_role,
-            *applicability,
-            limitation,
         ),
         CommandBody::FinalizeDeterministicExperiment {
             operating_cycle_id,
@@ -7495,6 +7481,28 @@ fn pi_child_profile_allowed(
     )
 }
 
+/// A deterministic evaluator is a separate, provider-free native child with
+/// no Pi sidecar or budget reservation. It may supply ancillary application
+/// evidence in a fixture or live Pi cycle, but never in the Pi qualification
+/// treatment. Only the evaluator-owner admission path calls this helper;
+/// Actor and Pi-child profile matrices intentionally remain narrower.
+fn deterministic_evaluator_profile_allowed(
+    treatment: OperatingCycleTreatment,
+    kind: ExecutionProfileKind,
+    readiness: ExecutionProfileReadiness,
+) -> bool {
+    matches!(
+        (treatment, kind, readiness),
+        (
+            OperatingCycleTreatment::PinnedPiSdkLiveV1
+                | OperatingCycleTreatment::DeterministicPiHostFixtureV1
+                | OperatingCycleTreatment::DeterministicEvaluatorFixtureV1,
+            ExecutionProfileKind::DeterministicEvaluatorProcessFixtureV1,
+            ExecutionProfileReadiness::DeterministicFixtureOnly,
+        )
+    )
+}
+
 fn admit_ticket(
     transaction: &Transaction<'_>,
     command_row_id: i64,
@@ -8474,28 +8482,43 @@ fn content_object_exists(
         .map_err(|_| Rejection::ContentObjectNotSealed)
 }
 
-fn evaluator_revision_for_content(
+fn evaluator_revision_for_application_content(
     transaction: &Transaction<'_>,
     command_row_id: i64,
+    application_revision_id: ApplicationRevisionId,
     content_object_id: ContentObjectId,
 ) -> Result<EvaluatorRevisionId, Rejection> {
-    let existing: Option<i64> = transaction
+    let existing: Option<(i64, i64, i64)> = transaction
         .query_row(
-            "SELECT evaluator_revision_id FROM evaluator_revisions WHERE content_object_id = ?1",
-            [content_object_id.value()],
-            |row| row.get(0),
+            "SELECT evaluator_revision_id, execution_contract, output_contract
+             FROM evaluator_revisions
+             WHERE application_revision_id = ?1 AND content_object_id = ?2",
+            params![application_revision_id.value(), content_object_id.value()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .optional()
         .map_err(|_| Rejection::ContentObjectNotSealed)?;
-    if let Some(existing) = existing {
+    if let Some((existing, execution_contract, output_contract)) = existing {
+        if execution_contract
+            != EvaluatorExecutionContract::DirectExecutableFixedInputManifestV1 as i64
+            || output_contract != EvaluatorOutputContract::ExitZeroCanonicalObservationV1 as i64
+        {
+            return Err(Rejection::DeterministicExperimentBindingMismatch);
+        }
         return EvaluatorRevisionId::try_from(existing).map_err(|_| Rejection::SubjectNotFound);
     }
     transaction
         .execute(
-            "INSERT INTO evaluator_revisions(content_object_id, media_schema_contract, registered_by_command_id) VALUES (?1, ?2, ?3)",
+            "INSERT INTO evaluator_revisions(
+                 application_revision_id, content_object_id, media_schema_contract,
+                 execution_contract, output_contract, registered_by_command_id
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
+                application_revision_id.value(),
                 content_object_id.value(),
                 ContentMediaSchemaContract::DeterministicEvaluatorV1 as i64,
+                EvaluatorExecutionContract::DirectExecutableFixedInputManifestV1 as i64,
+                EvaluatorOutputContract::ExitZeroCanonicalObservationV1 as i64,
                 command_row_id
             ],
         )
@@ -8556,8 +8579,24 @@ fn register_deterministic_experiment(
     {
         return Err(Rejection::DeterministicExperimentBindingMismatch);
     }
-    let evaluator_revision_id =
-        evaluator_revision_for_content(transaction, command_row_id, evaluator_content_object_id)?;
+    let application_revision_id: i64 = transaction
+        .query_row(
+            "SELECT application_revision_id
+             FROM project_north_star_alignments
+             WHERE project_id = ?1",
+            [project_id.value()],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|_| Rejection::DeterministicExperimentBindingMismatch)?
+        .ok_or(Rejection::DeterministicExperimentBindingMismatch)?;
+    let evaluator_revision_id = evaluator_revision_for_application_content(
+        transaction,
+        command_row_id,
+        ApplicationRevisionId::try_from(application_revision_id)
+            .map_err(|_| Rejection::DeterministicExperimentBindingMismatch)?,
+        evaluator_content_object_id,
+    )?;
     let input_manifest_id = input_manifest_for_content(
         transaction,
         command_row_id,
@@ -8710,57 +8749,124 @@ fn record_deterministic_evaluation_receipt(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
 fn admit_deterministic_evidence(
     transaction: &Transaction<'_>,
     command_row_id: i64,
     expected_generation: ExpectedGeneration,
     operating_cycle_id: OperatingCycleId,
     deterministic_evaluation_receipt_id: DeterministicEvaluationReceiptId,
-    deterministic_experiment_id: DeterministicExperimentId,
-    evaluator_revision_id: EvaluatorRevisionId,
-    input_manifest_id: InputManifestId,
-    evaluator_output_content_object_id: ContentObjectId,
-    related_graph_revision_id: GraphRevisionId,
-    semantic_role: EvidenceSemanticRole,
-    applicability: crate::EvidenceApplicability,
-    limitation: &EvidenceLimitationText,
 ) -> Result<EventBody, Rejection> {
     let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
-    let row: Option<(i64, i64, i64, i64, i64)> = transaction.query_row(
-        "SELECT e.project_id, e.target_graph_revision_id, r.deterministic_experiment_id, r.evaluator_revision_id, r.input_manifest_id
-         FROM deterministic_experiments e JOIN deterministic_evaluation_receipts r ON r.deterministic_experiment_id = e.deterministic_experiment_id
-         WHERE r.deterministic_evaluation_receipt_id = ?1 AND e.operating_cycle_id = ?2 AND e.lifecycle_state = 1",
-        params![deterministic_evaluation_receipt_id.value(), operating_cycle_id.value()],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+    // The receipt is the only caller-supplied lineage.  This one query proves
+    // that it came from the exact scheduler-claimed evaluator child, whose
+    // two streams are sealed and whose direct wait completed successfully.
+    // The evaluator revision is also tied to the exact application revision
+    // already aligned with this project, without interpreting its bytes.
+    let row: Option<(i64, i64, i64, i64, i64, i64)> = transaction.query_row(
+        "SELECT experiment.project_id,
+                experiment.target_graph_revision_id,
+                receipt.deterministic_experiment_id,
+                receipt.evaluator_revision_id,
+                receipt.input_manifest_id,
+                receipt.evaluator_output_content_object_id
+           FROM deterministic_evaluation_receipts receipt
+           JOIN deterministic_experiments experiment
+             ON experiment.deterministic_experiment_id = receipt.deterministic_experiment_id
+           JOIN evaluator_revisions evaluator
+             ON evaluator.evaluator_revision_id = receipt.evaluator_revision_id
+            AND evaluator.execution_contract = ?3
+            AND evaluator.output_contract = ?4
+           JOIN project_north_star_alignments alignment
+             ON alignment.project_id = experiment.project_id
+            AND alignment.application_revision_id = evaluator.application_revision_id
+           JOIN deterministic_evaluator_forensic_manifest_bindings binding
+             ON binding.forensic_manifest_id = receipt.forensic_manifest_id
+            AND binding.deterministic_experiment_id = receipt.deterministic_experiment_id
+            AND binding.evaluator_revision_id = receipt.evaluator_revision_id
+            AND binding.input_manifest_id = receipt.input_manifest_id
+            AND binding.evaluator_output_content_object_id = receipt.evaluator_output_content_object_id
+           JOIN native_child_spawn_admissions admission
+             ON admission.native_child_spawn_admission_id = binding.native_child_spawn_admission_id
+            AND admission.deterministic_experiment_id = binding.deterministic_experiment_id
+            AND admission.evaluator_revision_id = binding.evaluator_revision_id
+            AND admission.input_manifest_id = binding.input_manifest_id
+            AND admission.lifecycle_state = ?5
+           JOIN native_children child
+             ON child.native_child_id = binding.native_child_id
+            AND child.native_child_spawn_admission_id = admission.native_child_spawn_admission_id
+            AND child.lifecycle_state = ?6
+           JOIN native_child_stream_seals stdout
+             ON stdout.native_child_stream_seal_id = binding.native_child_stream_seal_id
+            AND stdout.native_child_id = child.native_child_id
+            AND stdout.stream_kind = ?7
+            AND stdout.completeness = ?8
+            AND stdout.retained_content_object_id = receipt.evaluator_output_content_object_id
+           JOIN native_child_stream_seals stderr
+             ON stderr.native_child_id = child.native_child_id
+            AND stderr.stream_kind = ?9
+            AND stderr.completeness = ?8
+           JOIN native_child_reap_receipts reap
+             ON reap.native_child_id = child.native_child_id
+            AND reap.wait_status_kind = 1
+            AND reap.status_value = 0
+          WHERE receipt.deterministic_evaluation_receipt_id = ?1
+            AND experiment.operating_cycle_id = ?2
+            AND experiment.lifecycle_state = ?10
+            AND NOT EXISTS (
+                SELECT 1
+                  FROM pi_child_spawn_sidecars sidecar
+                 WHERE sidecar.native_child_spawn_admission_id = admission.native_child_spawn_admission_id
+            )",
+        params![
+            deterministic_evaluation_receipt_id.value(),
+            operating_cycle_id.value(),
+            EvaluatorExecutionContract::DirectExecutableFixedInputManifestV1 as i64,
+            EvaluatorOutputContract::ExitZeroCanonicalObservationV1 as i64,
+            NativeChildSpawnAdmissionState::Spawned as i64,
+            ChildProcessState::Finalized as i64,
+            ChildStreamKind::Stdout as i64,
+            ChildStreamSealCompleteness::Complete as i64,
+            ChildStreamKind::Stderr as i64,
+            DeterministicExperimentState::Registered as i64,
+        ],
+        |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+            ))
+        },
     ).optional().map_err(|_| Rejection::DeterministicEvaluationBindingMismatch)?;
-    let (project, target, experiment, evaluator, input) =
+    let (project, target, experiment, evaluator, input, output) =
         row.ok_or(Rejection::DeterministicEvaluationBindingMismatch)?;
-    if experiment != deterministic_experiment_id.value()
-        || evaluator != evaluator_revision_id.value()
-        || input != input_manifest_id.value()
-        || target != related_graph_revision_id.value()
-    {
-        return Err(Rejection::DeterministicEvaluationBindingMismatch);
-    }
+    let related_graph_revision_id = GraphRevisionId::try_from(target)
+        .map_err(|_| Rejection::DeterministicEvaluationBindingMismatch)?;
     let (_, graph_project, graph_kind, graph_state) =
         graph_revision_row(transaction, related_graph_revision_id)?;
     if graph_project.value() != project
         || graph_kind != GraphObjectKind::Hypothesis
         || graph_state != GraphRevisionState::Committed
-        || semantic_role != EvidenceSemanticRole::DeterministicObservation
-        || applicability != crate::EvidenceApplicability::TestsTargetHypothesis
     {
         return Err(Rejection::DeterministicEvaluationBindingMismatch);
     }
-    let receipt_output: i64 = transaction.query_row("SELECT evaluator_output_content_object_id FROM deterministic_evaluation_receipts WHERE deterministic_evaluation_receipt_id = ?1", [deterministic_evaluation_receipt_id.value()], |row| row.get(0)).map_err(|_| Rejection::DeterministicEvaluationBindingMismatch)?;
-    if receipt_output != evaluator_output_content_object_id.value() {
-        return Err(Rejection::DeterministicEvaluationBindingMismatch);
-    }
+    let deterministic_experiment_id = DeterministicExperimentId::try_from(experiment)
+        .map_err(|_| Rejection::DeterministicEvaluationBindingMismatch)?;
+    let evaluator_revision_id = EvaluatorRevisionId::try_from(evaluator)
+        .map_err(|_| Rejection::DeterministicEvaluationBindingMismatch)?;
+    let input_manifest_id = InputManifestId::try_from(input)
+        .map_err(|_| Rejection::DeterministicEvaluationBindingMismatch)?;
+    let evaluator_output_content_object_id = ContentObjectId::try_from(output)
+        .map_err(|_| Rejection::DeterministicEvaluationBindingMismatch)?;
+    let semantic_role = EvidenceSemanticRole::DeterministicObservation;
+    let applicability = crate::EvidenceApplicability::TestsTargetHypothesis;
+    let limitation_kind = EvidenceLimitationKind::ApplicationSemanticsUninterpreted;
     transaction.execute(
-        "INSERT INTO evidence_admissions(deterministic_evaluation_receipt_id, deterministic_experiment_id, evaluator_revision_id, input_manifest_id, evaluator_output_content_object_id, related_graph_revision_id, semantic_role, applicability, limitation_text, admitted_by_command_id)
+        "INSERT INTO evidence_admissions(deterministic_evaluation_receipt_id, deterministic_experiment_id, evaluator_revision_id, input_manifest_id, evaluator_output_content_object_id, related_graph_revision_id, semantic_role, applicability, limitation_kind, admitted_by_command_id)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-        params![deterministic_evaluation_receipt_id.value(), deterministic_experiment_id.value(), evaluator_revision_id.value(), input_manifest_id.value(), evaluator_output_content_object_id.value(), related_graph_revision_id.value(), semantic_role as i64, applicability as i64, limitation.as_str(), command_row_id],
+        params![deterministic_evaluation_receipt_id.value(), deterministic_experiment_id.value(), evaluator_revision_id.value(), input_manifest_id.value(), evaluator_output_content_object_id.value(), related_graph_revision_id.value(), semantic_role as i64, applicability as i64, limitation_kind as i64, command_row_id],
     ).map_err(|_| Rejection::DeterministicEvaluationBindingMismatch)?;
     let evidence_admission_id = id_from_last_insert::<EvidenceAdmissionId>(transaction)?;
     transaction.execute("UPDATE deterministic_experiments SET lifecycle_state = 2, last_transition_command_id = ?1 WHERE deterministic_experiment_id = ?2", params![command_row_id, deterministic_experiment_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
@@ -8776,6 +8882,7 @@ fn admit_deterministic_evidence(
         deterministic_evaluation_receipt_id,
         semantic_role,
         applicability,
+        limitation_kind,
     })
 }
 
@@ -8894,9 +9001,10 @@ fn admit_deterministic_evaluator_native_child(
     supervisor_epoch_identity: &SupervisorEpochIdentity,
 ) -> Result<EventBody, Rejection> {
     let cycle = cycle_for_generation(transaction, operating_cycle_id, expected_generation)?;
-    if cycle.state != OperatingCycleState::Running
-        || cycle._treatment != OperatingCycleTreatment::DeterministicEvaluatorFixtureV1
-    {
+    if cycle._treatment == OperatingCycleTreatment::PiSdkQualificationV1 {
+        return Err(Rejection::QualificationTreatmentRestricted);
+    }
+    if cycle.state != OperatingCycleState::Running {
         return Err(Rejection::ExecutionProfileIneligible);
     }
     let binding: Option<(i64, i64, i64)> = transaction.query_row(
@@ -8918,12 +9026,17 @@ fn admit_deterministic_evaluator_native_child(
         "SELECT profile_kind, readiness FROM execution_profiles WHERE execution_profile_id = ?1",
         [execution_profile_id.value()], |row| Ok((row.get(0)?, row.get(1)?)),
     ).optional().map_err(|_| Rejection::ExecutionProfileIneligible)?;
-    if profile
-        != Some((
-            ExecutionProfileKind::DeterministicEvaluatorProcessFixtureV1 as i64,
-            ExecutionProfileReadiness::DeterministicFixtureOnly as i64,
-        ))
-    {
+    let profile_allowed = match profile {
+        Some((kind, readiness)) => deterministic_evaluator_profile_allowed(
+            cycle._treatment,
+            execution_profile_kind_from_i64(kind)
+                .map_err(|_| Rejection::ExecutionProfileIneligible)?,
+            execution_profile_readiness_from_i64(readiness)
+                .map_err(|_| Rejection::ExecutionProfileIneligible)?,
+        ),
+        None => false,
+    };
+    if !profile_allowed {
         return Err(Rejection::ExecutionProfileIneligible);
     }
     let epoch_matches: bool = transaction.query_row(
@@ -11614,25 +11727,9 @@ fn request_fingerprint(request: &CommandRequest) -> Blake3Digest {
         CommandBody::AdmitDeterministicEvidence {
             operating_cycle_id,
             deterministic_evaluation_receipt_id,
-            deterministic_experiment_id,
-            evaluator_revision_id,
-            input_manifest_id,
-            evaluator_output_content_object_id,
-            related_graph_revision_id,
-            semantic_role,
-            applicability,
-            limitation,
         } => {
             put_i64(&mut bytes, operating_cycle_id.value());
             put_i64(&mut bytes, deterministic_evaluation_receipt_id.value());
-            put_i64(&mut bytes, deterministic_experiment_id.value());
-            put_i64(&mut bytes, evaluator_revision_id.value());
-            put_i64(&mut bytes, input_manifest_id.value());
-            put_i64(&mut bytes, evaluator_output_content_object_id.value());
-            put_i64(&mut bytes, related_graph_revision_id.value());
-            put_i64(&mut bytes, *semantic_role as i64);
-            put_i64(&mut bytes, *applicability as i64);
-            put_bytes(&mut bytes, limitation.as_str().as_bytes());
         }
         CommandBody::FinalizeDeterministicExperiment {
             operating_cycle_id,
@@ -12554,11 +12651,13 @@ fn event_fingerprint(event_id: EventId, command_id: &CommandId, body: &EventBody
             deterministic_evaluation_receipt_id,
             semantic_role,
             applicability,
+            limitation_kind,
         } => {
             put_i64(&mut bytes, evidence_admission_id.value());
             put_i64(&mut bytes, deterministic_evaluation_receipt_id.value());
             put_i64(&mut bytes, *semantic_role as i64);
             put_i64(&mut bytes, *applicability as i64);
+            put_i64(&mut bytes, *limitation_kind as i64);
         }
         EventBody::DeterministicExperimentFinalized {
             deterministic_experiment_id,
@@ -13441,16 +13540,15 @@ fn insert_command_body(
         CommandBody::AdmitDeterministicEvidence {
             operating_cycle_id,
             deterministic_evaluation_receipt_id,
-            deterministic_experiment_id,
-            evaluator_revision_id,
-            input_manifest_id,
-            evaluator_output_content_object_id,
-            related_graph_revision_id,
-            semantic_role,
-            applicability,
-            limitation,
         } => {
-            transaction.execute("INSERT INTO command_admit_deterministic_evidence VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)", params![command_row_id, operating_cycle_id.value(), deterministic_evaluation_receipt_id.value(), deterministic_experiment_id.value(), evaluator_revision_id.value(), input_manifest_id.value(), evaluator_output_content_object_id.value(), related_graph_revision_id.value(), *semantic_role as i64, *applicability as i64, limitation.as_str()])?;
+            transaction.execute(
+                "INSERT INTO command_admit_deterministic_evidence VALUES (?1, ?2, ?3)",
+                params![
+                    command_row_id,
+                    operating_cycle_id.value(),
+                    deterministic_evaluation_receipt_id.value()
+                ],
+            )?;
         }
         CommandBody::FinalizeDeterministicExperiment {
             operating_cycle_id,
@@ -14938,15 +15036,17 @@ fn insert_event_body(
             deterministic_evaluation_receipt_id,
             semantic_role,
             applicability,
+            limitation_kind,
         } => {
             transaction.execute(
-                "INSERT INTO event_deterministic_evidence_admitted VALUES (?1, ?2, ?3, ?4, ?5)",
+                "INSERT INTO event_deterministic_evidence_admitted VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 params![
                     event_id.value(),
                     evidence_admission_id.value(),
                     deterministic_evaluation_receipt_id.value(),
                     *semantic_role as i64,
-                    *applicability as i64
+                    *applicability as i64,
+                    *limitation_kind as i64
                 ],
             )?;
         }
@@ -16027,7 +16127,7 @@ fn decode_event_body(
             }
         }
         EventKind::DeterministicEvidenceAdmitted => {
-            let (admission, receipt, role, applicability): (i64,i64,i64,i64) = connection.query_row("SELECT evidence_admission_id, deterministic_evaluation_receipt_id, semantic_role, applicability FROM event_deterministic_evidence_admitted WHERE event_id = ?1", [event_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing deterministic evidence event body"))?;
+            let (admission, receipt, role, applicability, limitation_kind): (i64, i64, i64, i64, i64) = connection.query_row("SELECT evidence_admission_id, deterministic_evaluation_receipt_id, semantic_role, applicability, limitation_kind FROM event_deterministic_evidence_admitted WHERE event_id = ?1", [event_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing deterministic evidence event body"))?;
             EventBody::DeterministicEvidenceAdmitted {
                 evidence_admission_id: EvidenceAdmissionId::try_from(admission)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -16037,6 +16137,7 @@ fn decode_event_body(
                 .map_err(|_| StoreError::InvalidStoredValue)?,
                 semantic_role: evidence_semantic_role_from_i64(role)?,
                 applicability: evidence_applicability_from_i64(applicability)?,
+                limitation_kind: evidence_limitation_kind_from_i64(limitation_kind)?,
             }
         }
         EventKind::DeterministicExperimentFinalized => {
@@ -17791,28 +17892,14 @@ fn decode_command_body(
             }
         }
         CommandKind::AdmitDeterministicEvidence => {
-            let row: (i64,i64,i64,i64,i64,i64,i64,i64,i64,String) = connection.query_row("SELECT operating_cycle_id, deterministic_evaluation_receipt_id, deterministic_experiment_id, evaluator_revision_id, input_manifest_id, evaluator_output_content_object_id, related_graph_revision_id, semantic_role, applicability, limitation_text FROM command_admit_deterministic_evidence WHERE command_row_id = ?1", [command_row_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?,row.get(7)?,row.get(8)?,row.get(9)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing deterministic evidence command body"))?;
+            let (cycle, receipt): (i64, i64) = connection.query_row("SELECT operating_cycle_id, deterministic_evaluation_receipt_id FROM command_admit_deterministic_evidence WHERE command_row_id = ?1", [command_row_id], |row| Ok((row.get(0)?, row.get(1)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing deterministic evidence command body"))?;
             CommandBody::AdmitDeterministicEvidence {
-                operating_cycle_id: OperatingCycleId::try_from(row.0)
+                operating_cycle_id: OperatingCycleId::try_from(cycle)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
                 deterministic_evaluation_receipt_id: DeterministicEvaluationReceiptId::try_from(
-                    row.1,
+                    receipt,
                 )
                 .map_err(|_| StoreError::InvalidStoredValue)?,
-                deterministic_experiment_id: DeterministicExperimentId::try_from(row.2)
-                    .map_err(|_| StoreError::InvalidStoredValue)?,
-                evaluator_revision_id: EvaluatorRevisionId::try_from(row.3)
-                    .map_err(|_| StoreError::InvalidStoredValue)?,
-                input_manifest_id: InputManifestId::try_from(row.4)
-                    .map_err(|_| StoreError::InvalidStoredValue)?,
-                evaluator_output_content_object_id: ContentObjectId::try_from(row.5)
-                    .map_err(|_| StoreError::InvalidStoredValue)?,
-                related_graph_revision_id: GraphRevisionId::try_from(row.6)
-                    .map_err(|_| StoreError::InvalidStoredValue)?,
-                semantic_role: evidence_semantic_role_from_i64(row.7)?,
-                applicability: evidence_applicability_from_i64(row.8)?,
-                limitation: EvidenceLimitationText::parse(row.9)
-                    .map_err(|_| StoreError::InvalidStoredValue)?,
             }
         }
         CommandKind::FinalizeDeterministicExperiment => {
@@ -19477,6 +19564,13 @@ fn forensic_manifest_capture_policy_from_i64(
 fn evidence_semantic_role_from_i64(value: i64) -> Result<EvidenceSemanticRole, StoreError> {
     match value {
         1 => Ok(EvidenceSemanticRole::DeterministicObservation),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+
+fn evidence_limitation_kind_from_i64(value: i64) -> Result<EvidenceLimitationKind, StoreError> {
+    match value {
+        1 => Ok(EvidenceLimitationKind::ApplicationSemanticsUninterpreted),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }

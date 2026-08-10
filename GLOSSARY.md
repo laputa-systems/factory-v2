@@ -117,9 +117,13 @@ wait, and bounded native streams. Pi may attach a strict session/protocol
 sidecar; a deterministic evaluator attaches no Pi identity. The current
 direct-executable evaluator treatment is driven only by a daemon-private,
 provider-free coordinator after a kernel claim over an already registered
-experiment. The coordinator is not an application evaluator profile, public
-scheduler, evidence admission, or application execution result, and the
-resident serving loop does not yet dispatch it.
+experiment. A separate kernel-service transition may derive one opaque generic
+`DeterministicObservation` only from the exact claimed receipt, complete sealed
+streams, finalized child, application-revision alignment, and direct exit zero;
+its limitation is `ApplicationSemanticsUninterpreted`. The kernel does not
+parse the application output, and neither the coordinator nor resident serving
+loop invokes that evidence transition yet. This is not a public scheduler,
+application-semantic admission, or application execution result.
 
 ### Office Prompt terminal evidence
 

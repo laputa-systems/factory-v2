@@ -142,10 +142,20 @@ and both complete stream seals. Only after child finalization may a constrained
 transition derive the forensic output from that child's stdout seal while also
 requiring complete stderr; callers cannot substitute an unrelated global
 object. Provider-free integration covers the ordinary and lingering-descendant
-paths. The resident serving loop still has no call site for this coordinator,
-and there is no public execution command, post-restart reconciliation,
-workspace disposal, semantic evidence admission, or application execution
-claim.
+paths.
+
+Evaluator revisions are scoped to the exact application revision aligned with
+their Project and carry closed direct-executable and exit-zero canonical-output
+contracts. The only generic evidence transition now names a completed
+evaluation receipt; the kernel derives every experiment/evaluator/input/output
+and graph cross-link and requires its exact claimed, finalized, two-stream
+child to have exited zero. It records only `DeterministicObservation`,
+`TestsTargetHypothesis`, and `ApplicationSemanticsUninterpreted`. It does not
+parse the application grammar or claim that the observation is true or
+decision-relevant. The daemon coordinator and resident serving loop still have
+no call site for this evidence transition, and there is no public execution
+command, post-restart reconciliation, workspace disposal, application-semantic
+admission, or application execution claim.
 
 Office Prompt completion also has two deliberately distinct closed sequence
 shapes. Observed assistant results require `AgentSettled`, a later exact final
