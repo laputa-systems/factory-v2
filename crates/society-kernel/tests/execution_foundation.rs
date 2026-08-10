@@ -8,7 +8,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use rusqlite::Connection;
+use society_kernel::postgres_compat::Connection;
 use society_kernel::{
     ActorAttemptCancellationReason, ActorAttemptId, ActorAttemptTerminalKind,
     ActorConfigurationName, ActorConfigurationRevisionId, ActorInstanceId, ActorModelPolicy,
@@ -150,7 +150,11 @@ fn rejected(
         body,
     );
     let receipt = store.execute(request).unwrap();
-    assert_eq!(receipt.disposition, CommandDisposition::Rejected(expected));
+    assert_eq!(
+        receipt.disposition,
+        CommandDisposition::Rejected(expected),
+        "{command_id}: {receipt:?}"
+    );
 }
 
 fn seal_and_register_mission_source(store: &mut KernelStore, mission: &ApplicationMissionInput) {
@@ -502,7 +506,7 @@ fn deterministic_evaluator_native_child_is_not_a_pi_child() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("society-evaluator-native-{nonce}.sqlite"));
+    let path = std::env::temp_dir().join(format!("society-evaluator-native-{nonce}"));
     let mut store = KernelStore::open(&path).unwrap();
     let (root_authority, cycle) = founded_cycle(
         &mut store,
@@ -916,15 +920,15 @@ fn deterministic_evaluator_native_child_is_not_a_pi_child() {
     // stderr seal. The receipt-time predicate must reject that recombination
     // directly, before a replay audit has a chance to discover it.
     drop(store);
-    let runtime_tamper_path = path.with_extension("runtime-binding-tamper.sqlite");
-    fs::copy(&path, &runtime_tamper_path).unwrap();
+    let runtime_tamper_path = path.with_extension("runtime-binding-tamper");
+    society_kernel::postgres_compat::clone_for_test(&path, &runtime_tamper_path).unwrap();
     let tampered = Connection::open(&runtime_tamper_path).unwrap();
     tampered
         .execute(
             "UPDATE deterministic_evaluator_forensic_manifest_bindings
                 SET native_child_stream_seal_id = 2
               WHERE forensic_manifest_id = 2",
-            [],
+            society_kernel::test_params![],
         )
         .unwrap();
     drop(tampered);
@@ -946,7 +950,7 @@ fn deterministic_evaluator_native_child_is_not_a_pi_child() {
         Rejection::DeterministicEvaluationBindingMismatch,
     );
     drop(runtime_tampered_store);
-    fs::remove_file(runtime_tamper_path).unwrap();
+    let _ = fs::remove_file(runtime_tamper_path);
     let mut store = KernelStore::open(&path).unwrap();
     rejected(
         &mut store,
@@ -1000,13 +1004,13 @@ fn deterministic_evaluator_native_child_is_not_a_pi_child() {
     // signaled direct reap, and it cannot cross an application-revision /
     // project-alignment boundary.
     drop(store);
-    let nonzero_reap_path = path.with_extension("nonzero-evaluator-reap.sqlite");
-    fs::copy(&path, &nonzero_reap_path).unwrap();
+    let nonzero_reap_path = path.with_extension("nonzero-evaluator-reap");
+    society_kernel::postgres_compat::clone_for_test(&path, &nonzero_reap_path).unwrap();
     let nonzero_reap = Connection::open(&nonzero_reap_path).unwrap();
     nonzero_reap
         .execute(
             "UPDATE native_child_reap_receipts SET status_value = 1 WHERE native_child_id = 1",
-            [],
+            society_kernel::test_params![],
         )
         .unwrap();
     drop(nonzero_reap);
@@ -1024,17 +1028,17 @@ fn deterministic_evaluator_native_child_is_not_a_pi_child() {
         Rejection::DeterministicEvaluationBindingMismatch,
     );
     drop(nonzero_reap_store);
-    fs::remove_file(nonzero_reap_path).unwrap();
+    let _ = fs::remove_file(nonzero_reap_path);
 
-    let signaled_reap_path = path.with_extension("signaled-evaluator-reap.sqlite");
-    fs::copy(&path, &signaled_reap_path).unwrap();
+    let signaled_reap_path = path.with_extension("signaled-evaluator-reap");
+    society_kernel::postgres_compat::clone_for_test(&path, &signaled_reap_path).unwrap();
     let signaled_reap = Connection::open(&signaled_reap_path).unwrap();
     signaled_reap
         .execute(
             "UPDATE native_child_reap_receipts
                 SET wait_status_kind = 2, status_value = 15
               WHERE native_child_id = 1",
-            [],
+            society_kernel::test_params![],
         )
         .unwrap();
     drop(signaled_reap);
@@ -1052,10 +1056,10 @@ fn deterministic_evaluator_native_child_is_not_a_pi_child() {
         Rejection::DeterministicEvaluationBindingMismatch,
     );
     drop(signaled_reap_store);
-    fs::remove_file(signaled_reap_path).unwrap();
+    let _ = fs::remove_file(signaled_reap_path);
 
-    let alignment_mismatch_path = path.with_extension("evaluator-alignment-mismatch.sqlite");
-    fs::copy(&path, &alignment_mismatch_path).unwrap();
+    let alignment_mismatch_path = path.with_extension("evaluator-alignment-mismatch");
+    society_kernel::postgres_compat::clone_for_test(&path, &alignment_mismatch_path).unwrap();
     let alignment_mismatch = Connection::open(&alignment_mismatch_path).unwrap();
     alignment_mismatch
         .execute(
@@ -1067,7 +1071,7 @@ fn deterministic_evaluator_native_child_is_not_a_pi_child() {
                     source_rendering_digest, source_content_object_id, installed_by_command_id
                FROM application_revisions
               WHERE application_revision_id = 1",
-            [],
+            society_kernel::test_params![],
         )
         .unwrap();
     alignment_mismatch
@@ -1075,7 +1079,7 @@ fn deterministic_evaluator_native_child_is_not_a_pi_child() {
             "UPDATE evaluator_revisions
                 SET application_revision_id = 2
               WHERE evaluator_revision_id = 1",
-            [],
+            society_kernel::test_params![],
         )
         .unwrap();
     drop(alignment_mismatch);
@@ -1093,7 +1097,7 @@ fn deterministic_evaluator_native_child_is_not_a_pi_child() {
         Rejection::DeterministicEvaluationBindingMismatch,
     );
     drop(alignment_mismatch_store);
-    fs::remove_file(alignment_mismatch_path).unwrap();
+    let _ = fs::remove_file(alignment_mismatch_path);
 
     let mut store = KernelStore::open(&path).unwrap();
     let evidence_receipt = accepted(
@@ -1350,7 +1354,7 @@ fn deterministic_evaluator_native_child_is_not_a_pi_child() {
             "UPDATE deterministic_evaluator_forensic_manifest_bindings
                 SET evaluator_output_content_object_id = 4
               WHERE forensic_manifest_id = 2",
-            [],
+            society_kernel::test_params![],
         )
         .unwrap();
     drop(tampered);
@@ -1360,7 +1364,7 @@ fn deterministic_evaluator_native_child_is_not_a_pi_child() {
             .validate_replayed_materialized_state()
             .is_err()
     );
-    fs::remove_file(path).unwrap();
+    let _ = fs::remove_file(path);
 }
 
 /// A fresh deterministic M5 fixture with an exact Office owner, active
@@ -1620,7 +1624,7 @@ fn ledger_event_reads_verified_pi_child_receipts_and_rejects_tampering() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("society-m5-ledger-event-{nonce}.sqlite"));
+    let path = std::env::temp_dir().join(format!("society-m5-ledger-event-{nonce}"));
     let mut store = KernelStore::open(&path).unwrap();
     let fixture = admitted_pi_office_fixture(&mut store, "m5-ledger-event");
     let generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
@@ -1668,7 +1672,7 @@ fn ledger_event_reads_verified_pi_child_receipts_and_rejects_tampering() {
         .execute(
             "INSERT INTO event_pi_adapter_ready_recorded(
                  event_id, native_child_id, pi_session_id
-             ) VALUES (?1, 1, 1)",
+             ) VALUES ($1, 1, 1)",
             [inert_event_id.value()],
         )
         .unwrap();
@@ -1679,7 +1683,7 @@ fn ledger_event_reads_verified_pi_child_receipts_and_rejects_tampering() {
         Err(StoreError::LedgerCorruption(_))
     ));
     drop(tampered);
-    fs::remove_file(path).unwrap();
+    let _ = fs::remove_file(path);
 }
 
 #[test]
@@ -1688,7 +1692,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("society-execution-foundation-{nonce}.sqlite"));
+    let path = std::env::temp_dir().join(format!("society-execution-foundation-{nonce}"));
     let mut store = KernelStore::open(&path).unwrap();
     let (root_authority, cycle) = founded_cycle(
         &mut store,
@@ -2615,12 +2619,12 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
     let retry_link: Option<i64> = inspect
         .query_row(
             "SELECT retry_of_actor_attempt_id FROM attempts WHERE actor_attempt_id = 2",
-            [],
+            society_kernel::test_params![],
             |row| row.get(0),
         )
         .unwrap();
     assert_eq!(retry_link, Some(1));
-    let (author, disposition): (i64, i64) = inspect.query_row("SELECT c.author_principal_id, d.disposition_kind FROM review_challenges c JOIN review_dispositions d ON d.review_challenge_id = c.review_challenge_id", [], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
+    let (author, disposition): (i64, i64) = inspect.query_row("SELECT c.author_principal_id, d.disposition_kind FROM review_challenges c JOIN review_dispositions d ON d.review_challenge_id = c.review_challenge_id", society_kernel::test_params![], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
     assert_eq!(
         (author, disposition),
         (
@@ -2633,7 +2637,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
             "SELECT c.command_id FROM ticket_acceptance_conditions a
          JOIN commands c ON c.command_row_id = a.satisfied_by_command_id
          WHERE a.ticket_id = 1",
-            [],
+            society_kernel::test_params![],
             |row| row.get(0),
         )
         .unwrap();
@@ -2642,7 +2646,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
         .query_row(
             "SELECT COUNT(*) FROM forensic_manifest_objects
              WHERE content_object_id = 4 AND object_role = 1",
-            [],
+            society_kernel::test_params![],
             |row| row.get(0),
         )
         .unwrap();
@@ -2654,7 +2658,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
              JOIN forensic_manifest_objects object
                ON object.forensic_manifest_id = manifest.forensic_manifest_id
              WHERE object.content_object_id = 4",
-            [],
+            society_kernel::test_params![],
             |row| row.get(0),
         )
         .unwrap();
@@ -2666,16 +2670,18 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
              ORDER BY forensic_manifest_id",
         )
         .unwrap()
-        .query_map([], |row| row.get(0))
+        .query_map(society_kernel::test_params![], |row| row.get(0))
         .unwrap()
         .map(Result::unwrap)
         .collect();
     assert_eq!(manifest_retention_classes, vec![2, 1]);
     let occurrence_policy_columns_on_content: i64 = inspect
         .query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('content_objects')
-             WHERE name IN ('media_schema_contract', 'retention_access_class')",
-            [],
+            "SELECT COUNT(*) FROM information_schema.columns
+             WHERE table_schema = current_schema()
+               AND table_name = 'content_objects'
+               AND column_name IN ('media_schema_contract', 'retention_access_class')",
+            society_kernel::test_params![],
             |row| row.get(0),
         )
         .unwrap();
@@ -2686,14 +2692,14 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
                 "UPDATE forensic_manifest_objects
              SET media_schema_contract = 1
              WHERE forensic_manifest_id = 1",
-                [],
+                society_kernel::test_params![],
             )
             .is_err()
     );
     inspect
         .execute(
             "UPDATE evidence_admissions SET evaluator_output_content_object_id = 5",
-            [],
+            society_kernel::test_params![],
         )
         .unwrap();
     drop(inspect);
@@ -2707,21 +2713,21 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
     repair_content
         .execute(
             "UPDATE evidence_admissions SET evaluator_output_content_object_id = 4",
-            [],
+            society_kernel::test_params![],
         )
         .unwrap();
     drop(repair_content);
     let inspect = Connection::open(&path).unwrap();
-    inspect.execute("UPDATE command_start_actor_attempt SET reservation_micros = 4999 WHERE command_row_id = (SELECT command_row_id FROM commands WHERE command_id = 'm3-attempt-start-retry')", []).unwrap();
+    inspect.execute("UPDATE command_start_actor_attempt SET reservation_micros = 4999 WHERE command_row_id = (SELECT command_row_id FROM commands WHERE command_id = 'm3-attempt-start-retry')", society_kernel::test_params![]).unwrap();
     drop(inspect);
     assert!(KernelStore::open(&path).unwrap().replay_ledger().is_err());
 
     let repair = Connection::open(&path).unwrap();
-    repair.execute("UPDATE command_start_actor_attempt SET reservation_micros = 5000 WHERE command_row_id = (SELECT command_row_id FROM commands WHERE command_id = 'm3-attempt-start-retry')", []).unwrap();
+    repair.execute("UPDATE command_start_actor_attempt SET reservation_micros = 5000 WHERE command_row_id = (SELECT command_row_id FROM commands WHERE command_id = 'm3-attempt-start-retry')", society_kernel::test_params![]).unwrap();
     repair
         .execute(
             "UPDATE attempts SET lifecycle_state = 4 WHERE actor_attempt_id = 2",
-            [],
+            society_kernel::test_params![],
         )
         .unwrap();
     drop(repair);
@@ -2731,7 +2737,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
             .validate_replayed_materialized_state()
             .is_err()
     );
-    fs::remove_file(path).unwrap();
+    let _ = fs::remove_file(path);
 }
 
 #[test]
@@ -2740,7 +2746,7 @@ fn pi_child_receipts_bind_epoch_treatment_cancellation_and_containment() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("society-m5-child-replay-{nonce}.sqlite"));
+    let path = std::env::temp_dir().join(format!("society-m5-child-replay-{nonce}"));
     let mut store = KernelStore::open(&path).unwrap();
     let (root_authority, cycle) = founded_cycle(
         &mut store,
@@ -3208,20 +3214,20 @@ fn pi_child_receipts_bind_epoch_treatment_cancellation_and_containment() {
     drop(live);
     drop(store);
     let inspect = Connection::open(&path).unwrap();
-    // SQLite independently rejects a contradictory accepted signal receipt;
+    // PostgreSQL independently rejects a contradictory accepted signal receipt;
     // rejected typed commands above remain ledgered because their command body
     // table deliberately does not encode this transition predicate.
     assert!(inspect
         .execute(
             "INSERT INTO process_signal_receipts(native_child_id, signal_action, delivery, observed_liveness, cause_kind, cancellation_propagation_id, recorded_by_command_id)
              VALUES (1, 1, 2, 1, 2, NULL, 1)",
-            [],
+            society_kernel::test_params![],
         )
         .is_err());
     inspect
         .execute(
             "UPDATE native_children SET child_identity = 'tampered-child-m5' WHERE native_child_id = 1",
-            [],
+            society_kernel::test_params![],
         )
         .unwrap();
     drop(inspect);
@@ -3231,7 +3237,7 @@ fn pi_child_receipts_bind_epoch_treatment_cancellation_and_containment() {
             .validate_replayed_materialized_state()
             .is_err()
     );
-    fs::remove_file(path).unwrap();
+    let _ = fs::remove_file(path);
 }
 
 #[test]
@@ -4936,7 +4942,7 @@ fn compiled_capability_grants_have_closed_origin_and_exact_service_set() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("society-capability-origin-{nonce}.sqlite"));
+    let path = std::env::temp_dir().join(format!("society-capability-origin-{nonce}"));
     let mut store = KernelStore::open(&path).unwrap();
     let (root_authority, _) = founded_cycle(
         &mut store,
@@ -4952,7 +4958,9 @@ fn compiled_capability_grants_have_closed_origin_and_exact_service_set() {
              FROM capability_grants WHERE principal_id = 1 ORDER BY grant_origin",
         )
         .unwrap()
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .query_map(society_kernel::test_params![], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
         .unwrap()
         .collect::<Result<_, _>>()
         .unwrap();
@@ -4965,7 +4973,7 @@ fn compiled_capability_grants_have_closed_origin_and_exact_service_set() {
              ORDER BY capability_kind",
         )
         .unwrap()
-        .query_map([], |row| row.get(0))
+        .query_map(society_kernel::test_params![], |row| row.get(0))
         .unwrap()
         .collect::<Result<_, _>>()
         .unwrap();
@@ -4978,7 +4986,7 @@ fn compiled_capability_grants_have_closed_origin_and_exact_service_set() {
     let root_authority_ledger_grants: i64 = inspect
         .query_row(
             "SELECT COUNT(*) FROM capability_grants
-             WHERE principal_id = ?1 AND grant_origin = 2
+             WHERE principal_id = $1 AND grant_origin = 2
                AND granted_by_command_id IS NOT NULL",
             [root_authority.value()],
             |row| row.get(0),
@@ -4994,7 +5002,7 @@ fn compiled_capability_grants_have_closed_origin_and_exact_service_set() {
                 "INSERT INTO capability_grants(principal_id, capability_kind, office_occupancy_id,
                                              actor_instance_id, grant_state, grant_origin,
                                              granted_by_command_id, consumed_by_command_id)
-             VALUES (?1, 54, NULL, NULL, 1, 3, NULL, NULL)",
+             VALUES ($1, 54, NULL, NULL, 1, 3, NULL, NULL)",
                 [root_authority.value()],
             )
             .is_err()
@@ -5006,5 +5014,5 @@ fn compiled_capability_grants_have_closed_origin_and_exact_service_set() {
             .validate_replayed_materialized_state()
             .is_ok()
     );
-    fs::remove_file(path).unwrap();
+    let _ = fs::remove_file(path);
 }

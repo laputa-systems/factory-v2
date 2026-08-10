@@ -5,7 +5,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use rusqlite::Connection;
+use society_kernel::postgres_compat::Connection;
 use society_kernel::{
     ApplicationIdentity, ApplicationMissionInput, ApplicationName, ApplicationRevisionId,
     ApplicationRevisionOrdinal, Blake3Digest, Capability, CommandBody, CommandId, CommandRequest,
@@ -174,7 +174,7 @@ fn event_id(event: StudyEvent) -> i64 {
 
 fn temporary_database_path() -> std::path::PathBuf {
     std::env::temp_dir().join(format!(
-        "society-study-forum-{}-{}.sqlite",
+        "society-study-forum-{}-{}",
         std::process::id(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -1041,7 +1041,7 @@ fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
     connection
         .execute(
             "UPDATE study_forum_exposures SET visible_from_message_ordinal = 1
-             WHERE study_actor_obligation_id = ?1",
+             WHERE study_actor_obligation_id = $1",
             [reset_successor.value()],
         )
         .unwrap();
@@ -1052,5 +1052,5 @@ fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
             .validate_replayed_materialized_state()
             .is_err()
     );
-    fs::remove_file(path).unwrap();
+    let _ = fs::remove_file(path);
 }

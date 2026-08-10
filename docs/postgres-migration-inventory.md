@@ -163,16 +163,16 @@ SQLite prototype files are disposable and no importer exists.
 ## Trigger and invariant evidence
 
 - [x] Source cross-row/immutability triggers are represented by 24 PostgreSQL triggers and PL/pgSQL functions: object-revision immutability and kind matching; capability-grant principal bindings; the single supervisor epoch; Pi sidecar requirements; live PID/PGID reuse exclusion; liveness reappearance containment; and the four-way Pi accounting sequence namespace.
-- [ ] Phase 2 must preserve every trigger's observable rejection while porting the transition SQL; no domain policy may be inferred from PostgreSQL error text.
-- [ ] Phase 2 must add real-database regression cases for duplicate command IDs, same-ID/different-body idempotency, stale generations, rejected-command durability, and each trigger replacement.
+- [x] Phase 2 preserves every trigger's observable rejection while porting the transition SQL; no domain policy is inferred from PostgreSQL error text.
+- [x] Phase 2 adds real-database regression cases for duplicate command IDs, same-ID/different-body idempotency, stale generations, rejected-command durability, and each trigger replacement.
 
 ## Transaction and identity sites
 
-- [x] The SQLite transaction envelope is located in `KernelStore::execute` and `execute_in_transaction` (`crates/society-kernel/src/store.rs:1042-1180`): command identity/fingerprint lookup, existing-receipt resolution, typed body persistence, accepted/rejected command/event persistence, materialized transition, and commit.
-- [x] Replay and materialized validation are `replay_ledger` and `validate_replayed_materialized_state` (`store.rs:1243-1375`).
-- [ ] Port these as one SQLx `PgTransaction` envelope, preserving source order and atomic commit.
-- [ ] Replace all three `last_insert_rowid` sites with statement-local `RETURNING`: `store.rs:1123` (command row), `store.rs:11380` (shared study/transition helper), and `study.rs:1276` (study identity helper).
-- [ ] Audit every SQLite `Immediate` transaction and retain serial daemon dispatch or add a narrowly justified row lock/serializable retry.
+- [x] The transaction envelope remains in `KernelStore::execute` and `execute_in_transaction`: command identity/fingerprint lookup, existing-receipt resolution, typed body persistence, accepted/rejected command/event persistence, materialized transition, and commit run on one PostgreSQL connection and transaction.
+- [x] Replay and materialized validation remain `replay_ledger` and `validate_replayed_materialized_state` (`store.rs`): the PostgreSQL-backed fresh replay is compared against the durable schema.
+- [x] The envelope uses the narrow synchronous SQLx storage boundary and preserves source order and atomic commit; no generic repository or payload map was introduced.
+- [x] All former identity reads now use statement-local PostgreSQL `RETURNING` of the table's generated identity column through the typed returned-identity helper.
+- [x] The existing daemon dispatch is serial, so the former SQLite immediate-transaction protection is retained by one transaction per command; no additional concurrent writer path exists in this phase.
 
 ## Direct client and test areas
 
@@ -204,4 +204,3 @@ runtime adapters listed so none is mistaken for a hidden compatibility path:
 
 This inventory is deliberately a checklist: unchecked Phase 2/3 items are
 migration gates, not claims that the SQLite implementation is already portable.
-

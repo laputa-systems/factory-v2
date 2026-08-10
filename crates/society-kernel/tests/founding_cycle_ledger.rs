@@ -8,7 +8,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use rusqlite::Connection;
+use society_kernel::postgres_compat::Connection;
 use society_kernel::{
     AdmissionGeneration, AdversarialReviewId, ApplicationIdentity, ApplicationMissionInput,
     ApplicationName, ApplicationRevisionId, ApplicationRevisionOrdinal, Blake3Digest,
@@ -407,7 +407,7 @@ fn mission_source_rendering_is_bounded_and_hashes_its_exact_bytes() {
 #[test]
 fn replay_rejects_recombined_persisted_mission_source_objects() {
     let path = std::env::temp_dir().join(format!(
-        "society-mission-source-tamper-{}-{}.sqlite",
+        "society-mission-source-tamper-{}-{}",
         std::process::id(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -481,7 +481,7 @@ fn replay_rejects_recombined_persisted_mission_source_objects() {
     tamper
         .execute(
             "UPDATE application_revisions SET source_content_object_id = 2",
-            [],
+            society_kernel::test_params![],
         )
         .unwrap();
     drop(tamper);
@@ -494,13 +494,13 @@ fn replay_rejects_recombined_persisted_mission_source_objects() {
     repair
         .execute(
             "UPDATE application_revisions SET source_content_object_id = 1",
-            [],
+            society_kernel::test_params![],
         )
         .unwrap();
     repair
         .execute(
             "UPDATE command_install_founding_mission SET source_content_object_id = 2",
-            [],
+            society_kernel::test_params![],
         )
         .unwrap();
     drop(repair);
@@ -508,7 +508,7 @@ fn replay_rejects_recombined_persisted_mission_source_objects() {
         KernelStore::open(&path).unwrap().replay_ledger(),
         Err(StoreError::LedgerCorruption(_))
     ));
-    fs::remove_file(path).unwrap();
+    let _ = fs::remove_file(path);
 }
 
 #[test]
@@ -828,7 +828,7 @@ fn current_operating_cycle_generation_is_typed_and_distinguishes_absence_from_co
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("society-cycle-generation-read-{nonce}.sqlite"));
+    let path = std::env::temp_dir().join(format!("society-cycle-generation-read-{nonce}"));
     let mut store = KernelStore::open(&path).unwrap();
     let (root_authority, cycle_id) = found_cycle(&mut store);
     assert_eq!(
@@ -865,11 +865,14 @@ fn current_operating_cycle_generation_is_typed_and_distinguishes_absence_from_co
     drop(store);
     let inspect = Connection::open(&path).unwrap();
     inspect
-        .pragma_update(None, "ignore_check_constraints", "ON")
+        .execute_batch(
+            "ALTER TABLE operating_cycles
+             DROP CONSTRAINT operating_cycles_admission_generation_check",
+        )
         .unwrap();
     inspect
         .execute(
-            "UPDATE operating_cycles SET admission_generation = -1 WHERE operating_cycle_id = ?1",
+            "UPDATE operating_cycles SET admission_generation = -1 WHERE operating_cycle_id = $1",
             [cycle_id.value()],
         )
         .unwrap();
@@ -882,7 +885,7 @@ fn current_operating_cycle_generation_is_typed_and_distinguishes_absence_from_co
         ))
     ));
     drop(corrupted);
-    fs::remove_file(path).unwrap();
+    let _ = fs::remove_file(path);
 }
 
 /// The M5 Office Ready fact is no longer a synthetic service assertion. This
@@ -1181,7 +1184,7 @@ fn founding_cycle_is_idempotent_fenced_and_replayable() {
 #[test]
 fn project_charter_activation_and_close_blocker_are_typed_and_replayable() {
     let path = std::env::temp_dir().join(format!(
-        "society-typed-graph-revisions-{}-{}.sqlite",
+        "society-typed-graph-revisions-{}-{}",
         std::process::id(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -1513,7 +1516,7 @@ fn project_charter_activation_and_close_blocker_are_typed_and_replayable() {
     let connection = Connection::open(&path).unwrap();
     connection
         .execute_batch(
-            "DROP TRIGGER observation_revision_cannot_update;
+            "DROP TRIGGER observation_revision_cannot_update ON observation_revisions;
              UPDATE observation_revisions
              SET observation_text = 'tampered observation body'
              WHERE graph_revision_id = 1;",
@@ -1551,20 +1554,20 @@ fn project_charter_activation_and_close_blocker_are_typed_and_replayable() {
             "UPDATE command_add_observation_revision
              SET observation_text = 'Observed a reproducible constraint.'
              WHERE command_row_id = (SELECT command_row_id FROM commands WHERE command_id = 'coord-add-observation');
-             DROP TRIGGER hypothesis_revision_matches_object_kind;
+             DROP TRIGGER hypothesis_revision_matches_object_kind ON hypothesis_revisions;
              INSERT INTO hypothesis_revisions(graph_revision_id, hypothesis_text)
              VALUES (1, 'forged second body');",
         )
         .unwrap();
     drop(connection);
     assert!(KernelStore::open(&path).unwrap().replay_ledger().is_err());
-    fs::remove_file(path).unwrap();
+    let _ = fs::remove_file(path);
 }
 
 #[test]
 fn application_mission_alignment_is_founding_mission_bound_and_replay_verified() {
     let path = std::env::temp_dir().join(format!(
-        "society-application-mission-alignment-{}-{}.sqlite",
+        "society-application-mission-alignment-{}-{}",
         std::process::id(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -1621,7 +1624,7 @@ fn application_mission_alignment_is_founding_mission_bound_and_replay_verified()
              JOIN application_revision_principles p
                ON p.application_revision_id = r.application_revision_id
              GROUP BY a.application_id, r.application_revision_id",
-            [],
+            society_kernel::test_params![],
             |row| {
                 Ok((
                     row.get(0)?,
@@ -1646,7 +1649,7 @@ fn application_mission_alignment_is_founding_mission_bound_and_replay_verified()
             "SELECT application_revision_id, change_answer, improvement_evidence_answer,
                     boundary_commitment_answer, revisit_answer
              FROM project_north_star_alignments WHERE project_id = 1",
-            [],
+            society_kernel::test_params![],
             |row| {
                 Ok((
                     row.get(0)?,
@@ -1678,7 +1681,7 @@ fn application_mission_alignment_is_founding_mission_bound_and_replay_verified()
              WHERE command_row_id = (
                  SELECT command_row_id FROM commands WHERE command_id = 'found-install-founding-mission'
              ) AND principle_ordinal = 1",
-            [],
+            society_kernel::test_params![],
         )
         .unwrap();
     drop(connection);
@@ -1692,26 +1695,26 @@ fn application_mission_alignment_is_founding_mission_bound_and_replay_verified()
              WHERE command_row_id = (
                  SELECT command_row_id FROM commands WHERE command_id = 'found-install-founding-mission'
              ) AND principle_ordinal = 1",
-            [],
+            society_kernel::test_params![],
         )
         .unwrap();
     connection
         .execute(
             "UPDATE project_north_star_alignments
              SET change_answer = 'forged material alignment' WHERE project_id = 1",
-            [],
+            society_kernel::test_params![],
         )
         .unwrap();
     drop(connection);
     let tampered = KernelStore::open(&path).unwrap();
     assert!(tampered.validate_replayed_materialized_state().is_err());
-    fs::remove_file(path).unwrap();
+    let _ = fs::remove_file(path);
 }
 
 #[test]
 fn current_schema_reopens_after_atomic_fresh_bootstrap() {
     let path = std::env::temp_dir().join(format!(
-        "society-fresh-schema-{}-{}.sqlite",
+        "society-fresh-schema-{}-{}",
         std::process::id(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -1719,89 +1722,51 @@ fn current_schema_reopens_after_atomic_fresh_bootstrap() {
             .as_nanos()
     ));
     let connection = Connection::open(&path).unwrap();
-    connection
-        .execute_batch(include_str!("../../../migrations/0001_kernel.sql"))
-        .unwrap();
+    connection.migrate().unwrap();
     assert_eq!(
         connection
-            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+            .query_row(
+                "SELECT COUNT(*) FROM _sqlx_migrations",
+                society_kernel::test_params![],
+                |row| row.get::<_, i64>(0)
+            )
             .unwrap(),
-        27
+        1
     );
     drop(connection);
     drop(KernelStore::open(&path).unwrap());
     let reopened = Connection::open(&path).unwrap();
     assert_eq!(
         reopened
-            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+            .query_row(
+                "SELECT COUNT(*) FROM _sqlx_migrations",
+                society_kernel::test_params![],
+                |row| row.get::<_, i64>(0)
+            )
             .unwrap(),
-        27
+        1
     );
-    assert_eq!(
-        reopened
-            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
-                row.get::<_, i64>(0)
-            })
-            .unwrap(),
-        0
-    );
-    let objects_table: String = reopened
-        .query_row(
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'objects'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert_eq!(objects_table, "objects");
+    assert_eq!(reopened.query_row("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = 'commands'", society_kernel::test_params![], |row| row.get::<_, i64>(0)).unwrap(), 1);
     drop(reopened);
-    fs::remove_file(path).unwrap();
+    let _ = fs::remove_file(path);
 }
 
 #[test]
-fn historical_schema_current_minus_one_is_rejected_without_current_schema_mutation() {
+fn migration_is_idempotent_and_reopen_preserves_the_current_schema() {
     let path = std::env::temp_dir().join(format!(
-        "society-historical-schema-twelve-{}-{}.sqlite",
+        "society-current-schema-reopen-{}-{}",
         std::process::id(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos()
     ));
-    let historical = Connection::open(&path).unwrap();
-    // Schema twelve was the immediately preceding fresh-only identity. Schema
-    // thirteen must not mistake its durable Dispose shape for current data.
-    historical
-        .execute_batch(
-            "CREATE TABLE previous_v12_ledger_marker (entry_id INTEGER PRIMARY KEY);
-             INSERT INTO previous_v12_ledger_marker VALUES (1);
-             PRAGMA user_version = 12;",
-        )
-        .unwrap();
-    drop(historical);
-
-    assert!(matches!(
-        KernelStore::open(&path),
-        Err(StoreError::UnsupportedSchemaVersion(12))
-    ));
-    let inspection = Connection::open(&path).unwrap();
-    assert_eq!(
-        inspection
-            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
-            .unwrap(),
-        12
-    );
-    assert_eq!(
-        inspection
-            .query_row(
-                "SELECT COUNT(*) FROM previous_v12_ledger_marker",
-                [],
-                |row| { row.get::<_, i64>(0) }
-            )
-            .unwrap(),
-        1
-    );
-    drop(inspection);
-    fs::remove_file(path).unwrap();
+    let first = Connection::open(&path).unwrap();
+    first.migrate().unwrap();
+    drop(first);
+    let reopened = KernelStore::open(&path).unwrap();
+    assert_eq!(reopened.command_count().unwrap(), 0);
+    let _ = fs::remove_file(path);
 }
 
 #[test]
@@ -1840,9 +1805,8 @@ fn founding_budget_policy_is_explicit_per_closed_treatment() {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "society-generic-budget-policy-{case}-{unique}.sqlite3"
-        ));
+        let path =
+            std::env::temp_dir().join(format!("society-generic-budget-policy-{case}-{unique}"));
         let mut store = KernelStore::open(&path).unwrap();
         let bootstrap = PrincipalId::BOOTSTRAP;
         accepted(
@@ -1968,7 +1932,7 @@ fn founding_budget_policy_is_explicit_per_closed_treatment() {
                    ON b.operating_cycle_id = c.operating_cycle_id
                  JOIN budget_envelopes e ON e.budget_envelope_id = b.budget_envelope_id
                  WHERE c.operating_cycle_id = 1",
-                [],
+                society_kernel::test_params![],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .unwrap();
@@ -1979,7 +1943,7 @@ fn founding_budget_policy_is_explicit_per_closed_treatment() {
                  JOIN commands command
                    ON command.command_row_id = proposal.command_row_id
                  WHERE command.command_id = 'policy-propose-explicit-cycle-ceiling'",
-                [],
+                society_kernel::test_params![],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .unwrap();
@@ -1987,7 +1951,7 @@ fn founding_budget_policy_is_explicit_per_closed_treatment() {
             .query_row(
                 "SELECT treatment, budget_ceiling_micros
                  FROM event_operating_cycle_proposed",
-                [],
+                society_kernel::test_params![],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .unwrap();
@@ -1999,7 +1963,7 @@ fn founding_budget_policy_is_explicit_per_closed_treatment() {
         inspection
             .execute(
                 "UPDATE command_propose_operating_cycle
-                 SET budget_ceiling_micros = ?1
+                 SET budget_ceiling_micros = $1
                  WHERE command_row_id = (
                     SELECT command_row_id FROM commands
                     WHERE command_id = 'policy-propose-explicit-cycle-ceiling'
@@ -2017,7 +1981,7 @@ fn founding_budget_policy_is_explicit_per_closed_treatment() {
         inspection
             .execute(
                 "UPDATE command_propose_operating_cycle
-                 SET budget_ceiling_micros = ?1
+                 SET budget_ceiling_micros = $1
                  WHERE command_row_id = (
                     SELECT command_row_id FROM commands
                     WHERE command_id = 'policy-propose-explicit-cycle-ceiling'
@@ -2028,7 +1992,7 @@ fn founding_budget_policy_is_explicit_per_closed_treatment() {
         inspection
             .execute(
                 "UPDATE event_operating_cycle_proposed
-                 SET budget_ceiling_micros = ?1",
+                 SET budget_ceiling_micros = $1",
                 [budget_ceiling.value() + 1],
             )
             .unwrap();
@@ -2042,13 +2006,13 @@ fn founding_budget_policy_is_explicit_per_closed_treatment() {
         inspection
             .execute(
                 "UPDATE event_operating_cycle_proposed
-                 SET budget_ceiling_micros = ?1",
+                 SET budget_ceiling_micros = $1",
                 [budget_ceiling.value()],
             )
             .unwrap();
         inspection
             .execute(
-                "UPDATE operating_cycles SET budget_ceiling_micros = ?1",
+                "UPDATE operating_cycles SET budget_ceiling_micros = $1",
                 [budget_ceiling.value() + 1],
             )
             .unwrap();
@@ -2059,7 +2023,7 @@ fn founding_budget_policy_is_explicit_per_closed_treatment() {
                 .validate_replayed_materialized_state(),
             Err(StoreError::LedgerCorruption(_))
         ));
-        fs::remove_file(path).unwrap();
+        let _ = fs::remove_file(path);
     }
 }
 
@@ -2069,32 +2033,32 @@ fn actor_grant_must_match_the_cycle_pinned_office_occupancy() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("society-occupancy-scope-{unique}.sqlite3"));
+    let path = std::env::temp_dir().join(format!("society-occupancy-scope-{unique}"));
     let mut store = KernelStore::open(&path).unwrap();
     let (_, cycle_id) = found_cycle(&mut store);
 
     // Succession is not a production command in this bounded slice. This
     // direct fixture creates a second, active office occupancy and its exact
     // grant, while the already proposed cycle remains pinned to occupancy 1.
-    let fixture = rusqlite::Connection::open(&path).unwrap();
+    let fixture = Connection::open(&path).unwrap();
     fixture
         .execute(
             "UPDATE office_occupancies SET active = 0 WHERE office_occupancy_id = 1",
-            [],
+            society_kernel::test_params![],
         )
         .unwrap();
     fixture
         .execute(
             "INSERT INTO principals(principal_id, principal_kind, display_name, active)
              VALUES (4, 3, 'successor fixture', 1)",
-            [],
+            society_kernel::test_params![],
         )
         .unwrap();
     fixture
         .execute(
             "INSERT INTO office_occupancies(office_id, principal_id, active, appointed_by_command_id)
              VALUES (1, 4, 1, 1)",
-            [],
+            society_kernel::test_params![],
         )
         .unwrap();
     fixture
@@ -2102,7 +2066,7 @@ fn actor_grant_must_match_the_cycle_pinned_office_occupancy() {
             "INSERT INTO capability_grants(principal_id, capability_kind, office_occupancy_id,
                                               grant_state, grant_origin, granted_by_command_id, consumed_by_command_id)
              VALUES (4, 9, 2, 1, 2, 1, NULL)",
-            [],
+            society_kernel::test_params![],
         )
         .unwrap();
     drop(fixture);
@@ -2118,7 +2082,7 @@ fn actor_grant_must_match_the_cycle_pinned_office_occupancy() {
     );
 
     drop(store);
-    fs::remove_file(path).unwrap();
+    let _ = fs::remove_file(path);
 }
 
 #[test]
@@ -2127,15 +2091,15 @@ fn forged_grant_principal_cannot_borrow_an_active_occupancy() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("society-forged-grant-{unique}.sqlite3"));
+    let path = std::env::temp_dir().join(format!("society-forged-grant-{unique}"));
     let mut store = KernelStore::open(&path).unwrap();
     let (_, cycle_id) = found_cycle(&mut store);
-    let fixture = rusqlite::Connection::open(&path).unwrap();
+    let fixture = Connection::open(&path).unwrap();
     fixture
         .execute(
             "INSERT INTO principals(principal_id, principal_kind, display_name, active)
              VALUES (4, 3, 'forged grant fixture', 1)",
-            [],
+            society_kernel::test_params![],
         )
         .unwrap();
     // Normal SQL cannot create a grant whose principal does not hold the
@@ -2145,16 +2109,16 @@ fn forged_grant_principal_cannot_borrow_an_active_occupancy() {
             "INSERT INTO capability_grants(principal_id, capability_kind, office_occupancy_id,
                                               grant_state, grant_origin, granted_by_command_id, consumed_by_command_id)
              VALUES (4, 9, 1, 1, 2, 1, NULL)",
-            [],
+            society_kernel::test_params![],
         )
         .is_err());
     // An attacker able to remove the schema defense can still manufacture the
     // row. The runtime authorization join must reject it before transition.
     fixture
         .execute_batch(
-            "DROP TRIGGER capability_grant_principal_matches_occupancy_on_insert;
-             DROP TRIGGER capability_grant_principal_matches_occupancy_on_update;
-             DROP TRIGGER occupancy_principal_matches_existing_grants;",
+            "DROP TRIGGER capability_grant_principal_matches_occupancy_on_insert ON capability_grants;
+             DROP TRIGGER capability_grant_principal_matches_occupancy_on_update ON capability_grants;
+             DROP TRIGGER occupancy_principal_matches_existing_grants ON office_occupancies;",
         )
         .unwrap();
     fixture
@@ -2162,7 +2126,7 @@ fn forged_grant_principal_cannot_borrow_an_active_occupancy() {
             "INSERT INTO capability_grants(principal_id, capability_kind, office_occupancy_id,
                                               grant_state, grant_origin, granted_by_command_id, consumed_by_command_id)
              VALUES (4, 9, 1, 1, 2, 1, NULL)",
-            [],
+            society_kernel::test_params![],
         )
         .unwrap();
     drop(fixture);
@@ -2178,7 +2142,7 @@ fn forged_grant_principal_cannot_borrow_an_active_occupancy() {
     );
 
     drop(store);
-    fs::remove_file(path).unwrap();
+    let _ = fs::remove_file(path);
 }
 
 #[test]
@@ -2867,7 +2831,7 @@ fn known_overrun_postmortem_records_actual_spend_even_above_admission_ceiling() 
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("society-known-overrun-{unique}.sqlite3"));
+    let path = std::env::temp_dir().join(format!("society-known-overrun-{unique}"));
     let mut store = KernelStore::open(&path).unwrap();
     let (root_authority, cycle_id) = found_cycle(&mut store);
     let zero = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
@@ -2954,12 +2918,14 @@ fn known_overrun_postmortem_records_actual_spend_even_above_admission_ceiling() 
             resolution: CostPostmortemResolution::ChargeObservedOverrun,
         },
     );
-    let accounting = rusqlite::Connection::open(&path).unwrap();
+    let accounting = Connection::open(&path).unwrap();
     let mut statement = accounting
         .prepare("SELECT reserved_micros, spent_micros FROM budget_envelopes ORDER BY budget_envelope_id")
         .unwrap();
     let rows = statement
-        .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))
+        .query_map(society_kernel::test_params![], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+        })
         .unwrap()
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
@@ -2976,7 +2942,7 @@ fn known_overrun_postmortem_records_actual_spend_even_above_admission_ceiling() 
     drop(statement);
     drop(accounting);
     drop(store);
-    fs::remove_file(path).unwrap();
+    let _ = fs::remove_file(path);
 }
 
 #[test]
@@ -3027,7 +2993,7 @@ fn pi_office_session_dispose_orders_peer_facts_and_reconciles_its_parent_budget(
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("society-m7-dispose-{unique}.sqlite3"));
+    let path = std::env::temp_dir().join(format!("society-m7-dispose-{unique}"));
     let mut store = KernelStore::open(&path).unwrap();
     let (root_authority, cycle_id) = found_cycle(&mut store);
     let initial = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
@@ -3447,7 +3413,7 @@ fn pi_office_session_dispose_orders_peer_facts_and_reconciles_its_parent_budget(
         connection
             .query_row(
                 "SELECT reservation_state, charged_micros FROM budget_reservations WHERE budget_reservation_id = 1",
-                [],
+                society_kernel::test_params![],
                 |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
             )
             .unwrap(),
@@ -3457,7 +3423,7 @@ fn pi_office_session_dispose_orders_peer_facts_and_reconciles_its_parent_budget(
         connection
             .query_row(
                 "SELECT lifecycle_state FROM root_authority_office_sessions WHERE root_authority_office_session_id = 1",
-                [],
+                society_kernel::test_params![],
                 |row| row.get::<_, i64>(0),
             )
             .unwrap(),
@@ -3470,7 +3436,7 @@ fn pi_office_session_dispose_orders_peer_facts_and_reconciles_its_parent_budget(
                  FROM budget_envelopes envelope
                  JOIN budget_envelope_constraints budget_constraint
                    ON budget_constraint.budget_envelope_id = envelope.budget_envelope_id
-                 WHERE budget_constraint.operating_cycle_id = ?1",
+                 WHERE budget_constraint.operating_cycle_id = $1",
                 [cycle_id.value()],
                 |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
             )
@@ -3480,9 +3446,9 @@ fn pi_office_session_dispose_orders_peer_facts_and_reconciles_its_parent_budget(
     assert_eq!(
         connection
             .query_row(
-                "SELECT COALESCE(SUM(amount_micros), 0)
+                "SELECT COALESCE(SUM(amount_micros)::BIGINT, 0::BIGINT)
                  FROM budget_reservation_charges WHERE budget_reservation_id = 1",
-                [],
+                society_kernel::test_params![],
                 |row| row.get::<_, i64>(0),
             )
             .unwrap(),
@@ -3499,11 +3465,11 @@ fn pi_office_session_dispose_orders_peer_facts_and_reconciles_its_parent_budget(
                  cumulative_ceiling_micros, recorded_by_command_id
              ) VALUES (
                  1, 1, 1, 'm7-first-prompt', 21,
-                 0, 0, 0, 0, 0, X'0000000000000000', 0,
+                 0, 0, 0, 0, 0, decode('0000000000000000', 'hex'), 0,
                  (SELECT command_row_id FROM commands
                   WHERE command_id = 'm7-record-final-known-usage')
              )",
-            [],
+            society_kernel::test_params![],
         )
         .unwrap_err();
     assert!(
@@ -3526,7 +3492,7 @@ fn pi_office_session_dispose_orders_peer_facts_and_reconciles_its_parent_budget(
                 SELECT command_row_id FROM commands
                 WHERE command_id = 'm7-record-dispose-accepted'
              )",
-            [],
+            society_kernel::test_params![],
         )
         .unwrap();
     drop(tampering);
@@ -3538,7 +3504,7 @@ fn pi_office_session_dispose_orders_peer_facts_and_reconciles_its_parent_budget(
         ))
     ));
     drop(tampered);
-    fs::remove_file(path).unwrap();
+    let _ = fs::remove_file(path);
 }
 
 #[test]
@@ -3625,9 +3591,7 @@ fn pi_office_session_dispose_accepts_a_materialized_no_prompt_transcript_with_ab
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path = std::env::temp_dir().join(format!(
-        "society-m7-materialized-no-prompt-{unique}.sqlite3"
-    ));
+    let path = std::env::temp_dir().join(format!("society-m7-materialized-no-prompt-{unique}"));
     let mut store = KernelStore::open(&path).unwrap();
     let (_root_authority, _cycle_id, session_id, authorized_generation, correlation) =
         authorized_dispose_session(
@@ -3746,7 +3710,7 @@ fn pi_office_session_dispose_accepts_a_materialized_no_prompt_transcript_with_ab
             "UPDATE pi_office_session_dispose_receipts
              SET session_file = '/tmp/m7-forged-materialized-no-prompt.jsonl'
              WHERE root_authority_office_session_id = 1",
-            [],
+            society_kernel::test_params![],
         )
         .unwrap();
     drop(tamper);
@@ -3757,7 +3721,7 @@ fn pi_office_session_dispose_accepts_a_materialized_no_prompt_transcript_with_ab
         Err(StoreError::LedgerCorruption(_))
     ));
     drop(reopened);
-    fs::remove_file(path).unwrap();
+    let _ = fs::remove_file(path);
 }
 
 #[test]
@@ -3766,7 +3730,7 @@ fn pi_office_session_dispose_known_overrun_records_terminal_then_freezes_parent(
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("society-m7-dispose-overrun-{unique}.sqlite3"));
+    let path = std::env::temp_dir().join(format!("society-m7-dispose-overrun-{unique}"));
     let mut store = KernelStore::open(&path).unwrap();
     let (_root_authority, _cycle_id, session_id, authorized_generation, correlation) =
         authorized_dispose_session(
@@ -3856,7 +3820,7 @@ fn pi_office_session_dispose_known_overrun_records_terminal_then_freezes_parent(
         inspection
             .query_row(
                 "SELECT reservation_state FROM budget_reservations WHERE budget_reservation_id = 1",
-                [],
+                society_kernel::test_params![],
                 |row| row.get::<_, i64>(0),
             )
             .unwrap(),
@@ -3866,7 +3830,7 @@ fn pi_office_session_dispose_known_overrun_records_terminal_then_freezes_parent(
         inspection
             .query_row(
                 "SELECT lifecycle_state FROM root_authority_office_sessions WHERE root_authority_office_session_id = 1",
-                [],
+                society_kernel::test_params![],
                 |row| row.get::<_, i64>(0),
             )
             .unwrap(),
@@ -3876,7 +3840,7 @@ fn pi_office_session_dispose_known_overrun_records_terminal_then_freezes_parent(
     let replayed = KernelStore::open(&path).unwrap();
     assert!(replayed.replay_ledger().is_ok());
     drop(replayed);
-    fs::remove_file(path).unwrap();
+    let _ = fs::remove_file(path);
 }
 
 #[test]
@@ -3965,7 +3929,7 @@ fn pi_office_turn_requires_authorized_delivered_peer_terminal_chain_and_debits_o
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("society-m6-office-turn-{unique}.sqlite3"));
+    let path = std::env::temp_dir().join(format!("society-m6-office-turn-{unique}"));
     let mut store = KernelStore::open(&path).unwrap();
     let (root_authority, cycle_id) = found_cycle(&mut store);
     let zero = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
@@ -4191,7 +4155,7 @@ fn pi_office_turn_requires_authorized_delivered_peer_terminal_chain_and_debits_o
         },
         Rejection::PiOfficeTurnTerminalEvidenceMissing,
     );
-    accepted(
+    let terminal_one_receipt = accepted(
         &mut store,
         "m6-terminal-one-with-interleaved-control-sequences",
         PrincipalId::KERNEL,
@@ -4211,6 +4175,18 @@ fn pi_office_turn_requires_authorized_delivered_peer_terminal_chain_and_debits_o
                 PiOfficeTurnTranscriptDisposition::DeferredUntilOfficeSessionDispose,
         },
     );
+    let terminal_one_receipt_id = match terminal_one_receipt.disposition {
+        CommandDisposition::Accepted(event_id) => {
+            match store.ledger_event(event_id).unwrap().body {
+                EventBody::PiOfficeTurnTerminalRecorded {
+                    pi_office_turn_terminal_receipt_id,
+                    ..
+                } => pi_office_turn_terminal_receipt_id,
+                other => panic!("unexpected terminal event: {other:?}"),
+            }
+        }
+        other => panic!("unexpected terminal receipt: {other:?}"),
+    };
     accepted(
         &mut store,
         "m6-settle-one",
@@ -4219,7 +4195,7 @@ fn pi_office_turn_requires_authorized_delivered_peer_terminal_chain_and_debits_o
         ExpectedGeneration::NotApplicable,
         CommandBody::SettleOfficeTurn {
             turn_id: turn_one,
-            terminal_receipt_id: PiOfficeTurnTerminalReceiptId::new(1).unwrap(),
+            terminal_receipt_id: terminal_one_receipt_id,
         },
     );
     let late_usage = PiCumulativeUsage {
@@ -4346,7 +4322,7 @@ fn pi_office_turn_requires_authorized_delivered_peer_terminal_chain_and_debits_o
             usage: usage_two,
         },
     );
-    accepted(
+    let terminal_two_receipt = accepted(
         &mut store,
         "m6-terminal-two",
         PrincipalId::KERNEL,
@@ -4366,6 +4342,18 @@ fn pi_office_turn_requires_authorized_delivered_peer_terminal_chain_and_debits_o
                 PiOfficeTurnTranscriptDisposition::DeferredUntilOfficeSessionDispose,
         },
     );
+    let terminal_two_receipt_id = match terminal_two_receipt.disposition {
+        CommandDisposition::Accepted(event_id) => {
+            match store.ledger_event(event_id).unwrap().body {
+                EventBody::PiOfficeTurnTerminalRecorded {
+                    pi_office_turn_terminal_receipt_id,
+                    ..
+                } => pi_office_turn_terminal_receipt_id,
+                other => panic!("unexpected terminal event: {other:?}"),
+            }
+        }
+        other => panic!("unexpected terminal receipt: {other:?}"),
+    };
     accepted(
         &mut store,
         "m6-settle-two",
@@ -4374,7 +4362,7 @@ fn pi_office_turn_requires_authorized_delivered_peer_terminal_chain_and_debits_o
         ExpectedGeneration::NotApplicable,
         CommandBody::SettleOfficeTurn {
             turn_id: turn_two,
-            terminal_receipt_id: PiOfficeTurnTerminalReceiptId::new(2).unwrap(),
+            terminal_receipt_id: terminal_two_receipt_id,
         },
     );
     let settled_deltas: Vec<_> = store
@@ -4540,7 +4528,7 @@ fn pi_office_turn_requires_authorized_delivered_peer_terminal_chain_and_debits_o
              JOIN budget_envelopes envelope ON envelope.budget_envelope_id = charge.budget_envelope_id
              WHERE postmortem.postmortem_id = 1
              ORDER BY envelope.budget_envelope_id LIMIT 1",
-            [],
+            society_kernel::test_params![],
             |row| {
                 Ok((
                     row.get(0)?,
@@ -4575,8 +4563,8 @@ fn pi_office_turn_requires_authorized_delivered_peer_terminal_chain_and_debits_o
                  cache_read_tokens, cache_write_tokens, total_tokens,
                  provider_cost_binary64, cumulative_ceiling_micros, recorded_by_command_id
              ) VALUES (3, 3, 1, 'm6-prompt-three', 32, 1, 1, 1, 1, 4,
-                       X'3ED26E2A23FAD2B5', 10, 1)",
-                [],
+                       decode('3ED26E2A23FAD2B5', 'hex'), 10, 1)",
+                society_kernel::test_params![],
             )
             .is_err()
     );
@@ -4586,12 +4574,12 @@ fn pi_office_turn_requires_authorized_delivered_peer_terminal_chain_and_debits_o
     body_tamper
         .execute(
             "UPDATE command_record_pi_office_turn_usage
-             SET provider_cost_binary64 = X'3ED132576B20E04A',
+             SET provider_cost_binary64 = decode('3ED132576B20E04A', 'hex'),
                  cumulative_ceiling_micros = 5
              WHERE command_row_id = (
                  SELECT command_row_id FROM commands WHERE command_id = 'm6-usage-one'
              )",
-            [],
+            society_kernel::test_params![],
         )
         .unwrap();
     drop(body_tamper);
@@ -4604,12 +4592,12 @@ fn pi_office_turn_requires_authorized_delivered_peer_terminal_chain_and_debits_o
     body_restore
         .execute(
             "UPDATE command_record_pi_office_turn_usage
-             SET provider_cost_binary64 = X'3ED0C6F7A0B5ED8D',
+             SET provider_cost_binary64 = decode('3ED0C6F7A0B5ED8D', 'hex'),
                  cumulative_ceiling_micros = 4
              WHERE command_row_id = (
                  SELECT command_row_id FROM commands WHERE command_id = 'm6-usage-one'
              )",
-            [],
+            society_kernel::test_params![],
         )
         .unwrap();
     drop(body_restore);
@@ -4619,7 +4607,7 @@ fn pi_office_turn_requires_authorized_delivered_peer_terminal_chain_and_debits_o
         .execute(
             "UPDATE office_turn_budget_checkpoints
              SET baseline_cumulative_micros = 1 WHERE office_turn_id = 1",
-            [],
+            society_kernel::test_params![],
         )
         .unwrap();
     assert!(matches!(
@@ -4628,7 +4616,7 @@ fn pi_office_turn_requires_authorized_delivered_peer_terminal_chain_and_debits_o
     ));
     drop(tamper);
     drop(store);
-    fs::remove_file(path).unwrap();
+    let _ = fs::remove_file(path);
 }
 
 #[test]
@@ -4813,8 +4801,7 @@ fn duplicate_cost_incident_cannot_open_another_postmortem_or_cancellation() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path =
-        std::env::temp_dir().join(format!("society-duplicate-cost-incident-{unique}.sqlite3"));
+    let path = std::env::temp_dir().join(format!("society-duplicate-cost-incident-{unique}"));
     let mut store = KernelStore::open(&path).unwrap();
     let (root_authority, cycle_id) = found_cycle(&mut store);
     let zero = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
@@ -4875,21 +4862,25 @@ fn duplicate_cost_incident_cannot_open_another_postmortem_or_cancellation() {
         Rejection::ReservationNotActive,
     );
 
-    let inspection = rusqlite::Connection::open(&path).unwrap();
+    let inspection = Connection::open(&path).unwrap();
     let postmortems: i64 = inspection
-        .query_row("SELECT COUNT(*) FROM cost_postmortems", [], |row| {
-            row.get(0)
-        })
+        .query_row(
+            "SELECT COUNT(*) FROM cost_postmortems",
+            society_kernel::test_params![],
+            |row| row.get(0),
+        )
         .unwrap();
     let cancellations: i64 = inspection
-        .query_row("SELECT COUNT(*) FROM cancellation_requests", [], |row| {
-            row.get(0)
-        })
+        .query_row(
+            "SELECT COUNT(*) FROM cancellation_requests",
+            society_kernel::test_params![],
+            |row| row.get(0),
+        )
         .unwrap();
     assert_eq!((postmortems, cancellations), (1, 1));
     drop(inspection);
     drop(store);
-    fs::remove_file(path).unwrap();
+    let _ = fs::remove_file(path);
 }
 
 #[test]
@@ -4898,7 +4889,7 @@ fn fresh_replay_detects_operating_cycle_budget_and_session_row_tampering() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("society-materialized-replay-{unique}.sqlite3"));
+    let path = std::env::temp_dir().join(format!("society-materialized-replay-{unique}"));
     let mut store = KernelStore::open(&path).unwrap();
     let (root_authority, cycle_id) = found_cycle(&mut store);
     accepted(
@@ -4911,10 +4902,10 @@ fn fresh_replay_detects_operating_cycle_budget_and_session_row_tampering() {
     );
     assert!(store.validate_replayed_materialized_state().is_ok());
 
-    let tamper = rusqlite::Connection::open(&path).unwrap();
+    let tamper = Connection::open(&path).unwrap();
     tamper
         .execute(
-            "UPDATE operating_cycles SET lifecycle_state = ?1 WHERE operating_cycle_id = 1",
+            "UPDATE operating_cycles SET lifecycle_state = $1 WHERE operating_cycle_id = 1",
             [OperatingCycleState::Failed as i64],
         )
         .unwrap();
@@ -4924,7 +4915,7 @@ fn fresh_replay_detects_operating_cycle_budget_and_session_row_tampering() {
     ));
     tamper
         .execute(
-            "UPDATE operating_cycles SET lifecycle_state = ?1 WHERE operating_cycle_id = 1",
+            "UPDATE operating_cycles SET lifecycle_state = $1 WHERE operating_cycle_id = 1",
             [OperatingCycleState::Running as i64],
         )
         .unwrap();
@@ -4932,7 +4923,7 @@ fn fresh_replay_detects_operating_cycle_budget_and_session_row_tampering() {
     tamper
         .execute(
             "UPDATE budget_envelopes SET spent_micros = 1 WHERE budget_envelope_id = 1",
-            [],
+            society_kernel::test_params![],
         )
         .unwrap();
     assert!(matches!(
@@ -4942,13 +4933,13 @@ fn fresh_replay_detects_operating_cycle_budget_and_session_row_tampering() {
     tamper
         .execute(
             "UPDATE budget_envelopes SET spent_micros = 0 WHERE budget_envelope_id = 1",
-            [],
+            society_kernel::test_params![],
         )
         .unwrap();
 
     tamper
         .execute(
-            "UPDATE root_authority_office_sessions SET lifecycle_state = ?1
+            "UPDATE root_authority_office_sessions SET lifecycle_state = $1
              WHERE root_authority_office_session_id = 1",
             [11_i64],
         )
@@ -4961,14 +4952,14 @@ fn fresh_replay_detects_operating_cycle_budget_and_session_row_tampering() {
         .execute(
             "UPDATE root_authority_office_sessions SET lifecycle_state = 1
              WHERE root_authority_office_session_id = 1",
-            [],
+            society_kernel::test_params![],
         )
         .unwrap();
     assert!(store.validate_replayed_materialized_state().is_ok());
 
     drop(tamper);
     drop(store);
-    fs::remove_file(path).unwrap();
+    let _ = fs::remove_file(path);
 }
 
 #[test]
@@ -4977,8 +4968,7 @@ fn on_disk_reopen_preserves_treatment_and_detects_materialized_tampering() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path =
-        std::env::temp_dir().join(format!("society-reopen-material-replay-{unique}.sqlite3"));
+    let path = std::env::temp_dir().join(format!("society-reopen-material-replay-{unique}"));
     {
         let mut store = KernelStore::open(&path).unwrap();
         let (_, cycle_id) = found_cycle(&mut store);
@@ -4999,7 +4989,7 @@ fn on_disk_reopen_preserves_treatment_and_detects_materialized_tampering() {
         assert!(reopened.validate_replayed_materialized_state().is_ok());
     }
 
-    let tamper = rusqlite::Connection::open(&path).unwrap();
+    let tamper = Connection::open(&path).unwrap();
     let (treatment, material_ceiling, envelope_ceiling): (i64, i64, i64) = tamper
         .query_row(
             "SELECT c.treatment, c.budget_ceiling_micros, e.ceiling_micros
@@ -5008,7 +4998,7 @@ fn on_disk_reopen_preserves_treatment_and_detects_materialized_tampering() {
                ON b.operating_cycle_id = c.operating_cycle_id
              JOIN budget_envelopes e ON e.budget_envelope_id = b.budget_envelope_id
              WHERE c.operating_cycle_id = 1",
-            [],
+            society_kernel::test_params![],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .unwrap();
@@ -5023,7 +5013,7 @@ fn on_disk_reopen_preserves_treatment_and_detects_materialized_tampering() {
     tamper
         .execute(
             "UPDATE budget_envelopes SET spent_micros = 1 WHERE budget_envelope_id = 1",
-            [],
+            society_kernel::test_params![],
         )
         .unwrap();
     drop(tamper);
@@ -5035,7 +5025,7 @@ fn on_disk_reopen_preserves_treatment_and_detects_materialized_tampering() {
         Err(society_kernel::StoreError::LedgerCorruption(_))
     ));
     drop(reopened_after_tamper);
-    fs::remove_file(path).unwrap();
+    let _ = fs::remove_file(path);
 }
 
 #[test]
@@ -5044,7 +5034,7 @@ fn rejected_missing_subject_and_tampered_extra_body_are_detected() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("society-kernel-{unique}.sqlite3"));
+    let path = std::env::temp_dir().join(format!("society-kernel-{unique}"));
     let mut store = KernelStore::open(&path).unwrap();
     let (root_authority, cycle_id) = found_cycle(&mut store);
     let invalid_grant_id = CommandId::parse("root-authority-invalid-capability-grant").unwrap();
@@ -5093,10 +5083,10 @@ fn rejected_missing_subject_and_tampered_extra_body_are_detected() {
     assert!(CommandId::parse("contains a space").is_err());
     assert!(CommandId::parse("contains\na-newline").is_err());
 
-    let tamper = rusqlite::Connection::open(&path).unwrap();
+    let tamper = Connection::open(&path).unwrap();
     let stored_grant: i64 = tamper
         .query_row(
-            "SELECT capability_grant_id FROM commands WHERE command_id = ?1",
+            "SELECT capability_grant_id FROM commands WHERE command_id = $1",
             [invalid_grant_id.as_str()],
             |row| row.get(0),
         )
@@ -5104,16 +5094,19 @@ fn rejected_missing_subject_and_tampered_extra_body_are_detected() {
     assert_eq!(stored_grant, 999);
     let opaque_or_json_tables: i64 = tamper
         .query_row(
-            "SELECT COUNT(*) FROM sqlite_schema
-             WHERE type = 'table' AND (upper(sql) LIKE '%JSON%' OR lower(sql) LIKE '%payload%' OR lower(sql) LIKE '%metadata%')",
-            [],
+            "SELECT COUNT(*) FROM information_schema.columns
+             WHERE table_schema = current_schema()
+               AND (upper(column_name) LIKE '%JSON%'
+                    OR lower(column_name) LIKE '%payload%'
+                    OR lower(column_name) LIKE '%metadata%')",
+            society_kernel::test_params![],
             |row| row.get(0),
-    )
-    .unwrap();
+        )
+        .unwrap();
     assert_eq!(opaque_or_json_tables, 0);
     tamper
         .execute(
-            "UPDATE commands SET command_id = ?1 WHERE command_row_id = 1",
+            "UPDATE commands SET command_id = $1 WHERE command_row_id = 1",
             ["mutated-but-unique-command-id"],
         )
         .unwrap();
@@ -5123,14 +5116,14 @@ fn rejected_missing_subject_and_tampered_extra_body_are_detected() {
     ));
     tamper
         .execute(
-            "UPDATE commands SET command_id = ?1 WHERE command_row_id = 1",
+            "UPDATE commands SET command_id = $1 WHERE command_row_id = 1",
             ["found-create-society"],
         )
         .unwrap();
     assert!(store.replay_ledger().is_ok());
     tamper
         .execute(
-            "UPDATE command_create_society_identity SET name = ?1 WHERE command_row_id = 1",
+            "UPDATE command_create_society_identity SET name = $1 WHERE command_row_id = 1",
             ["altered durable command body"],
         )
         .unwrap();
@@ -5140,14 +5133,14 @@ fn rejected_missing_subject_and_tampered_extra_body_are_detected() {
     ));
     tamper
         .execute(
-            "UPDATE command_create_society_identity SET name = ?1 WHERE command_row_id = 1",
+            "UPDATE command_create_society_identity SET name = $1 WHERE command_row_id = 1",
             ["Founding Society"],
         )
         .unwrap();
     assert!(store.replay_ledger().is_ok());
     tamper
         .execute(
-            "UPDATE event_r0_hard_ceiling_set SET ceiling_micros = ?1 WHERE event_id = 7",
+            "UPDATE event_r0_hard_ceiling_set SET ceiling_micros = $1 WHERE event_id = 7",
             [1_i64],
         )
         .unwrap();
@@ -5157,14 +5150,14 @@ fn rejected_missing_subject_and_tampered_extra_body_are_detected() {
     ));
     tamper
         .execute(
-            "UPDATE event_r0_hard_ceiling_set SET ceiling_micros = ?1 WHERE event_id = 7",
+            "UPDATE event_r0_hard_ceiling_set SET ceiling_micros = $1 WHERE event_id = 7",
             [1_030_000_i64],
         )
         .unwrap();
     assert!(store.replay_ledger().is_ok());
     tamper
         .execute(
-            "INSERT INTO command_bootstrap_society(command_row_id) VALUES (?1)",
+            "INSERT INTO command_bootstrap_society(command_row_id) VALUES ($1)",
             [1_i64],
         )
         .unwrap();
@@ -5174,7 +5167,7 @@ fn rejected_missing_subject_and_tampered_extra_body_are_detected() {
     ));
     tamper
         .execute(
-            "DELETE FROM command_bootstrap_society WHERE command_row_id = ?1",
+            "DELETE FROM command_bootstrap_society WHERE command_row_id = $1",
             [1_i64],
         )
         .unwrap();
@@ -5186,31 +5179,31 @@ fn rejected_missing_subject_and_tampered_extra_body_are_detected() {
     tamper
         .execute(
             "UPDATE events SET command_row_id = 11 WHERE event_id = 1",
-            [],
+            society_kernel::test_params![],
         )
         .unwrap();
     tamper
         .execute(
             "UPDATE events SET command_row_id = 1 WHERE event_id = 2",
-            [],
+            society_kernel::test_params![],
         )
         .unwrap();
     tamper
         .execute(
             "UPDATE events SET command_row_id = 2 WHERE event_id = 1",
-            [],
+            society_kernel::test_params![],
         )
         .unwrap();
     tamper
         .execute(
             "UPDATE commands SET accepted_event_id = 2 WHERE command_row_id = 1",
-            [],
+            society_kernel::test_params![],
         )
         .unwrap();
     tamper
         .execute(
             "UPDATE commands SET accepted_event_id = 1 WHERE command_row_id = 2",
-            [],
+            society_kernel::test_params![],
         )
         .unwrap();
     assert!(matches!(
@@ -5220,38 +5213,38 @@ fn rejected_missing_subject_and_tampered_extra_body_are_detected() {
     tamper
         .execute(
             "UPDATE events SET command_row_id = 11 WHERE event_id = 1",
-            [],
+            society_kernel::test_params![],
         )
         .unwrap();
     tamper
         .execute(
             "UPDATE events SET command_row_id = 2 WHERE event_id = 2",
-            [],
+            society_kernel::test_params![],
         )
         .unwrap();
     tamper
         .execute(
             "UPDATE events SET command_row_id = 1 WHERE event_id = 1",
-            [],
+            society_kernel::test_params![],
         )
         .unwrap();
     tamper
         .execute(
             "UPDATE commands SET accepted_event_id = 1 WHERE command_row_id = 1",
-            [],
+            society_kernel::test_params![],
         )
         .unwrap();
     tamper
         .execute(
             "UPDATE commands SET accepted_event_id = 2 WHERE command_row_id = 2",
-            [],
+            society_kernel::test_params![],
         )
         .unwrap();
     assert!(store.replay_ledger().is_ok());
     tamper
         .execute(
-            "INSERT INTO event_society_bootstrapped(event_id, society_id) VALUES (?1, ?2)",
-            rusqlite::params![1_i64, 1_i64],
+            "INSERT INTO event_society_bootstrapped(event_id, society_id) VALUES ($1, $2)",
+            society_kernel::test_params![1_i64, 1_i64],
         )
         .unwrap();
     drop(tamper);
@@ -5260,5 +5253,5 @@ fn rejected_missing_subject_and_tampered_extra_body_are_detected() {
         society_kernel::StoreError::LedgerCorruption(_)
     ));
     drop(store);
-    fs::remove_file(path).unwrap();
+    let _ = fs::remove_file(path);
 }

@@ -1,11 +1,9 @@
-use std::path::Path;
-
-use rusqlite::{
-    Connection, OptionalExtension, Transaction, TransactionBehavior, params,
-    types::{FromSql, ValueRef},
-};
 use thiserror::Error;
 
+use crate::postgres_compat::{
+    Connection, DbError, FromSql, OptionalExtension, Transaction, TransactionBehavior, ValueRef,
+    params,
+};
 use crate::{
     ActorAttemptCancellationReason, ActorAttemptId, ActorAttemptState, ActorAttemptTerminalKind,
     ActorConfigurationId, ActorConfigurationRevisionId, ActorInstanceId, ActorInstanceState,
@@ -60,12 +58,6 @@ use crate::{
     SupervisedChildIdentity, SupervisorEpochId, SupervisorEpochIdentity, TicketId, TicketState,
     UsdMicros, WorkItemId, WorkItemKind, WorkItemState, WorkLeaseId, WorkLeaseState,
 };
-
-const CURRENT_SCHEMA: &str = include_str!("../../../migrations/0001_kernel.sql");
-// Historical prototype schemas used versions one through thirteen. The collapsed
-// fresh schema deliberately occupies a noncolliding identity, so an old
-// ledger cannot be mistaken for current trusted physics.
-const CURRENT_SCHEMA_VERSION: i64 = 27;
 
 struct PiChildSpawnAdmissionInput<'a> {
     operating_cycle_id: OperatingCycleId,
@@ -612,7 +604,7 @@ pub enum InstallFoundingMissionPreflight {
 #[derive(Debug, Error)]
 pub enum StoreError {
     #[error(transparent)]
-    Database(#[from] rusqlite::Error),
+    Database(#[from] DbError),
     #[error("database has unsupported schema version {0}")]
     UnsupportedSchemaVersion(i64),
     #[error("command id was already used with a different typed request")]
@@ -666,34 +658,14 @@ impl KernelStore {
         Self::from_connection(Connection::open_in_memory()?)
     }
 
-    pub fn open(path: impl AsRef<Path>) -> Result<Self, StoreError> {
+    pub fn open(path: impl AsRef<std::path::Path>) -> Result<Self, StoreError> {
         Self::from_connection(Connection::open(path)?)
     }
 
     fn from_connection(connection: Connection) -> Result<Self, StoreError> {
-        connection.pragma_update(None, "foreign_keys", "ON")?;
-        let schema_version: i64 =
-            connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-        match schema_version {
-            0 => {
-                // This prototype has one current, atomic schema bootstrap. It
-                // does not claim historical-ledger compatibility; fresh creation
-                // either commits the whole trusted schema or does not become a
-                // current-version database.
-                bootstrap_current_schema(&connection)?;
-            }
-            CURRENT_SCHEMA_VERSION => {}
-            other => return Err(StoreError::UnsupportedSchemaVersion(other)),
-        }
-        let foreign_key_violations: i64 =
-            connection.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
-                row.get(0)
-            })?;
-        if foreign_key_violations != 0 {
-            return Err(StoreError::LedgerCorruption(
-                "current schema has foreign-key violations",
-            ));
-        }
+        connection.query_row("SELECT COUNT(*) FROM commands", params![], |row| {
+            row.get::<_, i64>(0)
+        })?;
         Ok(Self { connection })
     }
 
@@ -708,7 +680,7 @@ impl KernelStore {
         self.connection
             .query_row(
                 "SELECT capability_grant_id FROM capability_grants
-                 WHERE principal_id = ?1 AND capability_kind = ?2 AND grant_state = 1",
+                 WHERE principal_id = $1 AND capability_kind = $2 AND grant_state = 1",
                 params![principal_id.value(), capability as i64],
                 |row| row.get::<_, i64>(0),
             )
@@ -782,7 +754,7 @@ impl KernelStore {
         native_child_spawn_admission_id: NativeChildSpawnAdmissionId,
     ) -> Result<Option<DeterministicEvaluatorNativeChildAdmission>, StoreError> {
         let exists: bool = self.connection.query_row(
-            "SELECT EXISTS(SELECT 1 FROM native_child_spawn_admissions WHERE native_child_spawn_admission_id = ?1)",
+            "SELECT EXISTS(SELECT 1 FROM native_child_spawn_admissions WHERE native_child_spawn_admission_id = $1)",
             [native_child_spawn_admission_id.value()],
             |row| row.get::<_, i64>(0),
         )? != 0;
@@ -808,7 +780,7 @@ impl KernelStore {
                JOIN input_manifests input ON input.input_manifest_id = admission.input_manifest_id
                JOIN content_objects input_object ON input_object.content_object_id = input.content_object_id
                JOIN content_seal_receipts input_seal ON input_seal.content_seal_receipt_id = input_object.content_seal_receipt_id
-              WHERE admission.native_child_spawn_admission_id = ?1
+              WHERE admission.native_child_spawn_admission_id = $1
                 AND admission.actor_attempt_id IS NULL AND admission.root_authority_office_session_id IS NULL
                 AND admission.deterministic_experiment_id IS NOT NULL
                 AND admission.evaluator_revision_id IS NOT NULL AND admission.input_manifest_id IS NOT NULL
@@ -840,7 +812,7 @@ impl KernelStore {
                       AND experiment.operating_cycle_id = admission.operating_cycle_id
                       AND experiment.evaluator_revision_id = admission.evaluator_revision_id
                       AND experiment.input_manifest_id = admission.input_manifest_id
-                     WHERE admission.native_child_spawn_admission_id = ?1
+                     WHERE admission.native_child_spawn_admission_id = $1
                        AND admission.actor_attempt_id IS NULL
                        AND admission.root_authority_office_session_id IS NULL
                        AND admission.deterministic_experiment_id IS NOT NULL
@@ -920,7 +892,7 @@ impl KernelStore {
 
         let epoch_matches: bool = transaction.query_row(
             "SELECT EXISTS(SELECT 1 FROM supervisor_epochs
-               WHERE supervisor_epoch_id = ?1 AND supervisor_epoch_identity = ?2)",
+               WHERE supervisor_epoch_id = $1 AND supervisor_epoch_identity = $2)",
             params![
                 claim.supervisor_epoch_id.value(),
                 claim.supervisor_epoch_identity.as_str(),
@@ -943,9 +915,9 @@ impl KernelStore {
                    FROM deterministic_experiments experiment
                    JOIN operating_cycles cycle
                      ON cycle.operating_cycle_id = experiment.operating_cycle_id
-                  WHERE experiment.lifecycle_state = ?1
-                    AND cycle.lifecycle_state = ?2
-                    AND cycle.treatment IN (?3, ?4, ?5)
+                  WHERE experiment.lifecycle_state = $1
+                    AND cycle.lifecycle_state = $2
+                    AND cycle.treatment IN ($3, $4, $5)
                     AND NOT EXISTS(
                         SELECT 1 FROM native_child_spawn_admissions admission
                          WHERE admission.deterministic_experiment_id = experiment.deterministic_experiment_id
@@ -970,7 +942,7 @@ impl KernelStore {
         let capability_grant_id: i64 = transaction
             .query_row(
                 "SELECT capability_grant_id FROM capability_grants
-                  WHERE principal_id = ?1 AND capability_kind = ?2 AND grant_state = 1",
+                  WHERE principal_id = $1 AND capability_kind = $2 AND grant_state = 1",
                 params![
                     PrincipalId::KERNEL.value(),
                     Capability::AdmitDeterministicEvaluatorNativeChild as i64,
@@ -1020,7 +992,7 @@ impl KernelStore {
         };
         let admission_id: i64 = transaction.query_row(
             "SELECT native_child_spawn_admission_id FROM native_child_spawn_admissions
-              WHERE deterministic_experiment_id = ?1",
+              WHERE deterministic_experiment_id = $1",
             [experiment],
             |row| row.get(0),
         )?;
@@ -1060,7 +1032,7 @@ impl KernelStore {
         if let Some((stored_fingerprint, status, event_id, rejection)) = transaction
             .query_row(
                 "SELECT request_fingerprint, command_status, accepted_event_id, rejection_code
-                 FROM commands WHERE command_id = ?1",
+                 FROM commands WHERE command_id = $1",
                 [request.command_id.as_str()],
                 |row| {
                     Ok((
@@ -1108,7 +1080,7 @@ impl KernelStore {
             "INSERT INTO commands(command_id, principal_id, capability_grant_id, capability_kind, expected_generation,
                                   command_kind, request_fingerprint, command_status, rejection_code,
                                   accepted_event_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 2, ?8, NULL)",
+             VALUES ($1, $2, $3, $4, $5, $6, $7, 2, $8, NULL)",
             params![
                 request.command_id.as_str(),
                 request.principal_id.value(),
@@ -1120,7 +1092,7 @@ impl KernelStore {
                 Rejection::SubjectNotFound as i64,
             ],
         )?;
-        let command_row_id = transaction.last_insert_rowid();
+        let command_row_id = transaction.returned_identity()?;
         // Rejections also retain their exact typed request. A missing source
         // binding is therefore represented as NULL in that command material;
         // accepted installations must carry the resolved object below.
@@ -1149,8 +1121,8 @@ impl KernelStore {
                 )?;
                 transaction.execute(
                     "UPDATE commands
-                     SET command_status = 1, rejection_code = NULL, accepted_event_id = ?1
-                     WHERE command_row_id = ?2",
+                     SET command_status = 1, rejection_code = NULL, accepted_event_id = $1
+                     WHERE command_row_id = $2",
                     params![event_id.value(), command_row_id],
                 )?;
                 transaction.execute_batch("RELEASE apply_command")?;
@@ -1162,7 +1134,7 @@ impl KernelStore {
             Err(rejection) => {
                 transaction.execute_batch("ROLLBACK TO apply_command; RELEASE apply_command")?;
                 transaction.execute(
-                    "UPDATE commands SET rejection_code = ?1 WHERE command_row_id = ?2",
+                    "UPDATE commands SET rejection_code = $1 WHERE command_row_id = $2",
                     params![rejection as i64, command_row_id],
                 )?;
                 CommandReceipt {
@@ -1187,7 +1159,7 @@ impl KernelStore {
             .connection
             .query_row(
                 "SELECT request_fingerprint, command_status, accepted_event_id, rejection_code
-                   FROM commands WHERE command_id = ?1",
+                   FROM commands WHERE command_id = $1",
                 [request.command_id.as_str()],
                 |row| {
                     Ok((
@@ -1250,7 +1222,7 @@ impl KernelStore {
              JOIN commands c ON c.command_row_id = e.command_row_id
              ORDER BY e.event_sequence ASC",
         )?;
-        let rows = statement.query_map([], |row| {
+        let rows = statement.query_map(params![], |row| {
             Ok((
                 row.get::<_, i64>(0)?,
                 row.get::<_, String>(1)?,
@@ -1293,7 +1265,7 @@ impl KernelStore {
                         c.command_status, c.accepted_event_id
                  FROM events e
                  LEFT JOIN commands c ON c.command_row_id = e.command_row_id
-                 WHERE e.event_id = ?1",
+                 WHERE e.event_id = $1",
                 [event_id.value()],
                 |row| {
                     Ok((
@@ -1345,7 +1317,7 @@ impl KernelStore {
     }
 
     /// Reconstructs this bounded kernel's materialized state by re-executing
-    /// its verified typed command ledger into a fresh SQLite store, then
+    /// its verified typed command ledger into a fresh PostgreSQL schema, then
     /// compares every current material table/field through a deterministic
     /// digest. This catches mutable-state tampering without pretending that
     /// body-table cardinality alone is replay.
@@ -1361,7 +1333,8 @@ impl KernelStore {
                 ));
             }
         }
-        if reconstructed.replay_ledger()? != expected_events {
+        let replayed_events = reconstructed.replay_ledger()?;
+        if replayed_events != expected_events {
             return Err(StoreError::LedgerCorruption(
                 "replayed events differ from durable event ledger",
             ));
@@ -1379,7 +1352,7 @@ impl KernelStore {
     pub fn command_count(&self) -> Result<i64, StoreError> {
         Ok(self
             .connection
-            .query_row("SELECT COUNT(*) FROM commands", [], |row| row.get(0))?)
+            .query_row("SELECT COUNT(*) FROM commands", params![], |row| row.get(0))?)
     }
 
     /// Reads the current admission generation for one exact Operating Cycle.
@@ -1394,7 +1367,7 @@ impl KernelStore {
         let generation = self
             .connection
             .query_row(
-                "SELECT admission_generation FROM operating_cycles WHERE operating_cycle_id = ?1",
+                "SELECT admission_generation FROM operating_cycles WHERE operating_cycle_id = $1",
                 [operating_cycle_id.value()],
                 |row| row.get::<_, i64>(0),
             )
@@ -1419,7 +1392,7 @@ impl KernelStore {
                    FROM content_seal_receipts AS receipt
               LEFT JOIN content_objects AS object
                      ON object.content_seal_receipt_id = receipt.content_seal_receipt_id
-                  WHERE receipt.digest = ?1",
+                  WHERE receipt.digest = $1",
                 [digest.as_bytes().as_slice()],
                 |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?)),
             )
@@ -1452,7 +1425,7 @@ impl KernelStore {
             .connection
             .query_row(
                 "SELECT command_status, accepted_event_id, rejection_code
-                 FROM commands WHERE command_id = ?1",
+                 FROM commands WHERE command_id = $1",
                 [command_id.as_str()],
                 |row| {
                     Ok((
@@ -1501,7 +1474,7 @@ fn existing_deterministic_evaluator_schedule_claim(
                  ON body.command_row_id = command.command_row_id
           LEFT JOIN native_child_spawn_admissions admission
                  ON admission.admitted_by_command_id = command.command_row_id
-              WHERE command.command_id = ?1",
+              WHERE command.command_id = $1",
             [claim.command_id.as_str()],
             |row| {
                 Ok((
@@ -1648,7 +1621,7 @@ fn qualification_treatment_fences_request(
     if matches!(body, CommandBody::RegisterActorConfiguration { .. }) {
         let qualification_cycle_exists: i64 = transaction.query_row(
             "SELECT EXISTS(SELECT 1 FROM operating_cycles
-             WHERE treatment = ?1 AND lifecycle_state NOT IN (7, 10, 11))",
+             WHERE treatment = $1 AND lifecycle_state NOT IN (7, 10, 11))",
             [OperatingCycleTreatment::PiSdkQualificationV1 as i64],
             |row| row.get(0),
         )?;
@@ -1662,7 +1635,7 @@ fn qualification_treatment_fences_request(
     };
     let treatment: Option<i64> = transaction
         .query_row(
-            "SELECT treatment FROM operating_cycles WHERE operating_cycle_id = ?1",
+            "SELECT treatment FROM operating_cycles WHERE operating_cycle_id = $1",
             [cycle_id.value()],
             |row| row.get(0),
         )
@@ -1839,7 +1812,7 @@ fn command_operating_cycle_for_treatment(
         | CommandBody::OpenOfficeTurn { session_id, .. } => transaction
             .query_row(
                 "SELECT operating_cycle_id FROM root_authority_office_sessions
-                 WHERE root_authority_office_session_id = ?1",
+                 WHERE root_authority_office_session_id = $1",
                 [session_id.value()],
                 |row| row.get(0),
             )
@@ -1849,7 +1822,7 @@ fn command_operating_cycle_for_treatment(
                 "SELECT s.operating_cycle_id FROM office_turns t
                  JOIN root_authority_office_sessions s
                    ON s.root_authority_office_session_id = t.root_authority_office_session_id
-                 WHERE t.office_turn_id = ?1",
+                 WHERE t.office_turn_id = $1",
                 [turn_id.value()],
                 |row| row.get(0),
             )
@@ -1858,7 +1831,7 @@ fn command_operating_cycle_for_treatment(
             reservation_id, ..
         } => transaction
             .query_row(
-                "SELECT operating_cycle_id FROM budget_reservations WHERE budget_reservation_id = ?1",
+                "SELECT operating_cycle_id FROM budget_reservations WHERE budget_reservation_id = $1",
                 [reservation_id.value()],
                 |row| row.get(0),
             )
@@ -1868,14 +1841,14 @@ fn command_operating_cycle_for_treatment(
         } => transaction
             .query_row(
                 "SELECT operating_cycle_id FROM cancellation_requests
-                 WHERE cancellation_request_id = ?1",
+                 WHERE cancellation_request_id = $1",
                 [cancellation_request_id.value()],
                 |row| row.get(0),
             )
             .optional()?,
         CommandBody::CloseCostPostmortem { postmortem_id, .. } => transaction
             .query_row(
-                "SELECT operating_cycle_id FROM cost_postmortems WHERE postmortem_id = ?1",
+                "SELECT operating_cycle_id FROM cost_postmortems WHERE postmortem_id = $1",
                 [postmortem_id.value()],
                 |row| row.get(0),
             )
@@ -1887,7 +1860,7 @@ fn command_operating_cycle_for_treatment(
             actor_attempt_id, ..
         } => transaction
             .query_row(
-                "SELECT operating_cycle_id FROM attempts WHERE actor_attempt_id = ?1",
+                "SELECT operating_cycle_id FROM attempts WHERE actor_attempt_id = $1",
                 [actor_attempt_id.value()],
                 |row| row.get(0),
             )
@@ -1896,7 +1869,7 @@ fn command_operating_cycle_for_treatment(
             .query_row(
                 "SELECT a.operating_cycle_id FROM leases l
                  JOIN actor_instances a ON a.actor_instance_id = l.actor_instance_id
-                 WHERE l.work_lease_id = ?1",
+                 WHERE l.work_lease_id = $1",
                 [work_lease_id.value()],
                 |row| row.get(0),
             )
@@ -1907,15 +1880,6 @@ fn command_operating_cycle_for_treatment(
         .map(OperatingCycleId::try_from)
         .transpose()
         .map_err(|_| StoreError::InvalidStoredValue)
-}
-
-fn bootstrap_current_schema(connection: &Connection) -> Result<(), StoreError> {
-    if let Err(error) = connection.execute_batch(CURRENT_SCHEMA) {
-        let _ = connection.execute_batch("ROLLBACK");
-        return Err(error.into());
-    }
-    connection.pragma_update(None, "foreign_keys", "ON")?;
-    Ok(())
 }
 
 fn apply_command(
@@ -3150,8 +3114,8 @@ fn apply_command(
         && request.capability.requires_consumption()
     {
         transaction.execute(
-            "UPDATE capability_grants SET grant_state = 2, consumed_by_command_id = ?1
-             WHERE capability_grant_id = ?2 AND grant_state = 1",
+            "UPDATE capability_grants SET grant_state = 2, consumed_by_command_id = $1
+             WHERE capability_grant_id = $2 AND grant_state = 1",
             params![command_row_id, grant_id],
         )?;
     }
@@ -3168,11 +3132,11 @@ fn create_society(
     }
     transaction
         .execute(
-            "INSERT INTO societies(name, lifecycle_state) VALUES (?1, 1)",
+            "INSERT INTO societies(name, lifecycle_state) VALUES ($1, 1)",
             [name.as_str()],
         )
         .map_err(|_| Rejection::FoundingInvariant)?;
-    let society_id = id_from_last_insert::<SocietyId>(transaction)?;
+    let society_id = id_from_returned_identity::<SocietyId>(transaction)?;
     let _ = command_row_id;
     Ok(EventBody::SocietyIdentityCreated { society_id })
 }
@@ -3181,22 +3145,22 @@ fn install_root_authority_office(
     transaction: &Transaction<'_>,
     command_row_id: i64,
 ) -> Result<EventBody, Rejection> {
-    if !exists(transaction, "SELECT 1 FROM societies LIMIT 1")?
-        || exists(
-            transaction,
-            "SELECT 1 FROM office_contracts WHERE office_kind = 1",
-        )?
-    {
+    let society_exists = exists(transaction, "SELECT 1 FROM societies LIMIT 1")?;
+    let office_exists = exists(
+        transaction,
+        "SELECT 1 FROM office_contracts WHERE office_kind = 1",
+    )?;
+    if !society_exists || office_exists {
         return Err(Rejection::FoundingInvariant);
     }
     transaction
         .execute(
-            "INSERT INTO office_contracts(office_kind, installed_by_command_id) VALUES (?1, ?2)",
+            "INSERT INTO office_contracts(office_kind, installed_by_command_id) VALUES ($1, $2)",
             params![OfficeKind::RootAuthorityOffice as i64, command_row_id],
         )
         .map_err(|_| Rejection::FoundingInvariant)?;
     Ok(EventBody::RootAuthorityOfficeInstalled {
-        office_id: id_from_last_insert::<OfficeId>(transaction)?,
+        office_id: id_from_returned_identity::<OfficeId>(transaction)?,
     })
 }
 
@@ -3217,7 +3181,7 @@ fn install_founding_mission(
     transaction
         .execute(
             "INSERT INTO applications(application_identity, application_name, created_by_command_id)
-             VALUES (?1, ?2, ?3)",
+             VALUES ($1, $2, $3)",
             params![
                 mission.application_identity.as_str(),
                 mission.application_name.as_str(),
@@ -3225,13 +3189,13 @@ fn install_founding_mission(
             ],
         )
         .map_err(|_| Rejection::FoundingInvariant)?;
-    let application_id = id_from_last_insert::<ApplicationId>(transaction)?;
+    let application_id = id_from_returned_identity::<ApplicationId>(transaction)?;
     transaction
         .execute(
             "INSERT INTO application_revisions(
                  application_id, revision_ordinal, mission_statement,
                  source_rendering_digest, source_content_object_id, installed_by_command_id
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+             ) VALUES ($1, $2, $3, $4, $5, $6)",
             params![
                 application_id.value(),
                 mission.revision_ordinal.value(),
@@ -3242,7 +3206,7 @@ fn install_founding_mission(
             ],
         )
         .map_err(|_| Rejection::FoundingInvariant)?;
-    let application_revision_id = id_from_last_insert::<ApplicationRevisionId>(transaction)?;
+    let application_revision_id = id_from_returned_identity::<ApplicationRevisionId>(transaction)?;
     for (index, principle) in mission.principles.as_slice().iter().enumerate() {
         let ordinal = i64::try_from(index + 1).map_err(|_| Rejection::FoundingInvariant)?;
         transaction
@@ -3250,7 +3214,7 @@ fn install_founding_mission(
                 "INSERT INTO application_revision_principles(
                      application_revision_id, principle_ordinal,
                      principle_kind, principle_text
-                 ) VALUES (?1, ?2, ?3, ?4)",
+                 ) VALUES ($1, $2, $3, $4)",
                 params![
                     application_revision_id.value(),
                     ordinal,
@@ -3267,7 +3231,7 @@ fn install_founding_mission(
                  application_revision_id, change_question,
                  improvement_evidence_question, boundary_commitment_question,
                  revisit_question
-             ) VALUES (?1, ?2, ?3, ?4, ?5)",
+             ) VALUES ($1, $2, $3, $4, $5)",
             params![
                 application_revision_id.value(),
                 questions.change.as_str(),
@@ -3282,7 +3246,7 @@ fn install_founding_mission(
             "INSERT INTO founding_missions(
                  society_id, application_revision_id, revision,
                  active, installed_by_command_id
-             ) VALUES (?1, ?2, ?3, 1, ?4)",
+             ) VALUES ($1, $2, $3, 1, $4)",
             params![
                 society_id.value(),
                 application_revision_id.value(),
@@ -3292,7 +3256,7 @@ fn install_founding_mission(
         )
         .map_err(|_| Rejection::FoundingInvariant)?;
     Ok(EventBody::FoundingMissionInstalled {
-        mission_id: id_from_last_insert::<FoundingMissionId>(transaction)?,
+        mission_id: id_from_returned_identity::<FoundingMissionId>(transaction)?,
         application_revision_id,
     })
 }
@@ -3311,25 +3275,25 @@ fn appoint_initial_root_authority(
     }
     transaction
         .execute(
-            "INSERT INTO principals(principal_kind, display_name, active) VALUES (?1, ?2, 1)",
+            "INSERT INTO principals(principal_kind, display_name, active) VALUES ($1, $2, 1)",
             params![PrincipalKind::Actor as i64, actor_display_name],
         )
         .map_err(|_| Rejection::FoundingInvariant)?;
-    let actor_principal = id_from_last_insert::<PrincipalId>(transaction)?;
+    let actor_principal = id_from_returned_identity::<PrincipalId>(transaction)?;
     transaction
         .execute(
             "INSERT INTO office_occupancies(office_id, principal_id, active, appointed_by_command_id)
-             VALUES (?1, ?2, 1, ?3)",
+             VALUES ($1, $2, 1, $3)",
             params![office_id.value(), actor_principal.value(), command_row_id],
         )
         .map_err(|_| Rejection::ActiveOfficeOccupancyAlreadyExists)?;
-    let occupancy_id = id_from_last_insert::<OfficeOccupancyId>(transaction)?;
+    let occupancy_id = id_from_returned_identity::<OfficeOccupancyId>(transaction)?;
     for capability in Capability::ROOT_AUTHORITY {
         transaction
             .execute(
                 "INSERT INTO capability_grants(principal_id, capability_kind, office_occupancy_id,
                                                 grant_state, grant_origin, granted_by_command_id, consumed_by_command_id)
-                 VALUES (?1, ?2, ?3, 1, 2, ?4, NULL)",
+                 VALUES ($1, $2, $3, 1, 2, $4, NULL)",
                 params![actor_principal.value(), capability as i64, occupancy_id.value(), command_row_id],
             )
             .map_err(|_| Rejection::FoundingInvariant)?;
@@ -3374,20 +3338,20 @@ fn bootstrap_society(
         .execute(
             "INSERT INTO society_bootstraps(society_id, founding_mission_id, office_id, office_occupancy_id,
                                              hard_ceiling_micros, bootstrapped_by_command_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+             VALUES ($1, $2, $3, $4, $5, $6)",
             params![society_id.value(), mission_id.value(), office_id.value(), occupancy_id.value(), ceiling.value(), command_row_id],
         )
         .map_err(|_| Rejection::FoundingInvariant)?;
     transaction
         .execute(
-            "UPDATE societies SET lifecycle_state = 2 WHERE society_id = ?1",
+            "UPDATE societies SET lifecycle_state = 2 WHERE society_id = $1",
             [society_id.value()],
         )
         .map_err(|_| Rejection::FoundingInvariant)?;
     let budget_envelope_id = create_budget_envelope(transaction, command_row_id, ceiling)?;
     transaction.execute(
         "INSERT INTO budget_envelope_constraints(budget_envelope_id, society_id, operating_cycle_id)
-         VALUES (?1, ?2, NULL)",
+         VALUES ($1, $2, NULL)",
         params![budget_envelope_id.value(), society_id.value()],
     ).map_err(|_| Rejection::FoundingInvariant)?;
     Ok(EventBody::SocietyBootstrapped { society_id })
@@ -3414,15 +3378,15 @@ fn propose_operating_cycle(
         "INSERT INTO operating_cycles(society_id, founding_mission_id, office_occupancy_id, treatment,
                                       budget_ceiling_micros, lifecycle_state, admission_generation,
                                       proposed_by_command_id, last_transition_command_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7, ?7)",
+         VALUES ($1, $2, $3, $4, $5, $6, 0, $7, $7)",
         params![society_id.value(), mission_id.value(), occupancy_id.value(), treatment as i64,
                 budget_ceiling.value(), OperatingCycleState::Proposed as i64, command_row_id],
     ).map_err(|_| Rejection::ActiveCycleAlreadyExists)?;
-    let cycle_id = id_from_last_insert::<OperatingCycleId>(transaction)?;
+    let cycle_id = id_from_returned_identity::<OperatingCycleId>(transaction)?;
     let budget_envelope_id = create_budget_envelope(transaction, command_row_id, budget_ceiling)?;
     transaction.execute(
         "INSERT INTO budget_envelope_constraints(budget_envelope_id, society_id, operating_cycle_id)
-         VALUES (?1, NULL, ?2)",
+         VALUES ($1, NULL, $2)",
         params![budget_envelope_id.value(), cycle_id.value()],
     ).map_err(|_| Rejection::FoundingInvariant)?;
     Ok(EventBody::OperatingCycleProposed {
@@ -3444,12 +3408,12 @@ fn admit_operating_cycle(
         return Err(Rejection::InvalidLifecycleTransition);
     }
     transaction.execute(
-        "UPDATE operating_cycles SET lifecycle_state = ?1, last_transition_command_id = ?2 WHERE operating_cycle_id = ?3",
+        "UPDATE operating_cycles SET lifecycle_state = $1, last_transition_command_id = $2 WHERE operating_cycle_id = $3",
         params![OperatingCycleState::Admitted as i64, command_row_id, cycle_id.value()],
     ).map_err(|_| Rejection::SubjectNotFound)?;
     transaction.execute(
         "INSERT INTO operating_cycle_admissions(operating_cycle_id, admitted_by_command_id, started_by_command_id)
-         VALUES (?1, ?2, NULL)",
+         VALUES ($1, $2, NULL)",
         params![cycle_id.value(), command_row_id],
     ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
     Ok(EventBody::OperatingCycleStateChanged {
@@ -3470,21 +3434,21 @@ fn start_office_session(
         return Err(Rejection::InvalidLifecycleTransition);
     }
     transaction.execute(
-        "UPDATE operating_cycles SET lifecycle_state = ?1, last_transition_command_id = ?2 WHERE operating_cycle_id = ?3",
+        "UPDATE operating_cycles SET lifecycle_state = $1, last_transition_command_id = $2 WHERE operating_cycle_id = $3",
         params![OperatingCycleState::Running as i64, command_row_id, cycle_id.value()],
     ).map_err(|_| Rejection::SubjectNotFound)?;
     transaction.execute(
-        "UPDATE operating_cycle_admissions SET started_by_command_id = ?1 WHERE operating_cycle_id = ?2",
+        "UPDATE operating_cycle_admissions SET started_by_command_id = $1 WHERE operating_cycle_id = $2",
         params![command_row_id, cycle_id.value()],
     ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
     transaction.execute(
         "INSERT INTO root_authority_office_sessions(operating_cycle_id, office_occupancy_id, lifecycle_state,
                                                       started_by_command_id, last_transition_command_id)
-         VALUES (?1, ?2, ?3, ?4, ?4)",
+         VALUES ($1, $2, $3, $4, $4)",
         params![cycle_id.value(), cycle.occupancy_id.value(), OfficeSessionState::Reserved as i64, command_row_id],
     ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
     Ok(EventBody::RootAuthorityOfficeSessionStarted {
-        session_id: id_from_last_insert::<RootAuthorityOfficeSessionId>(transaction)?,
+        session_id: id_from_returned_identity::<RootAuthorityOfficeSessionId>(transaction)?,
         cycle_id,
     })
 }
@@ -3507,7 +3471,7 @@ fn record_office_session_ready(
     let supervised_admission: Option<i64> = transaction
         .query_row(
             "SELECT native_child_spawn_admission_id FROM native_child_spawn_admissions
-          WHERE root_authority_office_session_id = ?1",
+          WHERE root_authority_office_session_id = $1",
             [session_id.value()],
             |row| row.get(0),
         )
@@ -3521,9 +3485,9 @@ fn record_office_session_ready(
             "SELECT EXISTS(
                SELECT 1 FROM native_children c
                JOIN pi_child_session_protocols p ON p.native_child_id = c.native_child_id
-              WHERE c.native_child_spawn_admission_id = ?1
-                AND c.lifecycle_state = ?2
-                AND p.lifecycle_state = ?3)",
+              WHERE c.native_child_spawn_admission_id = $1
+                AND c.lifecycle_state = $2
+                AND p.lifecycle_state = $3)",
             params![
                 admission_id,
                 ChildProcessState::Running as i64,
@@ -3537,8 +3501,8 @@ fn record_office_session_ready(
         return Err(Rejection::ChildLifecycleReceiptMissing);
     }
     transaction.execute(
-        "UPDATE root_authority_office_sessions SET lifecycle_state = ?1, last_transition_command_id = ?2
-         WHERE root_authority_office_session_id = ?3",
+        "UPDATE root_authority_office_sessions SET lifecycle_state = $1, last_transition_command_id = $2
+         WHERE root_authority_office_session_id = $3",
         params![OfficeSessionState::Ready as i64, command_row_id, session_id.value()],
     ).map_err(|_| Rejection::SubjectNotFound)?;
     Ok(EventBody::RootAuthorityOfficeSessionStateChanged {
@@ -3567,7 +3531,7 @@ fn record_office_session_terminal(
     // Office terminal fact manufacture a semantic Pi/Office settlement for a
     // supervised session; a later normalized receipt owns that transition.
     let has_pi_child: bool = transaction.query_row(
-        "SELECT EXISTS(SELECT 1 FROM native_child_spawn_admissions WHERE root_authority_office_session_id = ?1)",
+        "SELECT EXISTS(SELECT 1 FROM native_child_spawn_admissions WHERE root_authority_office_session_id = $1)",
         [session_id.value()], |row| row.get::<_, i64>(0),
     ).map_err(|_| Rejection::ChildLifecycleReceiptMissing)? != 0;
     if has_pi_child {
@@ -3602,8 +3566,8 @@ fn record_office_session_terminal(
     };
     transaction
         .execute(
-            "UPDATE root_authority_office_sessions SET lifecycle_state = ?1, last_transition_command_id = ?2
-             WHERE root_authority_office_session_id = ?3",
+            "UPDATE root_authority_office_sessions SET lifecycle_state = $1, last_transition_command_id = $2
+             WHERE root_authority_office_session_id = $3",
             params![
                 next_state as i64,
                 command_row_id,
@@ -3633,7 +3597,7 @@ fn open_office_turn(
     let supervised_admission: Option<i64> = transaction
         .query_row(
             "SELECT native_child_spawn_admission_id FROM native_child_spawn_admissions
-              WHERE root_authority_office_session_id = ?1",
+              WHERE root_authority_office_session_id = $1",
             [session_id.value()],
             |row| row.get(0),
         )
@@ -3647,9 +3611,9 @@ fn open_office_turn(
             "SELECT EXISTS(
                SELECT 1 FROM native_children c
                JOIN pi_child_session_protocols p ON p.native_child_id = c.native_child_id
-              WHERE c.native_child_spawn_admission_id = ?1
-                AND c.lifecycle_state = ?2
-                AND p.lifecycle_state = ?3)",
+              WHERE c.native_child_spawn_admission_id = $1
+                AND c.lifecycle_state = $2
+                AND p.lifecycle_state = $3)",
             params![
                 admission_id,
                 ChildProcessState::Running as i64,
@@ -3677,17 +3641,17 @@ fn open_office_turn(
         return Err(Rejection::InvalidLifecycleTransition);
     }
     transaction.execute(
-        "UPDATE root_authority_office_sessions SET lifecycle_state = ?1, last_transition_command_id = ?2
-         WHERE root_authority_office_session_id = ?3",
+        "UPDATE root_authority_office_sessions SET lifecycle_state = $1, last_transition_command_id = $2
+         WHERE root_authority_office_session_id = $3",
         params![OfficeSessionState::TurnActive as i64, command_row_id, session_id.value()],
     ).map_err(|_| Rejection::SubjectNotFound)?;
     transaction.execute(
         "INSERT INTO office_turns(root_authority_office_session_id, lifecycle_state, purpose, opened_by_command_id, settled_by_command_id)
-         VALUES (?1, ?2, ?3, ?4, NULL)",
+         VALUES ($1, $2, $3, $4, NULL)",
         params![session_id.value(), OfficeTurnState::Active as i64, purpose as i64, command_row_id],
     ).map_err(|_| Rejection::SessionTurnAlreadyActive)?;
     Ok(EventBody::OfficeTurnOpened {
-        turn_id: id_from_last_insert::<OfficeTurnId>(transaction)?,
+        turn_id: id_from_returned_identity::<OfficeTurnId>(transaction)?,
         session_id,
         purpose,
     })
@@ -3726,7 +3690,7 @@ fn authorize_pi_office_turn_prompt(
                ON sidecar.native_child_spawn_admission_id = a.native_child_spawn_admission_id
              JOIN native_children p ON p.native_child_spawn_admission_id = a.native_child_spawn_admission_id
              JOIN pi_child_session_protocols proto ON proto.native_child_id = p.native_child_id
-             WHERE t.office_turn_id = ?1",
+             WHERE t.office_turn_id = $1",
             [office_turn_id.value()],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?, r.get(9)?, r.get(10)?, r.get(11)?)),
         )
@@ -3749,7 +3713,7 @@ fn authorize_pi_office_turn_prompt(
     }
     let profile: (i64, i64) = transaction
         .query_row(
-            "SELECT profile_kind, readiness FROM execution_profiles WHERE execution_profile_id = ?1",
+            "SELECT profile_kind, readiness FROM execution_profiles WHERE execution_profile_id = $1",
             [row.8],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
@@ -3770,7 +3734,7 @@ fn authorize_pi_office_turn_prompt(
             "SELECT o.budget_reservation_id, r.reservation_state, r.charged_micros, r.amount_micros
              FROM office_session_budget_reservations o
              JOIN budget_reservations r ON r.budget_reservation_id = o.budget_reservation_id
-             WHERE o.root_authority_office_session_id = ?1",
+             WHERE o.root_authority_office_session_id = $1",
             [session_id.value()],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )
@@ -3787,7 +3751,7 @@ fn authorize_pi_office_turn_prompt(
     let latest_usage: i64 = transaction
         .query_row(
             "SELECT COALESCE(MAX(cumulative_ceiling_micros), 0)
-             FROM pi_office_turn_usage_receipts WHERE pi_session_id = ?1",
+             FROM pi_office_turn_usage_receipts WHERE pi_session_id = $1",
             [row.7],
             |r| r.get(0),
         )
@@ -3798,7 +3762,7 @@ fn authorize_pi_office_turn_prompt(
     let current_frontier: Option<i64> = transaction
         .query_row(
             "SELECT event_id FROM events ORDER BY event_sequence DESC LIMIT 1",
-            [],
+            params![],
             |r| r.get(0),
         )
         .optional()
@@ -3810,7 +3774,7 @@ fn authorize_pi_office_turn_prompt(
         .query_row(
             "SELECT seal.digest FROM content_objects object
              JOIN content_seal_receipts seal ON seal.content_seal_receipt_id = object.content_seal_receipt_id
-             WHERE object.content_object_id = ?1",
+             WHERE object.content_object_id = $1",
             [prompt_content_object_id.value()],
             |r| r.get(0),
         )
@@ -3821,16 +3785,16 @@ fn authorize_pi_office_turn_prompt(
     }
     transaction.execute(
         "INSERT INTO office_turn_budget_checkpoints(office_turn_id, root_authority_office_session_id, budget_reservation_id, baseline_cumulative_micros, authorized_by_command_id, settled_cumulative_micros, settled_by_command_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, NULL, NULL)",
+         VALUES ($1, $2, $3, $4, $5, NULL, NULL)",
         params![office_turn_id.value(), session_id.value(), reservation_id.value(), charged, command_row_id],
     ).map_err(|_| Rejection::PiOfficeTurnAuthorityMissing)?;
     transaction.execute(
         "INSERT INTO pi_office_turn_prompt_authorizations(office_turn_id, native_child_id, pi_session_id, budget_reservation_id, correlation_identity, prompt_content_object_id, prompt_digest, frontier_event_id, admission_generation, office_turn_purpose, authorized_by_command_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
         params![office_turn_id.value(), row.9, row.7, reservation_id.value(), correlation_identity.as_str(), prompt_content_object_id.value(), prompt_digest.as_bytes().as_slice(), frontier_event_id.value(), cycle.generation.value(), row.1, command_row_id],
     ).map_err(|_| Rejection::PiOfficeTurnAuthorityMissing)?;
     Ok(EventBody::PiOfficeTurnPromptAuthorized {
-        pi_office_turn_prompt_authorization_id: id_from_last_insert(transaction)?,
+        pi_office_turn_prompt_authorization_id: id_from_returned_identity(transaction)?,
         office_turn_id,
         native_child_id: NativeChildId::try_from(row.9)
             .map_err(|_| Rejection::PiOfficeTurnAuthorityMissing)?,
@@ -3848,7 +3812,7 @@ fn record_pi_office_turn_prompt_delivery(
 ) -> Result<EventBody, Rejection> {
     let authorization: Option<i64> = transaction.query_row(
         "SELECT pi_office_turn_prompt_authorization_id FROM pi_office_turn_prompt_authorizations
-         WHERE office_turn_id = ?1 AND correlation_identity = ?2 AND prompt_digest = ?3",
+         WHERE office_turn_id = $1 AND correlation_identity = $2 AND prompt_digest = $3",
         params![office_turn_id.value(), correlation_identity.as_str(), prompt_digest.as_bytes().as_slice()],
         |r| r.get(0),
     ).optional().map_err(|_| Rejection::PiOfficeTurnPromptBindingMismatch)?;
@@ -3858,7 +3822,7 @@ fn record_pi_office_turn_prompt_delivery(
     .map_err(|_| Rejection::PiOfficeTurnPromptBindingMismatch)?;
     transaction.execute(
         "INSERT INTO pi_office_turn_prompt_deliveries(office_turn_id, pi_office_turn_prompt_authorization_id, correlation_identity, prompt_digest, delivered_by_command_id)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
+         VALUES ($1, $2, $3, $4, $5)",
         params![office_turn_id.value(), authorization.value(), correlation_identity.as_str(), prompt_digest.as_bytes().as_slice(), command_row_id],
     ).map_err(|_| Rejection::PiOfficeTurnPromptBindingMismatch)?;
     Ok(EventBody::PiOfficeTurnPromptDelivered {
@@ -3880,7 +3844,7 @@ fn record_pi_office_turn_prompt_accepted(
          FROM pi_office_turn_prompt_deliveries d
          JOIN pi_office_turn_prompt_authorizations a
            ON a.pi_office_turn_prompt_authorization_id = d.pi_office_turn_prompt_authorization_id
-         WHERE d.office_turn_id = ?1 AND a.correlation_identity = ?2",
+         WHERE d.office_turn_id = $1 AND a.correlation_identity = $2",
             params![office_turn_id.value(), correlation_identity.as_str()],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
@@ -3897,7 +3861,7 @@ fn record_pi_office_turn_prompt_accepted(
     }
     transaction.execute(
         "INSERT INTO pi_office_turn_prompt_acceptances(office_turn_id, pi_office_turn_prompt_authorization_id, command_result_sequence, accepted_by_command_id)
-         VALUES (?1, ?2, ?3, ?4)",
+         VALUES ($1, $2, $3, $4)",
         params![office_turn_id.value(), authorization.value(), command_result_sequence.value(), command_row_id],
     ).map_err(|_| Rejection::PiOfficeTurnPromptBindingMismatch)?;
     Ok(EventBody::PiOfficeTurnPromptAccepted {
@@ -3927,7 +3891,7 @@ fn record_pi_office_turn_usage(
          FROM pi_office_turn_prompt_authorizations a
          JOIN pi_office_turn_prompt_acceptances accepted
            ON accepted.pi_office_turn_prompt_authorization_id = a.pi_office_turn_prompt_authorization_id
-         WHERE a.office_turn_id = ?1 AND a.correlation_identity = ?2",
+         WHERE a.office_turn_id = $1 AND a.correlation_identity = $2",
         params![office_turn_id.value(), correlation_identity.as_str()],
         |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
     ).optional().map_err(|_| Rejection::PiOfficeTurnPromptBindingMismatch)?;
@@ -3944,7 +3908,7 @@ fn record_pi_office_turn_usage(
     let session_already_frozen: i64 = transaction
         .query_row(
             "SELECT EXISTS(
-                 SELECT 1 FROM pi_office_turn_usage_failures WHERE pi_session_id = ?1
+                 SELECT 1 FROM pi_office_turn_usage_failures WHERE pi_session_id = $1
              )",
             [session_id],
             |row| row.get(0),
@@ -3956,7 +3920,7 @@ fn record_pi_office_turn_usage(
     let previous: Option<PiOfficeTurnUsageSqlRow> = transaction.query_row(
         "SELECT input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
                 provider_cost_binary64, cumulative_ceiling_micros, protocol_sequence
-         FROM pi_office_turn_usage_receipts WHERE pi_session_id = ?1
+         FROM pi_office_turn_usage_receipts WHERE pi_session_id = $1
          ORDER BY protocol_sequence DESC LIMIT 1",
         [session_id],
         |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?)),
@@ -3986,11 +3950,11 @@ fn record_pi_office_turn_usage(
     }
     transaction.execute(
         "INSERT INTO pi_office_turn_usage_receipts(office_turn_id, pi_office_turn_prompt_authorization_id, pi_session_id, correlation_identity, protocol_sequence, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, total_tokens, provider_cost_binary64, cumulative_ceiling_micros, recorded_by_command_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
         params![office_turn_id.value(), authorization, session_id, correlation_identity.as_str(), protocol_sequence.value(), usage.input_tokens.value(), usage.output_tokens.value(), usage.cache_read_tokens.value(), usage.cache_write_tokens.value(), usage.total_tokens.value(), usage.provider_cost.as_big_endian_bytes().as_slice(), usage.ceiling_micro_usd.value(), command_row_id],
     ).map_err(|_| Rejection::PiOfficeTurnUsageNotMonotonic)?;
     Ok(EventBody::PiOfficeTurnUsageRecorded {
-        pi_office_turn_usage_receipt_id: id_from_last_insert(transaction)?,
+        pi_office_turn_usage_receipt_id: id_from_returned_identity(transaction)?,
         office_turn_id,
         protocol_sequence,
         cumulative_micro_usd: usage.ceiling_micro_usd,
@@ -4015,7 +3979,7 @@ fn record_pi_office_turn_usage_failure(
          JOIN office_turns t ON t.office_turn_id = a.office_turn_id
          JOIN root_authority_office_sessions s ON s.root_authority_office_session_id = t.root_authority_office_session_id
          JOIN pi_office_turn_prompt_acceptances accepted ON accepted.pi_office_turn_prompt_authorization_id = a.pi_office_turn_prompt_authorization_id
-         WHERE a.office_turn_id = ?1 AND a.correlation_identity = ?2",
+         WHERE a.office_turn_id = $1 AND a.correlation_identity = $2",
         params![office_turn_id.value(), correlation_identity.as_str()], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
     ).optional().map_err(|_| Rejection::PiOfficeTurnPromptBindingMismatch)?;
     let (authorization, reservation, cycle, session, accepted_sequence) =
@@ -4030,7 +3994,7 @@ fn record_pi_office_turn_usage_failure(
         BudgetReservationId::try_from(reservation).map_err(|_| Rejection::ReservationNotActive)?;
     let cycle_id = OperatingCycleId::try_from(cycle).map_err(|_| Rejection::SubjectNotFound)?;
     let (amount, charged, state): (i64, i64, i64) = transaction.query_row(
-        "SELECT amount_micros, charged_micros, reservation_state FROM budget_reservations WHERE budget_reservation_id = ?1",
+        "SELECT amount_micros, charged_micros, reservation_state FROM budget_reservations WHERE budget_reservation_id = $1",
         [reservation], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
     ).map_err(|_| Rejection::ReservationNotActive)?;
     if state != BudgetReservationState::Reserved as i64 || amount < charged {
@@ -4069,7 +4033,7 @@ fn record_pi_office_turn_usage_failure(
     let (kind, unknown, unavailable) = sql_pi_office_turn_usage_failure(failure);
     transaction.execute(
         "INSERT INTO pi_office_turn_usage_failures(office_turn_id, pi_office_turn_prompt_authorization_id, pi_session_id, correlation_identity, protocol_sequence, failure_kind, unknown_reason, unavailable_reason, budget_reservation_id, cancellation_request_id, cost_postmortem_id, recorded_by_command_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
         params![office_turn_id.value(), authorization, session, correlation_identity.as_str(), protocol_sequence.value(), kind, unknown, unavailable, reservation, cancellation_request_id.value(), postmortem_id.value(), command_row_id],
     ).map_err(|_| Rejection::PiOfficeTurnAuthorityMissing)?;
     Ok(EventBody::PiOfficeTurnUsageFrozen {
@@ -4105,7 +4069,7 @@ fn pi_office_session_dispose_binding(
                ON child.native_child_spawn_admission_id = admission.native_child_spawn_admission_id
              JOIN pi_child_session_protocols protocol
                ON protocol.native_child_id = child.native_child_id
-             WHERE s.root_authority_office_session_id = ?1",
+             WHERE s.root_authority_office_session_id = $1",
             [session_id.value()],
             |row| {
                 Ok((
@@ -4131,7 +4095,7 @@ fn pi_office_session_has_active_turn(
     transaction
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM office_turns
-             WHERE root_authority_office_session_id = ?1 AND lifecycle_state = ?2)",
+             WHERE root_authority_office_session_id = $1 AND lifecycle_state = $2)",
             params![session_id.value(), OfficeTurnState::Active as i64],
             |row| row.get::<_, i64>(0),
         )
@@ -4147,7 +4111,7 @@ fn require_pi_office_session_dispose_authorization_generation(
     let authorized_generation: i64 = transaction
         .query_row(
             "SELECT authorized_generation FROM pi_office_session_dispose_authorizations
-             WHERE root_authority_office_session_id = ?1",
+             WHERE root_authority_office_session_id = $1",
             [session_id.value()],
             |row| row.get(0),
         )
@@ -4187,10 +4151,10 @@ fn authorize_pi_office_session_dispose(
         .query_row(
             "SELECT EXISTS(
              SELECT 1 FROM pi_office_turn_prompt_authorizations
-             WHERE pi_session_id = ?1 AND correlation_identity = ?2
+             WHERE pi_session_id = $1 AND correlation_identity = $2
              UNION ALL
              SELECT 1 FROM pi_office_session_dispose_authorizations
-             WHERE pi_session_id = ?1 AND correlation_identity = ?2
+             WHERE pi_session_id = $1 AND correlation_identity = $2
          )",
             params![pi_session, correlation_identity.as_str()],
             |row| row.get(0),
@@ -4199,8 +4163,8 @@ fn authorize_pi_office_session_dispose(
     transaction
         .execute(
             "UPDATE root_authority_office_sessions
-         SET lifecycle_state = ?1, last_transition_command_id = ?2
-         WHERE root_authority_office_session_id = ?3",
+         SET lifecycle_state = $1, last_transition_command_id = $2
+         WHERE root_authority_office_session_id = $3",
             params![
                 OfficeSessionState::Quiescing as i64,
                 command_row_id,
@@ -4217,7 +4181,7 @@ fn authorize_pi_office_session_dispose(
          FROM office_session_budget_reservations parent
          JOIN budget_reservations reservation
            ON reservation.budget_reservation_id = parent.budget_reservation_id
-         WHERE parent.root_authority_office_session_id = ?1",
+         WHERE parent.root_authority_office_session_id = $1",
             [session_id.value()],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
@@ -4225,7 +4189,7 @@ fn authorize_pi_office_session_dispose(
     let latest_known: Option<i64> = transaction
         .query_row(
             "SELECT cumulative_ceiling_micros FROM pi_office_turn_usage_receipts
-         WHERE pi_session_id = ?1 ORDER BY protocol_sequence DESC LIMIT 1",
+         WHERE pi_session_id = $1 ORDER BY protocol_sequence DESC LIMIT 1",
             [pi_session],
             |row| row.get(0),
         )
@@ -4233,7 +4197,7 @@ fn authorize_pi_office_session_dispose(
         .map_err(|_| Rejection::PiOfficeSessionDisposeBindingMismatch)?;
     let has_usage_failure: i64 = transaction
         .query_row(
-            "SELECT EXISTS(SELECT 1 FROM pi_office_turn_usage_failures WHERE pi_session_id = ?1)",
+            "SELECT EXISTS(SELECT 1 FROM pi_office_turn_usage_failures WHERE pi_session_id = $1)",
             [pi_session],
             |row| row.get(0),
         )
@@ -4249,7 +4213,7 @@ fn authorize_pi_office_session_dispose(
             "INSERT INTO pi_office_session_dispose_authorizations(
              root_authority_office_session_id, native_child_id, pi_session_id,
              correlation_identity, authorized_generation, authorized_by_command_id
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+         ) VALUES ($1, $2, $3, $4, $5, $6)",
             params![
                 session_id.value(),
                 child,
@@ -4282,12 +4246,12 @@ fn record_pi_office_session_dispose_delivery(
         session_id,
     )?;
     let authorization: Option<(i64, i64, String, i64)> = transaction.query_row(
-        "SELECT authorization.native_child_id, authorization.pi_session_id,
-                authorization.correlation_identity, session.lifecycle_state
-         FROM pi_office_session_dispose_authorizations authorization
+        "SELECT prompt_auth.native_child_id, prompt_auth.pi_session_id,
+                prompt_auth.correlation_identity, session.lifecycle_state
+         FROM pi_office_session_dispose_authorizations prompt_auth
          JOIN root_authority_office_sessions session
-           ON session.root_authority_office_session_id = authorization.root_authority_office_session_id
-         WHERE authorization.root_authority_office_session_id = ?1",
+           ON session.root_authority_office_session_id = prompt_auth.root_authority_office_session_id
+         WHERE prompt_auth.root_authority_office_session_id = $1",
         [session_id.value()],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
     ).optional().map_err(|_| Rejection::PiOfficeSessionDisposeBindingMismatch)?;
@@ -4304,7 +4268,7 @@ fn record_pi_office_session_dispose_delivery(
             "INSERT INTO pi_office_session_dispose_deliveries(
              root_authority_office_session_id, native_child_id, pi_session_id,
              correlation_identity, delivered_by_command_id
-         ) VALUES (?1, ?2, ?3, ?4, ?5)",
+         ) VALUES ($1, $2, $3, $4, $5)",
             params![
                 session_id.value(),
                 child,
@@ -4341,7 +4305,7 @@ fn record_pi_office_session_dispose_accepted(
          FROM pi_office_session_dispose_deliveries d
          JOIN root_authority_office_sessions s
            ON s.root_authority_office_session_id = d.root_authority_office_session_id
-         WHERE d.root_authority_office_session_id = ?1",
+         WHERE d.root_authority_office_session_id = $1",
             [session_id.value()],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
@@ -4363,7 +4327,7 @@ fn record_pi_office_session_dispose_accepted(
         .execute(
             "INSERT INTO pi_office_session_dispose_acceptances(
              root_authority_office_session_id, command_result_sequence, accepted_by_command_id
-         ) VALUES (?1, ?2, ?3)",
+         ) VALUES ($1, $2, $3)",
             params![
                 session_id.value(),
                 command_result_sequence.value(),
@@ -4404,7 +4368,7 @@ fn record_pi_office_session_dispose_usage(
            ON a.root_authority_office_session_id = d.root_authority_office_session_id
          JOIN root_authority_office_sessions s
            ON s.root_authority_office_session_id = d.root_authority_office_session_id
-         WHERE d.root_authority_office_session_id = ?1",
+         WHERE d.root_authority_office_session_id = $1",
             [session_id.value()],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
@@ -4429,12 +4393,12 @@ fn record_pi_office_session_dispose_usage(
          FROM (
              SELECT input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
                     provider_cost_binary64, cumulative_ceiling_micros, protocol_sequence
-             FROM pi_office_turn_usage_receipts WHERE pi_session_id = ?1
+             FROM pi_office_turn_usage_receipts WHERE pi_session_id = $1
              UNION ALL
              SELECT input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
                     provider_cost_binary64, cumulative_ceiling_micros, protocol_sequence
-             FROM pi_office_session_dispose_usage_receipts WHERE pi_session_id = ?1
-         ) ORDER BY protocol_sequence DESC LIMIT 1",
+             FROM pi_office_session_dispose_usage_receipts WHERE pi_session_id = $1
+         ) AS prior_usage ORDER BY protocol_sequence DESC LIMIT 1",
         [pi_session],
         |row| {
             Ok((
@@ -4466,7 +4430,7 @@ fn record_pi_office_session_dispose_usage(
          FROM office_session_budget_reservations parent
          JOIN budget_reservations reservation
            ON reservation.budget_reservation_id = parent.budget_reservation_id
-         WHERE parent.root_authority_office_session_id = ?1",
+         WHERE parent.root_authority_office_session_id = $1",
             [session_id.value()],
             |row| row.get(0),
         )
@@ -4481,7 +4445,7 @@ fn record_pi_office_session_dispose_usage(
              protocol_sequence, input_tokens, output_tokens, cache_read_tokens,
              cache_write_tokens, total_tokens, provider_cost_binary64,
              cumulative_ceiling_micros, recorded_by_command_id
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
             params![
                 session_id.value(),
                 pi_session,
@@ -4530,7 +4494,7 @@ fn record_pi_office_session_dispose_usage_failure(
            ON s.root_authority_office_session_id = d.root_authority_office_session_id
          JOIN office_session_budget_reservations parent
            ON parent.root_authority_office_session_id = s.root_authority_office_session_id
-         WHERE d.root_authority_office_session_id = ?1",
+         WHERE d.root_authority_office_session_id = $1",
             [session_id.value()],
             |row| {
                 Ok((
@@ -4564,7 +4528,7 @@ fn record_pi_office_session_dispose_usage_failure(
     let (amount, charged, state): (i64, i64, i64) = transaction
         .query_row(
             "SELECT amount_micros, charged_micros, reservation_state
-         FROM budget_reservations WHERE budget_reservation_id = ?1",
+         FROM budget_reservations WHERE budget_reservation_id = $1",
             [reservation],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
@@ -4597,7 +4561,7 @@ fn record_pi_office_session_dispose_usage_failure(
              protocol_sequence, failure_kind, unknown_reason, unavailable_reason,
              budget_reservation_id, cancellation_request_id, cost_postmortem_id,
              recorded_by_command_id
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
             params![
                 session_id.value(),
                 pi_session,
@@ -4672,7 +4636,7 @@ fn record_pi_office_session_disposed(
            ON s.root_authority_office_session_id = d.root_authority_office_session_id
          JOIN office_session_budget_reservations parent
            ON parent.root_authority_office_session_id = s.root_authority_office_session_id
-         WHERE d.root_authority_office_session_id = ?1",
+         WHERE d.root_authority_office_session_id = $1",
             [session_id.value()],
             |row| {
                 Ok((
@@ -4759,7 +4723,7 @@ fn record_pi_office_session_disposed(
     let (amount, charged, reservation_state): (i64, i64, i64) = transaction
         .query_row(
             "SELECT amount_micros, charged_micros, reservation_state
-         FROM budget_reservations WHERE budget_reservation_id = ?1",
+         FROM budget_reservations WHERE budget_reservation_id = $1",
             [reservation],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
@@ -4803,7 +4767,7 @@ fn record_pi_office_session_disposed(
         let mut charge_statement = transaction
             .prepare(
                 "SELECT budget_envelope_id, amount_micros FROM budget_reservation_charges
-                 WHERE budget_reservation_id = ?1 ORDER BY budget_envelope_id",
+                 WHERE budget_reservation_id = $1 ORDER BY budget_envelope_id",
             )
             .map_err(|_| Rejection::ReservationNotActive)?;
         let charges = charge_statement
@@ -4820,16 +4784,16 @@ fn record_pi_office_session_disposed(
             transaction
                 .execute(
                     "UPDATE budget_envelopes
-                 SET reserved_micros = reserved_micros - ?1,
-                     spent_micros = spent_micros + ?2
-                 WHERE budget_envelope_id = ?3",
+                 SET reserved_micros = reserved_micros - $1,
+                     spent_micros = spent_micros + $2
+                 WHERE budget_envelope_id = $3",
                     params![reserved_charge, delta, budget_id],
                 )
                 .map_err(|_| Rejection::BudgetCeilingExceeded)?;
             transaction
                 .execute(
                     "UPDATE budget_reservation_charges SET amount_micros = 0
-                 WHERE budget_reservation_id = ?1 AND budget_envelope_id = ?2",
+                 WHERE budget_reservation_id = $1 AND budget_envelope_id = $2",
                     params![reservation_id.value(), budget_id],
                 )
                 .map_err(|_| Rejection::ReservationNotActive)?;
@@ -4837,8 +4801,8 @@ fn record_pi_office_session_disposed(
         transaction
             .execute(
                 "UPDATE budget_reservations
-             SET reservation_state = ?1, charged_micros = ?2, reconciled_by_command_id = ?3
-             WHERE budget_reservation_id = ?4",
+             SET reservation_state = $1, charged_micros = $2, reconciled_by_command_id = $3
+             WHERE budget_reservation_id = $4",
                 params![
                     BudgetReservationState::Reconciled as i64,
                     usage.ceiling_micro_usd.value(),
@@ -4864,7 +4828,7 @@ fn record_pi_office_session_disposed(
              session_file_digest, transcript_content_object_id, first_user_prompt_kind,
              first_user_prompt_digest, budget_disposition_kind, cancellation_request_id,
              cost_postmortem_id, recorded_by_command_id
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)",
             params![
                 session_id.value(),
                 child,
@@ -4884,12 +4848,12 @@ fn record_pi_office_session_disposed(
             ],
         )
         .map_err(|_| Rejection::PiOfficeSessionDisposeReceiptMissing)?;
-    let receipt_id = id_from_last_insert::<PiOfficeSessionDisposeReceiptId>(transaction)?;
+    let receipt_id = id_from_returned_identity::<PiOfficeSessionDisposeReceiptId>(transaction)?;
     transaction
         .execute(
             "UPDATE root_authority_office_sessions
-         SET lifecycle_state = ?1, last_transition_command_id = ?2
-         WHERE root_authority_office_session_id = ?3",
+         SET lifecycle_state = $1, last_transition_command_id = $2
+         WHERE root_authority_office_session_id = $3",
             params![
                 next_session_state as i64,
                 command_row_id,
@@ -4949,7 +4913,7 @@ fn validate_pi_office_session_transcript_receipt(
     let first_prompt: Option<Vec<u8>> = transaction
         .query_row(
             "SELECT prompt_digest FROM pi_office_turn_prompt_authorizations
-         WHERE pi_session_id = ?1
+         WHERE pi_session_id = $1
          ORDER BY pi_office_turn_prompt_authorization_id ASC LIMIT 1",
             [pi_session_id],
             |row| row.get(0),
@@ -4965,7 +4929,7 @@ fn validate_pi_office_session_transcript_receipt(
                     "SELECT seal.digest FROM content_objects object
                  JOIN content_seal_receipts seal
                    ON seal.content_seal_receipt_id = object.content_seal_receipt_id
-                 WHERE object.content_object_id = ?1",
+                 WHERE object.content_object_id = $1",
                     [content_object_id],
                     |row| row.get(0),
                 )
@@ -5020,7 +4984,7 @@ fn pi_office_turn_has_terminal_receipt(
         .query_row(
             "SELECT EXISTS(
                  SELECT 1 FROM pi_office_turn_terminal_receipts
-                 WHERE office_turn_id = ?1
+                 WHERE office_turn_id = $1
              )",
             [office_turn_id.value()],
             |row| row.get::<_, i64>(0),
@@ -5042,40 +5006,40 @@ fn pi_office_session_max_sequence(
             "SELECT MAX(protocol_sequence) FROM (
                  SELECT accepted.command_result_sequence AS protocol_sequence
                  FROM pi_office_turn_prompt_acceptances accepted
-                 JOIN pi_office_turn_prompt_authorizations authorization
-                   ON authorization.pi_office_turn_prompt_authorization_id = accepted.pi_office_turn_prompt_authorization_id
-                 WHERE authorization.pi_session_id = ?1
+                 JOIN pi_office_turn_prompt_authorizations prompt_auth
+                   ON prompt_auth.pi_office_turn_prompt_authorization_id = accepted.pi_office_turn_prompt_authorization_id
+                 WHERE prompt_auth.pi_session_id = $1
                  UNION ALL
                  SELECT protocol_sequence FROM pi_office_turn_usage_receipts
-                 WHERE pi_session_id = ?1
+                 WHERE pi_session_id = $1
                  UNION ALL
                  SELECT protocol_sequence FROM pi_office_turn_usage_failures
-                 WHERE pi_session_id = ?1
+                 WHERE pi_session_id = $1
                  UNION ALL
                  SELECT agent_settled_sequence FROM pi_office_turn_terminal_receipts
-                 WHERE pi_session_id = ?1
+                 WHERE pi_session_id = $1
                  UNION ALL
                  SELECT final_accounting_sequence FROM pi_office_turn_terminal_receipts
-                 WHERE pi_session_id = ?1
+                 WHERE pi_session_id = $1
                  UNION ALL
                  SELECT settled_sequence FROM pi_office_turn_terminal_receipts
-                 WHERE pi_session_id = ?1
+                 WHERE pi_session_id = $1
                  UNION ALL
                  SELECT accepted.command_result_sequence AS protocol_sequence
                  FROM pi_office_session_dispose_acceptances accepted
                  JOIN pi_office_session_dispose_deliveries delivery
                    ON delivery.root_authority_office_session_id = accepted.root_authority_office_session_id
-                 WHERE delivery.pi_session_id = ?1
+                 WHERE delivery.pi_session_id = $1
                  UNION ALL
                  SELECT protocol_sequence FROM pi_office_session_dispose_usage_receipts
-                 WHERE pi_session_id = ?1
+                 WHERE pi_session_id = $1
                  UNION ALL
                  SELECT protocol_sequence FROM pi_office_session_dispose_usage_failures
-                 WHERE pi_session_id = ?1
+                 WHERE pi_session_id = $1
                  UNION ALL
                  SELECT disposed_sequence AS protocol_sequence FROM pi_office_session_dispose_receipts
-                 WHERE pi_session_id = ?1
-             )",
+                 WHERE pi_session_id = $1
+             ) AS protocol_sequences",
             [pi_session_id],
             |row| row.get(0),
         )
@@ -5110,7 +5074,7 @@ fn record_pi_office_turn_terminal(
          JOIN office_turns t ON t.office_turn_id = a.office_turn_id
          JOIN root_authority_office_sessions s ON s.root_authority_office_session_id = t.root_authority_office_session_id
          JOIN pi_office_turn_prompt_acceptances accepted ON accepted.pi_office_turn_prompt_authorization_id = a.pi_office_turn_prompt_authorization_id
-         WHERE a.office_turn_id = ?1 AND a.correlation_identity = ?2",
+         WHERE a.office_turn_id = $1 AND a.correlation_identity = $2",
         params![office_turn_id.value(), correlation_identity.as_str()], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
     ).optional().map_err(|_| Rejection::PiOfficeTurnTerminalEvidenceMissing)?;
     let (authorization, child, session, cycle, accepted_sequence) =
@@ -5118,7 +5082,7 @@ fn record_pi_office_turn_terminal(
     let prior_session_settled: Option<i64> = transaction
         .query_row(
             "SELECT MAX(settled_sequence) FROM pi_office_turn_terminal_receipts
-             WHERE pi_session_id = ?1 AND office_turn_id != ?2",
+             WHERE pi_session_id = $1 AND office_turn_id != $2",
             params![session, office_turn_id.value()],
             |row| row.get(0),
         )
@@ -5134,8 +5098,8 @@ fn record_pi_office_turn_terminal(
     let usage_id: Option<i64> = transaction
         .query_row(
             "SELECT pi_office_turn_usage_receipt_id FROM pi_office_turn_usage_receipts
-         WHERE office_turn_id = ?1 AND pi_office_turn_prompt_authorization_id = ?2
-           AND correlation_identity = ?3 AND protocol_sequence = ?4",
+         WHERE office_turn_id = $1 AND pi_office_turn_prompt_authorization_id = $2
+           AND correlation_identity = $3 AND protocol_sequence = $4",
             params![
                 office_turn_id.value(),
                 authorization,
@@ -5153,8 +5117,8 @@ fn record_pi_office_turn_terminal(
     let failure_id: Option<i64> = transaction
         .query_row(
             "SELECT pi_office_turn_usage_failure_id FROM pi_office_turn_usage_failures
-         WHERE office_turn_id = ?1 AND pi_office_turn_prompt_authorization_id = ?2
-           AND correlation_identity = ?3 AND protocol_sequence = ?4",
+         WHERE office_turn_id = $1 AND pi_office_turn_prompt_authorization_id = $2
+           AND correlation_identity = $3 AND protocol_sequence = $4",
             params![
                 office_turn_id.value(),
                 authorization,
@@ -5198,11 +5162,11 @@ fn record_pi_office_turn_terminal(
         sql_pi_office_turn_terminal_evidence(terminal_evidence);
     transaction.execute(
         "INSERT INTO pi_office_turn_terminal_receipts(office_turn_id, pi_office_turn_prompt_authorization_id, native_child_id, pi_session_id, correlation_identity, terminal_evidence_kind, agent_settled_sequence, final_accounting_sequence, settled_sequence, final_usage_receipt_id, final_usage_failure_id, disposition, assistant_outcome, transcript_disposition, recorded_by_command_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)",
         params![office_turn_id.value(), authorization, child, session, correlation_identity.as_str(), evidence_kind, agent_settled_sequence, final_accounting_sequence.value(), settled_sequence.value(), usage_id.map(PiOfficeTurnUsageReceiptId::value), failure_id.map(PiOfficeTurnUsageFailureId::value), disposition as i64, assistant_outcome as i64, transcript_disposition as i64, command_row_id],
     ).map_err(|_| Rejection::PiOfficeTurnTerminalEvidenceMissing)?;
     Ok(EventBody::PiOfficeTurnTerminalRecorded {
-        pi_office_turn_terminal_receipt_id: id_from_last_insert(transaction)?,
+        pi_office_turn_terminal_receipt_id: id_from_returned_identity(transaction)?,
         office_turn_id,
         disposition,
         assistant_outcome,
@@ -5225,7 +5189,7 @@ fn settle_office_turn(
          JOIN pi_office_turn_terminal_receipts terminal ON terminal.office_turn_id = t.office_turn_id
          JOIN office_turn_budget_checkpoints checkpoint ON checkpoint.office_turn_id = t.office_turn_id
          JOIN pi_office_turn_usage_receipts usage ON usage.pi_office_turn_usage_receipt_id = terminal.final_usage_receipt_id
-         WHERE t.office_turn_id = ?1 AND terminal.pi_office_turn_terminal_receipt_id = ?2",
+         WHERE t.office_turn_id = $1 AND terminal.pi_office_turn_terminal_receipt_id = $2",
         params![turn_id.value(), terminal_receipt_id.value()],
         |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?, r.get(9)?)),
     ).optional().map_err(|_| Rejection::PiOfficeTurnTerminalEvidenceMissing)?;
@@ -5243,8 +5207,8 @@ fn settle_office_turn(
                 a.admission_generation
          FROM root_authority_office_sessions s
          JOIN operating_cycles c ON c.operating_cycle_id = s.operating_cycle_id
-         JOIN pi_office_turn_prompt_authorizations a ON a.office_turn_id = ?1
-         WHERE s.root_authority_office_session_id = ?2",
+         JOIN pi_office_turn_prompt_authorizations a ON a.office_turn_id = $1
+         WHERE s.root_authority_office_session_id = $2",
         params![turn_id.value(), session_id.value()],
         |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
     ).optional().map_err(|_| Rejection::PiOfficeTurnNotReconciled)?;
@@ -5262,7 +5226,7 @@ fn settle_office_turn(
     let child_is_still_live: i64 = transaction.query_row(
         "SELECT EXISTS(SELECT 1 FROM native_children child
           JOIN pi_child_session_protocols protocol ON protocol.native_child_id = child.native_child_id
-          WHERE child.native_child_id = ?1 AND child.lifecycle_state = ?2 AND protocol.lifecycle_state = ?3)",
+          WHERE child.native_child_id = $1 AND child.lifecycle_state = $2 AND protocol.lifecycle_state = $3)",
         params![row.4, ChildProcessState::Running as i64, PiChildSessionState::SessionReady as i64],
         |r| r.get(0),
     ).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
@@ -5272,7 +5236,7 @@ fn settle_office_turn(
     let reservation_id =
         BudgetReservationId::try_from(row.7).map_err(|_| Rejection::ReservationNotActive)?;
     let (amount, charged, state): (i64, i64, i64) = transaction.query_row(
-        "SELECT amount_micros, charged_micros, reservation_state FROM budget_reservations WHERE budget_reservation_id = ?1",
+        "SELECT amount_micros, charged_micros, reservation_state FROM budget_reservations WHERE budget_reservation_id = $1",
         [reservation_id.value()], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
     ).map_err(|_| Rejection::ReservationNotActive)?;
     if state != BudgetReservationState::Reserved as i64
@@ -5287,7 +5251,7 @@ fn settle_office_turn(
             transaction,
             command_row_id,
             reservation_id,
-            transaction.query_row("SELECT operating_cycle_id FROM budget_reservations WHERE budget_reservation_id = ?1", [reservation_id.value()], |r| r.get::<_, i64>(0))
+            transaction.query_row("SELECT operating_cycle_id FROM budget_reservations WHERE budget_reservation_id = $1", [reservation_id.value()], |r| r.get::<_, i64>(0))
                 .map_err(|_| Rejection::ReservationNotActive)
                 .and_then(|id| OperatingCycleId::try_from(id).map_err(|_| Rejection::ReservationNotActive))?,
             UsdMicros::try_from(amount - charged).map_err(|_| Rejection::ReservationNotActive)?,
@@ -5301,7 +5265,7 @@ fn settle_office_turn(
     let mut charge_statement = transaction
         .prepare(
             "SELECT budget_envelope_id, amount_micros FROM budget_reservation_charges
-         WHERE budget_reservation_id = ?1 ORDER BY budget_envelope_id",
+         WHERE budget_reservation_id = $1 ORDER BY budget_envelope_id",
         )
         .map_err(|_| Rejection::ReservationNotActive)?;
     let charges = charge_statement
@@ -5315,29 +5279,29 @@ fn settle_office_turn(
             return Err(Rejection::PiOfficeTurnUsageNotMonotonic);
         }
         transaction.execute(
-            "UPDATE budget_envelopes SET reserved_micros = reserved_micros - ?1, spent_micros = spent_micros + ?1 WHERE budget_envelope_id = ?2",
+            "UPDATE budget_envelopes SET reserved_micros = reserved_micros - $1, spent_micros = spent_micros + $1 WHERE budget_envelope_id = $2",
             params![delta, envelope_id],
         ).map_err(|_| Rejection::BudgetCeilingExceeded)?;
         transaction.execute(
-            "UPDATE budget_reservation_charges SET amount_micros = amount_micros - ?1 WHERE budget_reservation_id = ?2 AND budget_envelope_id = ?3",
+            "UPDATE budget_reservation_charges SET amount_micros = amount_micros - $1 WHERE budget_reservation_id = $2 AND budget_envelope_id = $3",
             params![delta, reservation_id.value(), envelope_id],
         ).map_err(|_| Rejection::ReservationNotActive)?;
     }
     transaction.execute(
-        "UPDATE budget_reservations SET charged_micros = charged_micros + ?1 WHERE budget_reservation_id = ?2",
+        "UPDATE budget_reservations SET charged_micros = charged_micros + $1 WHERE budget_reservation_id = $2",
         params![delta, reservation_id.value()],
     ).map_err(|_| Rejection::ReservationNotActive)?;
     transaction.execute(
-        "UPDATE office_turn_budget_checkpoints SET settled_cumulative_micros = ?1, settled_by_command_id = ?2 WHERE office_turn_id = ?3 AND settled_cumulative_micros IS NULL",
+        "UPDATE office_turn_budget_checkpoints SET settled_cumulative_micros = $1, settled_by_command_id = $2 WHERE office_turn_id = $3 AND settled_cumulative_micros IS NULL",
         params![row.8, command_row_id, turn_id.value()],
     ).map_err(|_| Rejection::PiOfficeTurnNotReconciled)?;
     transaction.execute(
-        "UPDATE office_turns SET lifecycle_state = ?1, settled_by_command_id = ?2 WHERE office_turn_id = ?3",
+        "UPDATE office_turns SET lifecycle_state = $1, settled_by_command_id = $2 WHERE office_turn_id = $3",
         params![OfficeTurnState::Settled as i64, command_row_id, turn_id.value()],
     ).map_err(|_| Rejection::SubjectNotFound)?;
     transaction.execute(
-        "UPDATE root_authority_office_sessions SET lifecycle_state = ?1, last_transition_command_id = ?2
-         WHERE root_authority_office_session_id = ?3",
+        "UPDATE root_authority_office_sessions SET lifecycle_state = $1, last_transition_command_id = $2
+         WHERE root_authority_office_session_id = $3",
         params![OfficeSessionState::Ready as i64, command_row_id, session_id.value()],
     ).map_err(|_| Rejection::SubjectNotFound)?;
     Ok(EventBody::OfficeTurnSettled {
@@ -5475,7 +5439,7 @@ fn begin_reconciliation(
     )?;
     transaction.execute(
         "INSERT INTO operating_cycle_reconciliations(operating_cycle_id, reconciliation_started_by_command_id, closed_by_command_id)
-         VALUES (?1, ?2, NULL)",
+         VALUES ($1, $2, NULL)",
         params![cycle_id.value(), command_row_id],
     ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
     Ok(EventBody::OperatingCycleStateChanged {
@@ -5511,7 +5475,7 @@ fn close_cycle(
         cycle.generation,
     )?;
     transaction.execute(
-        "UPDATE operating_cycle_reconciliations SET closed_by_command_id = ?1 WHERE operating_cycle_id = ?2",
+        "UPDATE operating_cycle_reconciliations SET closed_by_command_id = $1 WHERE operating_cycle_id = $2",
         params![command_row_id, cycle_id.value()],
     ).map_err(|_| Rejection::IncompleteCycleReconciliation)?;
     Ok(EventBody::OperatingCycleStateChanged {
@@ -5553,7 +5517,7 @@ fn reserve_budget(
         .execute(
             "INSERT INTO budget_reservations(operating_cycle_id, amount_micros, reservation_state,
                                          reserved_by_command_id, reconciled_by_command_id)
-         VALUES (?1, ?2, ?3, ?4, NULL)",
+         VALUES ($1, $2, $3, $4, NULL)",
             params![
                 cycle_id.value(),
                 amount.value(),
@@ -5562,15 +5526,15 @@ fn reserve_budget(
             ],
         )
         .map_err(|_| Rejection::BudgetCeilingExceeded)?;
-    let reservation_id = id_from_last_insert::<BudgetReservationId>(transaction)?;
+    let reservation_id = id_from_returned_identity::<BudgetReservationId>(transaction)?;
     for budget_id in [society_budget, cycle_budget] {
         transaction.execute(
-            "UPDATE budget_envelopes SET reserved_micros = reserved_micros + ?1 WHERE budget_envelope_id = ?2",
+            "UPDATE budget_envelopes SET reserved_micros = reserved_micros + $1 WHERE budget_envelope_id = $2",
             params![amount.value(), budget_id.value()],
         ).map_err(|_| Rejection::BudgetCeilingExceeded)?;
         transaction.execute(
             "INSERT INTO budget_reservation_charges(budget_reservation_id, budget_envelope_id, amount_micros)
-             VALUES (?1, ?2, ?3)",
+             VALUES ($1, $2, $3)",
             params![reservation_id.value(), budget_id.value(), amount.value()],
         ).map_err(|_| Rejection::BudgetCeilingExceeded)?;
     }
@@ -5588,7 +5552,7 @@ fn reconcile_budget(
     observation: CostObservation,
 ) -> Result<EventBody, Rejection> {
     let (cycle_id, reserved_amount, charged_amount, state) = transaction.query_row(
-        "SELECT operating_cycle_id, amount_micros, charged_micros, reservation_state FROM budget_reservations WHERE budget_reservation_id = ?1",
+        "SELECT operating_cycle_id, amount_micros, charged_micros, reservation_state FROM budget_reservations WHERE budget_reservation_id = $1",
         [reservation_id.value()],
         |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?)),
     ).optional().map_err(|_| Rejection::SubjectNotFound)?.ok_or(Rejection::SubjectNotFound)?;
@@ -5600,7 +5564,7 @@ fn reconcile_budget(
     // Dispose reconciliation, not this generic final-only command.
     let office_parent: i64 = transaction
         .query_row(
-            "SELECT EXISTS(SELECT 1 FROM office_session_budget_reservations WHERE budget_reservation_id = ?1)",
+            "SELECT EXISTS(SELECT 1 FROM office_session_budget_reservations WHERE budget_reservation_id = $1)",
             [reservation_id.value()],
             |row| row.get(0),
         )
@@ -5640,7 +5604,7 @@ fn reconcile_budget(
             let mut charge_statement = transaction
                 .prepare(
                     "SELECT budget_envelope_id, amount_micros FROM budget_reservation_charges
-                 WHERE budget_reservation_id = ?1 ORDER BY budget_envelope_id",
+                 WHERE budget_reservation_id = $1 ORDER BY budget_envelope_id",
                 )
                 .map_err(|_| Rejection::SubjectNotFound)?;
             let charges = charge_statement
@@ -5656,15 +5620,15 @@ fn reconcile_budget(
                 transaction
                     .execute(
                         "UPDATE budget_envelopes
-                     SET reserved_micros = reserved_micros - ?1, spent_micros = spent_micros + ?2
-                     WHERE budget_envelope_id = ?3",
+                     SET reserved_micros = reserved_micros - $1, spent_micros = spent_micros + $2
+                     WHERE budget_envelope_id = $3",
                         params![charge_amount, charge_delta.value(), budget_id],
                     )
                     .map_err(|_| Rejection::BudgetCeilingExceeded)?;
             }
             transaction.execute(
-                "UPDATE budget_reservations SET reservation_state = ?1, charged_micros = ?2, reconciled_by_command_id = ?3
-                 WHERE budget_reservation_id = ?4",
+                "UPDATE budget_reservations SET reservation_state = $1, charged_micros = $2, reconciled_by_command_id = $3
+                 WHERE budget_reservation_id = $4",
                 params![BudgetReservationState::Reconciled as i64, observed.value(), command_row_id, reservation_id.value()],
             ).map_err(|_| Rejection::SubjectNotFound)?;
             Ok(EventBody::BudgetReconciled {
@@ -5705,8 +5669,8 @@ fn freeze_budget_admission(
 ) -> Result<EventBody, Rejection> {
     transaction
         .execute(
-            "UPDATE budget_reservations SET reservation_state = ?1
-             WHERE budget_reservation_id = ?2",
+            "UPDATE budget_reservations SET reservation_state = $1
+             WHERE budget_reservation_id = $2",
             params![
                 BudgetReservationState::Frozen as i64,
                 reservation_id.value()
@@ -5720,8 +5684,8 @@ fn freeze_budget_admission(
         .map_err(|_| Rejection::InvalidLifecycleTransition)?;
     transaction
         .execute(
-            "UPDATE operating_cycles SET lifecycle_state = ?1, admission_generation = ?2,
-                                     last_transition_command_id = ?3 WHERE operating_cycle_id = ?4",
+            "UPDATE operating_cycles SET lifecycle_state = $1, admission_generation = $2,
+                                     last_transition_command_id = $3 WHERE operating_cycle_id = $4",
             params![
                 OperatingCycleState::Cancelling as i64,
                 new_generation.value(),
@@ -5736,7 +5700,7 @@ fn freeze_budget_admission(
             transaction.execute(
                 "INSERT INTO cancellation_requests(operating_cycle_id, cancellation_mode, lifecycle_state,
                                                    observed_admission_generation, requested_by_command_id, reconciled_by_command_id)
-                 VALUES (?1, ?2, ?3, ?4, ?5, NULL)",
+                 VALUES ($1, $2, $3, $4, $5, NULL)",
                 params![
                     cycle_id.value(),
                     CancellationMode::GracefulCancel as i64,
@@ -5745,7 +5709,7 @@ fn freeze_budget_admission(
                     command_row_id
                 ],
             ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
-            id_from_last_insert::<CancellationRequestId>(transaction)?
+            id_from_returned_identity::<CancellationRequestId>(transaction)?
         }
     };
     let (cause, observed, unknown, unavailable) = match reason {
@@ -5772,7 +5736,7 @@ fn freeze_budget_admission(
         "INSERT INTO cost_postmortems(budget_reservation_id, operating_cycle_id, cancellation_request_id,
                                       cause_kind, observed_micros, reserved_micros, unknown_reason,
                                       unavailable_reason, lifecycle_state, opened_by_command_id, closed_by_command_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL)",
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULL)",
         params![
             reservation_id.value(),
             cycle_id.value(),
@@ -5790,7 +5754,7 @@ fn freeze_budget_admission(
         reservation_id,
         cycle_id,
         cancellation_request_id,
-        postmortem_id: id_from_last_insert::<CostPostmortemId>(transaction)?,
+        postmortem_id: id_from_returned_identity::<CostPostmortemId>(transaction)?,
         reason,
     })
 }
@@ -5825,8 +5789,8 @@ fn request_cancellation(
     };
     transaction
         .execute(
-            "UPDATE operating_cycles SET lifecycle_state = ?1, admission_generation = ?2,
-                                     last_transition_command_id = ?3 WHERE operating_cycle_id = ?4",
+            "UPDATE operating_cycles SET lifecycle_state = $1, admission_generation = $2,
+                                     last_transition_command_id = $3 WHERE operating_cycle_id = $4",
             params![
                 cycle_state as i64,
                 new_generation.value(),
@@ -5838,11 +5802,11 @@ fn request_cancellation(
     transaction.execute(
         "INSERT INTO cancellation_requests(operating_cycle_id, cancellation_mode, lifecycle_state,
                                            observed_admission_generation, requested_by_command_id, reconciled_by_command_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, NULL)",
+         VALUES ($1, $2, $3, $4, $5, NULL)",
         params![cycle_id.value(), mode as i64, CancellationState::Accepted as i64, cycle.generation.value(), command_row_id],
     ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
     Ok(EventBody::CancellationRequested {
-        cancellation_request_id: id_from_last_insert::<CancellationRequestId>(transaction)?,
+        cancellation_request_id: id_from_returned_identity::<CancellationRequestId>(transaction)?,
         cycle_id,
         mode,
         generation: new_generation,
@@ -5860,7 +5824,7 @@ fn reconcile_cancellation(
     // seam with typed propagation, signal, wait/reap, evidence-sealing, and
     // containment receipts before a supervised child can reach this command.
     let (cycle_id, state) = transaction.query_row(
-        "SELECT operating_cycle_id, lifecycle_state FROM cancellation_requests WHERE cancellation_request_id = ?1",
+        "SELECT operating_cycle_id, lifecycle_state FROM cancellation_requests WHERE cancellation_request_id = $1",
         [cancellation_request_id.value()],
         |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
     ).optional().map_err(|_| Rejection::SubjectNotFound)?.ok_or(Rejection::SubjectNotFound)?;
@@ -5880,12 +5844,12 @@ fn reconcile_cancellation(
         return Err(Rejection::IncompleteCycleReconciliation);
     }
     let has_pi_child: bool = transaction.query_row(
-        "SELECT EXISTS(SELECT 1 FROM native_children p JOIN native_child_spawn_admissions a ON a.native_child_spawn_admission_id = p.native_child_spawn_admission_id WHERE a.operating_cycle_id = ?1)",
+        "SELECT EXISTS(SELECT 1 FROM native_children p JOIN native_child_spawn_admissions a ON a.native_child_spawn_admission_id = p.native_child_spawn_admission_id WHERE a.operating_cycle_id = $1)",
         [cycle_id.value()], |row| row.get::<_, i64>(0),
     ).map_err(|_| Rejection::ChildLifecycleReceiptMissing)? != 0;
     if has_pi_child {
         let propagation_reconciled: bool = transaction.query_row(
-            "SELECT EXISTS(SELECT 1 FROM cancellation_propagations WHERE cancellation_request_id = ?1 AND lifecycle_state = ?2)",
+            "SELECT EXISTS(SELECT 1 FROM cancellation_propagations WHERE cancellation_request_id = $1 AND lifecycle_state = $2)",
             params![cancellation_request_id.value(), CancellationPropagationState::Reconciled as i64],
             |row| row.get::<_, i64>(0),
         ).map_err(|_| Rejection::ChildLifecycleReceiptMissing)? != 0;
@@ -5895,8 +5859,8 @@ fn reconcile_cancellation(
     }
     transaction
         .execute(
-            "UPDATE cancellation_requests SET lifecycle_state = ?1, reconciled_by_command_id = ?2
-         WHERE cancellation_request_id = ?3",
+            "UPDATE cancellation_requests SET lifecycle_state = $1, reconciled_by_command_id = $2
+         WHERE cancellation_request_id = $3",
             params![
                 CancellationState::Completed as i64,
                 command_row_id,
@@ -5932,7 +5896,7 @@ fn close_cost_postmortem(
         .query_row(
             "SELECT budget_reservation_id, operating_cycle_id, cause_kind, observed_micros,
                     reserved_micros, lifecycle_state
-             FROM cost_postmortems WHERE postmortem_id = ?1",
+             FROM cost_postmortems WHERE postmortem_id = $1",
             [postmortem_id.value()],
             |row| {
                 Ok((
@@ -5967,7 +5931,7 @@ fn close_cost_postmortem(
     let (reservation_state, reservation_amount, reservation_charged): (i64, i64, i64) = transaction
         .query_row(
             "SELECT reservation_state, amount_micros, charged_micros
-             FROM budget_reservations WHERE budget_reservation_id = ?1",
+             FROM budget_reservations WHERE budget_reservation_id = $1",
             [reservation_id.value()],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
@@ -6011,7 +5975,7 @@ fn close_cost_postmortem(
     let mut charges = transaction
         .prepare(
             "SELECT budget_envelope_id, amount_micros FROM budget_reservation_charges
-             WHERE budget_reservation_id = ?1 ORDER BY budget_envelope_id",
+             WHERE budget_reservation_id = $1 ORDER BY budget_envelope_id",
         )
         .map_err(|_| Rejection::SubjectNotFound)?;
     let charges = charges
@@ -6024,8 +5988,8 @@ fn close_cost_postmortem(
         transaction
             .execute(
                 "UPDATE budget_envelopes
-                 SET reserved_micros = reserved_micros - ?1, spent_micros = spent_micros + ?2
-                 WHERE budget_envelope_id = ?3",
+                 SET reserved_micros = reserved_micros - $1, spent_micros = spent_micros + $2
+                 WHERE budget_envelope_id = $3",
                 params![reserved_charge, charged.value(), envelope_id],
             )
             .map_err(|_| Rejection::BudgetCeilingExceeded)?;
@@ -6033,8 +5997,8 @@ fn close_cost_postmortem(
     transaction
         .execute(
             "UPDATE budget_reservations
-             SET reservation_state = ?1, charged_micros = ?2, reconciled_by_command_id = ?3
-             WHERE budget_reservation_id = ?4",
+             SET reservation_state = $1, charged_micros = $2, reconciled_by_command_id = $3
+             WHERE budget_reservation_id = $4",
             params![
                 BudgetReservationState::Reconciled as i64,
                 reservation_charged
@@ -6048,8 +6012,8 @@ fn close_cost_postmortem(
         .map_err(|_| Rejection::SubjectNotFound)?;
     transaction
         .execute(
-            "UPDATE cost_postmortems SET lifecycle_state = ?1, closed_by_command_id = ?2
-             WHERE postmortem_id = ?3",
+            "UPDATE cost_postmortems SET lifecycle_state = $1, closed_by_command_id = $2
+             WHERE postmortem_id = $3",
             params![
                 CostPostmortemState::Closed as i64,
                 command_row_id,
@@ -6061,7 +6025,7 @@ fn close_cost_postmortem(
         .execute(
             "INSERT INTO cost_postmortem_resolutions(postmortem_id, resolution_kind, charged_micros,
                                                       resolved_by_command_id)
-             VALUES (?1, ?2, ?3, ?4)",
+             VALUES ($1, $2, $3, $4)",
             params![
                 postmortem_id.value(),
                 resolution as i64,
@@ -6104,7 +6068,7 @@ fn record_coordination_provenance(
 ) -> Result<(), Rejection> {
     transaction.execute(
         "INSERT INTO coordination_command_provenance(command_row_id, founding_mission_id, operating_cycle_id, project_id)
-         VALUES (?1, ?2, ?3, ?4)",
+         VALUES ($1, $2, $3, $4)",
         params![command_row_id, cycle.mission_id.value(), operating_cycle_id.value(), project_id.map(ProjectId::value)],
     ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
     Ok(())
@@ -6116,7 +6080,7 @@ fn project_row(
 ) -> Result<(ProjectState, FoundingMissionId), Rejection> {
     let row = transaction
         .query_row(
-            "SELECT lifecycle_state, founding_mission_id FROM projects WHERE project_id = ?1",
+            "SELECT lifecycle_state, founding_mission_id FROM projects WHERE project_id = $1",
             [project_id.value()],
             |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
         )
@@ -6140,7 +6104,7 @@ fn create_project(
     let cycle = cycle_for_generation(transaction, operating_cycle_id, expected_generation)?;
     let founding_mission_application_revision_id: i64 = transaction
         .query_row(
-            "SELECT application_revision_id FROM founding_missions WHERE founding_mission_id = ?1",
+            "SELECT application_revision_id FROM founding_missions WHERE founding_mission_id = $1",
             [cycle.mission_id.value()],
             |row| row.get(0),
         )
@@ -6154,17 +6118,17 @@ fn create_project(
     }
     transaction.execute(
         "INSERT INTO projects(project_name, founding_mission_id, lifecycle_state, created_by_command_id, last_transition_command_id)
-         VALUES (?1, ?2, ?3, ?4, ?4)",
+         VALUES ($1, $2, $3, $4, $4)",
         params![project_name, cycle.mission_id.value(), ProjectState::Proposed as i64, command_row_id],
     ).map_err(|_| Rejection::FoundingInvariant)?;
-    let project_id = id_from_last_insert::<ProjectId>(transaction)?;
+    let project_id = id_from_returned_identity::<ProjectId>(transaction)?;
     transaction
         .execute(
             "INSERT INTO project_north_star_alignments(
                  project_id, application_revision_id, change_answer,
                  improvement_evidence_answer, boundary_commitment_answer,
                  revisit_answer, aligned_by_command_id
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7)",
             params![
                 project_id.value(),
                 north_star_alignment.application_revision_id.value(),
@@ -6206,20 +6170,20 @@ fn charter_project(
         return Err(Rejection::InvalidLifecycleTransition);
     }
     transaction.execute(
-        "UPDATE projects SET lifecycle_state = ?1, last_transition_command_id = ?2 WHERE project_id = ?3",
+        "UPDATE projects SET lifecycle_state = $1, last_transition_command_id = $2 WHERE project_id = $3",
         params![ProjectState::Chartered as i64, command_row_id, project_id.value()],
     ).map_err(|_| Rejection::SubjectNotFound)?;
     transaction.execute(
-        "INSERT INTO project_objectives(project_id, objective_text, chartered_by_command_id) VALUES (?1, ?2, ?3)",
+        "INSERT INTO project_objectives(project_id, objective_text, chartered_by_command_id) VALUES ($1, $2, $3)",
         params![project_id.value(), objective, command_row_id],
     ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
     transaction.execute(
         "INSERT INTO project_milestones(project_id, milestone_name, lifecycle_state, chartered_by_command_id, completed_by_command_id)
-         VALUES (?1, ?2, 1, ?3, NULL)",
+         VALUES ($1, $2, 1, $3, NULL)",
         params![project_id.value(), milestone, command_row_id],
     ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
     transaction.execute(
-        "INSERT INTO project_stop_conditions(project_id, stop_condition_text, chartered_by_command_id) VALUES (?1, ?2, ?3)",
+        "INSERT INTO project_stop_conditions(project_id, stop_condition_text, chartered_by_command_id) VALUES ($1, $2, $3)",
         params![project_id.value(), stop_condition, command_row_id],
     ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
     record_coordination_provenance(
@@ -6237,58 +6201,58 @@ fn project_close_blocked(
     project_id: ProjectId,
 ) -> Result<bool, Rejection> {
     let incomplete_milestones: i64 = transaction.query_row(
-        "SELECT COUNT(*) FROM project_milestones WHERE project_id = ?1 AND lifecycle_state != 2",
+        "SELECT COUNT(*) FROM project_milestones WHERE project_id = $1 AND lifecycle_state != 2",
         [project_id.value()], |row| row.get(0),
     ).map_err(|_| Rejection::SubjectNotFound)?;
     let incomplete_tickets: i64 = transaction
         .query_row(
-            "SELECT COUNT(*) FROM tickets WHERE project_id = ?1 AND lifecycle_state != ?2",
+            "SELECT COUNT(*) FROM tickets WHERE project_id = $1 AND lifecycle_state != $2",
             params![project_id.value(), TicketState::Completed as i64],
             |row| row.get(0),
         )
         .map_err(|_| Rejection::SubjectNotFound)?;
     let open_reviews: i64 = transaction.query_row(
-        "SELECT COUNT(*) FROM adversarial_reviews WHERE project_id = ?1 AND lifecycle_state NOT IN (6, 7, 8)",
+        "SELECT COUNT(*) FROM adversarial_reviews WHERE project_id = $1 AND lifecycle_state NOT IN (6, 7, 8)",
         [project_id.value()], |row| row.get(0),
     ).map_err(|_| Rejection::SubjectNotFound)?;
     let open_postmortems: i64 = transaction
         .query_row(
-            "SELECT COUNT(*) FROM postmortems WHERE project_id = ?1 AND lifecycle_state != 3",
+            "SELECT COUNT(*) FROM postmortems WHERE project_id = $1 AND lifecycle_state != 3",
             [project_id.value()],
             |row| row.get(0),
         )
         .map_err(|_| Rejection::SubjectNotFound)?;
     let live_attempts: i64 = transaction.query_row(
         "SELECT COUNT(*) FROM attempts a JOIN attempt_budget_reservations r ON r.actor_attempt_id = a.actor_attempt_id
-         WHERE r.project_id = ?1 AND a.lifecycle_state IN (1, 2)",
+         WHERE r.project_id = $1 AND a.lifecycle_state IN (1, 2)",
         [project_id.value()], |row| row.get(0),
     ).map_err(|_| Rejection::SubjectNotFound)?;
     let active_leases: i64 = transaction.query_row(
         "SELECT COUNT(*) FROM leases l JOIN work_items w ON w.work_item_id = l.work_item_id
-         JOIN tickets t ON t.ticket_id = w.ticket_id WHERE t.project_id = ?1 AND l.lifecycle_state = 1",
+         JOIN tickets t ON t.ticket_id = w.ticket_id WHERE t.project_id = $1 AND l.lifecycle_state = 1",
         [project_id.value()], |row| row.get(0),
     ).map_err(|_| Rejection::SubjectNotFound)?;
     let unreconciled_attempt_reservations: i64 = transaction.query_row(
         "SELECT COUNT(*) FROM attempt_budget_reservations a JOIN budget_reservations b ON b.budget_reservation_id = a.budget_reservation_id
-         WHERE a.project_id = ?1 AND b.reservation_state != ?2",
+         WHERE a.project_id = $1 AND b.reservation_state != $2",
         params![project_id.value(), BudgetReservationState::Reconciled as i64], |row| row.get(0),
     ).map_err(|_| Rejection::SubjectNotFound)?;
     let open_outcomes: i64 = transaction.query_row(
-        "SELECT COUNT(*) FROM outcome_obligations WHERE project_id = ?1 AND lifecycle_state = 1",
+        "SELECT COUNT(*) FROM outcome_obligations WHERE project_id = $1 AND lifecycle_state = 1",
         [project_id.value()], |row| row.get(0),
     ).map_err(|_| Rejection::SubjectNotFound)?;
     // An admitted observation is not yet a closed Experiment. The Project
     // cannot discard an evidence-producing experiment while its explicit
     // lifecycle remains open.
     let open_deterministic_experiments: i64 = transaction.query_row(
-        "SELECT COUNT(*) FROM deterministic_experiments WHERE project_id = ?1 AND lifecycle_state != 3",
+        "SELECT COUNT(*) FROM deterministic_experiments WHERE project_id = $1 AND lifecycle_state != 3",
         [project_id.value()], |row| row.get(0),
     ).map_err(|_| Rejection::SubjectNotFound)?;
     let live_pi_children: i64 = transaction.query_row(
         "SELECT COUNT(*) FROM native_children p
          JOIN native_child_spawn_admissions s ON s.native_child_spawn_admission_id = p.native_child_spawn_admission_id
          JOIN attempt_budget_reservations r ON r.actor_attempt_id = s.actor_attempt_id
-         WHERE r.project_id = ?1 AND p.lifecycle_state != ?2",
+         WHERE r.project_id = $1 AND p.lifecycle_state != $2",
         params![project_id.value(), ChildProcessState::Finalized as i64], |row| row.get(0),
     ).map_err(|_| Rejection::SubjectNotFound)?;
     // M5 records workspace registration but deliberately does not claim a
@@ -6298,7 +6262,7 @@ fn project_close_blocked(
         .query_row(
             "SELECT COUNT(*) FROM native_child_spawn_admissions s
          JOIN attempt_budget_reservations r ON r.actor_attempt_id = s.actor_attempt_id
-         WHERE r.project_id = ?1",
+         WHERE r.project_id = $1",
             [project_id.value()],
             |row| row.get(0),
         )
@@ -6358,7 +6322,7 @@ fn transition_project(
     if target == ProjectState::Closed && project_close_blocked(transaction, project_id)? {
         return Err(Rejection::ProjectCloseBlocked);
     }
-    transaction.execute("UPDATE projects SET lifecycle_state = ?1, last_transition_command_id = ?2 WHERE project_id = ?3", params![target as i64, command_row_id, project_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    transaction.execute("UPDATE projects SET lifecycle_state = $1, last_transition_command_id = $2 WHERE project_id = $3", params![target as i64, command_row_id, project_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
     record_coordination_provenance(
         transaction,
         command_row_id,
@@ -6381,14 +6345,14 @@ fn complete_project_milestone(
 ) -> Result<EventBody, Rejection> {
     let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
     let (project, state) = transaction.query_row(
-        "SELECT project_id, lifecycle_state FROM project_milestones WHERE project_milestone_id = ?1",
+        "SELECT project_id, lifecycle_state FROM project_milestones WHERE project_milestone_id = $1",
         [project_milestone_id.value()], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
     ).optional().map_err(|_| Rejection::SubjectNotFound)?.ok_or(Rejection::SubjectNotFound)?;
     let project_id = ProjectId::try_from(project).map_err(|_| Rejection::SubjectNotFound)?;
     if state != ProjectMilestoneState::Pending as i64 {
         return Err(Rejection::InvalidLifecycleTransition);
     }
-    transaction.execute("UPDATE project_milestones SET lifecycle_state = 2, completed_by_command_id = ?1 WHERE project_milestone_id = ?2", params![command_row_id, project_milestone_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    transaction.execute("UPDATE project_milestones SET lifecycle_state = 2, completed_by_command_id = $1 WHERE project_milestone_id = $2", params![command_row_id, project_milestone_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
     record_coordination_provenance(
         transaction,
         command_row_id,
@@ -6413,7 +6377,7 @@ fn reopen_project(
     if !matches!(state, ProjectState::Closed | ProjectState::Terminated) {
         return Err(Rejection::InvalidLifecycleTransition);
     }
-    transaction.execute("UPDATE projects SET lifecycle_state = ?1, last_transition_command_id = ?2 WHERE project_id = ?3", params![ProjectState::Reopened as i64, command_row_id, project_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    transaction.execute("UPDATE projects SET lifecycle_state = $1, last_transition_command_id = $2 WHERE project_id = $3", params![ProjectState::Reopened as i64, command_row_id, project_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
     record_coordination_provenance(
         transaction,
         command_row_id,
@@ -6433,7 +6397,7 @@ fn ticket_row(
 ) -> Result<(ProjectId, TicketState), Rejection> {
     let row = transaction
         .query_row(
-            "SELECT project_id, lifecycle_state FROM tickets WHERE ticket_id = ?1",
+            "SELECT project_id, lifecycle_state FROM tickets WHERE ticket_id = $1",
             [ticket_id.value()],
             |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
         )
@@ -6463,7 +6427,7 @@ fn ticket_prerequisites_complete(
 ) -> Result<bool, Rejection> {
     let incomplete: i64 = transaction.query_row(
         "SELECT COUNT(*) FROM ticket_prerequisites p JOIN tickets t ON t.ticket_id = p.prerequisite_ticket_id
-         WHERE p.ticket_id = ?1 AND t.lifecycle_state != ?2",
+         WHERE p.ticket_id = $1 AND t.lifecycle_state != $2",
         params![ticket_id.value(), TicketState::Completed as i64], |row| row.get(0),
     ).map_err(|_| Rejection::SubjectNotFound)?;
     Ok(incomplete == 0)
@@ -6490,18 +6454,18 @@ fn create_ticket(
     }
     transaction.execute(
         "INSERT INTO tickets(project_id, ticket_title, lifecycle_state, created_by_command_id, last_transition_command_id)
-         VALUES (?1, ?2, ?3, ?4, ?4)",
+         VALUES ($1, $2, $3, $4, $4)",
         params![project_id.value(), ticket_title, TicketState::Draft as i64, command_row_id],
     ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
-    let ticket_id = id_from_last_insert::<TicketId>(transaction)?;
+    let ticket_id = id_from_returned_identity::<TicketId>(transaction)?;
     transaction.execute(
         "INSERT INTO ticket_acceptance_conditions(ticket_id, condition_text, lifecycle_state, created_by_command_id, satisfied_by_command_id)
-         VALUES (?1, ?2, 1, ?3, NULL)",
+         VALUES ($1, $2, 1, $3, NULL)",
         params![ticket_id.value(), acceptance_condition, command_row_id],
     ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
     if let Some(prerequisite_ticket_id) = prerequisite_ticket_id {
         transaction.execute(
-            "INSERT INTO ticket_prerequisites(ticket_id, prerequisite_ticket_id, created_by_command_id) VALUES (?1, ?2, ?3)",
+            "INSERT INTO ticket_prerequisites(ticket_id, prerequisite_ticket_id, created_by_command_id) VALUES ($1, $2, $3)",
             params![ticket_id.value(), prerequisite_ticket_id.value(), command_row_id],
         ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
     }
@@ -6556,7 +6520,7 @@ fn graph_revision_row(
         .query_row(
             "SELECT r.graph_object_id, o.project_id, o.object_kind, r.lifecycle_state
          FROM object_revisions r JOIN objects o ON o.graph_object_id = r.graph_object_id
-         WHERE r.graph_revision_id = ?1",
+         WHERE r.graph_revision_id = $1",
             [graph_revision_id.value()],
             |row| {
                 Ok((
@@ -6595,7 +6559,7 @@ fn add_graph_object_revision(
     if let Some(episode_id) = causal_episode_id {
         let episode_project: i64 = transaction
             .query_row(
-                "SELECT project_id FROM episodes WHERE causal_episode_id = ?1",
+                "SELECT project_id FROM episodes WHERE causal_episode_id = $1",
                 [episode_id.value()],
                 |row| row.get(0),
             )
@@ -6610,7 +6574,7 @@ fn add_graph_object_revision(
         Some(graph_object_id) => {
             let (object_project, stored_kind): (i64, i64) = transaction
                 .query_row(
-                    "SELECT project_id, object_kind FROM objects WHERE graph_object_id = ?1",
+                    "SELECT project_id, object_kind FROM objects WHERE graph_object_id = $1",
                     [graph_object_id.value()],
                     |row| Ok((row.get(0)?, row.get(1)?)),
                 )
@@ -6625,32 +6589,32 @@ fn add_graph_object_revision(
         None => {
             transaction.execute(
                 "INSERT INTO objects(project_id, causal_episode_id, founding_mission_id, object_kind, created_by_command_id)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                 VALUES ($1, $2, $3, $4, $5)",
                 params![project_id.value(), causal_episode_id.map(CausalEpisodeId::value), cycle.mission_id.value(), object_kind as i64, command_row_id],
             ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
-            id_from_last_insert::<GraphObjectId>(transaction)?
+            id_from_returned_identity::<GraphObjectId>(transaction)?
         }
     };
     let next_ordinal: i64 = transaction.query_row(
-        "SELECT COALESCE(MAX(revision_ordinal), 0) + 1 FROM object_revisions WHERE graph_object_id = ?1",
+        "SELECT COALESCE(MAX(revision_ordinal), 0) + 1 FROM object_revisions WHERE graph_object_id = $1",
         [graph_object_id.value()], |row| row.get(0),
     ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
     transaction.execute(
         "INSERT INTO object_revisions(graph_object_id, revision_ordinal, lifecycle_state, created_by_command_id, committed_by_command_id)
-         VALUES (?1, ?2, 1, ?3, NULL)",
+         VALUES ($1, $2, 1, $3, NULL)",
         params![graph_object_id.value(), next_ordinal, command_row_id],
     ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
-    let graph_revision_id = id_from_last_insert::<GraphRevisionId>(transaction)?;
+    let graph_revision_id = id_from_returned_identity::<GraphRevisionId>(transaction)?;
     match body {
         GraphRevisionBody::Observation { observation } => {
             transaction.execute(
-                "INSERT INTO observation_revisions(graph_revision_id, observation_text) VALUES (?1, ?2)",
+                "INSERT INTO observation_revisions(graph_revision_id, observation_text) VALUES ($1, $2)",
                 params![graph_revision_id.value(), observation.as_str()],
             ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
         }
         GraphRevisionBody::Hypothesis { hypothesis } => {
             transaction.execute(
-                "INSERT INTO hypothesis_revisions(graph_revision_id, hypothesis_text) VALUES (?1, ?2)",
+                "INSERT INTO hypothesis_revisions(graph_revision_id, hypothesis_text) VALUES ($1, $2)",
                 params![graph_revision_id.value(), hypothesis.as_str()],
             ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
         }
@@ -6682,7 +6646,7 @@ fn commit_graph_revision(
         return Err(Rejection::InvalidLifecycleTransition);
     }
     transaction.execute(
-        "UPDATE object_revisions SET lifecycle_state = 2, committed_by_command_id = ?1 WHERE graph_revision_id = ?2",
+        "UPDATE object_revisions SET lifecycle_state = 2, committed_by_command_id = $1 WHERE graph_revision_id = $2",
         params![command_row_id, graph_revision_id.value()],
     ).map_err(|_| Rejection::SubjectNotFound)?;
     record_coordination_provenance(
@@ -6721,10 +6685,10 @@ fn add_graph_edge(
         return Err(Rejection::IllegalGraphEdgeEndpoint);
     }
     transaction.execute(
-        "INSERT INTO edges(project_id, from_graph_revision_id, to_graph_revision_id, edge_kind, created_by_command_id) VALUES (?1, ?2, ?3, ?4, ?5)",
+        "INSERT INTO edges(project_id, from_graph_revision_id, to_graph_revision_id, edge_kind, created_by_command_id) VALUES ($1, $2, $3, $4, $5)",
         params![project_id.value(), from_graph_revision_id.value(), to_graph_revision_id.value(), edge_kind as i64, command_row_id],
     ).map_err(|_| Rejection::IllegalGraphEdgeEndpoint)?;
-    let graph_edge_id = id_from_last_insert::<GraphEdgeId>(transaction)?;
+    let graph_edge_id = id_from_returned_identity::<GraphEdgeId>(transaction)?;
     record_coordination_provenance(
         transaction,
         command_row_id,
@@ -6741,7 +6705,7 @@ fn episode_row(
 ) -> Result<(ProjectId, EpisodeState), Rejection> {
     let row: (i64, i64) = transaction
         .query_row(
-            "SELECT project_id, lifecycle_state FROM episodes WHERE causal_episode_id = ?1",
+            "SELECT project_id, lifecycle_state FROM episodes WHERE causal_episode_id = $1",
             [episode_id.value()],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
@@ -6811,10 +6775,10 @@ fn create_episode(
     let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
     project_is_active(transaction, project_id)?;
     transaction.execute(
-        "INSERT INTO episodes(project_id, founding_mission_id, lifecycle_state, created_by_command_id, last_transition_command_id) VALUES (?1, ?2, 1, ?3, ?3)",
+        "INSERT INTO episodes(project_id, founding_mission_id, lifecycle_state, created_by_command_id, last_transition_command_id) VALUES ($1, $2, 1, $3, $3)",
         params![project_id.value(), cycle.mission_id.value(), command_row_id],
     ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
-    let causal_episode_id = id_from_last_insert::<CausalEpisodeId>(transaction)?;
+    let causal_episode_id = id_from_returned_identity::<CausalEpisodeId>(transaction)?;
     record_coordination_provenance(
         transaction,
         command_row_id,
@@ -6841,7 +6805,7 @@ fn transition_episode(
     if !episode_transition_allowed(state, target) {
         return Err(Rejection::InvalidLifecycleTransition);
     }
-    transaction.execute("UPDATE episodes SET lifecycle_state = ?1, last_transition_command_id = ?2 WHERE causal_episode_id = ?3", params![target as i64, command_row_id, causal_episode_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    transaction.execute("UPDATE episodes SET lifecycle_state = $1, last_transition_command_id = $2 WHERE causal_episode_id = $3", params![target as i64, command_row_id, causal_episode_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
     record_coordination_provenance(
         transaction,
         command_row_id,
@@ -6873,7 +6837,7 @@ fn reopen_episode(
     ) {
         return Err(Rejection::InvalidLifecycleTransition);
     }
-    transaction.execute("UPDATE episodes SET lifecycle_state = ?1, last_transition_command_id = ?2 WHERE causal_episode_id = ?3", params![EpisodeState::Reopened as i64, command_row_id, causal_episode_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    transaction.execute("UPDATE episodes SET lifecycle_state = $1, last_transition_command_id = $2 WHERE causal_episode_id = $3", params![EpisodeState::Reopened as i64, command_row_id, causal_episode_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
     record_coordination_provenance(
         transaction,
         command_row_id,
@@ -6892,7 +6856,7 @@ fn review_row(
     review_id: AdversarialReviewId,
 ) -> Result<(ProjectId, GraphRevisionId, AdversarialReviewState), Rejection> {
     let row: (i64, i64, i64) = transaction.query_row(
-        "SELECT project_id, target_graph_revision_id, lifecycle_state FROM adversarial_reviews WHERE adversarial_review_id = ?1",
+        "SELECT project_id, target_graph_revision_id, lifecycle_state FROM adversarial_reviews WHERE adversarial_review_id = $1",
         [review_id.value()], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     ).optional().map_err(|_| Rejection::SubjectNotFound)?.ok_or(Rejection::SubjectNotFound)?;
     Ok((
@@ -6921,10 +6885,10 @@ fn request_adversarial_review(
         return Err(Rejection::GraphRevisionNotCommitted);
     }
     transaction.execute(
-        "INSERT INTO adversarial_reviews(project_id, target_graph_revision_id, lifecycle_state, requested_by_command_id, assigned_reviewer_principal_id, resolved_by_command_id) VALUES (?1, ?2, 1, ?3, NULL, NULL)",
+        "INSERT INTO adversarial_reviews(project_id, target_graph_revision_id, lifecycle_state, requested_by_command_id, assigned_reviewer_principal_id, resolved_by_command_id) VALUES ($1, $2, 1, $3, NULL, NULL)",
         params![project_id.value(), target_graph_revision_id.value(), command_row_id],
     ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
-    let adversarial_review_id = id_from_last_insert::<AdversarialReviewId>(transaction)?;
+    let adversarial_review_id = id_from_returned_identity::<AdversarialReviewId>(transaction)?;
     record_coordination_provenance(
         transaction,
         command_row_id,
@@ -6955,7 +6919,7 @@ fn assign_adversarial_reviewer(
     }
     let cycle_root_authority: i64 = transaction
         .query_row(
-            "SELECT principal_id FROM office_occupancies WHERE office_occupancy_id = ?1",
+            "SELECT principal_id FROM office_occupancies WHERE office_occupancy_id = $1",
             [cycle.occupancy_id.value()],
             |row| row.get(0),
         )
@@ -6978,7 +6942,7 @@ fn assign_adversarial_reviewer(
         work_item_row(transaction, work_item_id)?;
     let context_purpose: i64 = transaction
         .query_row(
-            "SELECT purpose FROM context_packs WHERE context_pack_id = ?1",
+            "SELECT purpose FROM context_packs WHERE context_pack_id = $1",
             [context_pack_id.value()],
             |row| row.get(0),
         )
@@ -7003,7 +6967,7 @@ fn assign_adversarial_reviewer(
     // only a prerequisite, never reviewer jurisdiction by itself.
     let eligible: bool = transaction
         .query_row(
-            "SELECT EXISTS(SELECT 1 FROM principals WHERE principal_id = ?1 AND principal_kind = ?2 AND active = 1)",
+            "SELECT EXISTS(SELECT 1 FROM principals WHERE principal_id = $1 AND principal_kind = $2 AND active = 1)",
             params![reviewer_principal_id.value(), PrincipalKind::Actor as i64],
             |row| row.get::<_, i64>(0),
         )
@@ -7014,7 +6978,7 @@ fn assign_adversarial_reviewer(
     }
     transaction
         .execute(
-            "UPDATE adversarial_reviews SET lifecycle_state = ?1, assigned_reviewer_principal_id = ?2, assigned_reviewer_actor_instance_id = ?3, reviewer_actor_attempt_id = ?4 WHERE adversarial_review_id = ?5",
+            "UPDATE adversarial_reviews SET lifecycle_state = $1, assigned_reviewer_principal_id = $2, assigned_reviewer_actor_instance_id = $3, reviewer_actor_attempt_id = $4 WHERE adversarial_review_id = $5",
             params![
                 AdversarialReviewState::Assigned as i64,
                 reviewer_principal_id.value(),
@@ -7059,7 +7023,7 @@ fn submit_review_challenge(
     let (project_id, review_target, review_state) = review_row(transaction, adversarial_review_id)?;
     let assigned_reviewer: (Option<i64>, Option<i64>) = transaction
         .query_row(
-            "SELECT assigned_reviewer_principal_id, assigned_reviewer_actor_instance_id FROM adversarial_reviews WHERE adversarial_review_id = ?1",
+            "SELECT assigned_reviewer_principal_id, assigned_reviewer_actor_instance_id FROM adversarial_reviews WHERE adversarial_review_id = $1",
             [adversarial_review_id.value()],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
@@ -7104,13 +7068,13 @@ fn submit_review_challenge(
     }
     transaction.execute(
         "INSERT INTO review_challenges(adversarial_review_id, target_graph_revision_id, author_principal_id, severity, failure_hypothesis, response_state, submitted_by_command_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6)",
+         VALUES ($1, $2, $3, $4, $5, 1, $6)",
         params![adversarial_review_id.value(), target_graph_revision_id.value(), author_principal_id.value(), severity as i64, failure_hypothesis, command_row_id],
     ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
-    let review_challenge_id = id_from_last_insert::<ReviewChallengeId>(transaction)?;
+    let review_challenge_id = id_from_returned_identity::<ReviewChallengeId>(transaction)?;
     transaction
         .execute(
-            "UPDATE adversarial_reviews SET lifecycle_state = 5 WHERE adversarial_review_id = ?1",
+            "UPDATE adversarial_reviews SET lifecycle_state = 5 WHERE adversarial_review_id = $1",
             [adversarial_review_id.value()],
         )
         .map_err(|_| Rejection::SubjectNotFound)?;
@@ -7142,7 +7106,7 @@ fn review_challenge_row(
     let row: (i64, i64, i64, i64) = transaction.query_row(
         "SELECT c.adversarial_review_id, r.project_id, c.author_principal_id, c.response_state
          FROM review_challenges c JOIN adversarial_reviews r ON r.adversarial_review_id = c.adversarial_review_id
-         WHERE c.review_challenge_id = ?1",
+         WHERE c.review_challenge_id = $1",
         [challenge_id.value()], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
     ).optional().map_err(|_| Rejection::SubjectNotFound)?.ok_or(Rejection::SubjectNotFound)?;
     Ok((
@@ -7167,10 +7131,10 @@ fn respond_to_review_challenge(
     if response_state != ReviewChallengeResponseState::Pending {
         return Err(Rejection::InvalidLifecycleTransition);
     }
-    transaction.execute("INSERT INTO review_challenge_responses(review_challenge_id, response_text, responded_by_command_id) VALUES (?1, ?2, ?3)", params![review_challenge_id.value(), response, command_row_id]).map_err(|_| Rejection::InvalidLifecycleTransition)?;
+    transaction.execute("INSERT INTO review_challenge_responses(review_challenge_id, response_text, responded_by_command_id) VALUES ($1, $2, $3)", params![review_challenge_id.value(), response, command_row_id]).map_err(|_| Rejection::InvalidLifecycleTransition)?;
     transaction
         .execute(
-            "UPDATE review_challenges SET response_state = 2 WHERE review_challenge_id = ?1",
+            "UPDATE review_challenges SET response_state = 2 WHERE review_challenge_id = $1",
             [review_challenge_id.value()],
         )
         .map_err(|_| Rejection::SubjectNotFound)?;
@@ -7204,7 +7168,7 @@ fn disposition_review_challenge(
     if response_state != ReviewChallengeResponseState::Responded {
         return Err(Rejection::ReviewDispositionIncomplete);
     }
-    transaction.execute("INSERT INTO review_dispositions(review_challenge_id, disposition_kind, disposed_by_principal_id, disposed_by_command_id) VALUES (?1, ?2, ?3, ?4)", params![review_challenge_id.value(), disposition as i64, principal_id.value(), command_row_id]).map_err(|_| Rejection::ReviewDispositionIncomplete)?;
+    transaction.execute("INSERT INTO review_dispositions(review_challenge_id, disposition_kind, disposed_by_principal_id, disposed_by_command_id) VALUES ($1, $2, $3, $4)", params![review_challenge_id.value(), disposition as i64, principal_id.value(), command_row_id]).map_err(|_| Rejection::ReviewDispositionIncomplete)?;
     record_coordination_provenance(
         transaction,
         command_row_id,
@@ -7233,7 +7197,7 @@ fn resolve_adversarial_review(
     }
     let missing: i64 = transaction.query_row(
         "SELECT COUNT(*) FROM review_challenges c LEFT JOIN review_dispositions d ON d.review_challenge_id = c.review_challenge_id
-         WHERE c.adversarial_review_id = ?1 AND (c.response_state != 2 OR d.review_disposition_id IS NULL)",
+         WHERE c.adversarial_review_id = $1 AND (c.response_state != 2 OR d.review_disposition_id IS NULL)",
         [adversarial_review_id.value()], |row| row.get(0),
     ).map_err(|_| Rejection::SubjectNotFound)?;
     if missing != 0 {
@@ -7243,7 +7207,7 @@ fn resolve_adversarial_review(
         ReviewResolutionKind::Resolved => AdversarialReviewState::Resolved,
         ReviewResolutionKind::AcceptedRisk => AdversarialReviewState::AcceptedRisk,
     };
-    transaction.execute("UPDATE adversarial_reviews SET lifecycle_state = ?1, resolved_by_command_id = ?2 WHERE adversarial_review_id = ?3", params![target_state as i64, command_row_id, adversarial_review_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    transaction.execute("UPDATE adversarial_reviews SET lifecycle_state = $1, resolved_by_command_id = $2 WHERE adversarial_review_id = $3", params![target_state as i64, command_row_id, adversarial_review_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
     record_coordination_provenance(
         transaction,
         command_row_id,
@@ -7263,7 +7227,7 @@ fn postmortem_row(
 ) -> Result<(ProjectId, PostmortemState), Rejection> {
     let row: (i64, i64) = transaction
         .query_row(
-            "SELECT project_id, lifecycle_state FROM postmortems WHERE postmortem_id = ?1",
+            "SELECT project_id, lifecycle_state FROM postmortems WHERE postmortem_id = $1",
             [postmortem_id.value()],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
@@ -7291,8 +7255,8 @@ fn trigger_postmortem(
     {
         return Err(Rejection::SubjectNotFound);
     }
-    transaction.execute("INSERT INTO postmortems(project_id, causal_episode_id, founding_mission_id, lifecycle_state, triggered_by_command_id, closed_by_command_id) VALUES (?1, ?2, ?3, 1, ?4, NULL)", params![project_id.value(), causal_episode_id.map(CausalEpisodeId::value), cycle.mission_id.value(), command_row_id]).map_err(|_| Rejection::InvalidLifecycleTransition)?;
-    let postmortem_id = id_from_last_insert::<PostmortemId>(transaction)?;
+    transaction.execute("INSERT INTO postmortems(project_id, causal_episode_id, founding_mission_id, lifecycle_state, triggered_by_command_id, closed_by_command_id) VALUES ($1, $2, $3, 1, $4, NULL)", params![project_id.value(), causal_episode_id.map(CausalEpisodeId::value), cycle.mission_id.value(), command_row_id]).map_err(|_| Rejection::InvalidLifecycleTransition)?;
+    let postmortem_id = id_from_returned_identity::<PostmortemId>(transaction)?;
     record_coordination_provenance(
         transaction,
         command_row_id,
@@ -7317,11 +7281,12 @@ fn record_postmortem_causal_claim(
     if state == PostmortemState::Closed {
         return Err(Rejection::InvalidLifecycleTransition);
     }
-    transaction.execute("INSERT INTO postmortem_causal_claims(postmortem_id, claim_kind, claim_text, recorded_by_command_id) VALUES (?1, ?2, ?3, ?4)", params![postmortem_id.value(), claim_kind as i64, claim, command_row_id]).map_err(|_| Rejection::InvalidLifecycleTransition)?;
-    let postmortem_causal_claim_id = id_from_last_insert::<PostmortemCausalClaimId>(transaction)?;
+    transaction.execute("INSERT INTO postmortem_causal_claims(postmortem_id, claim_kind, claim_text, recorded_by_command_id) VALUES ($1, $2, $3, $4)", params![postmortem_id.value(), claim_kind as i64, claim, command_row_id]).map_err(|_| Rejection::InvalidLifecycleTransition)?;
+    let postmortem_causal_claim_id =
+        id_from_returned_identity::<PostmortemCausalClaimId>(transaction)?;
     transaction
         .execute(
-            "UPDATE postmortems SET lifecycle_state = 2 WHERE postmortem_id = ?1",
+            "UPDATE postmortems SET lifecycle_state = 2 WHERE postmortem_id = $1",
             [postmortem_id.value()],
         )
         .map_err(|_| Rejection::SubjectNotFound)?;
@@ -7351,12 +7316,12 @@ fn propose_postmortem_action(
     if state == PostmortemState::Closed {
         return Err(Rejection::InvalidLifecycleTransition);
     }
-    transaction.execute("INSERT INTO postmortem_action_proposals(postmortem_id, action_kind, action_text, proposed_by_command_id) VALUES (?1, ?2, ?3, ?4)", params![postmortem_id.value(), action_kind as i64, action, command_row_id]).map_err(|_| Rejection::InvalidLifecycleTransition)?;
+    transaction.execute("INSERT INTO postmortem_action_proposals(postmortem_id, action_kind, action_text, proposed_by_command_id) VALUES ($1, $2, $3, $4)", params![postmortem_id.value(), action_kind as i64, action, command_row_id]).map_err(|_| Rejection::InvalidLifecycleTransition)?;
     let postmortem_action_proposal_id =
-        id_from_last_insert::<PostmortemActionProposalId>(transaction)?;
+        id_from_returned_identity::<PostmortemActionProposalId>(transaction)?;
     transaction
         .execute(
-            "UPDATE postmortems SET lifecycle_state = 2 WHERE postmortem_id = ?1",
+            "UPDATE postmortems SET lifecycle_state = 2 WHERE postmortem_id = $1",
             [postmortem_id.value()],
         )
         .map_err(|_| Rejection::SubjectNotFound)?;
@@ -7385,13 +7350,13 @@ fn close_postmortem(
         return Err(Rejection::InvalidLifecycleTransition);
     }
     let counts: (i64, i64) = transaction.query_row(
-        "SELECT (SELECT COUNT(*) FROM postmortem_causal_claims WHERE postmortem_id = ?1), (SELECT COUNT(*) FROM postmortem_action_proposals WHERE postmortem_id = ?1)",
+        "SELECT (SELECT COUNT(*) FROM postmortem_causal_claims WHERE postmortem_id = $1), (SELECT COUNT(*) FROM postmortem_action_proposals WHERE postmortem_id = $1)",
         [postmortem_id.value()], |row| Ok((row.get(0)?, row.get(1)?)),
     ).map_err(|_| Rejection::SubjectNotFound)?;
     if counts.0 == 0 || counts.1 == 0 {
         return Err(Rejection::PostmortemCloseBlocked);
     }
-    transaction.execute("UPDATE postmortems SET lifecycle_state = 3, closed_by_command_id = ?1 WHERE postmortem_id = ?2", params![command_row_id, postmortem_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    transaction.execute("UPDATE postmortems SET lifecycle_state = 3, closed_by_command_id = $1 WHERE postmortem_id = $2", params![command_row_id, postmortem_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
     record_coordination_provenance(
         transaction,
         command_row_id,
@@ -7413,17 +7378,17 @@ fn register_actor_configuration(
     primary_attractor: DevelopmentalAttractor,
 ) -> Result<EventBody, Rejection> {
     transaction.execute(
-        "INSERT INTO actor_configurations(configuration_name, lifecycle_state, created_by_command_id) VALUES (?1, 1, ?2)",
+        "INSERT INTO actor_configurations(configuration_name, lifecycle_state, created_by_command_id) VALUES ($1, 1, $2)",
         params![configuration_name, command_row_id],
     ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
-    let actor_configuration_id = id_from_last_insert::<ActorConfigurationId>(transaction)?;
+    let actor_configuration_id = id_from_returned_identity::<ActorConfigurationId>(transaction)?;
     transaction.execute(
-        "INSERT INTO actor_configuration_revisions(actor_configuration_id, revision_ordinal, model_policy, primary_attractor, created_by_command_id) VALUES (?1, 1, ?2, ?3, ?4)",
+        "INSERT INTO actor_configuration_revisions(actor_configuration_id, revision_ordinal, model_policy, primary_attractor, created_by_command_id) VALUES ($1, 1, $2, $3, $4)",
         params![actor_configuration_id.value(), model_policy as i64, primary_attractor as i64, command_row_id],
     ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
     Ok(EventBody::ActorConfigurationRegistered {
         actor_configuration_id,
-        actor_configuration_revision_id: id_from_last_insert::<ActorConfigurationRevisionId>(
+        actor_configuration_revision_id: id_from_returned_identity::<ActorConfigurationRevisionId>(
             transaction,
         )?,
     })
@@ -7439,10 +7404,10 @@ fn register_context_pack(
 ) -> Result<EventBody, Rejection> {
     let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
     transaction.execute(
-        "INSERT INTO context_packs(founding_mission_id, purpose, rendering_digest, created_by_command_id) VALUES (?1, ?2, ?3, ?4)",
+        "INSERT INTO context_packs(founding_mission_id, purpose, rendering_digest, created_by_command_id) VALUES ($1, $2, $3, $4)",
         params![cycle.mission_id.value(), purpose as i64, rendering_digest.as_bytes(), command_row_id],
     ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
-    let context_pack_id = id_from_last_insert::<ContextPackId>(transaction)?;
+    let context_pack_id = id_from_returned_identity::<ContextPackId>(transaction)?;
     record_coordination_provenance(transaction, command_row_id, cycle, operating_cycle_id, None)?;
     Ok(EventBody::ContextPackRegistered { context_pack_id })
 }
@@ -7458,12 +7423,12 @@ fn admit_actor_instance(
 ) -> Result<EventBody, Rejection> {
     let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
     let configuration_active: bool = transaction.query_row(
-        "SELECT EXISTS(SELECT 1 FROM actor_configuration_revisions r JOIN actor_configurations c ON c.actor_configuration_id = r.actor_configuration_id WHERE r.actor_configuration_revision_id = ?1 AND c.lifecycle_state = 1)",
+        "SELECT EXISTS(SELECT 1 FROM actor_configuration_revisions r JOIN actor_configurations c ON c.actor_configuration_id = r.actor_configuration_id WHERE r.actor_configuration_revision_id = $1 AND c.lifecycle_state = 1)",
         [actor_configuration_revision_id.value()], |row| row.get::<_, i64>(0),
     ).map_err(|_| Rejection::SubjectNotFound)? != 0;
     let profile: Option<(i64, i64)> = transaction
         .query_row(
-            "SELECT profile_kind, readiness FROM execution_profiles WHERE execution_profile_id = ?1",
+            "SELECT profile_kind, readiness FROM execution_profiles WHERE execution_profile_id = $1",
             [execution_profile_id.value()],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
@@ -7496,18 +7461,18 @@ fn admit_actor_instance(
     }
     transaction
         .execute(
-            "INSERT INTO principals(principal_kind, display_name, active) VALUES (?1, ?2, 1)",
+            "INSERT INTO principals(principal_kind, display_name, active) VALUES ($1, $2, 1)",
             params![PrincipalKind::Actor as i64, actor_display_name],
         )
         .map_err(|_| Rejection::InvalidLifecycleTransition)?;
-    let principal_id = id_from_last_insert::<PrincipalId>(transaction)?;
+    let principal_id = id_from_returned_identity::<PrincipalId>(transaction)?;
     transaction.execute(
-        "INSERT INTO actor_instances(principal_id, actor_configuration_revision_id, execution_profile_id, operating_cycle_id, lifecycle_state, admitted_by_command_id) VALUES (?1, ?2, ?3, ?4, 1, ?5)",
+        "INSERT INTO actor_instances(principal_id, actor_configuration_revision_id, execution_profile_id, operating_cycle_id, lifecycle_state, admitted_by_command_id) VALUES ($1, $2, $3, $4, 1, $5)",
         params![principal_id.value(), actor_configuration_revision_id.value(), execution_profile_id.value(), operating_cycle_id.value(), command_row_id],
     ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
-    let actor_instance_id = id_from_last_insert::<ActorInstanceId>(transaction)?;
+    let actor_instance_id = id_from_returned_identity::<ActorInstanceId>(transaction)?;
     transaction.execute(
-        "INSERT INTO capability_grants(principal_id, capability_kind, office_occupancy_id, actor_instance_id, grant_state, grant_origin, granted_by_command_id, consumed_by_command_id) VALUES (?1, ?2, NULL, ?3, 1, 2, ?4, NULL)",
+        "INSERT INTO capability_grants(principal_id, capability_kind, office_occupancy_id, actor_instance_id, grant_state, grant_origin, granted_by_command_id, consumed_by_command_id) VALUES ($1, $2, NULL, $3, 1, 2, $4, NULL)",
         params![principal_id.value(), Capability::ClaimWorkItem as i64, actor_instance_id.value(), command_row_id],
     ).map_err(|_| Rejection::ActorJurisdictionDenied)?;
     record_coordination_provenance(transaction, command_row_id, cycle, operating_cycle_id, None)?;
@@ -7582,7 +7547,7 @@ fn admit_ticket(
         return Err(Rejection::InvalidLifecycleTransition);
     }
     transaction.execute(
-        "UPDATE tickets SET lifecycle_state = ?1, last_transition_command_id = ?2 WHERE ticket_id = ?3",
+        "UPDATE tickets SET lifecycle_state = $1, last_transition_command_id = $2 WHERE ticket_id = $3",
         params![TicketState::Admitted as i64, command_row_id, ticket_id.value()],
     ).map_err(|_| Rejection::SubjectNotFound)?;
     record_coordination_provenance(
@@ -7609,7 +7574,7 @@ fn actor_instance_row(
     Rejection,
 > {
     let row: (i64, i64, i64, i64, i64) = transaction.query_row(
-        "SELECT principal_id, actor_configuration_revision_id, execution_profile_id, operating_cycle_id, lifecycle_state FROM actor_instances WHERE actor_instance_id = ?1",
+        "SELECT principal_id, actor_configuration_revision_id, execution_profile_id, operating_cycle_id, lifecycle_state FROM actor_instances WHERE actor_instance_id = $1",
         [actor_instance_id.value()], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
     ).optional().map_err(|_| Rejection::SubjectNotFound)?.ok_or(Rejection::SubjectNotFound)?;
     Ok((
@@ -7648,7 +7613,7 @@ fn register_work_item(
     }
     let context: (i64, i64) = transaction
         .query_row(
-            "SELECT founding_mission_id, purpose FROM context_packs WHERE context_pack_id = ?1",
+            "SELECT founding_mission_id, purpose FROM context_packs WHERE context_pack_id = $1",
             [context_pack_id.value()],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
@@ -7679,12 +7644,12 @@ fn register_work_item(
         _ => return Err(Rejection::ReviewAssignmentEvidenceMissing),
     }
     transaction.execute(
-        "INSERT INTO work_items(ticket_id, actor_instance_id, context_pack_id, work_kind, adversarial_review_id, assignment_text, lifecycle_state, retry_of_actor_attempt_id, created_by_command_id, last_transition_command_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, NULL, ?7, ?7)",
+        "INSERT INTO work_items(ticket_id, actor_instance_id, context_pack_id, work_kind, adversarial_review_id, assignment_text, lifecycle_state, retry_of_actor_attempt_id, created_by_command_id, last_transition_command_id) VALUES ($1, $2, $3, $4, $5, $6, 1, NULL, $7, $7)",
         params![ticket_id.value(), actor_instance_id.value(), context_pack_id.value(), work_kind as i64, adversarial_review_id.map(AdversarialReviewId::value), assignment, command_row_id],
     ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
-    let work_item_id = id_from_last_insert::<WorkItemId>(transaction)?;
+    let work_item_id = id_from_returned_identity::<WorkItemId>(transaction)?;
     transaction.execute(
-        "UPDATE tickets SET lifecycle_state = ?1, last_transition_command_id = ?2 WHERE ticket_id = ?3",
+        "UPDATE tickets SET lifecycle_state = $1, last_transition_command_id = $2 WHERE ticket_id = $3",
         params![TicketState::Ready as i64, command_row_id, ticket_id.value()],
     ).map_err(|_| Rejection::SubjectNotFound)?;
     record_coordination_provenance(
@@ -7706,7 +7671,7 @@ fn work_item_row(
     work_item_id: WorkItemId,
 ) -> Result<WorkItemRow, Rejection> {
     let row: (i64, i64, i64, i64, Option<i64>, i64, Option<i64>) = transaction.query_row(
-        "SELECT ticket_id, actor_instance_id, context_pack_id, work_kind, adversarial_review_id, lifecycle_state, retry_of_actor_attempt_id FROM work_items WHERE work_item_id = ?1",
+        "SELECT ticket_id, actor_instance_id, context_pack_id, work_kind, adversarial_review_id, lifecycle_state, retry_of_actor_attempt_id FROM work_items WHERE work_item_id = $1",
         [work_item_id.value()], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?)),
     ).optional().map_err(|_| Rejection::SubjectNotFound)?.ok_or(Rejection::SubjectNotFound)?;
     Ok((
@@ -7751,12 +7716,12 @@ fn claim_work_item(
         return Err(Rejection::WorkLeaseUnavailable);
     }
     transaction.execute(
-        "INSERT INTO leases(work_item_id, actor_instance_id, lifecycle_state, claimed_by_command_id, terminal_by_command_id) VALUES (?1, ?2, 1, ?3, NULL)",
+        "INSERT INTO leases(work_item_id, actor_instance_id, lifecycle_state, claimed_by_command_id, terminal_by_command_id) VALUES ($1, $2, 1, $3, NULL)",
         params![work_item_id.value(), actor_instance_id.value(), command_row_id],
     ).map_err(|_| Rejection::WorkLeaseUnavailable)?;
-    let work_lease_id = id_from_last_insert::<WorkLeaseId>(transaction)?;
-    transaction.execute("UPDATE work_items SET lifecycle_state = 2, last_transition_command_id = ?1 WHERE work_item_id = ?2", params![command_row_id, work_item_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
-    transaction.execute("UPDATE tickets SET lifecycle_state = ?1, last_transition_command_id = ?2 WHERE ticket_id = ?3", params![TicketState::Claimed as i64, command_row_id, ticket_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    let work_lease_id = id_from_returned_identity::<WorkLeaseId>(transaction)?;
+    transaction.execute("UPDATE work_items SET lifecycle_state = 2, last_transition_command_id = $1 WHERE work_item_id = $2", params![command_row_id, work_item_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    transaction.execute("UPDATE tickets SET lifecycle_state = $1, last_transition_command_id = $2 WHERE ticket_id = $3", params![TicketState::Claimed as i64, command_row_id, ticket_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
     record_coordination_provenance(
         transaction,
         command_row_id,
@@ -7798,11 +7763,11 @@ fn reserve_attempt_budget(
             return Err(Rejection::BudgetCeilingExceeded);
         }
     }
-    transaction.execute("INSERT INTO budget_reservations(operating_cycle_id, amount_micros, reservation_state, reserved_by_command_id, reconciled_by_command_id) VALUES (?1, ?2, 1, ?3, NULL)", params![cycle_id.value(), amount.value(), command_row_id]).map_err(|_| Rejection::BudgetCeilingExceeded)?;
-    let reservation_id = id_from_last_insert::<BudgetReservationId>(transaction)?;
+    transaction.execute("INSERT INTO budget_reservations(operating_cycle_id, amount_micros, reservation_state, reserved_by_command_id, reconciled_by_command_id) VALUES ($1, $2, 1, $3, NULL)", params![cycle_id.value(), amount.value(), command_row_id]).map_err(|_| Rejection::BudgetCeilingExceeded)?;
+    let reservation_id = id_from_returned_identity::<BudgetReservationId>(transaction)?;
     for budget_id in [society_budget, cycle_budget] {
-        transaction.execute("UPDATE budget_envelopes SET reserved_micros = reserved_micros + ?1 WHERE budget_envelope_id = ?2", params![amount.value(), budget_id.value()]).map_err(|_| Rejection::BudgetCeilingExceeded)?;
-        transaction.execute("INSERT INTO budget_reservation_charges(budget_reservation_id, budget_envelope_id, amount_micros) VALUES (?1, ?2, ?3)", params![reservation_id.value(), budget_id.value(), amount.value()]).map_err(|_| Rejection::BudgetCeilingExceeded)?;
+        transaction.execute("UPDATE budget_envelopes SET reserved_micros = reserved_micros + $1 WHERE budget_envelope_id = $2", params![amount.value(), budget_id.value()]).map_err(|_| Rejection::BudgetCeilingExceeded)?;
+        transaction.execute("INSERT INTO budget_reservation_charges(budget_reservation_id, budget_envelope_id, amount_micros) VALUES ($1, $2, $3)", params![reservation_id.value(), budget_id.value(), amount.value()]).map_err(|_| Rejection::BudgetCeilingExceeded)?;
     }
     Ok(reservation_id)
 }
@@ -7836,7 +7801,7 @@ fn start_actor_attempt(
     {
         return Err(Rejection::WorkLeaseUnavailable);
     }
-    let lease_id: i64 = transaction.query_row("SELECT work_lease_id FROM leases WHERE work_item_id = ?1 AND actor_instance_id = ?2 AND lifecycle_state = 1", params![work_item_id.value(), actor_instance_id.value()], |row| row.get(0)).optional().map_err(|_| Rejection::WorkLeaseUnavailable)?.ok_or(Rejection::WorkLeaseUnavailable)?;
+    let lease_id: i64 = transaction.query_row("SELECT work_lease_id FROM leases WHERE work_item_id = $1 AND actor_instance_id = $2 AND lifecycle_state = 1", params![work_item_id.value(), actor_instance_id.value()], |row| row.get(0)).optional().map_err(|_| Rejection::WorkLeaseUnavailable)?.ok_or(Rejection::WorkLeaseUnavailable)?;
     let work_lease_id =
         WorkLeaseId::try_from(lease_id).map_err(|_| Rejection::WorkLeaseUnavailable)?;
     let reservation_id = reserve_attempt_budget(
@@ -7846,10 +7811,10 @@ fn start_actor_attempt(
         operating_cycle_id,
         reservation_amount,
     )?;
-    transaction.execute("INSERT INTO attempts(operating_cycle_id, ticket_id, work_item_id, work_lease_id, actor_instance_id, actor_configuration_revision_id, execution_profile_id, context_pack_id, retry_of_actor_attempt_id, lifecycle_state, started_by_command_id, terminal_by_command_id, validated_by_command_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1, ?10, NULL, NULL)", params![operating_cycle_id.value(), ticket_id.value(), work_item_id.value(), work_lease_id.value(), actor_instance_id.value(), configuration_revision_id.value(), execution_profile_id.value(), context_pack_id.value(), retry_of_actor_attempt_id.map(ActorAttemptId::value), command_row_id]).map_err(|_| Rejection::InvalidLifecycleTransition)?;
-    let actor_attempt_id = id_from_last_insert::<ActorAttemptId>(transaction)?;
-    transaction.execute("INSERT INTO attempt_budget_reservations(actor_attempt_id, budget_reservation_id, project_id, ticket_id) VALUES (?1, ?2, ?3, ?4)", params![actor_attempt_id.value(), reservation_id.value(), project_id.value(), ticket_id.value()]).map_err(|_| Rejection::InvalidLifecycleTransition)?;
-    transaction.execute("UPDATE work_items SET lifecycle_state = 3, last_transition_command_id = ?1 WHERE work_item_id = ?2", params![command_row_id, work_item_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    transaction.execute("INSERT INTO attempts(operating_cycle_id, ticket_id, work_item_id, work_lease_id, actor_instance_id, actor_configuration_revision_id, execution_profile_id, context_pack_id, retry_of_actor_attempt_id, lifecycle_state, started_by_command_id, terminal_by_command_id, validated_by_command_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 1, $10, NULL, NULL)", params![operating_cycle_id.value(), ticket_id.value(), work_item_id.value(), work_lease_id.value(), actor_instance_id.value(), configuration_revision_id.value(), execution_profile_id.value(), context_pack_id.value(), retry_of_actor_attempt_id.map(ActorAttemptId::value), command_row_id]).map_err(|_| Rejection::InvalidLifecycleTransition)?;
+    let actor_attempt_id = id_from_returned_identity::<ActorAttemptId>(transaction)?;
+    transaction.execute("INSERT INTO attempt_budget_reservations(actor_attempt_id, budget_reservation_id, project_id, ticket_id) VALUES ($1, $2, $3, $4)", params![actor_attempt_id.value(), reservation_id.value(), project_id.value(), ticket_id.value()]).map_err(|_| Rejection::InvalidLifecycleTransition)?;
+    transaction.execute("UPDATE work_items SET lifecycle_state = 3, last_transition_command_id = $1 WHERE work_item_id = $2", params![command_row_id, work_item_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
     record_coordination_provenance(
         transaction,
         command_row_id,
@@ -7878,7 +7843,7 @@ fn actor_attempt_row(
     ),
     Rejection,
 > {
-    let row: (i64, i64, i64, i64, i64, i64) = transaction.query_row("SELECT operating_cycle_id, ticket_id, work_item_id, work_lease_id, actor_instance_id, lifecycle_state FROM attempts WHERE actor_attempt_id = ?1", [actor_attempt_id.value()], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?))).optional().map_err(|_| Rejection::SubjectNotFound)?.ok_or(Rejection::SubjectNotFound)?;
+    let row: (i64, i64, i64, i64, i64, i64) = transaction.query_row("SELECT operating_cycle_id, ticket_id, work_item_id, work_lease_id, actor_instance_id, lifecycle_state FROM attempts WHERE actor_attempt_id = $1", [actor_attempt_id.value()], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?))).optional().map_err(|_| Rejection::SubjectNotFound)?.ok_or(Rejection::SubjectNotFound)?;
     Ok((
         OperatingCycleId::try_from(row.0).map_err(|_| Rejection::SubjectNotFound)?,
         TicketId::try_from(row.1).map_err(|_| Rejection::SubjectNotFound)?,
@@ -7902,7 +7867,7 @@ fn attest_actor_attempt_terminal(
     // invents a model outcome.
     let has_supervised_child: bool = transaction
         .query_row(
-            "SELECT EXISTS(SELECT 1 FROM native_child_spawn_admissions WHERE actor_attempt_id = ?1)",
+            "SELECT EXISTS(SELECT 1 FROM native_child_spawn_admissions WHERE actor_attempt_id = $1)",
             [actor_attempt_id.value()],
             |row| row.get::<_, i64>(0),
         )
@@ -7916,15 +7881,15 @@ fn attest_actor_attempt_terminal(
     if !terminal_kind.allowed_from(state) {
         return Err(Rejection::ActorAttemptNotTerminal);
     }
-    transaction.execute("INSERT INTO actor_attempt_terminal_facts(actor_attempt_id, terminal_kind, attested_by_command_id) VALUES (?1, ?2, ?3)", params![actor_attempt_id.value(), terminal_kind as i64, command_row_id]).map_err(|_| Rejection::ActorAttemptNotTerminal)?;
-    transaction.execute("UPDATE attempts SET lifecycle_state = ?1, terminal_by_command_id = ?2 WHERE actor_attempt_id = ?3", params![terminal_kind.state() as i64, command_row_id, actor_attempt_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    transaction.execute("INSERT INTO actor_attempt_terminal_facts(actor_attempt_id, terminal_kind, attested_by_command_id) VALUES ($1, $2, $3)", params![actor_attempt_id.value(), terminal_kind as i64, command_row_id]).map_err(|_| Rejection::ActorAttemptNotTerminal)?;
+    transaction.execute("UPDATE attempts SET lifecycle_state = $1, terminal_by_command_id = $2 WHERE actor_attempt_id = $3", params![terminal_kind.state() as i64, command_row_id, actor_attempt_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
     let lease_state = if terminal_kind == ActorAttemptTerminalKind::Cancelled {
         WorkLeaseState::Cancelled
     } else {
         WorkLeaseState::Released
     };
-    transaction.execute("UPDATE leases SET lifecycle_state = ?1, terminal_by_command_id = ?2 WHERE work_lease_id = ?3 AND lifecycle_state = 1", params![lease_state as i64, command_row_id, work_lease_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
-    transaction.execute("UPDATE work_items SET lifecycle_state = 4, last_transition_command_id = ?1 WHERE work_item_id = ?2", params![command_row_id, work_item_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    transaction.execute("UPDATE leases SET lifecycle_state = $1, terminal_by_command_id = $2 WHERE work_lease_id = $3 AND lifecycle_state = 1", params![lease_state as i64, command_row_id, work_lease_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    transaction.execute("UPDATE work_items SET lifecycle_state = 4, last_transition_command_id = $1 WHERE work_item_id = $2", params![command_row_id, work_item_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
     let ticket_state = match terminal_kind {
         ActorAttemptTerminalKind::Succeeded => TicketState::Submitted,
         ActorAttemptTerminalKind::Cancelled => TicketState::Cancelled,
@@ -7933,7 +7898,7 @@ fn attest_actor_attempt_terminal(
         | ActorAttemptTerminalKind::ProtocolFailed
         | ActorAttemptTerminalKind::SupervisorFailed => TicketState::Failed,
     };
-    transaction.execute("UPDATE tickets SET lifecycle_state = ?1, last_transition_command_id = ?2 WHERE ticket_id = ?3", params![ticket_state as i64, command_row_id, ticket_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    transaction.execute("UPDATE tickets SET lifecycle_state = $1, last_transition_command_id = $2 WHERE ticket_id = $3", params![ticket_state as i64, command_row_id, ticket_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
     let (project_id, _) = ticket_row(transaction, ticket_id)?;
     let cycle = cycle_row(transaction, operating_cycle_id)?;
     record_coordination_provenance(
@@ -7972,15 +7937,15 @@ fn validate_ticket_attempt(
         return Err(Rejection::ActorAttemptNotValidatable);
     }
     let evidence_pending: i64 = transaction.query_row(
-        "SELECT COUNT(*) FROM deterministic_experiments WHERE ticket_id = ?1 AND lifecycle_state = 1",
+        "SELECT COUNT(*) FROM deterministic_experiments WHERE ticket_id = $1 AND lifecycle_state = 1",
         [ticket_id.value()], |row| row.get(0),
     ).map_err(|_| Rejection::SubjectNotFound)?;
     if evidence_pending != 0 {
         return Err(Rejection::EvidenceAdmissionRequired);
     }
-    transaction.execute("UPDATE attempts SET lifecycle_state = 9, validated_by_command_id = ?1 WHERE actor_attempt_id = ?2", params![command_row_id, actor_attempt_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
-    transaction.execute("UPDATE ticket_acceptance_conditions SET lifecycle_state = 2, satisfied_by_command_id = ?1 WHERE ticket_id = ?2 AND lifecycle_state = 1", params![command_row_id, ticket_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
-    transaction.execute("UPDATE tickets SET lifecycle_state = ?1, last_transition_command_id = ?2 WHERE ticket_id = ?3", params![TicketState::Verified as i64, command_row_id, ticket_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    transaction.execute("UPDATE attempts SET lifecycle_state = 9, validated_by_command_id = $1 WHERE actor_attempt_id = $2", params![command_row_id, actor_attempt_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    transaction.execute("UPDATE ticket_acceptance_conditions SET lifecycle_state = 2, satisfied_by_command_id = $1 WHERE ticket_id = $2 AND lifecycle_state = 1", params![command_row_id, ticket_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    transaction.execute("UPDATE tickets SET lifecycle_state = $1, last_transition_command_id = $2 WHERE ticket_id = $3", params![TicketState::Verified as i64, command_row_id, ticket_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
     record_coordination_provenance(
         transaction,
         command_row_id,
@@ -8022,8 +7987,8 @@ fn retry_actor_attempt(
     if work_state != WorkItemState::Settled {
         return Err(Rejection::WorkLeaseUnavailable);
     }
-    transaction.execute("UPDATE work_items SET lifecycle_state = 1, retry_of_actor_attempt_id = ?1, last_transition_command_id = ?2 WHERE work_item_id = ?3", params![actor_attempt_id.value(), command_row_id, work_item_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
-    transaction.execute("UPDATE tickets SET lifecycle_state = ?1, last_transition_command_id = ?2 WHERE ticket_id = ?3", params![TicketState::Ready as i64, command_row_id, ticket_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    transaction.execute("UPDATE work_items SET lifecycle_state = 1, retry_of_actor_attempt_id = $1, last_transition_command_id = $2 WHERE work_item_id = $3", params![actor_attempt_id.value(), command_row_id, work_item_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    transaction.execute("UPDATE tickets SET lifecycle_state = $1, last_transition_command_id = $2 WHERE ticket_id = $3", params![TicketState::Ready as i64, command_row_id, ticket_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
     record_coordination_provenance(
         transaction,
         command_row_id,
@@ -8058,7 +8023,7 @@ fn complete_ticket(
     let unsatisfied_condition_count: i64 = transaction
         .query_row(
             "SELECT COUNT(*) FROM ticket_acceptance_conditions
-         WHERE ticket_id = ?1 AND lifecycle_state = 1",
+         WHERE ticket_id = $1 AND lifecycle_state = 1",
             [ticket_id.value()],
             |row| row.get(0),
         )
@@ -8066,7 +8031,7 @@ fn complete_ticket(
     if unsatisfied_condition_count != 0 {
         return Err(Rejection::TicketAcceptanceConditionUnsatisfied);
     }
-    transaction.execute("UPDATE tickets SET lifecycle_state = ?1, last_transition_command_id = ?2 WHERE ticket_id = ?3", params![TicketState::Completed as i64, command_row_id, ticket_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    transaction.execute("UPDATE tickets SET lifecycle_state = $1, last_transition_command_id = $2 WHERE ticket_id = $3", params![TicketState::Completed as i64, command_row_id, ticket_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
     record_coordination_provenance(
         transaction,
         command_row_id,
@@ -8085,13 +8050,13 @@ fn expire_work_lease(
     command_row_id: i64,
     work_lease_id: WorkLeaseId,
 ) -> Result<EventBody, Rejection> {
-    let row: (i64, i64, i64, i64) = transaction.query_row("SELECT l.work_item_id, l.lifecycle_state, w.ticket_id, a.operating_cycle_id FROM leases l JOIN work_items w ON w.work_item_id = l.work_item_id JOIN actor_instances a ON a.actor_instance_id = l.actor_instance_id WHERE l.work_lease_id = ?1", [work_lease_id.value()], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))).optional().map_err(|_| Rejection::SubjectNotFound)?.ok_or(Rejection::SubjectNotFound)?;
+    let row: (i64, i64, i64, i64) = transaction.query_row("SELECT l.work_item_id, l.lifecycle_state, w.ticket_id, a.operating_cycle_id FROM leases l JOIN work_items w ON w.work_item_id = l.work_item_id JOIN actor_instances a ON a.actor_instance_id = l.actor_instance_id WHERE l.work_lease_id = $1", [work_lease_id.value()], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))).optional().map_err(|_| Rejection::SubjectNotFound)?.ok_or(Rejection::SubjectNotFound)?;
     if row.1 != WorkLeaseState::Active as i64 {
         return Err(Rejection::WorkLeaseUnavailable);
     }
     let attempt_count: i64 = transaction
         .query_row(
-            "SELECT COUNT(*) FROM attempts WHERE work_lease_id = ?1",
+            "SELECT COUNT(*) FROM attempts WHERE work_lease_id = $1",
             [work_lease_id.value()],
             |row| row.get(0),
         )
@@ -8103,9 +8068,9 @@ fn expire_work_lease(
     let ticket_id = TicketId::try_from(row.2).map_err(|_| Rejection::SubjectNotFound)?;
     let operating_cycle_id =
         OperatingCycleId::try_from(row.3).map_err(|_| Rejection::SubjectNotFound)?;
-    transaction.execute("UPDATE leases SET lifecycle_state = 3, terminal_by_command_id = ?1 WHERE work_lease_id = ?2", params![command_row_id, work_lease_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
-    transaction.execute("UPDATE work_items SET lifecycle_state = 1, last_transition_command_id = ?1 WHERE work_item_id = ?2", params![command_row_id, work_item_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
-    transaction.execute("UPDATE tickets SET lifecycle_state = ?1, last_transition_command_id = ?2 WHERE ticket_id = ?3", params![TicketState::Ready as i64, command_row_id, ticket_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    transaction.execute("UPDATE leases SET lifecycle_state = 3, terminal_by_command_id = $1 WHERE work_lease_id = $2", params![command_row_id, work_lease_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    transaction.execute("UPDATE work_items SET lifecycle_state = 1, last_transition_command_id = $1 WHERE work_item_id = $2", params![command_row_id, work_item_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    transaction.execute("UPDATE tickets SET lifecycle_state = $1, last_transition_command_id = $2 WHERE ticket_id = $3", params![TicketState::Ready as i64, command_row_id, ticket_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
     let (project_id, _) = ticket_row(transaction, ticket_id)?;
     record_coordination_provenance(
         transaction,
@@ -8133,7 +8098,7 @@ fn cancel_actor_attempt(
     }
     transaction
         .execute(
-            "UPDATE attempts SET lifecycle_state = 2 WHERE actor_attempt_id = ?1",
+            "UPDATE attempts SET lifecycle_state = 2 WHERE actor_attempt_id = $1",
             [actor_attempt_id.value()],
         )
         .map_err(|_| Rejection::SubjectNotFound)?;
@@ -8161,8 +8126,8 @@ fn register_outcome_obligation(
 ) -> Result<EventBody, Rejection> {
     let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
     project_is_active(transaction, project_id)?;
-    transaction.execute("INSERT INTO outcome_obligations(project_id, obligation_text, lifecycle_state, scheduled_by_command_id, resolved_by_command_id) VALUES (?1, ?2, 1, ?3, NULL)", params![project_id.value(), obligation, command_row_id]).map_err(|_| Rejection::InvalidLifecycleTransition)?;
-    let outcome_obligation_id = id_from_last_insert::<OutcomeObligationId>(transaction)?;
+    transaction.execute("INSERT INTO outcome_obligations(project_id, obligation_text, lifecycle_state, scheduled_by_command_id, resolved_by_command_id) VALUES ($1, $2, 1, $3, NULL)", params![project_id.value(), obligation, command_row_id]).map_err(|_| Rejection::InvalidLifecycleTransition)?;
+    let outcome_obligation_id = id_from_returned_identity::<OutcomeObligationId>(transaction)?;
     record_coordination_provenance(
         transaction,
         command_row_id,
@@ -8185,13 +8150,13 @@ fn resolve_outcome_obligation(
     disposition: OutcomeObligationDisposition,
 ) -> Result<EventBody, Rejection> {
     let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
-    let row: (i64, i64) = transaction.query_row("SELECT project_id, lifecycle_state FROM outcome_obligations WHERE outcome_obligation_id = ?1", [outcome_obligation_id.value()], |row| Ok((row.get(0)?, row.get(1)?))).optional().map_err(|_| Rejection::SubjectNotFound)?.ok_or(Rejection::SubjectNotFound)?;
+    let row: (i64, i64) = transaction.query_row("SELECT project_id, lifecycle_state FROM outcome_obligations WHERE outcome_obligation_id = $1", [outcome_obligation_id.value()], |row| Ok((row.get(0)?, row.get(1)?))).optional().map_err(|_| Rejection::SubjectNotFound)?.ok_or(Rejection::SubjectNotFound)?;
     if row.1 != OutcomeObligationState::Scheduled as i64 {
         return Err(Rejection::OutcomeObligationOpen);
     }
     let project_id = ProjectId::try_from(row.0).map_err(|_| Rejection::SubjectNotFound)?;
     let state = disposition.state();
-    transaction.execute("UPDATE outcome_obligations SET lifecycle_state = ?1, resolved_by_command_id = ?2 WHERE outcome_obligation_id = ?3", params![state as i64, command_row_id, outcome_obligation_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    transaction.execute("UPDATE outcome_obligations SET lifecycle_state = $1, resolved_by_command_id = $2 WHERE outcome_obligation_id = $3", params![state as i64, command_row_id, outcome_obligation_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
     record_coordination_provenance(
         transaction,
         command_row_id,
@@ -8216,7 +8181,7 @@ fn record_content_seal_receipt(
 ) -> Result<EventBody, Rejection> {
     let duplicate: i64 = transaction
         .query_row(
-            "SELECT COUNT(*) FROM content_seal_receipts WHERE digest = ?1",
+            "SELECT COUNT(*) FROM content_seal_receipts WHERE digest = $1",
             [digest.as_bytes().as_slice()],
             |row| row.get(0),
         )
@@ -8227,11 +8192,11 @@ fn record_content_seal_receipt(
     transaction
         .execute(
             "INSERT INTO content_seal_receipts(digest, attested_by_command_id)
-             VALUES (?1, ?2)",
+             VALUES ($1, $2)",
             params![digest.as_bytes().as_slice(), command_row_id],
         )
         .map_err(|_| Rejection::ContentObjectNotSealed)?;
-    let content_seal_receipt_id = id_from_last_insert::<ContentSealReceiptId>(transaction)?;
+    let content_seal_receipt_id = id_from_returned_identity::<ContentSealReceiptId>(transaction)?;
     Ok(EventBody::ContentSealReceiptRecorded {
         content_seal_receipt_id,
         digest,
@@ -8252,7 +8217,7 @@ fn mission_source_content_object_id(
                FROM content_seal_receipts AS receipt
                JOIN content_objects AS object
                  ON object.content_seal_receipt_id = receipt.content_seal_receipt_id
-              WHERE receipt.digest = ?1",
+              WHERE receipt.digest = $1",
             [digest.as_bytes().as_slice()],
             |row| row.get::<_, i64>(0),
         )
@@ -8269,7 +8234,7 @@ fn register_content_object(
 ) -> Result<EventBody, Rejection> {
     let present: bool = transaction
         .query_row(
-            "SELECT EXISTS(SELECT 1 FROM content_seal_receipts WHERE content_seal_receipt_id = ?1)",
+            "SELECT EXISTS(SELECT 1 FROM content_seal_receipts WHERE content_seal_receipt_id = $1)",
             [content_seal_receipt_id.value()],
             |row| row.get(0),
         )
@@ -8279,7 +8244,7 @@ fn register_content_object(
     }
     let registered: bool = transaction
         .query_row(
-            "SELECT EXISTS(SELECT 1 FROM content_objects WHERE content_seal_receipt_id = ?1)",
+            "SELECT EXISTS(SELECT 1 FROM content_objects WHERE content_seal_receipt_id = $1)",
             [content_seal_receipt_id.value()],
             |row| row.get(0),
         )
@@ -8290,11 +8255,11 @@ fn register_content_object(
     transaction
         .execute(
             "INSERT INTO content_objects(content_seal_receipt_id, registered_by_command_id)
-             VALUES (?1, ?2)",
+             VALUES ($1, $2)",
             params![content_seal_receipt_id.value(), command_row_id],
         )
         .map_err(|_| Rejection::ContentObjectNotSealed)?;
-    let content_object_id = id_from_last_insert::<ContentObjectId>(transaction)?;
+    let content_object_id = id_from_returned_identity::<ContentObjectId>(transaction)?;
     Ok(EventBody::ContentObjectRegistered {
         content_object_id,
         content_seal_receipt_id,
@@ -8314,7 +8279,7 @@ fn register_forensic_manifest(
 ) -> Result<EventBody, Rejection> {
     let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
     let experiment: Option<(i64, i64)> = transaction.query_row(
-        "SELECT project_id, operating_cycle_id FROM deterministic_experiments WHERE deterministic_experiment_id = ?1 AND lifecycle_state = 1",
+        "SELECT project_id, operating_cycle_id FROM deterministic_experiments WHERE deterministic_experiment_id = $1 AND lifecycle_state = 1",
         [producing_deterministic_experiment_id.value()], |row| Ok((row.get(0)?, row.get(1)?)),
     ).optional().map_err(|_| Rejection::ForensicManifestBindingMismatch)?;
     let (project, experiment_cycle) =
@@ -8326,7 +8291,7 @@ fn register_forensic_manifest(
         .query_row(
             "SELECT EXISTS(
                  SELECT 1 FROM native_child_spawn_admissions
-                  WHERE deterministic_experiment_id = ?1
+                  WHERE deterministic_experiment_id = $1
              )",
             [producing_deterministic_experiment_id.value()],
             |row| row.get::<_, i64>(0),
@@ -8343,7 +8308,7 @@ fn register_forensic_manifest(
     let project_id = ProjectId::try_from(project).map_err(|_| Rejection::SubjectNotFound)?;
     let object_exists: bool = transaction
         .query_row(
-            "SELECT EXISTS(SELECT 1 FROM content_objects WHERE content_object_id = ?1)",
+            "SELECT EXISTS(SELECT 1 FROM content_objects WHERE content_object_id = $1)",
             [evaluator_output_content_object_id.value()],
             |row| row.get(0),
         )
@@ -8354,15 +8319,15 @@ fn register_forensic_manifest(
     transaction
         .execute(
             "INSERT INTO forensic_manifests(producing_deterministic_experiment_id, capture_policy, retention_access_class, registered_by_command_id)
-             VALUES (?1, ?2, ?3, ?4)",
+             VALUES ($1, $2, $3, $4)",
             params![producing_deterministic_experiment_id.value(), capture_policy as i64, retention_access_class as i64, command_row_id],
         )
         .map_err(|_| Rejection::ForensicManifestBindingMismatch)?;
-    let forensic_manifest_id = id_from_last_insert::<ForensicManifestId>(transaction)?;
+    let forensic_manifest_id = id_from_returned_identity::<ForensicManifestId>(transaction)?;
     transaction
         .execute(
             "INSERT INTO forensic_manifest_objects(forensic_manifest_id, member_ordinal, object_role, media_schema_contract, content_object_id)
-             VALUES (?1, 1, 1, ?2, ?3)",
+             VALUES ($1, 1, 1, $2, $3)",
             params![
                 forensic_manifest_id.value(),
                 ContentMediaSchemaContract::DeterministicEvaluatorOutputV1 as i64,
@@ -8415,23 +8380,23 @@ fn register_deterministic_evaluator_forensic_manifest(
                  ON child.native_child_spawn_admission_id = admission.native_child_spawn_admission_id
                JOIN native_child_stream_seals stdout
                  ON stdout.native_child_id = child.native_child_id
-                AND stdout.stream_kind = ?1
-                AND stdout.completeness = ?2
+                AND stdout.stream_kind = $1
+                AND stdout.completeness = $2
                JOIN native_child_stream_seals stderr
                  ON stderr.native_child_id = child.native_child_id
-                AND stderr.stream_kind = ?3
-                AND stderr.completeness = ?2
-              WHERE admission.native_child_spawn_admission_id = ?4
-                AND admission.operating_cycle_id = ?5
+                AND stderr.stream_kind = $3
+                AND stderr.completeness = $2
+              WHERE admission.native_child_spawn_admission_id = $4
+                AND admission.operating_cycle_id = $5
                 AND admission.actor_attempt_id IS NULL
                 AND admission.root_authority_office_session_id IS NULL
                 AND admission.deterministic_experiment_id IS NOT NULL
                 AND admission.evaluator_revision_id IS NOT NULL
                 AND admission.input_manifest_id IS NOT NULL
                 AND admission.budget_reservation_id IS NULL
-                AND admission.lifecycle_state = ?6
-                AND experiment.lifecycle_state = ?7
-                AND child.lifecycle_state = ?8
+                AND admission.lifecycle_state = $6
+                AND experiment.lifecycle_state = $7
+                AND child.lifecycle_state = $8
                 AND NOT EXISTS(
                     SELECT 1 FROM pi_child_spawn_sidecars sidecar
                      WHERE sidecar.native_child_spawn_admission_id = admission.native_child_spawn_admission_id
@@ -8468,7 +8433,7 @@ fn register_deterministic_evaluator_forensic_manifest(
             "INSERT INTO forensic_manifests(
              producing_deterministic_experiment_id, capture_policy,
              retention_access_class, registered_by_command_id
-         ) VALUES (?1, ?2, ?3, ?4)",
+         ) VALUES ($1, $2, $3, $4)",
             params![
                 experiment,
                 ForensicManifestCapturePolicy::DeterministicExperimentEvaluatorV1 as i64,
@@ -8477,13 +8442,13 @@ fn register_deterministic_evaluator_forensic_manifest(
             ],
         )
         .map_err(|_| Rejection::ForensicManifestBindingMismatch)?;
-    let forensic_manifest_id = id_from_last_insert::<ForensicManifestId>(transaction)?;
+    let forensic_manifest_id = id_from_returned_identity::<ForensicManifestId>(transaction)?;
     transaction
         .execute(
             "INSERT INTO forensic_manifest_objects(
              forensic_manifest_id, member_ordinal, object_role,
              media_schema_contract, content_object_id
-         ) VALUES (?1, 1, 1, ?2, ?3)",
+         ) VALUES ($1, 1, 1, $2, $3)",
             params![
                 forensic_manifest_id.value(),
                 ContentMediaSchemaContract::DeterministicEvaluatorOutputV1 as i64,
@@ -8499,7 +8464,7 @@ fn register_deterministic_evaluator_forensic_manifest(
              evaluator_revision_id, input_manifest_id,
              native_child_stream_seal_id, evaluator_output_content_object_id,
              registered_by_command_id
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
             params![
                 forensic_manifest_id.value(),
                 experiment,
@@ -8540,7 +8505,7 @@ fn content_object_exists(
 ) -> Result<bool, Rejection> {
     transaction
         .query_row(
-            "SELECT EXISTS(SELECT 1 FROM content_objects WHERE content_object_id = ?1)",
+            "SELECT EXISTS(SELECT 1 FROM content_objects WHERE content_object_id = $1)",
             [content_object_id.value()],
             |row| row.get(0),
         )
@@ -8557,7 +8522,7 @@ fn evaluator_revision_for_application_content(
         .query_row(
             "SELECT evaluator_revision_id, execution_contract, output_contract
              FROM evaluator_revisions
-             WHERE application_revision_id = ?1 AND content_object_id = ?2",
+             WHERE application_revision_id = $1 AND content_object_id = $2",
             params![application_revision_id.value(), content_object_id.value()],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
@@ -8577,7 +8542,7 @@ fn evaluator_revision_for_application_content(
             "INSERT INTO evaluator_revisions(
                  application_revision_id, content_object_id, media_schema_contract,
                  execution_contract, output_contract, registered_by_command_id
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+             ) VALUES ($1, $2, $3, $4, $5, $6)",
             params![
                 application_revision_id.value(),
                 content_object_id.value(),
@@ -8588,7 +8553,7 @@ fn evaluator_revision_for_application_content(
             ],
         )
         .map_err(|_| Rejection::ContentObjectNotSealed)?;
-    id_from_last_insert::<EvaluatorRevisionId>(transaction)
+    id_from_returned_identity::<EvaluatorRevisionId>(transaction)
 }
 
 fn input_manifest_for_content(
@@ -8598,7 +8563,7 @@ fn input_manifest_for_content(
 ) -> Result<InputManifestId, Rejection> {
     let existing: Option<i64> = transaction
         .query_row(
-            "SELECT input_manifest_id FROM input_manifests WHERE content_object_id = ?1",
+            "SELECT input_manifest_id FROM input_manifests WHERE content_object_id = $1",
             [content_object_id.value()],
             |row| row.get(0),
         )
@@ -8609,7 +8574,7 @@ fn input_manifest_for_content(
     }
     transaction
         .execute(
-            "INSERT INTO input_manifests(content_object_id, media_schema_contract, registered_by_command_id) VALUES (?1, ?2, ?3)",
+            "INSERT INTO input_manifests(content_object_id, media_schema_contract, registered_by_command_id) VALUES ($1, $2, $3)",
             params![
                 content_object_id.value(),
                 ContentMediaSchemaContract::DeterministicInputManifestV1 as i64,
@@ -8617,7 +8582,7 @@ fn input_manifest_for_content(
             ],
         )
         .map_err(|_| Rejection::ContentObjectNotSealed)?;
-    id_from_last_insert::<InputManifestId>(transaction)
+    id_from_returned_identity::<InputManifestId>(transaction)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -8648,7 +8613,7 @@ fn register_deterministic_experiment(
         .query_row(
             "SELECT application_revision_id
              FROM project_north_star_alignments
-             WHERE project_id = ?1",
+             WHERE project_id = $1",
             [project_id.value()],
             |row| row.get(0),
         )
@@ -8670,12 +8635,12 @@ fn register_deterministic_experiment(
     transaction
         .execute(
             "INSERT INTO deterministic_experiments(operating_cycle_id, project_id, ticket_id, target_graph_revision_id, evaluator_revision_id, input_manifest_id, lifecycle_state, registered_by_command_id, last_transition_command_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)",
             params![operating_cycle_id.value(), project_id.value(), ticket_id.value(), target_graph_revision_id.value(), evaluator_revision_id.value(), input_manifest_id.value(), DeterministicExperimentState::Registered as i64, command_row_id],
         )
         .map_err(|_| Rejection::DeterministicExperimentBindingMismatch)?;
     let deterministic_experiment_id =
-        id_from_last_insert::<DeterministicExperimentId>(transaction)?;
+        id_from_returned_identity::<DeterministicExperimentId>(transaction)?;
     record_coordination_provenance(
         transaction,
         command_row_id,
@@ -8705,7 +8670,7 @@ fn record_deterministic_evaluation_receipt(
     let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
     let row: Option<(i64, i64, i64, i64)> = transaction.query_row(
         "SELECT project_id, ticket_id, evaluator_revision_id, input_manifest_id
-         FROM deterministic_experiments WHERE deterministic_experiment_id = ?1 AND operating_cycle_id = ?2 AND lifecycle_state = 1",
+         FROM deterministic_experiments WHERE deterministic_experiment_id = $1 AND operating_cycle_id = $2 AND lifecycle_state = 1",
         params![deterministic_experiment_id.value(), operating_cycle_id.value()],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
     ).optional().map_err(|_| Rejection::DeterministicEvaluationBindingMismatch)?;
@@ -8715,14 +8680,14 @@ fn record_deterministic_evaluation_receipt(
         return Err(Rejection::DeterministicEvaluationBindingMismatch);
     }
     let manifest_experiment: Option<i64> = transaction.query_row(
-        "SELECT producing_deterministic_experiment_id FROM forensic_manifests WHERE forensic_manifest_id = ?1",
+        "SELECT producing_deterministic_experiment_id FROM forensic_manifests WHERE forensic_manifest_id = $1",
         [forensic_manifest_id.value()], |row| row.get(0),
     ).optional().map_err(|_| Rejection::DeterministicEvaluationBindingMismatch)?;
     if manifest_experiment != Some(deterministic_experiment_id.value()) {
         return Err(Rejection::DeterministicEvaluationBindingMismatch);
     }
     let output_in_manifest: bool = transaction.query_row(
-        "SELECT EXISTS(SELECT 1 FROM forensic_manifest_objects WHERE forensic_manifest_id = ?1 AND content_object_id = ?2 AND object_role = 1 AND media_schema_contract = 3)",
+        "SELECT EXISTS(SELECT 1 FROM forensic_manifest_objects WHERE forensic_manifest_id = $1 AND content_object_id = $2 AND object_role = 1 AND media_schema_contract = 3)",
         params![forensic_manifest_id.value(), evaluator_output_content_object_id.value()],
         |row| row.get(0),
     ).map_err(|_| Rejection::DeterministicEvaluationBindingMismatch)?;
@@ -8737,7 +8702,7 @@ fn record_deterministic_evaluation_receipt(
         .query_row(
             "SELECT EXISTS(
                  SELECT 1 FROM native_child_spawn_admissions
-                  WHERE deterministic_experiment_id = ?1
+                  WHERE deterministic_experiment_id = $1
              )",
             [deterministic_experiment_id.value()],
             |row| row.get::<_, i64>(0),
@@ -8758,22 +8723,22 @@ fn record_deterministic_evaluation_receipt(
                        JOIN native_children child
                          ON child.native_child_id = binding.native_child_id
                         AND child.native_child_spawn_admission_id = binding.native_child_spawn_admission_id
-                        AND child.lifecycle_state = ?6
+                        AND child.lifecycle_state = $6
                        JOIN native_child_stream_seals stdout
                          ON stdout.native_child_stream_seal_id = binding.native_child_stream_seal_id
                         AND stdout.native_child_id = binding.native_child_id
-                        AND stdout.stream_kind = ?7
-                        AND stdout.completeness = ?8
+                        AND stdout.stream_kind = $7
+                        AND stdout.completeness = $8
                         AND stdout.retained_content_object_id = binding.evaluator_output_content_object_id
                        JOIN native_child_stream_seals stderr
                          ON stderr.native_child_id = binding.native_child_id
-                        AND stderr.stream_kind = ?9
-                        AND stderr.completeness = ?8
-                      WHERE binding.forensic_manifest_id = ?1
-                        AND binding.deterministic_experiment_id = ?2
-                        AND binding.evaluator_revision_id = ?3
-                        AND binding.input_manifest_id = ?4
-                        AND binding.evaluator_output_content_object_id = ?5
+                        AND stderr.stream_kind = $9
+                        AND stderr.completeness = $8
+                      WHERE binding.forensic_manifest_id = $1
+                        AND binding.deterministic_experiment_id = $2
+                        AND binding.evaluator_revision_id = $3
+                        AND binding.input_manifest_id = $4
+                        AND binding.evaluator_output_content_object_id = $5
                  )",
                 params![
                     forensic_manifest_id.value(),
@@ -8796,11 +8761,11 @@ fn record_deterministic_evaluation_receipt(
     }
     transaction.execute(
         "INSERT INTO deterministic_evaluation_receipts(deterministic_experiment_id, evaluator_revision_id, input_manifest_id, forensic_manifest_id, evaluator_output_content_object_id, attested_by_command_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+         VALUES ($1, $2, $3, $4, $5, $6)",
         params![deterministic_experiment_id.value(), evaluator_revision_id.value(), input_manifest_id.value(), forensic_manifest_id.value(), evaluator_output_content_object_id.value(), command_row_id],
     ).map_err(|_| Rejection::DeterministicEvaluationBindingMismatch)?;
     let deterministic_evaluation_receipt_id =
-        id_from_last_insert::<DeterministicEvaluationReceiptId>(transaction)?;
+        id_from_returned_identity::<DeterministicEvaluationReceiptId>(transaction)?;
     record_coordination_provenance(
         transaction,
         command_row_id,
@@ -8839,8 +8804,8 @@ fn admit_deterministic_evidence(
              ON experiment.deterministic_experiment_id = receipt.deterministic_experiment_id
            JOIN evaluator_revisions evaluator
              ON evaluator.evaluator_revision_id = receipt.evaluator_revision_id
-            AND evaluator.execution_contract = ?3
-            AND evaluator.output_contract = ?4
+            AND evaluator.execution_contract = $3
+            AND evaluator.output_contract = $4
            JOIN project_north_star_alignments alignment
              ON alignment.project_id = experiment.project_id
             AND alignment.application_revision_id = evaluator.application_revision_id
@@ -8855,28 +8820,28 @@ fn admit_deterministic_evidence(
             AND admission.deterministic_experiment_id = binding.deterministic_experiment_id
             AND admission.evaluator_revision_id = binding.evaluator_revision_id
             AND admission.input_manifest_id = binding.input_manifest_id
-            AND admission.lifecycle_state = ?5
+            AND admission.lifecycle_state = $5
            JOIN native_children child
              ON child.native_child_id = binding.native_child_id
             AND child.native_child_spawn_admission_id = admission.native_child_spawn_admission_id
-            AND child.lifecycle_state = ?6
+            AND child.lifecycle_state = $6
            JOIN native_child_stream_seals stdout
              ON stdout.native_child_stream_seal_id = binding.native_child_stream_seal_id
             AND stdout.native_child_id = child.native_child_id
-            AND stdout.stream_kind = ?7
-            AND stdout.completeness = ?8
+            AND stdout.stream_kind = $7
+            AND stdout.completeness = $8
             AND stdout.retained_content_object_id = receipt.evaluator_output_content_object_id
            JOIN native_child_stream_seals stderr
              ON stderr.native_child_id = child.native_child_id
-            AND stderr.stream_kind = ?9
-            AND stderr.completeness = ?8
+            AND stderr.stream_kind = $9
+            AND stderr.completeness = $8
            JOIN native_child_reap_receipts reap
              ON reap.native_child_id = child.native_child_id
             AND reap.wait_status_kind = 1
             AND reap.status_value = 0
-          WHERE receipt.deterministic_evaluation_receipt_id = ?1
-            AND experiment.operating_cycle_id = ?2
-            AND experiment.lifecycle_state = ?10
+          WHERE receipt.deterministic_evaluation_receipt_id = $1
+            AND experiment.operating_cycle_id = $2
+            AND experiment.lifecycle_state = $10
             AND NOT EXISTS (
                 SELECT 1
                   FROM pi_child_spawn_sidecars sidecar
@@ -8930,11 +8895,11 @@ fn admit_deterministic_evidence(
     let limitation_kind = EvidenceLimitationKind::ApplicationSemanticsUninterpreted;
     transaction.execute(
         "INSERT INTO evidence_admissions(deterministic_evaluation_receipt_id, deterministic_experiment_id, evaluator_revision_id, input_manifest_id, evaluator_output_content_object_id, related_graph_revision_id, semantic_role, applicability, limitation_kind, admitted_by_command_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
         params![deterministic_evaluation_receipt_id.value(), deterministic_experiment_id.value(), evaluator_revision_id.value(), input_manifest_id.value(), evaluator_output_content_object_id.value(), related_graph_revision_id.value(), semantic_role as i64, applicability as i64, limitation_kind as i64, command_row_id],
     ).map_err(|_| Rejection::DeterministicEvaluationBindingMismatch)?;
-    let evidence_admission_id = id_from_last_insert::<EvidenceAdmissionId>(transaction)?;
-    transaction.execute("UPDATE deterministic_experiments SET lifecycle_state = 2, last_transition_command_id = ?1 WHERE deterministic_experiment_id = ?2", params![command_row_id, deterministic_experiment_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    let evidence_admission_id = id_from_returned_identity::<EvidenceAdmissionId>(transaction)?;
+    transaction.execute("UPDATE deterministic_experiments SET lifecycle_state = 2, last_transition_command_id = $1 WHERE deterministic_experiment_id = $2", params![command_row_id, deterministic_experiment_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
     record_coordination_provenance(
         transaction,
         command_row_id,
@@ -8959,7 +8924,7 @@ fn finalize_deterministic_experiment(
     deterministic_experiment_id: DeterministicExperimentId,
 ) -> Result<EventBody, Rejection> {
     let cycle = cycle_for_generation(transaction, operating_cycle_id, expected_generation)?;
-    let row: Option<(i64, i64)> = transaction.query_row("SELECT project_id, lifecycle_state FROM deterministic_experiments WHERE deterministic_experiment_id = ?1 AND operating_cycle_id = ?2", params![deterministic_experiment_id.value(), operating_cycle_id.value()], |row| Ok((row.get(0)?, row.get(1)?))).optional().map_err(|_| Rejection::SubjectNotFound)?;
+    let row: Option<(i64, i64)> = transaction.query_row("SELECT project_id, lifecycle_state FROM deterministic_experiments WHERE deterministic_experiment_id = $1 AND operating_cycle_id = $2", params![deterministic_experiment_id.value(), operating_cycle_id.value()], |row| Ok((row.get(0)?, row.get(1)?))).optional().map_err(|_| Rejection::SubjectNotFound)?;
     let (project, state) = row.ok_or(Rejection::SubjectNotFound)?;
     let terminal_state = if state == DeterministicExperimentState::EvidenceAdmitted as i64 {
         DeterministicExperimentState::Closed
@@ -8969,8 +8934,8 @@ fn finalize_deterministic_experiment(
                  SELECT 1 FROM native_children child
                  JOIN native_child_spawn_admissions admission
                    ON admission.native_child_spawn_admission_id = child.native_child_spawn_admission_id
-                 WHERE admission.deterministic_experiment_id = ?1
-                   AND child.lifecycle_state = ?2
+                 WHERE admission.deterministic_experiment_id = $1
+                   AND child.lifecycle_state = $2
              )",
             params![deterministic_experiment_id.value(), ChildProcessState::Finalized as i64],
             |row| row.get::<_, i64>(0),
@@ -8980,8 +8945,8 @@ fn finalize_deterministic_experiment(
                  SELECT 1 FROM native_child_spawn_admissions admission
                  JOIN native_child_spawn_invalidations invalidation
                    ON invalidation.native_child_spawn_admission_id = admission.native_child_spawn_admission_id
-                 WHERE admission.deterministic_experiment_id = ?1
-                   AND admission.lifecycle_state = ?2
+                 WHERE admission.deterministic_experiment_id = $1
+                   AND admission.lifecycle_state = $2
              )",
             params![
                 deterministic_experiment_id.value(),
@@ -8995,12 +8960,12 @@ fn finalize_deterministic_experiment(
         let cancelled: bool = transaction
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM cancellation_propagation_targets
-              WHERE deterministic_experiment_id = ?1 AND target_disposition IN (4, 5))
+              WHERE deterministic_experiment_id = $1 AND target_disposition IN (4, 5))
                  OR EXISTS(
                      SELECT 1 FROM native_child_spawn_admissions admission
                      JOIN native_child_spawn_invalidations invalidation
                        ON invalidation.native_child_spawn_admission_id = admission.native_child_spawn_admission_id
-                     WHERE admission.deterministic_experiment_id = ?1
+                     WHERE admission.deterministic_experiment_id = $1
                        AND invalidation.reason = 1
                  )",
                 [deterministic_experiment_id.value()],
@@ -9036,7 +9001,7 @@ fn finalize_deterministic_experiment(
     if !terminal_cycle_allowed {
         return Err(Rejection::InvalidLifecycleTransition);
     }
-    transaction.execute("UPDATE deterministic_experiments SET lifecycle_state = ?1, last_transition_command_id = ?2 WHERE deterministic_experiment_id = ?3", params![terminal_state as i64, command_row_id, deterministic_experiment_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    transaction.execute("UPDATE deterministic_experiments SET lifecycle_state = $1, last_transition_command_id = $2 WHERE deterministic_experiment_id = $3", params![terminal_state as i64, command_row_id, deterministic_experiment_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
     record_coordination_provenance(
         transaction,
         command_row_id,
@@ -9074,7 +9039,7 @@ fn admit_deterministic_evaluator_native_child(
     }
     let binding: Option<(i64, i64, i64)> = transaction.query_row(
         "SELECT evaluator_revision_id, input_manifest_id, lifecycle_state FROM deterministic_experiments
-         WHERE deterministic_experiment_id = ?1 AND operating_cycle_id = ?2",
+         WHERE deterministic_experiment_id = $1 AND operating_cycle_id = $2",
         params![deterministic_experiment_id.value(), operating_cycle_id.value()],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     ).optional().map_err(|_| Rejection::DeterministicExperimentBindingMismatch)?;
@@ -9088,7 +9053,7 @@ fn admit_deterministic_evaluator_native_child(
         return Err(Rejection::DeterministicExperimentBindingMismatch);
     }
     let profile: Option<(i64, i64)> = transaction.query_row(
-        "SELECT profile_kind, readiness FROM execution_profiles WHERE execution_profile_id = ?1",
+        "SELECT profile_kind, readiness FROM execution_profiles WHERE execution_profile_id = $1",
         [execution_profile_id.value()], |row| Ok((row.get(0)?, row.get(1)?)),
     ).optional().map_err(|_| Rejection::ExecutionProfileIneligible)?;
     let profile_allowed = match profile {
@@ -9105,26 +9070,26 @@ fn admit_deterministic_evaluator_native_child(
         return Err(Rejection::ExecutionProfileIneligible);
     }
     let epoch_matches: bool = transaction.query_row(
-        "SELECT EXISTS(SELECT 1 FROM supervisor_epochs WHERE supervisor_epoch_id = ?1 AND supervisor_epoch_identity = ?2)",
+        "SELECT EXISTS(SELECT 1 FROM supervisor_epochs WHERE supervisor_epoch_id = $1 AND supervisor_epoch_identity = $2)",
         params![supervisor_epoch_id.value(), supervisor_epoch_identity.as_str()], |row| row.get::<_, i64>(0),
     ).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)? != 0;
     if !epoch_matches {
         return Err(Rejection::ChildSpawnAdmissionInvalid);
     }
     transaction.execute(
-        "INSERT OR IGNORE INTO workspaces(native_workspace_id, canonical_workspace_path, registered_by_command_id) VALUES (?1, ?2, ?3)",
+        "INSERT INTO workspaces(native_workspace_id, canonical_workspace_path, registered_by_command_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
         params![native_workspace_id.as_str(), canonical_workspace_path.as_str(), command_row_id],
     ).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
     let workspace_id: i64 = transaction.query_row(
-        "SELECT workspace_id FROM workspaces WHERE native_workspace_id = ?1 AND canonical_workspace_path = ?2",
+        "SELECT workspace_id FROM workspaces WHERE native_workspace_id = $1 AND canonical_workspace_path = $2",
         params![native_workspace_id.as_str(), canonical_workspace_path.as_str()], |row| row.get(0),
     ).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
     transaction.execute(
         "INSERT INTO native_child_spawn_admissions(operating_cycle_id, actor_attempt_id, root_authority_office_session_id, deterministic_experiment_id, evaluator_revision_id, input_manifest_id, budget_reservation_id, execution_profile_id, workspace_id, supervisor_epoch_id, admission_generation, lifecycle_state, admitted_by_command_id, spawned_by_command_id)
-         VALUES (?1, NULL, NULL, ?2, ?3, ?4, NULL, ?5, ?6, ?7, ?8, 1, ?9, NULL)",
+         VALUES ($1, NULL, NULL, $2, $3, $4, NULL, $5, $6, $7, $8, 1, $9, NULL)",
         params![operating_cycle_id.value(), deterministic_experiment_id.value(), evaluator_revision_id.value(), input_manifest_id.value(), execution_profile_id.value(), workspace_id, supervisor_epoch_id.value(), cycle.generation.value(), command_row_id],
     ).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
-    let admission_id = id_from_last_insert::<NativeChildSpawnAdmissionId>(transaction)?;
+    let admission_id = id_from_returned_identity::<NativeChildSpawnAdmissionId>(transaction)?;
     Ok(EventBody::DeterministicEvaluatorNativeChildAdmitted {
         native_child_spawn_admission_id: admission_id,
         owner: NativeChildOwner::DeterministicEvaluator {
@@ -9159,7 +9124,7 @@ fn record_deterministic_evaluator_native_child_spawn(
            FROM native_child_spawn_admissions admission
       LEFT JOIN pi_child_spawn_sidecars sidecar
              ON sidecar.native_child_spawn_admission_id = admission.native_child_spawn_admission_id
-          WHERE admission.native_child_spawn_admission_id = ?1",
+          WHERE admission.native_child_spawn_admission_id = $1",
             [admission_id.value()],
             |row| {
                 Ok((
@@ -9189,8 +9154,8 @@ fn record_deterministic_evaluator_native_child_spawn(
     let binding_matches: bool = transaction
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM deterministic_experiments
-          WHERE deterministic_experiment_id = ?1 AND operating_cycle_id = ?2
-            AND evaluator_revision_id = ?3 AND input_manifest_id = ?4 AND lifecycle_state = 1)",
+          WHERE deterministic_experiment_id = $1 AND operating_cycle_id = $2
+            AND evaluator_revision_id = $3 AND input_manifest_id = $4 AND lifecycle_state = 1)",
             params![experiment, cycle, evaluator, input],
             |row| row.get::<_, i64>(0),
         )
@@ -9201,12 +9166,12 @@ fn record_deterministic_evaluator_native_child_spawn(
     }
     transaction.execute(
         "INSERT INTO native_children(native_child_spawn_admission_id, child_identity, direct_child_pid, process_group_id, lifecycle_state, terminal_disposition, spawned_by_command_id, last_transition_command_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?6)",
+         VALUES ($1, $2, $3, $4, $5, NULL, $6, $6)",
         params![admission_id.value(), child_identity.as_str(), direct_child_pid.value(), process_group_id.value(), ChildProcessState::Spawned as i64, command_row_id],
     ).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
-    let native_child_id = id_from_last_insert::<NativeChildId>(transaction)?;
+    let native_child_id = id_from_returned_identity::<NativeChildId>(transaction)?;
     transaction.execute(
-        "UPDATE native_child_spawn_admissions SET lifecycle_state = 2, spawned_by_command_id = ?1 WHERE native_child_spawn_admission_id = ?2",
+        "UPDATE native_child_spawn_admissions SET lifecycle_state = 2, spawned_by_command_id = $1 WHERE native_child_spawn_admission_id = $2",
         params![command_row_id, admission_id.value()],
     ).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
     // A cancellation snapshot may precede the physical spawn. Attach this
@@ -9214,16 +9179,17 @@ fn record_deterministic_evaluator_native_child_spawn(
     // pretending it belonged to an Actor or Office.
     transaction.execute(
         "UPDATE cancellation_propagation_targets
-            SET native_child_id = ?1, target_disposition = ?2
+            SET native_child_id = $1, target_disposition = $2
           WHERE native_child_id IS NULL
-            AND deterministic_experiment_id = (SELECT deterministic_experiment_id FROM native_child_spawn_admissions WHERE native_child_spawn_admission_id = ?3)
+            AND deterministic_experiment_id = (SELECT deterministic_experiment_id FROM native_child_spawn_admissions WHERE native_child_spawn_admission_id = $3)
             AND cancellation_propagation_id IN (SELECT cancellation_propagation_id FROM cancellation_propagations WHERE lifecycle_state = 1)",
         params![native_child_id.value(), CancellationPropagationTargetDisposition::AwaitingChildReceipt as i64, admission_id.value()],
     ).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
     transaction.execute(
-        "INSERT OR IGNORE INTO cancellation_propagation_children(cancellation_propagation_id, native_child_id)
+        "INSERT INTO cancellation_propagation_children(cancellation_propagation_id, native_child_id)
          SELECT cancellation_propagation_id, native_child_id FROM cancellation_propagation_targets
-          WHERE native_child_id = ?1 AND target_disposition = ?2",
+          WHERE native_child_id = $1 AND target_disposition = $2
+          ON CONFLICT DO NOTHING",
         params![native_child_id.value(), CancellationPropagationTargetDisposition::AwaitingChildReceipt as i64],
     ).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
     Ok(EventBody::DeterministicEvaluatorNativeChildSpawnRecorded {
@@ -9244,7 +9210,7 @@ fn open_supervisor_epoch(
     let epoch_already_open: bool = transaction
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM supervisor_epochs)",
-            [],
+            params![],
             |row| row.get::<_, i64>(0),
         )
         .map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?
@@ -9254,7 +9220,7 @@ fn open_supervisor_epoch(
     }
     transaction.execute(
         "INSERT INTO supervisor_epochs(supervisor_epoch_id, supervisor_epoch_identity, opened_by_command_id)
-         VALUES (?1, ?2, ?3)",
+         VALUES ($1, $2, $3)",
         params![
             supervisor_epoch_id.value(),
             supervisor_epoch_identity.as_str(),
@@ -9289,7 +9255,7 @@ fn admit_pi_child_spawn(
         return Err(Rejection::InvalidLifecycleTransition);
     }
     let reservation: Option<(i64, i64)> = transaction.query_row(
-        "SELECT operating_cycle_id, reservation_state FROM budget_reservations WHERE budget_reservation_id = ?1",
+        "SELECT operating_cycle_id, reservation_state FROM budget_reservations WHERE budget_reservation_id = $1",
         [budget_reservation_id.value()], |r| Ok((r.get(0)?, r.get(1)?)),
     ).optional().map_err(|_| Rejection::SubjectNotFound)?;
     let Some((reservation_cycle, reservation_state)) = reservation else {
@@ -9305,7 +9271,7 @@ fn admit_pi_child_spawn(
             let row: Option<(i64, i64, i64)> = transaction.query_row(
                 "SELECT a.operating_cycle_id, a.execution_profile_id, r.budget_reservation_id
                    FROM attempts a JOIN attempt_budget_reservations r ON r.actor_attempt_id = a.actor_attempt_id
-                  WHERE a.actor_attempt_id = ?1 AND a.lifecycle_state = ?2",
+                  WHERE a.actor_attempt_id = $1 AND a.lifecycle_state = $2",
                 params![actor_attempt_id.value(), ActorAttemptState::Running as i64],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             ).optional().map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
@@ -9324,7 +9290,7 @@ fn admit_pi_child_spawn(
             let row: Option<i64> = transaction
                 .query_row(
                     "SELECT operating_cycle_id FROM root_authority_office_sessions
-                  WHERE root_authority_office_session_id = ?1 AND lifecycle_state IN (1, 2, 3, 4)",
+                  WHERE root_authority_office_session_id = $1 AND lifecycle_state IN (1, 2, 3, 4)",
                     [session_id.value()],
                     |r| r.get(0),
                 )
@@ -9334,7 +9300,7 @@ fn admit_pi_child_spawn(
                 return Err(Rejection::ChildSpawnAdmissionInvalid);
             }
             let existing: Option<i64> = transaction.query_row(
-                "SELECT budget_reservation_id FROM office_session_budget_reservations WHERE root_authority_office_session_id = ?1",
+                "SELECT budget_reservation_id FROM office_session_budget_reservations WHERE root_authority_office_session_id = $1",
                 [session_id.value()], |r| r.get(0),
             ).optional().map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
             match existing {
@@ -9342,7 +9308,7 @@ fn admit_pi_child_spawn(
                 Some(_) => return Err(Rejection::ChildSpawnAdmissionInvalid),
                 None => {
                     transaction.execute(
-                        "INSERT INTO office_session_budget_reservations(root_authority_office_session_id, budget_reservation_id, bound_by_command_id) VALUES (?1, ?2, ?3)",
+                        "INSERT INTO office_session_budget_reservations(root_authority_office_session_id, budget_reservation_id, bound_by_command_id) VALUES ($1, $2, $3)",
                         params![session_id.value(), budget_reservation_id.value(), command_row_id],
                     ).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
                 }
@@ -9351,7 +9317,7 @@ fn admit_pi_child_spawn(
         }
     };
     let profile: Option<(i64, i64)> = transaction.query_row(
-        "SELECT profile_kind, readiness FROM execution_profiles WHERE execution_profile_id = ?1",
+        "SELECT profile_kind, readiness FROM execution_profiles WHERE execution_profile_id = $1",
         [execution_profile_id.value()], |r| Ok((r.get(0)?, r.get(1)?)),
     ).optional().map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
     let profile_is_allowed = profile.is_some_and(|(kind, readiness)| {
@@ -9367,31 +9333,31 @@ fn admit_pi_child_spawn(
         return Err(Rejection::ExecutionProfileIneligible);
     }
     let epoch_matches: bool = transaction.query_row(
-        "SELECT EXISTS(SELECT 1 FROM supervisor_epochs WHERE supervisor_epoch_id = ?1 AND supervisor_epoch_identity = ?2)",
+        "SELECT EXISTS(SELECT 1 FROM supervisor_epochs WHERE supervisor_epoch_id = $1 AND supervisor_epoch_identity = $2)",
         params![supervisor_epoch_id.value(), supervisor_epoch_identity.as_str()],
         |row| row.get::<_, i64>(0),
     ).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)? != 0;
     if !epoch_matches {
         return Err(Rejection::ChildSpawnAdmissionInvalid);
     }
-    transaction.execute("INSERT OR IGNORE INTO workspaces(native_workspace_id, canonical_workspace_path, registered_by_command_id) VALUES (?1, ?2, ?3)", params![native_workspace_id.as_str(), canonical_workspace_path.as_str(), command_row_id]).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
+    transaction.execute("INSERT INTO workspaces(native_workspace_id, canonical_workspace_path, registered_by_command_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING", params![native_workspace_id.as_str(), canonical_workspace_path.as_str(), command_row_id]).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
     let workspace_id: i64 = transaction
         .query_row(
-            "SELECT workspace_id FROM workspaces WHERE native_workspace_id = ?1 AND canonical_workspace_path = ?2",
+            "SELECT workspace_id FROM workspaces WHERE native_workspace_id = $1 AND canonical_workspace_path = $2",
             params![native_workspace_id.as_str(), canonical_workspace_path.as_str()],
             |r| r.get(0),
         )
         .map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
-    transaction.execute("INSERT INTO pi_child_sessions(pi_session_identity, spawn_nonce, created_by_command_id, ready_by_command_id) VALUES (?1, ?2, ?3, NULL)", params![pi_session_identity.as_str(), spawn_nonce.as_str(), command_row_id]).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
-    let pi_session_id = id_from_last_insert::<PiSessionId>(transaction)?;
+    transaction.execute("INSERT INTO pi_child_sessions(pi_session_identity, spawn_nonce, created_by_command_id, ready_by_command_id) VALUES ($1, $2, $3, NULL)", params![pi_session_identity.as_str(), spawn_nonce.as_str(), command_row_id]).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
+    let pi_session_id = id_from_returned_identity::<PiSessionId>(transaction)?;
     transaction.execute(
         "INSERT INTO native_child_spawn_admissions(operating_cycle_id, actor_attempt_id, root_authority_office_session_id, deterministic_experiment_id, evaluator_revision_id, input_manifest_id, budget_reservation_id, execution_profile_id, workspace_id, supervisor_epoch_id, admission_generation, lifecycle_state, admitted_by_command_id, spawned_by_command_id)
-         VALUES (?1, ?2, ?3, NULL, NULL, NULL, ?4, ?5, ?6, ?7, ?8, 1, ?9, NULL)",
+         VALUES ($1, $2, $3, NULL, NULL, NULL, $4, $5, $6, $7, $8, 1, $9, NULL)",
         params![operating_cycle_id.value(), attempt.map(ActorAttemptId::value), office_session.map(RootAuthorityOfficeSessionId::value), budget_reservation_id.value(), execution_profile_id.value(), workspace_id, supervisor_epoch_id.value(), cycle.generation.value(), command_row_id],
     ).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
-    let admission_id = id_from_last_insert::<NativeChildSpawnAdmissionId>(transaction)?;
+    let admission_id = id_from_returned_identity::<NativeChildSpawnAdmissionId>(transaction)?;
     transaction.execute(
-        "INSERT INTO pi_child_spawn_sidecars(native_child_spawn_admission_id, pi_session_id) VALUES (?1, ?2)",
+        "INSERT INTO pi_child_spawn_sidecars(native_child_spawn_admission_id, pi_session_id) VALUES ($1, $2)",
         params![admission_id.value(), pi_session_id.value()],
     ).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
     Ok(EventBody::PiChildSpawnAdmitted {
@@ -9406,7 +9372,7 @@ fn admission_cycle_for_generation(
     admission_id: NativeChildSpawnAdmissionId,
     _expected: ExpectedGeneration,
 ) -> Result<(OperatingCycleId, NativeChildSpawnAdmissionState), Rejection> {
-    let row: Option<(i64, i64)> = transaction.query_row("SELECT operating_cycle_id, lifecycle_state FROM native_child_spawn_admissions WHERE native_child_spawn_admission_id = ?1", [admission_id.value()], |r| Ok((r.get(0)?, r.get(1)?))).optional().map_err(|_| Rejection::SubjectNotFound)?;
+    let row: Option<(i64, i64)> = transaction.query_row("SELECT operating_cycle_id, lifecycle_state FROM native_child_spawn_admissions WHERE native_child_spawn_admission_id = $1", [admission_id.value()], |r| Ok((r.get(0)?, r.get(1)?))).optional().map_err(|_| Rejection::SubjectNotFound)?;
     let Some((cycle, state)) = row else {
         return Err(Rejection::SubjectNotFound);
     };
@@ -9435,7 +9401,7 @@ fn native_child_cycle_for_generation(
          FROM native_children child
          JOIN native_child_spawn_admissions admission
            ON admission.native_child_spawn_admission_id = child.native_child_spawn_admission_id
-         WHERE child.native_child_id = ?1",
+         WHERE child.native_child_id = $1",
             [native_child_id.value()],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
@@ -9465,7 +9431,7 @@ fn child_cycle_for_generation(
            ON a.native_child_spawn_admission_id = c.native_child_spawn_admission_id
          JOIN pi_child_spawn_sidecars sidecar
            ON sidecar.native_child_spawn_admission_id = a.native_child_spawn_admission_id
-         WHERE c.native_child_id = ?1",
+         WHERE c.native_child_id = $1",
             [native_child_id.value()],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
@@ -9502,7 +9468,7 @@ fn record_inert_child_spawn(
              SELECT 1 FROM native_child_spawn_admissions admission
              JOIN pi_child_spawn_sidecars sidecar
                ON sidecar.native_child_spawn_admission_id = admission.native_child_spawn_admission_id
-             WHERE admission.native_child_spawn_admission_id = ?1
+             WHERE admission.native_child_spawn_admission_id = $1
                AND admission.deterministic_experiment_id IS NULL
                AND admission.budget_reservation_id IS NOT NULL
                AND ((admission.actor_attempt_id IS NOT NULL AND admission.root_authority_office_session_id IS NULL)
@@ -9520,8 +9486,8 @@ fn record_inert_child_spawn(
         .query_row(
             "SELECT EXISTS(
            SELECT 1 FROM native_children
-            WHERE lifecycle_state != ?1
-              AND (direct_child_pid = ?2 OR process_group_id = ?3))",
+            WHERE lifecycle_state != $1
+              AND (direct_child_pid = $2 OR process_group_id = $3))",
             params![
                 ChildProcessState::Finalized as i64,
                 direct_child_pid.value(),
@@ -9534,26 +9500,26 @@ fn record_inert_child_spawn(
     if identity_in_use {
         return Err(Rejection::ChildSpawnAdmissionInvalid);
     }
-    transaction.execute("INSERT INTO native_children(native_child_spawn_admission_id, child_identity, direct_child_pid, process_group_id, lifecycle_state, terminal_disposition, spawned_by_command_id, last_transition_command_id) VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?6)", params![admission_id.value(), child_identity.as_str(), direct_child_pid.value(), process_group_id.value(), ChildProcessState::Spawned as i64, command_row_id]).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
-    let native_child_id = id_from_last_insert::<NativeChildId>(transaction)?;
-    transaction.execute("INSERT INTO pi_child_session_protocols(native_child_id, lifecycle_state, create_correlation_identity, create_request_digest) VALUES (?1, 1, NULL, NULL)", [native_child_id.value()]).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
-    transaction.execute("UPDATE native_child_spawn_admissions SET lifecycle_state = 2, spawned_by_command_id = ?1 WHERE native_child_spawn_admission_id = ?2", params![command_row_id, admission_id.value()]).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
+    transaction.execute("INSERT INTO native_children(native_child_spawn_admission_id, child_identity, direct_child_pid, process_group_id, lifecycle_state, terminal_disposition, spawned_by_command_id, last_transition_command_id) VALUES ($1, $2, $3, $4, $5, NULL, $6, $6)", params![admission_id.value(), child_identity.as_str(), direct_child_pid.value(), process_group_id.value(), ChildProcessState::Spawned as i64, command_row_id]).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
+    let native_child_id = id_from_returned_identity::<NativeChildId>(transaction)?;
+    transaction.execute("INSERT INTO pi_child_session_protocols(native_child_id, lifecycle_state, create_correlation_identity, create_request_digest) VALUES ($1, 1, NULL, NULL)", [native_child_id.value()]).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
+    transaction.execute("UPDATE native_child_spawn_admissions SET lifecycle_state = 2, spawned_by_command_id = $1 WHERE native_child_spawn_admission_id = $2", params![command_row_id, admission_id.value()]).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
     // A cancellation snapshot may have observed this owner before the OS
     // child raced into existence. Attach that raced child to the already
     // frozen owner target rather than omitting it from propagation.
     transaction.execute(
         "UPDATE cancellation_propagation_targets
-            SET native_child_id = ?1, target_disposition = ?2
+            SET native_child_id = $1, target_disposition = $2
           WHERE native_child_id IS NULL
             AND cancellation_propagation_id IN (
                 SELECT p.cancellation_propagation_id
                   FROM cancellation_propagations p
                   JOIN native_child_spawn_admissions a
-                    ON a.native_child_spawn_admission_id = ?3
+                    ON a.native_child_spawn_admission_id = $3
                  WHERE p.operating_cycle_id = a.operating_cycle_id
                    AND p.lifecycle_state = 1)
-            AND (actor_attempt_id = (SELECT actor_attempt_id FROM native_child_spawn_admissions WHERE native_child_spawn_admission_id = ?3)
-              OR root_authority_office_session_id = (SELECT root_authority_office_session_id FROM native_child_spawn_admissions WHERE native_child_spawn_admission_id = ?3))",
+            AND (actor_attempt_id = (SELECT actor_attempt_id FROM native_child_spawn_admissions WHERE native_child_spawn_admission_id = $3)
+              OR root_authority_office_session_id = (SELECT root_authority_office_session_id FROM native_child_spawn_admissions WHERE native_child_spawn_admission_id = $3))",
         params![
             native_child_id.value(),
             CancellationPropagationTargetDisposition::AwaitingChildReceipt as i64,
@@ -9561,11 +9527,12 @@ fn record_inert_child_spawn(
         ],
     ).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
     transaction.execute(
-        "INSERT OR IGNORE INTO cancellation_propagation_children(cancellation_propagation_id, native_child_id)
-         SELECT cancellation_propagation_id, ?1
+        "INSERT INTO cancellation_propagation_children(cancellation_propagation_id, native_child_id)
+         SELECT cancellation_propagation_id, $1
            FROM cancellation_propagation_targets
-          WHERE native_child_id = ?1
-            AND target_disposition = ?2",
+          WHERE native_child_id = $1
+            AND target_disposition = $2
+         ON CONFLICT DO NOTHING",
         params![
             native_child_id.value(),
             CancellationPropagationTargetDisposition::AwaitingChildReceipt as i64,
@@ -9586,7 +9553,7 @@ fn record_native_child_not_spawned(
 ) -> Result<EventBody, Rejection> {
     let native_owner: bool = transaction.query_row(
         "SELECT EXISTS(SELECT 1 FROM native_child_spawn_admissions admission
-          WHERE admission.native_child_spawn_admission_id = ?1
+          WHERE admission.native_child_spawn_admission_id = $1
             AND ((admission.deterministic_experiment_id IS NULL
                   AND admission.evaluator_revision_id IS NULL
                   AND admission.input_manifest_id IS NULL
@@ -9615,15 +9582,15 @@ fn record_native_child_not_spawned(
     // count is the ordinary native-workspace/artifact/spawn failure path.
     let targets = transaction.execute(
         "UPDATE cancellation_propagation_targets
-            SET target_disposition = ?1
+            SET target_disposition = $1
           WHERE cancellation_propagation_id IN (
                 SELECT cancellation_propagation_id FROM cancellation_propagations
-                 WHERE operating_cycle_id = ?2 AND lifecycle_state = 1)
+                 WHERE operating_cycle_id = $2 AND lifecycle_state = 1)
             AND native_child_id IS NULL
-            AND target_disposition = ?3
-            AND (actor_attempt_id = (SELECT actor_attempt_id FROM native_child_spawn_admissions WHERE native_child_spawn_admission_id = ?4)
-              OR root_authority_office_session_id = (SELECT root_authority_office_session_id FROM native_child_spawn_admissions WHERE native_child_spawn_admission_id = ?4)
-              OR deterministic_experiment_id = (SELECT deterministic_experiment_id FROM native_child_spawn_admissions WHERE native_child_spawn_admission_id = ?4))",
+            AND target_disposition = $3
+            AND (actor_attempt_id = (SELECT actor_attempt_id FROM native_child_spawn_admissions WHERE native_child_spawn_admission_id = $4)
+              OR root_authority_office_session_id = (SELECT root_authority_office_session_id FROM native_child_spawn_admissions WHERE native_child_spawn_admission_id = $4)
+              OR deterministic_experiment_id = (SELECT deterministic_experiment_id FROM native_child_spawn_admissions WHERE native_child_spawn_admission_id = $4))",
         params![
             CancellationPropagationTargetDisposition::NotRunning as i64,
             cycle_id.value(),
@@ -9640,8 +9607,8 @@ fn record_native_child_not_spawned(
     transaction
         .execute(
             "UPDATE native_child_spawn_admissions
-            SET lifecycle_state = ?1
-          WHERE native_child_spawn_admission_id = ?2",
+            SET lifecycle_state = $1
+          WHERE native_child_spawn_admission_id = $2",
             params![
                 NativeChildSpawnAdmissionState::Invalidated as i64,
                 admission_id.value()
@@ -9650,7 +9617,7 @@ fn record_native_child_not_spawned(
         .map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
     transaction.execute(
         "INSERT INTO native_child_spawn_invalidations(native_child_spawn_admission_id, reason, invalidated_by_command_id)
-         VALUES (?1, ?2, ?3)",
+         VALUES ($1, $2, $3)",
         params![admission_id.value(), reason as i64, command_row_id],
     ).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
     Ok(EventBody::NativeChildSpawnInvalidated {
@@ -9675,7 +9642,7 @@ fn record_pi_adapter_ready(
     {
         return Err(Rejection::InvalidLifecycleTransition);
     }
-    let matches: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM pi_child_sessions WHERE pi_session_id = ?1 AND pi_session_identity = ?2 AND spawn_nonce = ?3)", params![pi_session_id.value(), identity.as_str(), nonce.as_str()], |r| r.get::<_, i64>(0)).map_err(|_| Rejection::ChildLifecycleReceiptMissing)? != 0;
+    let matches: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM pi_child_sessions WHERE pi_session_id = $1 AND pi_session_identity = $2 AND spawn_nonce = $3)", params![pi_session_id.value(), identity.as_str(), nonce.as_str()], |r| r.get::<_, i64>(0)).map_err(|_| Rejection::ChildLifecycleReceiptMissing)? != 0;
     if !matches {
         return Err(Rejection::ChildSpawnAdmissionInvalid);
     }
@@ -9700,7 +9667,7 @@ fn authorize_pi_create_session(
         "SELECT a.admission_generation, a.budget_reservation_id, a.execution_profile_id, a.actor_attempt_id, a.root_authority_office_session_id, p.profile_kind, p.readiness
            FROM native_children c JOIN native_child_spawn_admissions a ON a.native_child_spawn_admission_id = c.native_child_spawn_admission_id
            JOIN execution_profiles p ON p.execution_profile_id = a.execution_profile_id
-          WHERE c.native_child_id = ?1",
+          WHERE c.native_child_id = $1",
         [child_id.value()], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?)),
     ).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
     if state != ChildProcessState::Spawned
@@ -9710,13 +9677,13 @@ fn authorize_pi_create_session(
     {
         return Err(Rejection::StaleAdmissionGeneration);
     }
-    let reservation_active: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM budget_reservations WHERE budget_reservation_id = ?1 AND operating_cycle_id = ?2 AND reservation_state = ?3)", params![admission.1, cycle_id.value(), BudgetReservationState::Reserved as i64], |r| r.get::<_,i64>(0)).map_err(|_| Rejection::ReservationNotActive)? != 0;
+    let reservation_active: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM budget_reservations WHERE budget_reservation_id = $1 AND operating_cycle_id = $2 AND reservation_state = $3)", params![admission.1, cycle_id.value(), BudgetReservationState::Reserved as i64], |r| r.get::<_,i64>(0)).map_err(|_| Rejection::ReservationNotActive)? != 0;
     if !reservation_active || active_cancellation_count(transaction, cycle_id)? != 0 {
         return Err(Rejection::ReservationNotActive);
     }
     let owner_active = match (admission.3, admission.4) {
-        (Some(attempt), None) => transaction.query_row("SELECT EXISTS(SELECT 1 FROM attempts WHERE actor_attempt_id = ?1 AND lifecycle_state = 1)", [attempt], |r| r.get::<_,i64>(0)).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)? != 0,
-        (None, Some(session)) => transaction.query_row("SELECT EXISTS(SELECT 1 FROM root_authority_office_sessions s JOIN office_session_budget_reservations b ON b.root_authority_office_session_id = s.root_authority_office_session_id WHERE s.root_authority_office_session_id = ?1 AND b.budget_reservation_id = ?2 AND s.lifecycle_state IN (1,2,3,4))", params![session, admission.1], |r| r.get::<_,i64>(0)).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)? != 0,
+        (Some(attempt), None) => transaction.query_row("SELECT EXISTS(SELECT 1 FROM attempts WHERE actor_attempt_id = $1 AND lifecycle_state = 1)", [attempt], |r| r.get::<_,i64>(0)).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)? != 0,
+        (None, Some(session)) => transaction.query_row("SELECT EXISTS(SELECT 1 FROM root_authority_office_sessions s JOIN office_session_budget_reservations b ON b.root_authority_office_session_id = s.root_authority_office_session_id WHERE s.root_authority_office_session_id = $1 AND b.budget_reservation_id = $2 AND s.lifecycle_state IN (1,2,3,4))", params![session, admission.1], |r| r.get::<_,i64>(0)).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)? != 0,
         _ => false,
     };
     if !owner_active {
@@ -9732,7 +9699,7 @@ fn authorize_pi_create_session(
     if !profile_allowed {
         return Err(Rejection::ExecutionProfileIneligible);
     }
-    transaction.execute("UPDATE pi_child_session_protocols SET lifecycle_state = ?1, create_correlation_identity = ?2, create_request_digest = ?3 WHERE native_child_id = ?4", params![PiChildSessionState::CreateAuthorized as i64, correlation.as_str(), create_request_digest.as_bytes().as_slice(), child_id.value()]).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    transaction.execute("UPDATE pi_child_session_protocols SET lifecycle_state = $1, create_correlation_identity = $2, create_request_digest = $3 WHERE native_child_id = $4", params![PiChildSessionState::CreateAuthorized as i64, correlation.as_str(), create_request_digest.as_bytes().as_slice(), child_id.value()]).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
     Ok(EventBody::PiCreateSessionAuthorized {
         native_child_id: child_id,
     })
@@ -9747,7 +9714,7 @@ fn record_pi_create_session_delivery(
     create_request_digest: Blake3Digest,
 ) -> Result<EventBody, Rejection> {
     let (_, state, _) = child_cycle_for_generation(transaction, child_id, expected)?;
-    let matches: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM pi_child_session_protocols WHERE native_child_id = ?1 AND lifecycle_state = ?2 AND create_correlation_identity = ?3 AND create_request_digest = ?4)", params![child_id.value(), PiChildSessionState::CreateAuthorized as i64, correlation.as_str(), create_request_digest.as_bytes().as_slice()], |r| r.get::<_, i64>(0)).map_err(|_| Rejection::ChildLifecycleReceiptMissing)? != 0;
+    let matches: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM pi_child_session_protocols WHERE native_child_id = $1 AND lifecycle_state = $2 AND create_correlation_identity = $3 AND create_request_digest = $4)", params![child_id.value(), PiChildSessionState::CreateAuthorized as i64, correlation.as_str(), create_request_digest.as_bytes().as_slice()], |r| r.get::<_, i64>(0)).map_err(|_| Rejection::ChildLifecycleReceiptMissing)? != 0;
     if !matches!(
         state,
         ChildProcessState::Spawned | ChildProcessState::CancellationRequested
@@ -9776,13 +9743,13 @@ fn record_pi_session_ready(
     {
         return Err(Rejection::InvalidLifecycleTransition);
     }
-    let matches: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM pi_child_sessions WHERE pi_session_id = ?1 AND pi_session_identity = ?2 AND ready_by_command_id IS NULL)", params![pi_session_id.value(), identity.as_str()], |r| r.get::<_, i64>(0)).map_err(|_| Rejection::ChildLifecycleReceiptMissing)? != 0;
+    let matches: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM pi_child_sessions WHERE pi_session_id = $1 AND pi_session_identity = $2 AND ready_by_command_id IS NULL)", params![pi_session_id.value(), identity.as_str()], |r| r.get::<_, i64>(0)).map_err(|_| Rejection::ChildLifecycleReceiptMissing)? != 0;
     if !matches {
         return Err(Rejection::ChildSpawnAdmissionInvalid);
     }
     transaction
         .execute(
-            "UPDATE pi_child_sessions SET ready_by_command_id = ?1 WHERE pi_session_id = ?2",
+            "UPDATE pi_child_sessions SET ready_by_command_id = $1 WHERE pi_session_id = $2",
             params![command_row_id, pi_session_id.value()],
         )
         .map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
@@ -9827,9 +9794,9 @@ fn record_pi_abort_control_delivery(
         "SELECT EXISTS(
            SELECT 1 FROM cancellation_propagation_targets t
            JOIN cancellation_propagations p ON p.cancellation_propagation_id = t.cancellation_propagation_id
-          WHERE t.cancellation_propagation_id = ?1
-            AND t.native_child_id = ?2
-            AND t.target_disposition = ?3
+          WHERE t.cancellation_propagation_id = $1
+            AND t.native_child_id = $2
+            AND t.target_disposition = $3
             AND p.lifecycle_state = 1)",
         params![propagation_id.value(), child_id.value(), CancellationPropagationTargetDisposition::AwaitingChildReceipt as i64],
         |row| row.get::<_, i64>(0),
@@ -9839,11 +9806,13 @@ fn record_pi_abort_control_delivery(
     }
     transaction.execute(
         "INSERT INTO pi_abort_control_receipts(native_child_id, cancellation_propagation_id, correlation_identity, abort_command_digest, physical_write_outcome, recorded_by_command_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+         VALUES ($1, $2, $3, $4, $5, $6)",
         params![child_id.value(), propagation_id.value(), correlation.as_str(), abort_digest.as_bytes().as_slice(), outcome as i64, command_row_id],
     ).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
     Ok(EventBody::PiAbortControlDeliveryRecorded {
-        pi_abort_control_receipt_id: id_from_last_insert::<PiAbortControlReceiptId>(transaction)?,
+        pi_abort_control_receipt_id: id_from_returned_identity::<PiAbortControlReceiptId>(
+            transaction,
+        )?,
         native_child_id: child_id,
         cancellation_propagation_id: propagation_id,
         correlation_identity: correlation.clone(),
@@ -9879,7 +9848,7 @@ fn record_child_stream_seal(
              SELECT 1 FROM native_children child
              JOIN native_child_spawn_admissions admission
                ON admission.native_child_spawn_admission_id = child.native_child_spawn_admission_id
-             WHERE child.native_child_id = ?1
+             WHERE child.native_child_id = $1
                AND admission.deterministic_experiment_id IS NOT NULL
                AND admission.evaluator_revision_id IS NOT NULL
                AND admission.input_manifest_id IS NOT NULL
@@ -9896,7 +9865,7 @@ fn record_child_stream_seal(
     {
         return Err(Rejection::InvalidLifecycleTransition);
     }
-    let retained_digest: Option<Vec<u8>> = transaction.query_row("SELECT r.digest FROM content_objects o JOIN content_seal_receipts r ON r.content_seal_receipt_id = o.content_seal_receipt_id WHERE o.content_object_id = ?1", [retained.value()], |r| r.get(0)).optional().map_err(|_| Rejection::ContentObjectNotSealed)?;
+    let retained_digest: Option<Vec<u8>> = transaction.query_row("SELECT r.digest FROM content_objects o JOIN content_seal_receipts r ON r.content_seal_receipt_id = o.content_seal_receipt_id WHERE o.content_object_id = $1", [retained.value()], |r| r.get(0)).optional().map_err(|_| Rejection::ContentObjectNotSealed)?;
     let Some(retained_digest) = retained_digest else {
         return Err(Rejection::ContentObjectNotSealed);
     };
@@ -9905,8 +9874,8 @@ fn record_child_stream_seal(
     {
         return Err(Rejection::ChildStreamSealBindingMismatch);
     }
-    transaction.execute("INSERT INTO native_child_stream_seals(native_child_id, stream_kind, full_observed_digest, retained_content_object_id, completeness, sealed_by_command_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![child_id.value(), stream as i64, full_digest.as_bytes().as_slice(), retained.value(), completeness as i64, command_row_id]).map_err(|_| Rejection::ChildStreamSealBindingMismatch)?;
-    let seal_id = id_from_last_insert::<NativeChildStreamSealId>(transaction)?;
+    transaction.execute("INSERT INTO native_child_stream_seals(native_child_id, stream_kind, full_observed_digest, retained_content_object_id, completeness, sealed_by_command_id) VALUES ($1, $2, $3, $4, $5, $6)", params![child_id.value(), stream as i64, full_digest.as_bytes().as_slice(), retained.value(), completeness as i64, command_row_id]).map_err(|_| Rejection::ChildStreamSealBindingMismatch)?;
+    let seal_id = id_from_returned_identity::<NativeChildStreamSealId>(transaction)?;
     if completeness == ChildStreamSealCompleteness::CountOverflow {
         mark_child_containment_failed(transaction, child_id, command_row_id)?;
     }
@@ -9935,11 +9904,12 @@ fn record_child_process_liveness(
         return Err(Rejection::InvalidLifecycleTransition);
     }
     let liveness_regressed = liveness_is_reuse_conflict(transaction, child_id, liveness)?;
-    transaction.execute("INSERT INTO native_child_liveness_observations(native_child_id, liveness, observed_by_command_id) VALUES (?1, ?2, ?3)", params![child_id.value(), liveness as i64, command_row_id]).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    transaction.execute("INSERT INTO native_child_liveness_observations(native_child_id, liveness, observed_by_command_id) VALUES ($1, $2, $3)", params![child_id.value(), liveness as i64, command_row_id]).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
     // Preserve the receipt identity before a containment transition performs
     // any material-row update. The event must name the physical observation,
     // never an incidental later SQLite row identity.
-    let observation_id = id_from_last_insert::<NativeChildLivenessObservationId>(transaction)?;
+    let observation_id =
+        id_from_returned_identity::<NativeChildLivenessObservationId>(transaction)?;
     if liveness == ProcessGroupLiveness::Inaccessible || liveness_regressed {
         mark_child_containment_failed(transaction, child_id, command_row_id)?;
     } else if state == ChildProcessState::RecoveryContainmentRequired
@@ -9948,9 +9918,9 @@ fn record_child_process_liveness(
         transaction
             .execute(
                 "UPDATE native_children
-                SET lifecycle_state = ?1, terminal_disposition = ?2,
-                    last_transition_command_id = ?3
-              WHERE native_child_id = ?4 AND lifecycle_state = ?5",
+                SET lifecycle_state = $1, terminal_disposition = $2,
+                    last_transition_command_id = $3
+              WHERE native_child_id = $4 AND lifecycle_state = $5",
                 params![
                     ChildProcessState::LostParentage as i64,
                     ChildTerminalDisposition::SupervisionLost as i64,
@@ -10018,9 +9988,9 @@ fn record_process_signal_receipt(
                    SELECT 1 FROM cancellation_propagation_targets t
                    JOIN cancellation_propagations p
                      ON p.cancellation_propagation_id = t.cancellation_propagation_id
-                  WHERE t.cancellation_propagation_id = ?1
-                    AND t.native_child_id = ?2
-                    AND t.target_disposition = ?3
+                  WHERE t.cancellation_propagation_id = $1
+                    AND t.native_child_id = $2
+                    AND t.target_disposition = $3
                     AND p.lifecycle_state = 1)",
                     params![
                         propagation_id.value(),
@@ -10100,7 +10070,7 @@ fn record_process_signal_receipt(
         }
     };
     let liveness_regressed = liveness_is_reuse_conflict(transaction, child_id, liveness)?;
-    transaction.execute("INSERT INTO process_signal_receipts(native_child_id, signal_action, delivery, observed_liveness, cause_kind, cancellation_propagation_id, recorded_by_command_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)", params![child_id.value(), action as i64, delivery as i64, liveness as i64, cause_kind, propagation_id, command_row_id]).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    transaction.execute("INSERT INTO process_signal_receipts(native_child_id, signal_action, delivery, observed_liveness, cause_kind, cancellation_propagation_id, recorded_by_command_id) VALUES ($1, $2, $3, $4, $5, $6, $7)", params![child_id.value(), action as i64, delivery as i64, liveness as i64, cause_kind, propagation_id, command_row_id]).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
     if delivery == ProcessSignalDelivery::Delivered
         && matches!(
             state,
@@ -10128,9 +10098,9 @@ fn record_process_signal_receipt(
         transaction
             .execute(
                 "UPDATE native_children
-                    SET lifecycle_state = ?1, terminal_disposition = ?2,
-                        last_transition_command_id = ?3
-                  WHERE native_child_id = ?4 AND lifecycle_state = ?5",
+                    SET lifecycle_state = $1, terminal_disposition = $2,
+                        last_transition_command_id = $3
+                  WHERE native_child_id = $4 AND lifecycle_state = $5",
                 params![
                     ChildProcessState::LostParentage as i64,
                     ChildTerminalDisposition::SupervisionLost as i64,
@@ -10142,7 +10112,9 @@ fn record_process_signal_receipt(
             .map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
     }
     Ok(EventBody::ProcessSignalReceiptRecorded {
-        process_signal_receipt_id: id_from_last_insert::<ProcessSignalReceiptId>(transaction)?,
+        process_signal_receipt_id: id_from_returned_identity::<ProcessSignalReceiptId>(
+            transaction,
+        )?,
         native_child_id: child_id,
         action,
         delivery,
@@ -10162,10 +10134,10 @@ fn prior_signal_attempt(
         .query_row(
             "SELECT EXISTS(
            SELECT 1 FROM process_signal_receipts
-            WHERE native_child_id = ?1
-              AND signal_action = ?2
-              AND cause_kind = ?3
-              AND cancellation_propagation_id IS ?4)",
+            WHERE native_child_id = $1
+              AND signal_action = $2
+              AND cause_kind = $3
+              AND cancellation_propagation_id IS NOT DISTINCT FROM $4)",
             params![
                 child_id.value(),
                 action as i64,
@@ -10187,8 +10159,8 @@ fn prior_pi_abort_control_attempt(
         .query_row(
             "SELECT EXISTS(
                SELECT 1 FROM pi_abort_control_receipts
-                WHERE native_child_id = ?1
-                  AND cancellation_propagation_id = ?2
+                WHERE native_child_id = $1
+                  AND cancellation_propagation_id = $2
                  )",
             params![child_id.value(), propagation_id.value(),],
             |row| row.get::<_, i64>(0),
@@ -10210,9 +10182,9 @@ fn liveness_is_reuse_conflict(
     }
     transaction.query_row(
         "SELECT EXISTS(
-            SELECT 1 FROM native_child_liveness_observations WHERE native_child_id = ?1 AND liveness = 2
-            UNION ALL SELECT 1 FROM process_signal_receipts WHERE native_child_id = ?1 AND observed_liveness = 2
-            UNION ALL SELECT 1 FROM native_child_reap_receipts WHERE native_child_id = ?1 AND (group_liveness_before_cleanup = 2 OR group_liveness_after_cleanup = 2)
+            SELECT 1 FROM native_child_liveness_observations WHERE native_child_id = $1 AND liveness = 2
+            UNION ALL SELECT 1 FROM process_signal_receipts WHERE native_child_id = $1 AND observed_liveness = 2
+            UNION ALL SELECT 1 FROM native_child_reap_receipts WHERE native_child_id = $1 AND (group_liveness_before_cleanup = 2 OR group_liveness_after_cleanup = 2)
         )",
         [child_id.value()],
         |row| row.get::<_, i64>(0),
@@ -10228,9 +10200,9 @@ fn lingering_group_cleanup_is_due(
             "SELECT EXISTS(
            SELECT 1 FROM native_children c
            JOIN native_child_reap_receipts r ON r.native_child_id = c.native_child_id
-          WHERE c.native_child_id = ?1
-            AND c.lifecycle_state = ?2
-            AND r.group_liveness_after_cleanup = ?3)",
+          WHERE c.native_child_id = $1
+            AND c.lifecycle_state = $2
+            AND r.group_liveness_after_cleanup = $3)",
             params![
                 child_id.value(),
                 ChildProcessState::DirectChildReaped as i64,
@@ -10270,7 +10242,7 @@ fn record_direct_child_reap(
         }
         DirectChildWaitStatus::Unknown => (3, None),
     };
-    transaction.execute("INSERT INTO native_child_reap_receipts(native_child_id, wait_status_kind, status_value, group_liveness_before_cleanup, group_liveness_after_cleanup, reaped_by_command_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![child_id.value(), kind, value, before as i64, after as i64, command_row_id]).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    transaction.execute("INSERT INTO native_child_reap_receipts(native_child_id, wait_status_kind, status_value, group_liveness_before_cleanup, group_liveness_after_cleanup, reaped_by_command_id) VALUES ($1, $2, $3, $4, $5, $6)", params![child_id.value(), kind, value, before as i64, after as i64, command_row_id]).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
     // A wait(2) only proves the direct child. Descendants which remain present
     // or inaccessible after cleanup are a durable containment failure, not a
     // close-eligible finalization. We preserve the wait receipt for audit.
@@ -10285,7 +10257,9 @@ fn record_direct_child_reap(
         )?;
     }
     Ok(EventBody::DirectChildReaped {
-        native_child_reap_receipt_id: id_from_last_insert::<NativeChildReapReceiptId>(transaction)?,
+        native_child_reap_receipt_id: id_from_returned_identity::<NativeChildReapReceiptId>(
+            transaction,
+        )?,
         native_child_id: child_id,
         wait_status: status,
         group_liveness_before_cleanup: before,
@@ -10317,15 +10291,15 @@ fn record_child_recovery(
     }
     let liveness_regressed =
         liveness_is_reuse_conflict(transaction, child_id, group_liveness_after_restart)?;
-    transaction.execute("INSERT INTO native_child_recovery_receipts(native_child_id, observation, group_liveness_after_restart, recorded_by_command_id) VALUES (?1, ?2, ?3, ?4)", params![child_id.value(), observation as i64, group_liveness_after_restart as i64, command_row_id]).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    transaction.execute("INSERT INTO native_child_recovery_receipts(native_child_id, observation, group_liveness_after_restart, recorded_by_command_id) VALUES ($1, $2, $3, $4)", params![child_id.value(), observation as i64, group_liveness_after_restart as i64, command_row_id]).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
     match group_liveness_after_restart {
         ProcessGroupLiveness::Absent => {
             transaction
                 .execute(
                     "UPDATE native_children
-            SET lifecycle_state = ?1, terminal_disposition = ?2,
-                last_transition_command_id = ?3
-          WHERE native_child_id = ?4",
+            SET lifecycle_state = $1, terminal_disposition = $2,
+                last_transition_command_id = $3
+          WHERE native_child_id = $4",
                     params![
                         ChildProcessState::LostParentage as i64,
                         ChildTerminalDisposition::SupervisionLost as i64,
@@ -10351,9 +10325,9 @@ fn record_child_recovery(
             transaction
                 .execute(
                     "UPDATE native_children
-                    SET lifecycle_state = ?1, terminal_disposition = NULL,
-                        last_transition_command_id = ?2
-                  WHERE native_child_id = ?3",
+                    SET lifecycle_state = $1, terminal_disposition = NULL,
+                        last_transition_command_id = $2
+                  WHERE native_child_id = $3",
                     params![
                         ChildProcessState::RecoveryContainmentRequired as i64,
                         command_row_id,
@@ -10364,7 +10338,7 @@ fn record_child_recovery(
         }
     };
     Ok(EventBody::ChildRecoveryObserved {
-        native_child_recovery_receipt_id: id_from_last_insert::<NativeChildRecoveryReceiptId>(
+        native_child_recovery_receipt_id: id_from_returned_identity::<NativeChildRecoveryReceiptId>(
             transaction,
         )?,
         native_child_id: child_id,
@@ -10381,14 +10355,14 @@ fn finalize_child_process(
 ) -> Result<EventBody, Rejection> {
     let (_, state) = native_child_cycle_for_generation(transaction, child_id, expected)?;
     let disposition = if state == ChildProcessState::DirectChildReaped {
-        let (kind, value, after, reap_command): (i64, Option<i64>, i64, i64) = transaction.query_row("SELECT wait_status_kind, status_value, group_liveness_after_cleanup, reaped_by_command_id FROM native_child_reap_receipts WHERE native_child_id = ?1", [child_id.value()], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+        let (kind, value, after, reap_command): (i64, Option<i64>, i64, i64) = transaction.query_row("SELECT wait_status_kind, status_value, group_liveness_after_cleanup, reaped_by_command_id FROM native_child_reap_receipts WHERE native_child_id = $1", [child_id.value()], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
         let group_absent_after_reap = after == ProcessGroupLiveness::Absent as i64 || transaction.query_row(
             "SELECT EXISTS(
                 SELECT 1 FROM native_child_liveness_observations
-                 WHERE native_child_id = ?1 AND liveness = 2 AND observed_by_command_id > ?2
+                 WHERE native_child_id = $1 AND liveness = 2 AND observed_by_command_id > $2
                 UNION ALL
                 SELECT 1 FROM process_signal_receipts
-                 WHERE native_child_id = ?1 AND observed_liveness = 2 AND recorded_by_command_id > ?2
+                 WHERE native_child_id = $1 AND observed_liveness = 2 AND recorded_by_command_id > $2
             )",
             params![child_id.value(), reap_command],
             |row| row.get::<_, i64>(0),
@@ -10403,14 +10377,14 @@ fn finalize_child_process(
                    ON admission.native_child_spawn_admission_id = child.native_child_spawn_admission_id
                  JOIN pi_child_spawn_sidecars sidecar
                    ON sidecar.native_child_spawn_admission_id = admission.native_child_spawn_admission_id
-                 WHERE child.native_child_id = ?1
+                 WHERE child.native_child_id = $1
              ) THEN 4 ELSE 2 END",
             [child_id.value()], |r| r.get(0),
         ).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
         let retained_seals: i64 = transaction
             .query_row(
                 "SELECT COUNT(*) FROM native_child_stream_seals
-              WHERE native_child_id = ?1 AND completeness IN (1, 2)",
+              WHERE native_child_id = $1 AND completeness IN (1, 2)",
                 [child_id.value()],
                 |r| r.get(0),
             )
@@ -10418,7 +10392,7 @@ fn finalize_child_process(
         let required_evaluator_output: i64 = transaction
             .query_row(
                 "SELECT COUNT(*) FROM native_child_stream_seals
-              WHERE native_child_id = ?1 AND stream_kind IN (3, 4) AND completeness IN (1, 2)",
+              WHERE native_child_id = $1 AND stream_kind IN (3, 4) AND completeness IN (1, 2)",
                 [child_id.value()],
                 |r| r.get(0),
             )
@@ -10449,7 +10423,7 @@ fn finalize_child_process(
     } else {
         return Err(Rejection::ChildLifecycleReceiptMissing);
     };
-    transaction.execute("UPDATE native_children SET lifecycle_state = ?1, terminal_disposition = ?2, last_transition_command_id = ?3 WHERE native_child_id = ?4", params![ChildProcessState::Finalized as i64, disposition as i64, command_row_id, child_id.value()]).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    transaction.execute("UPDATE native_children SET lifecycle_state = $1, terminal_disposition = $2, last_transition_command_id = $3 WHERE native_child_id = $4", params![ChildProcessState::Finalized as i64, disposition as i64, command_row_id, child_id.value()]).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
     // A physical exit is not a Pi/model outcome, submission, validation, or
     // budget reconciliation. M5 therefore ends only the child receipt chain;
     // later normalized supervisor/Pi receipts own semantic Attempt or Office
@@ -10466,7 +10440,7 @@ fn begin_cancellation_propagation(
     expected: ExpectedGeneration,
     cancellation_request_id: CancellationRequestId,
 ) -> Result<EventBody, Rejection> {
-    let row: Option<(i64, i64)> = transaction.query_row("SELECT operating_cycle_id, lifecycle_state FROM cancellation_requests WHERE cancellation_request_id = ?1", [cancellation_request_id.value()], |r| Ok((r.get(0)?, r.get(1)?))).optional().map_err(|_| Rejection::SubjectNotFound)?;
+    let row: Option<(i64, i64)> = transaction.query_row("SELECT operating_cycle_id, lifecycle_state FROM cancellation_requests WHERE cancellation_request_id = $1", [cancellation_request_id.value()], |r| Ok((r.get(0)?, r.get(1)?))).optional().map_err(|_| Rejection::SubjectNotFound)?;
     let Some((cycle, request_state)) = row else {
         return Err(Rejection::SubjectNotFound);
     };
@@ -10477,14 +10451,14 @@ fn begin_cancellation_propagation(
     {
         return Err(Rejection::InvalidLifecycleTransition);
     }
-    transaction.execute("INSERT INTO cancellation_propagations(cancellation_request_id, operating_cycle_id, observed_generation, lifecycle_state, begun_by_command_id, reconciled_by_command_id) VALUES (?1, ?2, ?3, 1, ?4, NULL)", params![cancellation_request_id.value(), cycle_id.value(), cycle.generation.value(), command_row_id]).map_err(|_| Rejection::InvalidLifecycleTransition)?;
-    let id = id_from_last_insert::<CancellationPropagationId>(transaction)?;
+    transaction.execute("INSERT INTO cancellation_propagations(cancellation_request_id, operating_cycle_id, observed_generation, lifecycle_state, begun_by_command_id, reconciled_by_command_id) VALUES ($1, $2, $3, 1, $4, NULL)", params![cancellation_request_id.value(), cycle_id.value(), cycle.generation.value(), command_row_id]).map_err(|_| Rejection::InvalidLifecycleTransition)?;
+    let id = id_from_returned_identity::<CancellationPropagationId>(transaction)?;
     // Snapshot owners before children. An admitted-but-unspawned owner stays
     // AwaitingChildReceipt until a typed invalidation or raced spawn resolves
     // it; a target with no admission is the explicit `not_running` fact.
     transaction.execute(
         "INSERT INTO cancellation_propagation_targets(cancellation_propagation_id, actor_attempt_id, root_authority_office_session_id, native_child_id, target_disposition)
-         SELECT ?1, a.actor_attempt_id, NULL, p.native_child_id,
+         SELECT $1, a.actor_attempt_id, NULL, p.native_child_id,
                 CASE
                   WHEN p.native_child_id IS NULL AND s.native_child_spawn_admission_id IS NOT NULL AND s.lifecycle_state = 1 THEN 2
                   WHEN p.native_child_id IS NULL THEN 1
@@ -10499,12 +10473,12 @@ fn begin_cancellation_propagation(
            FROM attempts a
       LEFT JOIN native_child_spawn_admissions s ON s.actor_attempt_id = a.actor_attempt_id
       LEFT JOIN native_children p ON p.native_child_spawn_admission_id = s.native_child_spawn_admission_id
-          WHERE a.operating_cycle_id = ?2 AND a.lifecycle_state IN (1, 2)",
+          WHERE a.operating_cycle_id = $2 AND a.lifecycle_state IN (1, 2)",
         params![id.value(), cycle_id.value()],
     ).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
     transaction.execute(
         "INSERT INTO cancellation_propagation_targets(cancellation_propagation_id, actor_attempt_id, root_authority_office_session_id, deterministic_experiment_id, native_child_id, target_disposition)
-         SELECT ?1, NULL, NULL, experiment.deterministic_experiment_id, child.native_child_id,
+         SELECT $1, NULL, NULL, experiment.deterministic_experiment_id, child.native_child_id,
                 CASE
                   WHEN child.native_child_id IS NULL AND admission.native_child_spawn_admission_id IS NOT NULL AND admission.lifecycle_state = 1 THEN 2
                   WHEN child.native_child_id IS NULL THEN 1
@@ -10520,12 +10494,12 @@ fn begin_cancellation_propagation(
              ON admission.deterministic_experiment_id = experiment.deterministic_experiment_id
       LEFT JOIN native_children child
              ON child.native_child_spawn_admission_id = admission.native_child_spawn_admission_id
-          WHERE experiment.operating_cycle_id = ?2 AND experiment.lifecycle_state = 1",
+          WHERE experiment.operating_cycle_id = $2 AND experiment.lifecycle_state = 1",
         params![id.value(), cycle_id.value()],
     ).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
     transaction.execute(
         "INSERT INTO cancellation_propagation_targets(cancellation_propagation_id, actor_attempt_id, root_authority_office_session_id, native_child_id, target_disposition)
-         SELECT ?1, NULL, o.root_authority_office_session_id, p.native_child_id,
+         SELECT $1, NULL, o.root_authority_office_session_id, p.native_child_id,
                 CASE
                   WHEN p.native_child_id IS NULL AND s.native_child_spawn_admission_id IS NOT NULL AND s.lifecycle_state = 1 THEN 2
                   WHEN p.native_child_id IS NULL THEN 1
@@ -10540,11 +10514,11 @@ fn begin_cancellation_propagation(
            FROM root_authority_office_sessions o
       LEFT JOIN native_child_spawn_admissions s ON s.root_authority_office_session_id = o.root_authority_office_session_id
       LEFT JOIN native_children p ON p.native_child_spawn_admission_id = s.native_child_spawn_admission_id
-          WHERE o.operating_cycle_id = ?2 AND o.lifecycle_state NOT IN (8, 10, 11)",
+          WHERE o.operating_cycle_id = $2 AND o.lifecycle_state NOT IN (8, 10, 11)",
         params![id.value(), cycle_id.value()],
     ).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
-    transaction.execute("INSERT INTO cancellation_propagation_children(cancellation_propagation_id, native_child_id) SELECT ?1, native_child_id FROM cancellation_propagation_targets WHERE cancellation_propagation_id = ?1 AND native_child_id IS NOT NULL AND target_disposition = 2", [id.value()]).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
-    transaction.execute("UPDATE cancellation_requests SET lifecycle_state = ?1 WHERE cancellation_request_id = ?2", params![CancellationState::Propagating as i64, cancellation_request_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    transaction.execute("INSERT INTO cancellation_propagation_children(cancellation_propagation_id, native_child_id) SELECT $1, native_child_id FROM cancellation_propagation_targets WHERE cancellation_propagation_id = $1 AND native_child_id IS NOT NULL AND target_disposition = 2", [id.value()]).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    transaction.execute("UPDATE cancellation_requests SET lifecycle_state = $1 WHERE cancellation_request_id = $2", params![CancellationState::Propagating as i64, cancellation_request_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
     Ok(EventBody::CancellationPropagationBegun {
         cancellation_propagation_id: id,
         cancellation_request_id,
@@ -10557,7 +10531,7 @@ fn reconcile_cancellation_propagation(
     expected: ExpectedGeneration,
     propagation_id: CancellationPropagationId,
 ) -> Result<EventBody, Rejection> {
-    let row: Option<(i64, i64, i64)> = transaction.query_row("SELECT operating_cycle_id, lifecycle_state, cancellation_request_id FROM cancellation_propagations WHERE cancellation_propagation_id = ?1", [propagation_id.value()], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).optional().map_err(|_| Rejection::SubjectNotFound)?;
+    let row: Option<(i64, i64, i64)> = transaction.query_row("SELECT operating_cycle_id, lifecycle_state, cancellation_request_id FROM cancellation_propagations WHERE cancellation_propagation_id = $1", [propagation_id.value()], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).optional().map_err(|_| Rejection::SubjectNotFound)?;
     let Some((cycle, state, _)) = row else {
         return Err(Rejection::SubjectNotFound);
     };
@@ -10578,23 +10552,23 @@ fn reconcile_cancellation_propagation(
                  ELSE target_disposition
                END
            FROM native_children p
-          WHERE cancellation_propagation_targets.cancellation_propagation_id = ?1
+          WHERE cancellation_propagation_targets.cancellation_propagation_id = $1
             AND cancellation_propagation_targets.native_child_id = p.native_child_id",
             [propagation_id.value()],
         )
         .map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
-    let containment: i64 = transaction.query_row("SELECT COUNT(*) FROM cancellation_propagation_targets WHERE cancellation_propagation_id = ?1 AND target_disposition = 6", [propagation_id.value()], |r| r.get(0)).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    let containment: i64 = transaction.query_row("SELECT COUNT(*) FROM cancellation_propagation_targets WHERE cancellation_propagation_id = $1 AND target_disposition = 6", [propagation_id.value()], |r| r.get(0)).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
     if containment != 0 {
-        transaction.execute("UPDATE cancellation_propagations SET lifecycle_state = 3 WHERE cancellation_propagation_id = ?1", [propagation_id.value()]).map_err(|_| Rejection::ProcessContainmentFailed)?;
+        transaction.execute("UPDATE cancellation_propagations SET lifecycle_state = 3 WHERE cancellation_propagation_id = $1", [propagation_id.value()]).map_err(|_| Rejection::ProcessContainmentFailed)?;
         return Ok(EventBody::CancellationPropagationContainmentFailed {
             cancellation_propagation_id: propagation_id,
         });
     }
-    let unfinished: i64 = transaction.query_row("SELECT COUNT(*) FROM cancellation_propagation_targets WHERE cancellation_propagation_id = ?1 AND target_disposition = 2", [propagation_id.value()], |r| r.get(0)).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    let unfinished: i64 = transaction.query_row("SELECT COUNT(*) FROM cancellation_propagation_targets WHERE cancellation_propagation_id = $1 AND target_disposition = 2", [propagation_id.value()], |r| r.get(0)).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
     if unfinished != 0 {
         return Err(Rejection::CancellationPropagationIncomplete);
     }
-    transaction.execute("UPDATE cancellation_propagations SET lifecycle_state = 2, reconciled_by_command_id = ?1 WHERE cancellation_propagation_id = ?2", params![command_row_id, propagation_id.value()]).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    transaction.execute("UPDATE cancellation_propagations SET lifecycle_state = 2, reconciled_by_command_id = $1 WHERE cancellation_propagation_id = $2", params![command_row_id, propagation_id.value()]).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
     Ok(EventBody::CancellationPropagationReconciled {
         cancellation_propagation_id: propagation_id,
     })
@@ -10606,7 +10580,7 @@ fn set_child_state(
     state: ChildProcessState,
     command_row_id: i64,
 ) -> Result<(), Rejection> {
-    transaction.execute("UPDATE native_children SET lifecycle_state = ?1, last_transition_command_id = ?2 WHERE native_child_id = ?3", params![state as i64, command_row_id, child_id.value()]).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    transaction.execute("UPDATE native_children SET lifecycle_state = $1, last_transition_command_id = $2 WHERE native_child_id = $3", params![state as i64, command_row_id, child_id.value()]).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
     Ok(())
 }
 
@@ -10618,9 +10592,9 @@ fn mark_child_containment_failed(
     transaction
         .execute(
             "UPDATE native_children
-            SET lifecycle_state = ?1, terminal_disposition = ?2,
-                last_transition_command_id = ?3
-          WHERE native_child_id = ?4",
+            SET lifecycle_state = $1, terminal_disposition = $2,
+                last_transition_command_id = $3
+          WHERE native_child_id = $4",
             params![
                 ChildProcessState::ContainmentFailed as i64,
                 ChildTerminalDisposition::ContainmentFailed as i64,
@@ -10638,7 +10612,7 @@ fn pi_protocol_state(
 ) -> Result<PiChildSessionState, Rejection> {
     let value: i64 = transaction
         .query_row(
-            "SELECT lifecycle_state FROM pi_child_session_protocols WHERE native_child_id = ?1",
+            "SELECT lifecycle_state FROM pi_child_session_protocols WHERE native_child_id = $1",
             [child_id.value()],
             |r| r.get(0),
         )
@@ -10662,7 +10636,7 @@ fn set_pi_protocol_state(
 ) -> Result<(), Rejection> {
     transaction
         .execute(
-            "UPDATE pi_child_session_protocols SET lifecycle_state = ?1 WHERE native_child_id = ?2",
+            "UPDATE pi_child_session_protocols SET lifecycle_state = $1 WHERE native_child_id = $2",
             params![state as i64, child_id.value()],
         )
         .map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
@@ -10687,9 +10661,9 @@ fn signal_terminal_disposition(
         .query_row(
             "SELECT EXISTS(
            SELECT 1 FROM process_signal_receipts
-            WHERE native_child_id = ?1
-              AND signal_action IN (?2, ?3)
-              AND delivery = ?4)",
+            WHERE native_child_id = $1
+              AND signal_action IN ($2, $3)
+              AND delivery = $4)",
             params![
                 child_id.value(),
                 expected_action as i64,
@@ -10723,7 +10697,7 @@ fn capability_grant(
     let grant = transaction
         .query_row(
             "SELECT grant_state, office_occupancy_id, actor_instance_id FROM capability_grants
-             WHERE capability_grant_id = ?1 AND principal_id = ?2 AND capability_kind = ?3",
+             WHERE capability_grant_id = $1 AND principal_id = $2 AND capability_kind = $3",
             params![
                 capability_grant_id.value(),
                 principal_id.value(),
@@ -10766,7 +10740,7 @@ fn grant_has_active_occupancy(
             "SELECT EXISTS(
              SELECT 1 FROM capability_grants g
              JOIN office_occupancies o ON o.office_occupancy_id = g.office_occupancy_id
-             WHERE g.capability_grant_id = ?1
+             WHERE g.capability_grant_id = $1
                AND o.active = 1
                AND o.principal_id = g.principal_id
          )",
@@ -10787,7 +10761,7 @@ fn grant_has_active_actor_instance(
              SELECT 1 FROM capability_grants g
              JOIN actor_instances a ON a.actor_instance_id = g.actor_instance_id
              JOIN principals p ON p.principal_id = a.principal_id
-             WHERE g.capability_grant_id = ?1
+             WHERE g.capability_grant_id = $1
                AND a.lifecycle_state = 1
                AND p.active = 1
                AND p.principal_id = g.principal_id
@@ -10827,7 +10801,7 @@ fn command_target_occupancy(
         CommandBody::CloseCostPostmortem { postmortem_id, .. } => {
             let cycle_id = transaction
                 .query_row(
-                    "SELECT operating_cycle_id FROM cost_postmortems WHERE postmortem_id = ?1",
+                    "SELECT operating_cycle_id FROM cost_postmortems WHERE postmortem_id = $1",
                     [postmortem_id.value()],
                     |row| row.get::<_, i64>(0),
                 )
@@ -10955,9 +10929,11 @@ fn command_target_occupancy(
 
 fn only_society_id(transaction: &Transaction<'_>) -> Result<SocietyId, Rejection> {
     let value = transaction
-        .query_row("SELECT society_id FROM societies LIMIT 1", [], |row| {
-            row.get::<_, i64>(0)
-        })
+        .query_row(
+            "SELECT society_id FROM societies LIMIT 1",
+            params![],
+            |row| row.get::<_, i64>(0),
+        )
         .optional()
         .map_err(|_| Rejection::SubjectNotFound)?
         .ok_or(Rejection::SubjectNotFound)?;
@@ -10968,7 +10944,7 @@ fn root_authority_office_id(transaction: &Transaction<'_>) -> Result<OfficeId, R
     let value = transaction
         .query_row(
             "SELECT office_id FROM office_contracts WHERE office_kind = 1",
-            [],
+            params![],
             |row| row.get::<_, i64>(0),
         )
         .optional()
@@ -10983,7 +10959,7 @@ fn active_founding_mission_id(
 ) -> Result<FoundingMissionId, Rejection> {
     let value = transaction
         .query_row(
-            "SELECT founding_mission_id FROM founding_missions WHERE society_id = ?1 AND active = 1",
+            "SELECT founding_mission_id FROM founding_missions WHERE society_id = $1 AND active = 1",
             [society_id.value()],
             |row| row.get::<_, i64>(0),
         )
@@ -11001,7 +10977,7 @@ fn active_root_authority_occupancy_id(
             "SELECT o.office_occupancy_id FROM office_occupancies o
          JOIN office_contracts c ON c.office_id = o.office_id
          WHERE c.office_kind = 1 AND o.active = 1",
-            [],
+            params![],
             |row| row.get::<_, i64>(0),
         )
         .optional()
@@ -11014,7 +10990,7 @@ fn hard_ceiling_from_event_body(transaction: &Transaction<'_>) -> Result<UsdMicr
     let value = transaction
         .query_row(
             "SELECT ceiling_micros FROM event_r0_hard_ceiling_set ORDER BY event_id DESC LIMIT 1",
-            [],
+            params![],
             |row| row.get::<_, i64>(0),
         )
         .optional()
@@ -11030,7 +11006,7 @@ fn bootstrapped_constitution(
         .query_row(
             "SELECT society_id, founding_mission_id, office_occupancy_id, hard_ceiling_micros
          FROM society_bootstraps LIMIT 1",
-            [],
+            params![],
             |row| {
                 Ok((
                     row.get::<_, i64>(0)?,
@@ -11057,7 +11033,7 @@ fn cycle_row(
 ) -> Result<CycleRow, Rejection> {
     let row = transaction.query_row(
         "SELECT society_id, founding_mission_id, office_occupancy_id, treatment, lifecycle_state, admission_generation
-         FROM operating_cycles WHERE operating_cycle_id = ?1",
+         FROM operating_cycles WHERE operating_cycle_id = $1",
         [cycle_id.value()],
         |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?, row.get::<_, i64>(5)?)),
     ).optional().map_err(|_| Rejection::SubjectNotFound)?.ok_or(Rejection::SubjectNotFound)?;
@@ -11094,7 +11070,7 @@ fn session_row(
     let row = transaction
         .query_row(
             "SELECT lifecycle_state, operating_cycle_id FROM root_authority_office_sessions
-         WHERE root_authority_office_session_id = ?1",
+         WHERE root_authority_office_session_id = $1",
             [session_id.value()],
             |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
         )
@@ -11114,7 +11090,7 @@ fn session_occupancy_id(
     let value = transaction
         .query_row(
             "SELECT office_occupancy_id FROM root_authority_office_sessions
-             WHERE root_authority_office_session_id = ?1",
+             WHERE root_authority_office_session_id = $1",
             [session_id.value()],
             |row| row.get::<_, i64>(0),
         )
@@ -11133,8 +11109,8 @@ fn transition_cycle(
 ) -> Result<(), Rejection> {
     transaction
         .execute(
-            "UPDATE operating_cycles SET lifecycle_state = ?1, admission_generation = ?2,
-                                     last_transition_command_id = ?3 WHERE operating_cycle_id = ?4",
+            "UPDATE operating_cycles SET lifecycle_state = $1, admission_generation = $2,
+                                     last_transition_command_id = $3 WHERE operating_cycle_id = $4",
             params![
                 state as i64,
                 generation.value(),
@@ -11153,10 +11129,10 @@ fn create_budget_envelope(
 ) -> Result<BudgetEnvelopeId, Rejection> {
     transaction.execute(
         "INSERT INTO budget_envelopes(ceiling_micros, reserved_micros, spent_micros, created_by_command_id)
-         VALUES (?1, 0, 0, ?2)",
+         VALUES ($1, 0, 0, $2)",
         params![ceiling.value(), command_row_id],
     ).map_err(|_| Rejection::BudgetCeilingExceeded)?;
-    id_from_last_insert::<BudgetEnvelopeId>(transaction)
+    id_from_returned_identity::<BudgetEnvelopeId>(transaction)
 }
 
 fn budget_envelopes_for_cycle(
@@ -11166,7 +11142,7 @@ fn budget_envelopes_for_cycle(
 ) -> Result<(BudgetEnvelopeId, BudgetEnvelopeId), Rejection> {
     let society_budget = transaction
         .query_row(
-            "SELECT budget_envelope_id FROM budget_envelope_constraints WHERE society_id = ?1",
+            "SELECT budget_envelope_id FROM budget_envelope_constraints WHERE society_id = $1",
             [society_id.value()],
             |row| row.get::<_, i64>(0),
         )
@@ -11174,7 +11150,7 @@ fn budget_envelopes_for_cycle(
         .map_err(|_| Rejection::SubjectNotFound)?
         .ok_or(Rejection::SubjectNotFound)?;
     let cycle_budget = transaction.query_row(
-        "SELECT budget_envelope_id FROM budget_envelope_constraints WHERE operating_cycle_id = ?1",
+        "SELECT budget_envelope_id FROM budget_envelope_constraints WHERE operating_cycle_id = $1",
         [cycle_id.value()], |row| row.get::<_, i64>(0),
     ).optional().map_err(|_| Rejection::SubjectNotFound)?.ok_or(Rejection::SubjectNotFound)?;
     Ok((
@@ -11188,7 +11164,7 @@ fn budget_amounts(
     budget_id: BudgetEnvelopeId,
 ) -> Result<(UsdMicros, UsdMicros, UsdMicros), Rejection> {
     let row = transaction.query_row(
-        "SELECT ceiling_micros, reserved_micros, spent_micros FROM budget_envelopes WHERE budget_envelope_id = ?1",
+        "SELECT ceiling_micros, reserved_micros, spent_micros FROM budget_envelopes WHERE budget_envelope_id = $1",
         [budget_id.value()],
         |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?)),
     ).map_err(|_| Rejection::SubjectNotFound)?;
@@ -11206,7 +11182,7 @@ fn active_office_turn_count(
     transaction.query_row(
         "SELECT COUNT(*) FROM office_turns t
          JOIN root_authority_office_sessions s ON s.root_authority_office_session_id = t.root_authority_office_session_id
-         WHERE s.operating_cycle_id = ?1 AND t.lifecycle_state = ?2",
+         WHERE s.operating_cycle_id = $1 AND t.lifecycle_state = $2",
         params![cycle_id.value(), OfficeTurnState::Active as i64],
         |row| row.get(0),
     ).map_err(|_| Rejection::SubjectNotFound)
@@ -11219,7 +11195,7 @@ fn session_has_active_turn(
     transaction
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM office_turns
-             WHERE root_authority_office_session_id = ?1 AND lifecycle_state = ?2)",
+             WHERE root_authority_office_session_id = $1 AND lifecycle_state = $2)",
             params![session_id.value(), OfficeTurnState::Active as i64],
             |row| row.get::<_, i64>(0),
         )
@@ -11234,7 +11210,7 @@ fn live_office_session_count(
     transaction
         .query_row(
             "SELECT COUNT(*) FROM root_authority_office_sessions
-             WHERE operating_cycle_id = ?1 AND lifecycle_state NOT IN (?2, ?3, ?4)",
+             WHERE operating_cycle_id = $1 AND lifecycle_state NOT IN ($2, $3, $4)",
             params![
                 cycle_id.value(),
                 OfficeSessionState::Closed as i64,
@@ -11251,7 +11227,7 @@ fn unreconciled_reservation_count(
     cycle_id: OperatingCycleId,
 ) -> Result<i64, Rejection> {
     transaction.query_row(
-        "SELECT COUNT(*) FROM budget_reservations WHERE operating_cycle_id = ?1 AND reservation_state != ?2",
+        "SELECT COUNT(*) FROM budget_reservations WHERE operating_cycle_id = $1 AND reservation_state != $2",
         params![cycle_id.value(), BudgetReservationState::Reconciled as i64],
         |row| row.get(0),
     ).map_err(|_| Rejection::SubjectNotFound)
@@ -11263,8 +11239,8 @@ fn active_cancellation_count(
 ) -> Result<i64, Rejection> {
     transaction
         .query_row(
-            "SELECT COUNT(*) FROM cancellation_requests WHERE operating_cycle_id = ?1
-         AND lifecycle_state NOT IN (?2, ?3)",
+            "SELECT COUNT(*) FROM cancellation_requests WHERE operating_cycle_id = $1
+         AND lifecycle_state NOT IN ($2, $3)",
             params![
                 cycle_id.value(),
                 CancellationState::Completed as i64,
@@ -11286,7 +11262,7 @@ fn active_work_lease_count(
         .query_row(
             "SELECT COUNT(*) FROM leases l
              JOIN actor_instances a ON a.actor_instance_id = l.actor_instance_id
-             WHERE a.operating_cycle_id = ?1 AND l.lifecycle_state = ?2",
+             WHERE a.operating_cycle_id = $1 AND l.lifecycle_state = $2",
             params![cycle_id.value(), WorkLeaseState::Active as i64],
             |row| row.get(0),
         )
@@ -11299,7 +11275,7 @@ fn live_actor_attempt_count(
 ) -> Result<i64, Rejection> {
     transaction
         .query_row(
-            "SELECT COUNT(*) FROM attempts WHERE operating_cycle_id = ?1 AND lifecycle_state IN (?2, ?3)",
+            "SELECT COUNT(*) FROM attempts WHERE operating_cycle_id = $1 AND lifecycle_state IN ($2, $3)",
             params![
                 cycle_id.value(),
                 ActorAttemptState::Running as i64,
@@ -11320,7 +11296,7 @@ fn live_native_child_count(
     transaction.query_row(
         "SELECT COUNT(*) FROM native_children p
          JOIN native_child_spawn_admissions a ON a.native_child_spawn_admission_id = p.native_child_spawn_admission_id
-         WHERE a.operating_cycle_id = ?1 AND p.lifecycle_state != ?2",
+         WHERE a.operating_cycle_id = $1 AND p.lifecycle_state != $2",
         params![cycle_id.value(), ChildProcessState::Finalized as i64],
         |row| row.get(0),
     ).map_err(|_| Rejection::SubjectNotFound)
@@ -11335,7 +11311,7 @@ fn undisposed_pi_workspace_count(
             "SELECT COUNT(*) FROM native_child_spawn_admissions admission
              JOIN pi_child_spawn_sidecars sidecar
                ON sidecar.native_child_spawn_admission_id = admission.native_child_spawn_admission_id
-             WHERE admission.operating_cycle_id = ?1",
+             WHERE admission.operating_cycle_id = $1",
             [cycle_id.value()],
             |row| row.get(0),
         )
@@ -11349,7 +11325,7 @@ fn active_cancellation_for_cycle(
     transaction
         .query_row(
             "SELECT cancellation_request_id FROM cancellation_requests
-             WHERE operating_cycle_id = ?1 AND lifecycle_state NOT IN (?2, ?3)
+             WHERE operating_cycle_id = $1 AND lifecycle_state NOT IN ($2, $3)
              ORDER BY cancellation_request_id ASC LIMIT 1",
             params![
                 cycle_id.value(),
@@ -11367,17 +11343,22 @@ fn active_cancellation_for_cycle(
 
 fn exists(transaction: &Transaction<'_>, query: &str) -> Result<bool, Rejection> {
     transaction
-        .query_row(query, [], |row| row.get::<_, i64>(0))
+        .query_row(query, params![], |row| row.get::<_, i64>(0))
         .optional()
         .map(|value| value.is_some())
         .map_err(|_| Rejection::SubjectNotFound)
 }
 
-fn id_from_last_insert<T>(transaction: &Transaction<'_>) -> Result<T, Rejection>
+fn id_from_returned_identity<T>(transaction: &Transaction<'_>) -> Result<T, Rejection>
 where
     T: TryFrom<i64>,
 {
-    T::try_from(transaction.last_insert_rowid()).map_err(|_| Rejection::SubjectNotFound)
+    T::try_from(
+        transaction
+            .returned_identity()
+            .map_err(|_| Rejection::SubjectNotFound)?,
+    )
+    .map_err(|_| Rejection::SubjectNotFound)
 }
 
 fn expected_generation_to_sql(value: ExpectedGeneration) -> Option<i64> {
@@ -13214,7 +13195,7 @@ fn insert_command_body(
     match body {
         CommandBody::CreateSocietyIdentity { name } => {
             transaction.execute(
-                "INSERT INTO command_create_society_identity(command_row_id, name) VALUES (?1, ?2)",
+                "INSERT INTO command_create_society_identity(command_row_id, name) VALUES ($1, $2)",
                 params![command_row_id, name.as_str()],
             )?;
         }
@@ -13226,13 +13207,13 @@ fn insert_command_body(
             outcome,
         } => {
             transaction.execute(
-                "INSERT INTO command_record_pi_abort_control_delivery VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                "INSERT INTO command_record_pi_abort_control_delivery VALUES ($1, $2, $3, $4, $5, $6)",
                 params![command_row_id, native_child_id.value(), cancellation_propagation_id.value(), correlation_identity.as_str(), abort_command_digest.as_bytes().as_slice(), *outcome as i64],
             )?;
         }
         CommandBody::InstallRootAuthorityOffice => {
             transaction.execute(
-                "INSERT INTO command_install_root_authority_office(command_row_id) VALUES (?1)",
+                "INSERT INTO command_install_root_authority_office(command_row_id) VALUES ($1)",
                 [command_row_id],
             )?;
         }
@@ -13242,7 +13223,7 @@ fn insert_command_body(
                      command_row_id, application_identity, application_name,
                      revision_ordinal, mission_statement, source_rendering_digest,
                      source_content_object_id
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                 ) VALUES ($1, $2, $3, $4, $5, $6, $7)",
                 params![
                     command_row_id,
                     mission.application_identity.as_str(),
@@ -13257,7 +13238,7 @@ fn insert_command_body(
                 transaction.execute(
                     "INSERT INTO command_install_founding_mission_principles(
                          command_row_id, principle_ordinal, principle_kind, principle_text
-                     ) VALUES (?1, ?2, ?3, ?4)",
+                     ) VALUES ($1, $2, $3, $4)",
                     params![
                         command_row_id,
                         i64::try_from(index + 1).map_err(|_| StoreError::InvalidStoredValue)?,
@@ -13271,7 +13252,7 @@ fn insert_command_body(
                 "INSERT INTO command_install_founding_mission_north_star_questions(
                      command_row_id, change_question, improvement_evidence_question,
                      boundary_commitment_question, revisit_question
-                 ) VALUES (?1, ?2, ?3, ?4, ?5)",
+                 ) VALUES ($1, $2, $3, $4, $5)",
                 params![
                     command_row_id,
                     questions.change.as_str(),
@@ -13282,14 +13263,14 @@ fn insert_command_body(
             )?;
         }
         CommandBody::AppointInitialRootAuthority { actor_display_name } => {
-            transaction.execute("INSERT INTO command_appoint_initial_root_authority(command_row_id, actor_display_name) VALUES (?1, ?2)", params![command_row_id, actor_display_name.as_str()])?;
+            transaction.execute("INSERT INTO command_appoint_initial_root_authority(command_row_id, actor_display_name) VALUES ($1, $2)", params![command_row_id, actor_display_name.as_str()])?;
         }
         CommandBody::SetR0HardCeiling { ceiling } => {
-            transaction.execute("INSERT INTO command_set_r0_hard_ceiling(command_row_id, ceiling_micros) VALUES (?1, ?2)", params![command_row_id, ceiling.value()])?;
+            transaction.execute("INSERT INTO command_set_r0_hard_ceiling(command_row_id, ceiling_micros) VALUES ($1, $2)", params![command_row_id, ceiling.value()])?;
         }
         CommandBody::BootstrapSociety => {
             transaction.execute(
-                "INSERT INTO command_bootstrap_society(command_row_id) VALUES (?1)",
+                "INSERT INTO command_bootstrap_society(command_row_id) VALUES ($1)",
                 [command_row_id],
             )?;
         }
@@ -13297,52 +13278,52 @@ fn insert_command_body(
             treatment,
             budget_ceiling,
         } => {
-            transaction.execute("INSERT INTO command_propose_operating_cycle(command_row_id, treatment, budget_ceiling_micros) VALUES (?1, ?2, ?3)", params![command_row_id, *treatment as i64, budget_ceiling.value()])?;
+            transaction.execute("INSERT INTO command_propose_operating_cycle(command_row_id, treatment, budget_ceiling_micros) VALUES ($1, $2, $3)", params![command_row_id, *treatment as i64, budget_ceiling.value()])?;
         }
         CommandBody::AdmitOperatingCycle { cycle_id } => {
-            transaction.execute("INSERT INTO command_admit_operating_cycle(command_row_id, operating_cycle_id) VALUES (?1, ?2)", params![command_row_id, cycle_id.value()])?;
+            transaction.execute("INSERT INTO command_admit_operating_cycle(command_row_id, operating_cycle_id) VALUES ($1, $2)", params![command_row_id, cycle_id.value()])?;
         }
         CommandBody::StartRootAuthorityOfficeSession { cycle_id } => {
-            transaction.execute("INSERT INTO command_start_root_authority_office_session(command_row_id, operating_cycle_id) VALUES (?1, ?2)", params![command_row_id, cycle_id.value()])?;
+            transaction.execute("INSERT INTO command_start_root_authority_office_session(command_row_id, operating_cycle_id) VALUES ($1, $2)", params![command_row_id, cycle_id.value()])?;
         }
         CommandBody::RecordOfficeSessionReady { session_id } => {
-            transaction.execute("INSERT INTO command_record_office_session_ready(command_row_id, root_authority_office_session_id) VALUES (?1, ?2)", params![command_row_id, session_id.value()])?;
+            transaction.execute("INSERT INTO command_record_office_session_ready(command_row_id, root_authority_office_session_id) VALUES ($1, $2)", params![command_row_id, session_id.value()])?;
         }
         CommandBody::RecordOfficeSessionTerminal {
             session_id,
             terminal_state,
         } => {
-            transaction.execute("INSERT INTO command_record_office_session_terminal(command_row_id, root_authority_office_session_id, terminal_state) VALUES (?1, ?2, ?3)", params![command_row_id, session_id.value(), *terminal_state as i64])?;
+            transaction.execute("INSERT INTO command_record_office_session_terminal(command_row_id, root_authority_office_session_id, terminal_state) VALUES ($1, $2, $3)", params![command_row_id, session_id.value(), *terminal_state as i64])?;
         }
         CommandBody::OpenOfficeTurn {
             session_id,
             purpose,
         } => {
-            transaction.execute("INSERT INTO command_open_office_turn(command_row_id, root_authority_office_session_id, purpose) VALUES (?1, ?2, ?3)", params![command_row_id, session_id.value(), *purpose as i64])?;
+            transaction.execute("INSERT INTO command_open_office_turn(command_row_id, root_authority_office_session_id, purpose) VALUES ($1, $2, $3)", params![command_row_id, session_id.value(), *purpose as i64])?;
         }
         CommandBody::SettleOfficeTurn {
             turn_id,
             terminal_receipt_id,
         } => {
-            transaction.execute("INSERT INTO command_settle_office_turn(command_row_id, office_turn_id, pi_office_turn_terminal_receipt_id) VALUES (?1, ?2, ?3)", params![command_row_id, turn_id.value(), terminal_receipt_id.value()])?;
+            transaction.execute("INSERT INTO command_settle_office_turn(command_row_id, office_turn_id, pi_office_turn_terminal_receipt_id) VALUES ($1, $2, $3)", params![command_row_id, turn_id.value(), terminal_receipt_id.value()])?;
         }
         CommandBody::QuiesceOperatingCycle { cycle_id } => {
-            transaction.execute("INSERT INTO command_quiesce_operating_cycle(command_row_id, operating_cycle_id) VALUES (?1, ?2)", params![command_row_id, cycle_id.value()])?;
+            transaction.execute("INSERT INTO command_quiesce_operating_cycle(command_row_id, operating_cycle_id) VALUES ($1, $2)", params![command_row_id, cycle_id.value()])?;
         }
         CommandBody::RecordCycleDrained { cycle_id } => {
-            transaction.execute("INSERT INTO command_record_cycle_drained(command_row_id, operating_cycle_id) VALUES (?1, ?2)", params![command_row_id, cycle_id.value()])?;
+            transaction.execute("INSERT INTO command_record_cycle_drained(command_row_id, operating_cycle_id) VALUES ($1, $2)", params![command_row_id, cycle_id.value()])?;
         }
         CommandBody::ResumeOperatingCycle { cycle_id } => {
-            transaction.execute("INSERT INTO command_resume_operating_cycle(command_row_id, operating_cycle_id) VALUES (?1, ?2)", params![command_row_id, cycle_id.value()])?;
+            transaction.execute("INSERT INTO command_resume_operating_cycle(command_row_id, operating_cycle_id) VALUES ($1, $2)", params![command_row_id, cycle_id.value()])?;
         }
         CommandBody::ReconcileOperatingCycle { cycle_id } => {
-            transaction.execute("INSERT INTO command_reconcile_operating_cycle(command_row_id, operating_cycle_id) VALUES (?1, ?2)", params![command_row_id, cycle_id.value()])?;
+            transaction.execute("INSERT INTO command_reconcile_operating_cycle(command_row_id, operating_cycle_id) VALUES ($1, $2)", params![command_row_id, cycle_id.value()])?;
         }
         CommandBody::CloseOperatingCycle { cycle_id } => {
-            transaction.execute("INSERT INTO command_close_operating_cycle(command_row_id, operating_cycle_id) VALUES (?1, ?2)", params![command_row_id, cycle_id.value()])?;
+            transaction.execute("INSERT INTO command_close_operating_cycle(command_row_id, operating_cycle_id) VALUES ($1, $2)", params![command_row_id, cycle_id.value()])?;
         }
         CommandBody::ReserveBudget { cycle_id, amount } => {
-            transaction.execute("INSERT INTO command_reserve_budget(command_row_id, operating_cycle_id, amount_micros) VALUES (?1, ?2, ?3)", params![command_row_id, cycle_id.value(), amount.value()])?;
+            transaction.execute("INSERT INTO command_reserve_budget(command_row_id, operating_cycle_id, amount_micros) VALUES ($1, $2, $3)", params![command_row_id, cycle_id.value(), amount.value()])?;
         }
         CommandBody::ReconcileBudget {
             reservation_id,
@@ -13354,21 +13335,21 @@ fn insert_command_body(
                     CostObservation::Unknown(reason) => (2, None, Some(*reason as i64), None),
                     CostObservation::Unavailable(reason) => (3, None, None, Some(*reason as i64)),
                 };
-            transaction.execute("INSERT INTO command_reconcile_budget(command_row_id, budget_reservation_id, observation_kind, known_micros, unknown_reason, unavailable_reason) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![command_row_id, reservation_id.value(), kind, known, unknown, unavailable])?;
+            transaction.execute("INSERT INTO command_reconcile_budget(command_row_id, budget_reservation_id, observation_kind, known_micros, unknown_reason, unavailable_reason) VALUES ($1, $2, $3, $4, $5, $6)", params![command_row_id, reservation_id.value(), kind, known, unknown, unavailable])?;
         }
         CommandBody::RequestCancellation { cycle_id, mode } => {
-            transaction.execute("INSERT INTO command_request_cancellation(command_row_id, operating_cycle_id, cancellation_mode) VALUES (?1, ?2, ?3)", params![command_row_id, cycle_id.value(), *mode as i64])?;
+            transaction.execute("INSERT INTO command_request_cancellation(command_row_id, operating_cycle_id, cancellation_mode) VALUES ($1, $2, $3)", params![command_row_id, cycle_id.value(), *mode as i64])?;
         }
         CommandBody::ReconcileCancellation {
             cancellation_request_id,
         } => {
-            transaction.execute("INSERT INTO command_reconcile_cancellation(command_row_id, cancellation_request_id) VALUES (?1, ?2)", params![command_row_id, cancellation_request_id.value()])?;
+            transaction.execute("INSERT INTO command_reconcile_cancellation(command_row_id, cancellation_request_id) VALUES ($1, $2)", params![command_row_id, cancellation_request_id.value()])?;
         }
         CommandBody::CloseCostPostmortem {
             postmortem_id,
             resolution,
         } => {
-            transaction.execute("INSERT INTO command_close_cost_postmortem(command_row_id, postmortem_id, resolution_kind) VALUES (?1, ?2, ?3)", params![command_row_id, postmortem_id.value(), *resolution as i64])?;
+            transaction.execute("INSERT INTO command_close_cost_postmortem(command_row_id, postmortem_id, resolution_kind) VALUES ($1, $2, $3)", params![command_row_id, postmortem_id.value(), *resolution as i64])?;
         }
         CommandBody::CreateProject {
             operating_cycle_id,
@@ -13376,7 +13357,7 @@ fn insert_command_body(
             north_star_alignment,
         } => {
             transaction.execute(
-                "INSERT INTO command_create_project VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                "INSERT INTO command_create_project VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
                 params![
                     command_row_id,
                     operating_cycle_id.value(),
@@ -13397,7 +13378,7 @@ fn insert_command_body(
             frontier_event_id,
         } => {
             transaction.execute(
-                "INSERT INTO command_authorize_pi_office_turn_prompt VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                "INSERT INTO command_authorize_pi_office_turn_prompt VALUES ($1, $2, $3, $4, $5, $6)",
                 params![command_row_id, office_turn_id.value(), correlation_identity.as_str(), prompt_content_object_id.value(), prompt_digest.as_bytes().as_slice(), frontier_event_id.value()],
             )?;
         }
@@ -13407,7 +13388,7 @@ fn insert_command_body(
             prompt_digest,
         } => {
             transaction.execute(
-                "INSERT INTO command_record_pi_office_turn_prompt_delivery VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO command_record_pi_office_turn_prompt_delivery VALUES ($1, $2, $3, $4)",
                 params![
                     command_row_id,
                     office_turn_id.value(),
@@ -13422,7 +13403,7 @@ fn insert_command_body(
             command_result_sequence,
         } => {
             transaction.execute(
-                "INSERT INTO command_record_pi_office_turn_prompt_accepted VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO command_record_pi_office_turn_prompt_accepted VALUES ($1, $2, $3, $4)",
                 params![
                     command_row_id,
                     office_turn_id.value(),
@@ -13438,7 +13419,7 @@ fn insert_command_body(
             usage,
         } => {
             transaction.execute(
-                "INSERT INTO command_record_pi_office_turn_usage VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                "INSERT INTO command_record_pi_office_turn_usage VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
                 params![command_row_id, office_turn_id.value(), correlation_identity.as_str(), protocol_sequence.value(), usage.input_tokens.value(), usage.output_tokens.value(), usage.cache_read_tokens.value(), usage.cache_write_tokens.value(), usage.total_tokens.value(), usage.provider_cost.as_big_endian_bytes().as_slice(), usage.ceiling_micro_usd.value()],
             )?;
         }
@@ -13450,7 +13431,7 @@ fn insert_command_body(
         } => {
             let (kind, unknown, unavailable) = sql_pi_office_turn_usage_failure(*failure);
             transaction.execute(
-                "INSERT INTO command_record_pi_office_turn_usage_failure VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                "INSERT INTO command_record_pi_office_turn_usage_failure VALUES ($1, $2, $3, $4, $5, $6, $7)",
                 params![command_row_id, office_turn_id.value(), correlation_identity.as_str(), protocol_sequence.value(), kind, unknown, unavailable],
             )?;
         }
@@ -13466,7 +13447,7 @@ fn insert_command_body(
             let (evidence_kind, agent_settled_sequence) =
                 sql_pi_office_turn_terminal_evidence(*terminal_evidence);
             transaction.execute(
-                "INSERT INTO command_record_pi_office_turn_terminal VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                "INSERT INTO command_record_pi_office_turn_terminal VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
                 params![command_row_id, office_turn_id.value(), correlation_identity.as_str(), evidence_kind, agent_settled_sequence, terminal_evidence.final_accounting_sequence().value(), settled_sequence.value(), *disposition as i64, *assistant_outcome as i64, *transcript_disposition as i64],
             )?;
         }
@@ -13475,7 +13456,7 @@ fn insert_command_body(
             correlation_identity,
         } => {
             transaction.execute(
-                "INSERT INTO command_authorize_pi_office_session_dispose VALUES (?1, ?2, ?3)",
+                "INSERT INTO command_authorize_pi_office_session_dispose VALUES ($1, $2, $3)",
                 params![
                     command_row_id,
                     session_id.value(),
@@ -13488,7 +13469,7 @@ fn insert_command_body(
             correlation_identity,
         } => {
             transaction.execute(
-                "INSERT INTO command_record_pi_office_session_dispose_delivery VALUES (?1, ?2, ?3)",
+                "INSERT INTO command_record_pi_office_session_dispose_delivery VALUES ($1, $2, $3)",
                 params![
                     command_row_id,
                     session_id.value(),
@@ -13502,7 +13483,7 @@ fn insert_command_body(
             command_result_sequence,
         } => {
             transaction.execute(
-                "INSERT INTO command_record_pi_office_session_dispose_accepted VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO command_record_pi_office_session_dispose_accepted VALUES ($1, $2, $3, $4)",
                 params![command_row_id, session_id.value(), correlation_identity.as_str(), command_result_sequence.value()],
             )?;
         }
@@ -13513,7 +13494,7 @@ fn insert_command_body(
             usage,
         } => {
             transaction.execute(
-                "INSERT INTO command_record_pi_office_session_dispose_usage VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                "INSERT INTO command_record_pi_office_session_dispose_usage VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
                 params![command_row_id, session_id.value(), correlation_identity.as_str(), protocol_sequence.value(), usage.input_tokens.value(), usage.output_tokens.value(), usage.cache_read_tokens.value(), usage.cache_write_tokens.value(), usage.total_tokens.value(), usage.provider_cost.as_big_endian_bytes().as_slice(), usage.ceiling_micro_usd.value()],
             )?;
         }
@@ -13525,7 +13506,7 @@ fn insert_command_body(
         } => {
             let (kind, unknown, unavailable) = sql_pi_office_turn_usage_failure(*failure);
             transaction.execute(
-                "INSERT INTO command_record_pi_office_session_dispose_usage_failure VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                "INSERT INTO command_record_pi_office_session_dispose_usage_failure VALUES ($1, $2, $3, $4, $5, $6, $7)",
                 params![command_row_id, session_id.value(), correlation_identity.as_str(), protocol_sequence.value(), kind, unknown, unavailable],
             )?;
         }
@@ -13538,7 +13519,7 @@ fn insert_command_body(
             let (kind, session_file, digest, content, first_kind, first_digest) =
                 transcript_receipt_sql_values(transcript_receipt);
             transaction.execute(
-                "INSERT INTO command_record_pi_office_session_disposed VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                "INSERT INTO command_record_pi_office_session_disposed VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
                 params![command_row_id, session_id.value(), correlation_identity.as_str(), disposed_sequence.value(), kind, session_file, digest, content, first_kind, first_digest],
             )?;
         }
@@ -13547,7 +13528,7 @@ fn insert_command_body(
         }
         CommandBody::RecordContentSealReceipt { digest } => {
             transaction.execute(
-                "INSERT INTO command_record_content_seal_receipt VALUES (?1, ?2)",
+                "INSERT INTO command_record_content_seal_receipt VALUES ($1, $2)",
                 params![command_row_id, digest.as_bytes().as_slice()],
             )?;
         }
@@ -13555,7 +13536,7 @@ fn insert_command_body(
             content_seal_receipt_id,
         } => {
             transaction.execute(
-                "INSERT INTO command_register_content_object VALUES (?1, ?2)",
+                "INSERT INTO command_register_content_object VALUES ($1, $2)",
                 params![command_row_id, content_seal_receipt_id.value()],
             )?;
         }
@@ -13567,7 +13548,7 @@ fn insert_command_body(
             evaluator_output_content_object_id,
         } => {
             transaction.execute(
-                "INSERT INTO command_register_forensic_manifest VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                "INSERT INTO command_register_forensic_manifest VALUES ($1, $2, $3, $4, $5, $6)",
                 params![
                     command_row_id,
                     operating_cycle_id.value(),
@@ -13583,7 +13564,7 @@ fn insert_command_body(
             native_child_spawn_admission_id,
         } => {
             transaction.execute(
-                "INSERT INTO command_register_deterministic_evaluator_forensic_manifest VALUES (?1, ?2, ?3)",
+                "INSERT INTO command_register_deterministic_evaluator_forensic_manifest VALUES ($1, $2, $3)",
                 params![
                     command_row_id,
                     operating_cycle_id.value(),
@@ -13599,7 +13580,7 @@ fn insert_command_body(
             evaluator_content_object_id,
             input_manifest_content_object_id,
         } => {
-            transaction.execute("INSERT INTO command_register_deterministic_experiment VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)", params![command_row_id, operating_cycle_id.value(), project_id.value(), ticket_id.value(), target_graph_revision_id.value(), evaluator_content_object_id.value(), input_manifest_content_object_id.value()])?;
+            transaction.execute("INSERT INTO command_register_deterministic_experiment VALUES ($1, $2, $3, $4, $5, $6, $7)", params![command_row_id, operating_cycle_id.value(), project_id.value(), ticket_id.value(), target_graph_revision_id.value(), evaluator_content_object_id.value(), input_manifest_content_object_id.value()])?;
         }
         CommandBody::RecordDeterministicEvaluationReceipt {
             operating_cycle_id,
@@ -13609,14 +13590,14 @@ fn insert_command_body(
             forensic_manifest_id,
             evaluator_output_content_object_id,
         } => {
-            transaction.execute("INSERT INTO command_record_deterministic_evaluation_receipt VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)", params![command_row_id, operating_cycle_id.value(), deterministic_experiment_id.value(), evaluator_revision_id.value(), input_manifest_id.value(), forensic_manifest_id.value(), evaluator_output_content_object_id.value()])?;
+            transaction.execute("INSERT INTO command_record_deterministic_evaluation_receipt VALUES ($1, $2, $3, $4, $5, $6, $7)", params![command_row_id, operating_cycle_id.value(), deterministic_experiment_id.value(), evaluator_revision_id.value(), input_manifest_id.value(), forensic_manifest_id.value(), evaluator_output_content_object_id.value()])?;
         }
         CommandBody::AdmitDeterministicEvidence {
             operating_cycle_id,
             deterministic_evaluation_receipt_id,
         } => {
             transaction.execute(
-                "INSERT INTO command_admit_deterministic_evidence VALUES (?1, ?2, ?3)",
+                "INSERT INTO command_admit_deterministic_evidence VALUES ($1, $2, $3)",
                 params![
                     command_row_id,
                     operating_cycle_id.value(),
@@ -13629,7 +13610,7 @@ fn insert_command_body(
             deterministic_experiment_id,
         } => {
             transaction.execute(
-                "INSERT INTO command_finalize_deterministic_experiment VALUES (?1, ?2, ?3)",
+                "INSERT INTO command_finalize_deterministic_experiment VALUES ($1, $2, $3)",
                 params![
                     command_row_id,
                     operating_cycle_id.value(),
@@ -13649,7 +13630,7 @@ fn insert_command_body(
             supervisor_epoch_identity,
         } => {
             transaction.execute(
-                "INSERT INTO command_admit_deterministic_evaluator_native_child VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                "INSERT INTO command_admit_deterministic_evaluator_native_child VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
                 params![command_row_id, operating_cycle_id.value(), deterministic_experiment_id.value(), evaluator_revision_id.value(), input_manifest_id.value(), execution_profile_id.value(), native_workspace_id.as_str(), canonical_workspace_path.as_str(), supervisor_epoch_id.value(), supervisor_epoch_identity.as_str()],
             )?;
         }
@@ -13660,7 +13641,7 @@ fn insert_command_body(
             process_group_id,
         } => {
             transaction.execute(
-                "INSERT INTO command_record_deterministic_evaluator_native_child_spawn VALUES (?1, ?2, ?3, ?4, ?5)",
+                "INSERT INTO command_record_deterministic_evaluator_native_child_spawn VALUES ($1, $2, $3, $4, $5)",
                 params![command_row_id, native_child_spawn_admission_id.value(), child_identity.as_str(), direct_child_pid.value(), process_group_id.value()],
             )?;
         }
@@ -13670,7 +13651,7 @@ fn insert_command_body(
             primary_attractor,
         } => {
             transaction.execute(
-                "INSERT INTO command_register_actor_configuration VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO command_register_actor_configuration VALUES ($1, $2, $3, $4)",
                 params![
                     command_row_id,
                     configuration_name.as_str(),
@@ -13685,7 +13666,7 @@ fn insert_command_body(
             rendering_digest,
         } => {
             transaction.execute(
-                "INSERT INTO command_register_context_pack VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO command_register_context_pack VALUES ($1, $2, $3, $4)",
                 params![
                     command_row_id,
                     operating_cycle_id.value(),
@@ -13701,7 +13682,7 @@ fn insert_command_body(
             actor_display_name,
         } => {
             transaction.execute(
-                "INSERT INTO command_admit_actor_instance VALUES (?1, ?2, ?3, ?4, ?5)",
+                "INSERT INTO command_admit_actor_instance VALUES ($1, $2, $3, $4, $5)",
                 params![
                     command_row_id,
                     operating_cycle_id.value(),
@@ -13716,7 +13697,7 @@ fn insert_command_body(
             ticket_id,
         } => {
             transaction.execute(
-                "INSERT INTO command_admit_ticket VALUES (?1, ?2, ?3)",
+                "INSERT INTO command_admit_ticket VALUES ($1, $2, $3)",
                 params![
                     command_row_id,
                     operating_cycle_id.value(),
@@ -13734,7 +13715,7 @@ fn insert_command_body(
             assignment,
         } => {
             transaction.execute(
-                "INSERT INTO command_register_work_item VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                "INSERT INTO command_register_work_item VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
                 params![
                     command_row_id,
                     operating_cycle_id.value(),
@@ -13752,7 +13733,7 @@ fn insert_command_body(
             work_item_id,
         } => {
             transaction.execute(
-                "INSERT INTO command_claim_work_item VALUES (?1, ?2, ?3)",
+                "INSERT INTO command_claim_work_item VALUES ($1, $2, $3)",
                 params![
                     command_row_id,
                     operating_cycle_id.value(),
@@ -13766,7 +13747,7 @@ fn insert_command_body(
             reservation_amount,
         } => {
             transaction.execute(
-                "INSERT INTO command_start_actor_attempt VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO command_start_actor_attempt VALUES ($1, $2, $3, $4)",
                 params![
                     command_row_id,
                     operating_cycle_id.value(),
@@ -13780,7 +13761,7 @@ fn insert_command_body(
             terminal_kind,
         } => {
             transaction.execute(
-                "INSERT INTO command_attest_actor_attempt_terminal VALUES (?1, ?2, ?3)",
+                "INSERT INTO command_attest_actor_attempt_terminal VALUES ($1, $2, $3)",
                 params![
                     command_row_id,
                     actor_attempt_id.value(),
@@ -13793,7 +13774,7 @@ fn insert_command_body(
             actor_attempt_id,
         } => {
             transaction.execute(
-                "INSERT INTO command_validate_ticket_attempt VALUES (?1, ?2, ?3)",
+                "INSERT INTO command_validate_ticket_attempt VALUES ($1, $2, $3)",
                 params![
                     command_row_id,
                     operating_cycle_id.value(),
@@ -13806,7 +13787,7 @@ fn insert_command_body(
             actor_attempt_id,
         } => {
             transaction.execute(
-                "INSERT INTO command_retry_actor_attempt VALUES (?1, ?2, ?3)",
+                "INSERT INTO command_retry_actor_attempt VALUES ($1, $2, $3)",
                 params![
                     command_row_id,
                     operating_cycle_id.value(),
@@ -13819,7 +13800,7 @@ fn insert_command_body(
             actor_attempt_id,
         } => {
             transaction.execute(
-                "INSERT INTO command_complete_ticket VALUES (?1, ?2, ?3)",
+                "INSERT INTO command_complete_ticket VALUES ($1, $2, $3)",
                 params![
                     command_row_id,
                     operating_cycle_id.value(),
@@ -13829,7 +13810,7 @@ fn insert_command_body(
         }
         CommandBody::ExpireWorkLease { work_lease_id } => {
             transaction.execute(
-                "INSERT INTO command_expire_work_lease VALUES (?1, ?2)",
+                "INSERT INTO command_expire_work_lease VALUES ($1, $2)",
                 params![command_row_id, work_lease_id.value()],
             )?;
         }
@@ -13838,7 +13819,7 @@ fn insert_command_body(
             reason,
         } => {
             transaction.execute(
-                "INSERT INTO command_cancel_actor_attempt VALUES (?1, ?2, ?3)",
+                "INSERT INTO command_cancel_actor_attempt VALUES ($1, $2, $3)",
                 params![command_row_id, actor_attempt_id.value(), *reason as i64],
             )?;
         }
@@ -13848,7 +13829,7 @@ fn insert_command_body(
             obligation,
         } => {
             transaction.execute(
-                "INSERT INTO command_register_outcome_obligation VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO command_register_outcome_obligation VALUES ($1, $2, $3, $4)",
                 params![
                     command_row_id,
                     operating_cycle_id.value(),
@@ -13863,7 +13844,7 @@ fn insert_command_body(
             disposition,
         } => {
             transaction.execute(
-                "INSERT INTO command_resolve_outcome_obligation VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO command_resolve_outcome_obligation VALUES ($1, $2, $3, $4)",
                 params![
                     command_row_id,
                     operating_cycle_id.value(),
@@ -13880,7 +13861,7 @@ fn insert_command_body(
             stop_condition,
         } => {
             transaction.execute(
-                "INSERT INTO command_charter_project VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                "INSERT INTO command_charter_project VALUES ($1, $2, $3, $4, $5, $6)",
                 params![
                     command_row_id,
                     operating_cycle_id.value(),
@@ -13897,7 +13878,7 @@ fn insert_command_body(
             target,
         } => {
             transaction.execute(
-                "INSERT INTO command_transition_project VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO command_transition_project VALUES ($1, $2, $3, $4)",
                 params![
                     command_row_id,
                     operating_cycle_id.value(),
@@ -13911,7 +13892,7 @@ fn insert_command_body(
             project_milestone_id,
         } => {
             transaction.execute(
-                "INSERT INTO command_complete_project_milestone VALUES (?1, ?2, ?3)",
+                "INSERT INTO command_complete_project_milestone VALUES ($1, $2, $3)",
                 params![
                     command_row_id,
                     operating_cycle_id.value(),
@@ -13924,7 +13905,7 @@ fn insert_command_body(
             project_id,
         } => {
             transaction.execute(
-                "INSERT INTO command_reopen_project VALUES (?1, ?2, ?3)",
+                "INSERT INTO command_reopen_project VALUES ($1, $2, $3)",
                 params![
                     command_row_id,
                     operating_cycle_id.value(),
@@ -13940,7 +13921,7 @@ fn insert_command_body(
             prerequisite_ticket_id,
         } => {
             transaction.execute(
-                "INSERT INTO command_create_ticket VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                "INSERT INTO command_create_ticket VALUES ($1, $2, $3, $4, $5, $6)",
                 params![
                     command_row_id,
                     operating_cycle_id.value(),
@@ -13957,7 +13938,7 @@ fn insert_command_body(
             target,
         } => {
             transaction.execute(
-                "INSERT INTO command_transition_ticket VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO command_transition_ticket VALUES ($1, $2, $3, $4)",
                 params![
                     command_row_id,
                     operating_cycle_id.value(),
@@ -13974,7 +13955,7 @@ fn insert_command_body(
             body,
         } => {
             transaction.execute(
-                "INSERT INTO command_add_graph_object_revision VALUES (?1, ?2, ?3, ?4, ?5)",
+                "INSERT INTO command_add_graph_object_revision VALUES ($1, $2, $3, $4, $5)",
                 params![
                     command_row_id,
                     operating_cycle_id.value(),
@@ -13986,13 +13967,13 @@ fn insert_command_body(
             match body {
                 GraphRevisionBody::Observation { observation } => {
                     transaction.execute(
-                        "INSERT INTO command_add_observation_revision VALUES (?1, ?2)",
+                        "INSERT INTO command_add_observation_revision VALUES ($1, $2)",
                         params![command_row_id, observation.as_str()],
                     )?;
                 }
                 GraphRevisionBody::Hypothesis { hypothesis } => {
                     transaction.execute(
-                        "INSERT INTO command_add_hypothesis_revision VALUES (?1, ?2)",
+                        "INSERT INTO command_add_hypothesis_revision VALUES ($1, $2)",
                         params![command_row_id, hypothesis.as_str()],
                     )?;
                 }
@@ -14003,7 +13984,7 @@ fn insert_command_body(
             graph_revision_id,
         } => {
             transaction.execute(
-                "INSERT INTO command_commit_graph_revision VALUES (?1, ?2, ?3)",
+                "INSERT INTO command_commit_graph_revision VALUES ($1, $2, $3)",
                 params![
                     command_row_id,
                     operating_cycle_id.value(),
@@ -14019,7 +14000,7 @@ fn insert_command_body(
             edge_kind,
         } => {
             transaction.execute(
-                "INSERT INTO command_add_graph_edge VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                "INSERT INTO command_add_graph_edge VALUES ($1, $2, $3, $4, $5, $6)",
                 params![
                     command_row_id,
                     operating_cycle_id.value(),
@@ -14035,7 +14016,7 @@ fn insert_command_body(
             project_id,
         } => {
             transaction.execute(
-                "INSERT INTO command_create_episode VALUES (?1, ?2, ?3)",
+                "INSERT INTO command_create_episode VALUES ($1, $2, $3)",
                 params![
                     command_row_id,
                     operating_cycle_id.value(),
@@ -14049,7 +14030,7 @@ fn insert_command_body(
             target,
         } => {
             transaction.execute(
-                "INSERT INTO command_transition_episode VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO command_transition_episode VALUES ($1, $2, $3, $4)",
                 params![
                     command_row_id,
                     operating_cycle_id.value(),
@@ -14063,7 +14044,7 @@ fn insert_command_body(
             causal_episode_id,
         } => {
             transaction.execute(
-                "INSERT INTO command_reopen_episode VALUES (?1, ?2, ?3)",
+                "INSERT INTO command_reopen_episode VALUES ($1, $2, $3)",
                 params![
                     command_row_id,
                     operating_cycle_id.value(),
@@ -14077,7 +14058,7 @@ fn insert_command_body(
             target_graph_revision_id,
         } => {
             transaction.execute(
-                "INSERT INTO command_request_adversarial_review VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO command_request_adversarial_review VALUES ($1, $2, $3, $4)",
                 params![
                     command_row_id,
                     operating_cycle_id.value(),
@@ -14094,7 +14075,7 @@ fn insert_command_body(
             reviewer_actor_attempt_id,
         } => {
             transaction.execute(
-                "INSERT INTO command_assign_adversarial_reviewer VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                "INSERT INTO command_assign_adversarial_reviewer VALUES ($1, $2, $3, $4, $5, $6)",
                 params![
                     command_row_id,
                     operating_cycle_id.value(),
@@ -14114,7 +14095,7 @@ fn insert_command_body(
             failure_hypothesis,
         } => {
             transaction.execute(
-                "INSERT INTO command_submit_review_challenge VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                "INSERT INTO command_submit_review_challenge VALUES ($1, $2, $3, $4, $5, $6, $7)",
                 params![
                     command_row_id,
                     operating_cycle_id.value(),
@@ -14132,7 +14113,7 @@ fn insert_command_body(
             response,
         } => {
             transaction.execute(
-                "INSERT INTO command_respond_to_review_challenge VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO command_respond_to_review_challenge VALUES ($1, $2, $3, $4)",
                 params![
                     command_row_id,
                     operating_cycle_id.value(),
@@ -14147,7 +14128,7 @@ fn insert_command_body(
             disposition,
         } => {
             transaction.execute(
-                "INSERT INTO command_disposition_review_challenge VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO command_disposition_review_challenge VALUES ($1, $2, $3, $4)",
                 params![
                     command_row_id,
                     operating_cycle_id.value(),
@@ -14162,7 +14143,7 @@ fn insert_command_body(
             resolution,
         } => {
             transaction.execute(
-                "INSERT INTO command_resolve_adversarial_review VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO command_resolve_adversarial_review VALUES ($1, $2, $3, $4)",
                 params![
                     command_row_id,
                     operating_cycle_id.value(),
@@ -14177,7 +14158,7 @@ fn insert_command_body(
             causal_episode_id,
         } => {
             transaction.execute(
-                "INSERT INTO command_trigger_postmortem VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO command_trigger_postmortem VALUES ($1, $2, $3, $4)",
                 params![
                     command_row_id,
                     operating_cycle_id.value(),
@@ -14193,7 +14174,7 @@ fn insert_command_body(
             claim,
         } => {
             transaction.execute(
-                "INSERT INTO command_record_postmortem_causal_claim VALUES (?1, ?2, ?3, ?4, ?5)",
+                "INSERT INTO command_record_postmortem_causal_claim VALUES ($1, $2, $3, $4, $5)",
                 params![
                     command_row_id,
                     operating_cycle_id.value(),
@@ -14210,7 +14191,7 @@ fn insert_command_body(
             action,
         } => {
             transaction.execute(
-                "INSERT INTO command_propose_postmortem_action VALUES (?1, ?2, ?3, ?4, ?5)",
+                "INSERT INTO command_propose_postmortem_action VALUES ($1, $2, $3, $4, $5)",
                 params![
                     command_row_id,
                     operating_cycle_id.value(),
@@ -14225,7 +14206,7 @@ fn insert_command_body(
             postmortem_id,
         } => {
             transaction.execute(
-                "INSERT INTO command_close_postmortem VALUES (?1, ?2, ?3)",
+                "INSERT INTO command_close_postmortem VALUES ($1, $2, $3)",
                 params![
                     command_row_id,
                     operating_cycle_id.value(),
@@ -14238,7 +14219,7 @@ fn insert_command_body(
             supervisor_epoch_identity,
         } => {
             transaction.execute(
-                "INSERT INTO command_open_supervisor_epoch VALUES (?1, ?2, ?3)",
+                "INSERT INTO command_open_supervisor_epoch VALUES ($1, $2, $3)",
                 params![
                     command_row_id,
                     supervisor_epoch_id.value(),
@@ -14262,7 +14243,7 @@ fn insert_command_body(
                 PiChildOwner::ActorAttempt(id) => (Some(id.value()), None),
                 PiChildOwner::RootAuthorityOfficeSession(id) => (None, Some(id.value())),
             };
-            transaction.execute("INSERT INTO command_admit_pi_child_spawn VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)", params![command_row_id, operating_cycle_id.value(), attempt, office, budget_reservation_id.value(), execution_profile_id.value(), native_workspace_id.as_str(), canonical_workspace_path.as_str(), supervisor_epoch_id.value(), supervisor_epoch_identity.as_str(), pi_session_identity.as_str(), spawn_nonce.as_str()])?;
+            transaction.execute("INSERT INTO command_admit_pi_child_spawn VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)", params![command_row_id, operating_cycle_id.value(), attempt, office, budget_reservation_id.value(), execution_profile_id.value(), native_workspace_id.as_str(), canonical_workspace_path.as_str(), supervisor_epoch_id.value(), supervisor_epoch_identity.as_str(), pi_session_identity.as_str(), spawn_nonce.as_str()])?;
         }
         CommandBody::RecordInertChildSpawn {
             native_child_spawn_admission_id,
@@ -14271,7 +14252,7 @@ fn insert_command_body(
             process_group_id,
         } => {
             transaction.execute(
-                "INSERT INTO command_record_inert_pi_child_spawn VALUES (?1, ?2, ?3, ?4, ?5)",
+                "INSERT INTO command_record_inert_pi_child_spawn VALUES ($1, $2, $3, $4, $5)",
                 params![
                     command_row_id,
                     native_child_spawn_admission_id.value(),
@@ -14287,7 +14268,7 @@ fn insert_command_body(
             spawn_nonce,
         } => {
             transaction.execute(
-                "INSERT INTO command_record_pi_adapter_ready VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO command_record_pi_adapter_ready VALUES ($1, $2, $3, $4)",
                 params![
                     command_row_id,
                     native_child_id.value(),
@@ -14302,7 +14283,7 @@ fn insert_command_body(
             create_request_digest,
         } => {
             transaction.execute(
-                "INSERT INTO command_authorize_pi_create_session VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO command_authorize_pi_create_session VALUES ($1, $2, $3, $4)",
                 params![
                     command_row_id,
                     native_child_id.value(),
@@ -14317,7 +14298,7 @@ fn insert_command_body(
             create_request_digest,
         } => {
             transaction.execute(
-                "INSERT INTO command_record_pi_create_session_delivery VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO command_record_pi_create_session_delivery VALUES ($1, $2, $3, $4)",
                 params![
                     command_row_id,
                     native_child_id.value(),
@@ -14331,7 +14312,7 @@ fn insert_command_body(
             pi_session_identity,
         } => {
             transaction.execute(
-                "INSERT INTO command_record_pi_session_ready VALUES (?1, ?2, ?3)",
+                "INSERT INTO command_record_pi_session_ready VALUES ($1, $2, $3)",
                 params![
                     command_row_id,
                     native_child_id.value(),
@@ -14347,7 +14328,7 @@ fn insert_command_body(
             completeness,
         } => {
             transaction.execute(
-                "INSERT INTO command_record_child_stream_seal VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                "INSERT INTO command_record_child_stream_seal VALUES ($1, $2, $3, $4, $5, $6)",
                 params![
                     command_row_id,
                     native_child_id.value(),
@@ -14363,7 +14344,7 @@ fn insert_command_body(
             liveness,
         } => {
             transaction.execute(
-                "INSERT INTO command_record_child_process_liveness VALUES (?1, ?2, ?3)",
+                "INSERT INTO command_record_child_process_liveness VALUES ($1, $2, $3)",
                 params![command_row_id, native_child_id.value(), *liveness as i64],
             )?;
         }
@@ -14375,7 +14356,7 @@ fn insert_command_body(
             cause,
         } => {
             let (cause_kind, propagation_id) = signal_cause_parts(*cause);
-            transaction.execute("INSERT INTO command_record_process_signal_receipt VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)", params![command_row_id, native_child_id.value(), *action as i64, *delivery as i64, *observed_liveness as i64, cause_kind, propagation_id])?;
+            transaction.execute("INSERT INTO command_record_process_signal_receipt VALUES ($1, $2, $3, $4, $5, $6, $7)", params![command_row_id, native_child_id.value(), *action as i64, *delivery as i64, *observed_liveness as i64, cause_kind, propagation_id])?;
         }
         CommandBody::RecordDirectChildReap {
             native_child_id,
@@ -14393,7 +14374,7 @@ fn insert_command_body(
                 DirectChildWaitStatus::Unknown => (3, None),
             };
             transaction.execute(
-                "INSERT INTO command_record_direct_child_reap VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                "INSERT INTO command_record_direct_child_reap VALUES ($1, $2, $3, $4, $5, $6)",
                 params![
                     command_row_id,
                     native_child_id.value(),
@@ -14410,7 +14391,7 @@ fn insert_command_body(
             group_liveness_after_restart,
         } => {
             transaction.execute(
-                "INSERT INTO command_record_child_recovery VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO command_record_child_recovery VALUES ($1, $2, $3, $4)",
                 params![
                     command_row_id,
                     native_child_id.value(),
@@ -14421,7 +14402,7 @@ fn insert_command_body(
         }
         CommandBody::FinalizeChildProcess { native_child_id } => {
             transaction.execute(
-                "INSERT INTO command_finalize_child_process VALUES (?1, ?2)",
+                "INSERT INTO command_finalize_child_process VALUES ($1, $2)",
                 params![command_row_id, native_child_id.value()],
             )?;
         }
@@ -14429,7 +14410,7 @@ fn insert_command_body(
             cancellation_request_id,
         } => {
             transaction.execute(
-                "INSERT INTO command_begin_cancellation_propagation VALUES (?1, ?2)",
+                "INSERT INTO command_begin_cancellation_propagation VALUES ($1, $2)",
                 params![command_row_id, cancellation_request_id.value()],
             )?;
         }
@@ -14437,7 +14418,7 @@ fn insert_command_body(
             cancellation_propagation_id,
         } => {
             transaction.execute(
-                "INSERT INTO command_reconcile_cancellation_propagation VALUES (?1, ?2)",
+                "INSERT INTO command_reconcile_cancellation_propagation VALUES ($1, $2)",
                 params![command_row_id, cancellation_propagation_id.value()],
             )?;
         }
@@ -14446,7 +14427,7 @@ fn insert_command_body(
             reason,
         } => {
             transaction.execute(
-                "INSERT INTO command_record_native_child_not_spawned VALUES (?1, ?2, ?3)",
+                "INSERT INTO command_record_native_child_not_spawned VALUES ($1, $2, $3)",
                 params![
                     command_row_id,
                     native_child_spawn_admission_id.value(),
@@ -14466,18 +14447,18 @@ fn insert_event(
 ) -> Result<EventId, StoreError> {
     let sequence: i64 = transaction.query_row(
         "SELECT COALESCE(MAX(event_sequence), 0) + 1 FROM events",
-        [],
+        params![],
         |row| row.get(0),
     )?;
     let event_id = EventId::try_from(transaction.query_row(
         "SELECT COALESCE(MAX(event_id), 0) + 1 FROM events",
-        [],
+        params![],
         |row| row.get::<_, i64>(0),
     )?)
     .map_err(|_| StoreError::InvalidStoredValue)?;
     transaction.execute(
         "INSERT INTO events(event_id, command_row_id, event_kind, event_sequence, event_fingerprint)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
+         VALUES ($1, $2, $3, $4, $5)",
         params![
             event_id.value(),
             command_row_id,
@@ -14505,18 +14486,18 @@ fn insert_event_body(
             authorized_generation,
         } => {
             transaction.execute(
-                "INSERT INTO event_pi_office_session_dispose_authorized VALUES (?1, ?2, ?3, ?4, ?5)",
+                "INSERT INTO event_pi_office_session_dispose_authorized VALUES ($1, $2, $3, $4, $5)",
                 params![event_id.value(), session_id.value(), native_child_id.value(), correlation_identity.as_str(), authorized_generation.value()],
             )?;
         }
         EventBody::SocietyIdentityCreated { society_id } => {
             transaction.execute(
-                "INSERT INTO event_society_identity_created(event_id, society_id) VALUES (?1, ?2)",
+                "INSERT INTO event_society_identity_created(event_id, society_id) VALUES ($1, $2)",
                 params![event_id.value(), society_id.value()],
             )?;
         }
         EventBody::RootAuthorityOfficeInstalled { office_id } => {
-            transaction.execute("INSERT INTO event_root_authority_office_installed(event_id, office_id) VALUES (?1, ?2)", params![event_id.value(), office_id.value()])?;
+            transaction.execute("INSERT INTO event_root_authority_office_installed(event_id, office_id) VALUES ($1, $2)", params![event_id.value(), office_id.value()])?;
         }
         EventBody::FoundingMissionInstalled {
             mission_id,
@@ -14525,7 +14506,7 @@ fn insert_event_body(
             transaction.execute(
                 "INSERT INTO event_founding_mission_installed(
                      event_id, founding_mission_id, application_revision_id
-                 ) VALUES (?1, ?2, ?3)",
+                 ) VALUES ($1, $2, $3)",
                 params![
                     event_id.value(),
                     mission_id.value(),
@@ -14537,17 +14518,17 @@ fn insert_event_body(
             occupancy_id,
             principal_id,
         } => {
-            transaction.execute("INSERT INTO event_root_authority_appointed(event_id, office_occupancy_id, principal_id) VALUES (?1, ?2, ?3)", params![event_id.value(), occupancy_id.value(), principal_id.value()])?;
+            transaction.execute("INSERT INTO event_root_authority_appointed(event_id, office_occupancy_id, principal_id) VALUES ($1, $2, $3)", params![event_id.value(), occupancy_id.value(), principal_id.value()])?;
         }
         EventBody::R0HardCeilingSet {
             society_id,
             ceiling,
         } => {
-            transaction.execute("INSERT INTO event_r0_hard_ceiling_set(event_id, society_id, ceiling_micros) VALUES (?1, ?2, ?3)", params![event_id.value(), society_id.value(), ceiling.value()])?;
+            transaction.execute("INSERT INTO event_r0_hard_ceiling_set(event_id, society_id, ceiling_micros) VALUES ($1, $2, $3)", params![event_id.value(), society_id.value(), ceiling.value()])?;
         }
         EventBody::SocietyBootstrapped { society_id } => {
             transaction.execute(
-                "INSERT INTO event_society_bootstrapped(event_id, society_id) VALUES (?1, ?2)",
+                "INSERT INTO event_society_bootstrapped(event_id, society_id) VALUES ($1, $2)",
                 params![event_id.value(), society_id.value()],
             )?;
         }
@@ -14557,50 +14538,50 @@ fn insert_event_body(
             treatment,
             budget_ceiling,
         } => {
-            transaction.execute("INSERT INTO event_operating_cycle_proposed(event_id, operating_cycle_id, admission_generation, treatment, budget_ceiling_micros) VALUES (?1, ?2, ?3, ?4, ?5)", params![event_id.value(), cycle_id.value(), generation.value(), *treatment as i64, budget_ceiling.value()])?;
+            transaction.execute("INSERT INTO event_operating_cycle_proposed(event_id, operating_cycle_id, admission_generation, treatment, budget_ceiling_micros) VALUES ($1, $2, $3, $4, $5)", params![event_id.value(), cycle_id.value(), generation.value(), *treatment as i64, budget_ceiling.value()])?;
         }
         EventBody::OperatingCycleStateChanged {
             cycle_id,
             state,
             generation,
         } => {
-            transaction.execute("INSERT INTO event_operating_cycle_state_changed(event_id, operating_cycle_id, lifecycle_state, admission_generation) VALUES (?1, ?2, ?3, ?4)", params![event_id.value(), cycle_id.value(), *state as i64, generation.value()])?;
+            transaction.execute("INSERT INTO event_operating_cycle_state_changed(event_id, operating_cycle_id, lifecycle_state, admission_generation) VALUES ($1, $2, $3, $4)", params![event_id.value(), cycle_id.value(), *state as i64, generation.value()])?;
         }
         EventBody::RootAuthorityOfficeSessionStarted {
             session_id,
             cycle_id,
         } => {
-            transaction.execute("INSERT INTO event_root_authority_office_session_started(event_id, root_authority_office_session_id, operating_cycle_id) VALUES (?1, ?2, ?3)", params![event_id.value(), session_id.value(), cycle_id.value()])?;
+            transaction.execute("INSERT INTO event_root_authority_office_session_started(event_id, root_authority_office_session_id, operating_cycle_id) VALUES ($1, $2, $3)", params![event_id.value(), session_id.value(), cycle_id.value()])?;
         }
         EventBody::RootAuthorityOfficeSessionStateChanged { session_id, state } => {
-            transaction.execute("INSERT INTO event_root_authority_office_session_state_changed(event_id, root_authority_office_session_id, lifecycle_state) VALUES (?1, ?2, ?3)", params![event_id.value(), session_id.value(), *state as i64])?;
+            transaction.execute("INSERT INTO event_root_authority_office_session_state_changed(event_id, root_authority_office_session_id, lifecycle_state) VALUES ($1, $2, $3)", params![event_id.value(), session_id.value(), *state as i64])?;
         }
         EventBody::OfficeTurnOpened {
             turn_id,
             session_id,
             purpose,
         } => {
-            transaction.execute("INSERT INTO event_office_turn_opened(event_id, office_turn_id, root_authority_office_session_id, purpose) VALUES (?1, ?2, ?3, ?4)", params![event_id.value(), turn_id.value(), session_id.value(), *purpose as i64])?;
+            transaction.execute("INSERT INTO event_office_turn_opened(event_id, office_turn_id, root_authority_office_session_id, purpose) VALUES ($1, $2, $3, $4)", params![event_id.value(), turn_id.value(), session_id.value(), *purpose as i64])?;
         }
         EventBody::OfficeTurnSettled {
             turn_id,
             session_id,
             charged_delta,
         } => {
-            transaction.execute("INSERT INTO event_office_turn_settled(event_id, office_turn_id, root_authority_office_session_id, charged_delta_micros) VALUES (?1, ?2, ?3, ?4)", params![event_id.value(), turn_id.value(), session_id.value(), charged_delta.value()])?;
+            transaction.execute("INSERT INTO event_office_turn_settled(event_id, office_turn_id, root_authority_office_session_id, charged_delta_micros) VALUES ($1, $2, $3, $4)", params![event_id.value(), turn_id.value(), session_id.value(), charged_delta.value()])?;
         }
         EventBody::BudgetReserved {
             reservation_id,
             cycle_id,
             amount,
         } => {
-            transaction.execute("INSERT INTO event_budget_reserved(event_id, budget_reservation_id, operating_cycle_id, amount_micros) VALUES (?1, ?2, ?3, ?4)", params![event_id.value(), reservation_id.value(), cycle_id.value(), amount.value()])?;
+            transaction.execute("INSERT INTO event_budget_reserved(event_id, budget_reservation_id, operating_cycle_id, amount_micros) VALUES ($1, $2, $3, $4)", params![event_id.value(), reservation_id.value(), cycle_id.value(), amount.value()])?;
         }
         EventBody::BudgetReconciled {
             reservation_id,
             observed,
         } => {
-            transaction.execute("INSERT INTO event_budget_reconciled(event_id, budget_reservation_id, observed_micros) VALUES (?1, ?2, ?3)", params![event_id.value(), reservation_id.value(), observed.value()])?;
+            transaction.execute("INSERT INTO event_budget_reconciled(event_id, budget_reservation_id, observed_micros) VALUES ($1, $2, $3)", params![event_id.value(), reservation_id.value(), observed.value()])?;
         }
         EventBody::BudgetAdmissionFrozen {
             reservation_id,
@@ -14611,7 +14592,7 @@ fn insert_event_body(
         } => {
             let (reason_kind, observed, reserved, unknown, unavailable) =
                 budget_freeze_reason_to_sql(*reason);
-            transaction.execute("INSERT INTO event_budget_admission_frozen(event_id, budget_reservation_id, operating_cycle_id, cancellation_request_id, postmortem_id, freeze_reason_kind, observed_micros, reserved_micros, unknown_reason, unavailable_reason) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)", params![event_id.value(), reservation_id.value(), cycle_id.value(), cancellation_request_id.value(), postmortem_id.value(), reason_kind, observed, reserved, unknown, unavailable])?;
+            transaction.execute("INSERT INTO event_budget_admission_frozen(event_id, budget_reservation_id, operating_cycle_id, cancellation_request_id, postmortem_id, freeze_reason_kind, observed_micros, reserved_micros, unknown_reason, unavailable_reason) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)", params![event_id.value(), reservation_id.value(), cycle_id.value(), cancellation_request_id.value(), postmortem_id.value(), reason_kind, observed, reserved, unknown, unavailable])?;
         }
         EventBody::CancellationRequested {
             cancellation_request_id,
@@ -14619,13 +14600,13 @@ fn insert_event_body(
             mode,
             generation,
         } => {
-            transaction.execute("INSERT INTO event_cancellation_requested(event_id, cancellation_request_id, operating_cycle_id, cancellation_mode, admission_generation) VALUES (?1, ?2, ?3, ?4, ?5)", params![event_id.value(), cancellation_request_id.value(), cycle_id.value(), *mode as i64, generation.value()])?;
+            transaction.execute("INSERT INTO event_cancellation_requested(event_id, cancellation_request_id, operating_cycle_id, cancellation_mode, admission_generation) VALUES ($1, $2, $3, $4, $5)", params![event_id.value(), cancellation_request_id.value(), cycle_id.value(), *mode as i64, generation.value()])?;
         }
         EventBody::CancellationReconciled {
             cancellation_request_id,
             cycle_id,
         } => {
-            transaction.execute("INSERT INTO event_cancellation_reconciled(event_id, cancellation_request_id, operating_cycle_id) VALUES (?1, ?2, ?3)", params![event_id.value(), cancellation_request_id.value(), cycle_id.value()])?;
+            transaction.execute("INSERT INTO event_cancellation_reconciled(event_id, cancellation_request_id, operating_cycle_id) VALUES ($1, $2, $3)", params![event_id.value(), cancellation_request_id.value(), cycle_id.value()])?;
         }
         EventBody::CostPostmortemClosed {
             postmortem_id,
@@ -14634,14 +14615,14 @@ fn insert_event_body(
             resolution,
             charged,
         } => {
-            transaction.execute("INSERT INTO event_cost_postmortem_closed(event_id, postmortem_id, budget_reservation_id, operating_cycle_id, resolution_kind, charged_micros) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![event_id.value(), postmortem_id.value(), reservation_id.value(), cycle_id.value(), *resolution as i64, charged.value()])?;
+            transaction.execute("INSERT INTO event_cost_postmortem_closed(event_id, postmortem_id, budget_reservation_id, operating_cycle_id, resolution_kind, charged_micros) VALUES ($1, $2, $3, $4, $5, $6)", params![event_id.value(), postmortem_id.value(), reservation_id.value(), cycle_id.value(), *resolution as i64, charged.value()])?;
         }
         EventBody::ProjectCreated {
             project_id,
             application_revision_id,
         } => {
             transaction.execute(
-                "INSERT INTO event_project_created VALUES (?1, ?2, ?3)",
+                "INSERT INTO event_project_created VALUES ($1, $2, $3)",
                 params![
                     event_id.value(),
                     project_id.value(),
@@ -14651,13 +14632,13 @@ fn insert_event_body(
         }
         EventBody::ProjectChartered { project_id } => {
             transaction.execute(
-                "INSERT INTO event_project_chartered VALUES (?1, ?2)",
+                "INSERT INTO event_project_chartered VALUES ($1, $2)",
                 params![event_id.value(), project_id.value()],
             )?;
         }
         EventBody::ProjectStateChanged { project_id, state } => {
             transaction.execute(
-                "INSERT INTO event_project_state_changed VALUES (?1, ?2, ?3)",
+                "INSERT INTO event_project_state_changed VALUES ($1, $2, $3)",
                 params![event_id.value(), project_id.value(), *state as i64],
             )?;
         }
@@ -14665,7 +14646,7 @@ fn insert_event_body(
             project_milestone_id,
         } => {
             transaction.execute(
-                "INSERT INTO event_project_milestone_completed VALUES (?1, ?2)",
+                "INSERT INTO event_project_milestone_completed VALUES ($1, $2)",
                 params![event_id.value(), project_milestone_id.value()],
             )?;
         }
@@ -14674,13 +14655,13 @@ fn insert_event_body(
             project_id,
         } => {
             transaction.execute(
-                "INSERT INTO event_ticket_created VALUES (?1, ?2, ?3)",
+                "INSERT INTO event_ticket_created VALUES ($1, $2, $3)",
                 params![event_id.value(), ticket_id.value(), project_id.value()],
             )?;
         }
         EventBody::TicketStateChanged { ticket_id, state } => {
             transaction.execute(
-                "INSERT INTO event_ticket_state_changed VALUES (?1, ?2, ?3)",
+                "INSERT INTO event_ticket_state_changed VALUES ($1, $2, $3)",
                 params![event_id.value(), ticket_id.value(), *state as i64],
             )?;
         }
@@ -14689,7 +14670,7 @@ fn insert_event_body(
             graph_revision_id,
         } => {
             transaction.execute(
-                "INSERT INTO event_graph_object_revision_added VALUES (?1, ?2, ?3)",
+                "INSERT INTO event_graph_object_revision_added VALUES ($1, $2, $3)",
                 params![
                     event_id.value(),
                     graph_object_id.value(),
@@ -14699,13 +14680,13 @@ fn insert_event_body(
         }
         EventBody::GraphRevisionCommitted { graph_revision_id } => {
             transaction.execute(
-                "INSERT INTO event_graph_revision_committed VALUES (?1, ?2)",
+                "INSERT INTO event_graph_revision_committed VALUES ($1, $2)",
                 params![event_id.value(), graph_revision_id.value()],
             )?;
         }
         EventBody::GraphEdgeAdded { graph_edge_id } => {
             transaction.execute(
-                "INSERT INTO event_graph_edge_added VALUES (?1, ?2)",
+                "INSERT INTO event_graph_edge_added VALUES ($1, $2)",
                 params![event_id.value(), graph_edge_id.value()],
             )?;
         }
@@ -14714,7 +14695,7 @@ fn insert_event_body(
             project_id,
         } => {
             transaction.execute(
-                "INSERT INTO event_episode_created VALUES (?1, ?2, ?3)",
+                "INSERT INTO event_episode_created VALUES ($1, $2, $3)",
                 params![
                     event_id.value(),
                     causal_episode_id.value(),
@@ -14727,7 +14708,7 @@ fn insert_event_body(
             state,
         } => {
             transaction.execute(
-                "INSERT INTO event_episode_state_changed VALUES (?1, ?2, ?3)",
+                "INSERT INTO event_episode_state_changed VALUES ($1, $2, $3)",
                 params![event_id.value(), causal_episode_id.value(), *state as i64],
             )?;
         }
@@ -14735,7 +14716,7 @@ fn insert_event_body(
             adversarial_review_id,
         } => {
             transaction.execute(
-                "INSERT INTO event_adversarial_review_requested VALUES (?1, ?2)",
+                "INSERT INTO event_adversarial_review_requested VALUES ($1, $2)",
                 params![event_id.value(), adversarial_review_id.value()],
             )?;
         }
@@ -14746,7 +14727,7 @@ fn insert_event_body(
             reviewer_actor_attempt_id,
         } => {
             transaction.execute(
-                "INSERT INTO event_adversarial_reviewer_assigned VALUES (?1, ?2, ?3, ?4, ?5)",
+                "INSERT INTO event_adversarial_reviewer_assigned VALUES ($1, $2, $3, $4, $5)",
                 params![
                     event_id.value(),
                     adversarial_review_id.value(),
@@ -14761,7 +14742,7 @@ fn insert_event_body(
             author_principal_id,
         } => {
             transaction.execute(
-                "INSERT INTO event_review_challenge_submitted VALUES (?1, ?2, ?3)",
+                "INSERT INTO event_review_challenge_submitted VALUES ($1, $2, $3)",
                 params![
                     event_id.value(),
                     review_challenge_id.value(),
@@ -14773,7 +14754,7 @@ fn insert_event_body(
             review_challenge_id,
         } => {
             transaction.execute(
-                "INSERT INTO event_review_challenge_responded VALUES (?1, ?2)",
+                "INSERT INTO event_review_challenge_responded VALUES ($1, $2)",
                 params![event_id.value(), review_challenge_id.value()],
             )?;
         }
@@ -14782,7 +14763,7 @@ fn insert_event_body(
             disposition,
         } => {
             transaction.execute(
-                "INSERT INTO event_review_challenge_dispositioned VALUES (?1, ?2, ?3)",
+                "INSERT INTO event_review_challenge_dispositioned VALUES ($1, $2, $3)",
                 params![
                     event_id.value(),
                     review_challenge_id.value(),
@@ -14795,7 +14776,7 @@ fn insert_event_body(
             state,
         } => {
             transaction.execute(
-                "INSERT INTO event_adversarial_review_resolved VALUES (?1, ?2, ?3)",
+                "INSERT INTO event_adversarial_review_resolved VALUES ($1, $2, $3)",
                 params![
                     event_id.value(),
                     adversarial_review_id.value(),
@@ -14805,7 +14786,7 @@ fn insert_event_body(
         }
         EventBody::PostmortemTriggered { postmortem_id } => {
             transaction.execute(
-                "INSERT INTO event_postmortem_triggered VALUES (?1, ?2)",
+                "INSERT INTO event_postmortem_triggered VALUES ($1, $2)",
                 params![event_id.value(), postmortem_id.value()],
             )?;
         }
@@ -14813,7 +14794,7 @@ fn insert_event_body(
             postmortem_causal_claim_id,
         } => {
             transaction.execute(
-                "INSERT INTO event_postmortem_causal_claim_recorded VALUES (?1, ?2)",
+                "INSERT INTO event_postmortem_causal_claim_recorded VALUES ($1, $2)",
                 params![event_id.value(), postmortem_causal_claim_id.value()],
             )?;
         }
@@ -14821,13 +14802,13 @@ fn insert_event_body(
             postmortem_action_proposal_id,
         } => {
             transaction.execute(
-                "INSERT INTO event_postmortem_action_proposed VALUES (?1, ?2)",
+                "INSERT INTO event_postmortem_action_proposed VALUES ($1, $2)",
                 params![event_id.value(), postmortem_action_proposal_id.value()],
             )?;
         }
         EventBody::PostmortemClosed { postmortem_id } => {
             transaction.execute(
-                "INSERT INTO event_postmortem_closed VALUES (?1, ?2)",
+                "INSERT INTO event_postmortem_closed VALUES ($1, $2)",
                 params![event_id.value(), postmortem_id.value()],
             )?;
         }
@@ -14836,7 +14817,7 @@ fn insert_event_body(
             actor_configuration_revision_id,
         } => {
             transaction.execute(
-                "INSERT INTO event_actor_configuration_registered VALUES (?1, ?2, ?3)",
+                "INSERT INTO event_actor_configuration_registered VALUES ($1, $2, $3)",
                 params![
                     event_id.value(),
                     actor_configuration_id.value(),
@@ -14846,7 +14827,7 @@ fn insert_event_body(
         }
         EventBody::ContextPackRegistered { context_pack_id } => {
             transaction.execute(
-                "INSERT INTO event_context_pack_registered VALUES (?1, ?2)",
+                "INSERT INTO event_context_pack_registered VALUES ($1, $2)",
                 params![event_id.value(), context_pack_id.value()],
             )?;
         }
@@ -14855,7 +14836,7 @@ fn insert_event_body(
             principal_id,
         } => {
             transaction.execute(
-                "INSERT INTO event_actor_instance_admitted VALUES (?1, ?2, ?3)",
+                "INSERT INTO event_actor_instance_admitted VALUES ($1, $2, $3)",
                 params![
                     event_id.value(),
                     actor_instance_id.value(),
@@ -14865,7 +14846,7 @@ fn insert_event_body(
         }
         EventBody::TicketAdmitted { ticket_id } => {
             transaction.execute(
-                "INSERT INTO event_ticket_admitted VALUES (?1, ?2)",
+                "INSERT INTO event_ticket_admitted VALUES ($1, $2)",
                 params![event_id.value(), ticket_id.value()],
             )?;
         }
@@ -14875,7 +14856,7 @@ fn insert_event_body(
             adversarial_review_id,
         } => {
             transaction.execute(
-                "INSERT INTO event_work_item_registered VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO event_work_item_registered VALUES ($1, $2, $3, $4)",
                 params![
                     event_id.value(),
                     work_item_id.value(),
@@ -14890,7 +14871,7 @@ fn insert_event_body(
             actor_instance_id,
         } => {
             transaction.execute(
-                "INSERT INTO event_work_item_claimed VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO event_work_item_claimed VALUES ($1, $2, $3, $4)",
                 params![
                     event_id.value(),
                     work_item_id.value(),
@@ -14905,7 +14886,7 @@ fn insert_event_body(
             budget_reservation_id,
         } => {
             transaction.execute(
-                "INSERT INTO event_actor_attempt_started VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO event_actor_attempt_started VALUES ($1, $2, $3, $4)",
                 params![
                     event_id.value(),
                     actor_attempt_id.value(),
@@ -14919,7 +14900,7 @@ fn insert_event_body(
             terminal_kind,
         } => {
             transaction.execute(
-                "INSERT INTO event_actor_attempt_terminal_attested VALUES (?1, ?2, ?3)",
+                "INSERT INTO event_actor_attempt_terminal_attested VALUES ($1, $2, $3)",
                 params![
                     event_id.value(),
                     actor_attempt_id.value(),
@@ -14932,7 +14913,7 @@ fn insert_event_body(
             ticket_id,
         } => {
             transaction.execute(
-                "INSERT INTO event_ticket_attempt_validated VALUES (?1, ?2, ?3)",
+                "INSERT INTO event_ticket_attempt_validated VALUES ($1, $2, $3)",
                 params![
                     event_id.value(),
                     actor_attempt_id.value(),
@@ -14946,7 +14927,7 @@ fn insert_event_body(
             ticket_id,
         } => {
             transaction.execute(
-                "INSERT INTO event_actor_attempt_retry_prepared VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO event_actor_attempt_retry_prepared VALUES ($1, $2, $3, $4)",
                 params![
                     event_id.value(),
                     actor_attempt_id.value(),
@@ -14960,7 +14941,7 @@ fn insert_event_body(
             actor_attempt_id,
         } => {
             transaction.execute(
-                "INSERT INTO event_ticket_completed VALUES (?1, ?2, ?3)",
+                "INSERT INTO event_ticket_completed VALUES ($1, $2, $3)",
                 params![
                     event_id.value(),
                     ticket_id.value(),
@@ -14973,7 +14954,7 @@ fn insert_event_body(
             work_item_id,
         } => {
             transaction.execute(
-                "INSERT INTO event_work_lease_expired VALUES (?1, ?2, ?3)",
+                "INSERT INTO event_work_lease_expired VALUES ($1, $2, $3)",
                 params![
                     event_id.value(),
                     work_lease_id.value(),
@@ -14986,7 +14967,7 @@ fn insert_event_body(
             reason,
         } => {
             transaction.execute(
-                "INSERT INTO event_actor_attempt_cancellation_requested VALUES (?1, ?2, ?3)",
+                "INSERT INTO event_actor_attempt_cancellation_requested VALUES ($1, $2, $3)",
                 params![event_id.value(), actor_attempt_id.value(), *reason as i64],
             )?;
         }
@@ -14995,7 +14976,7 @@ fn insert_event_body(
             project_id,
         } => {
             transaction.execute(
-                "INSERT INTO event_outcome_obligation_registered VALUES (?1, ?2, ?3)",
+                "INSERT INTO event_outcome_obligation_registered VALUES ($1, $2, $3)",
                 params![
                     event_id.value(),
                     outcome_obligation_id.value(),
@@ -15008,7 +14989,7 @@ fn insert_event_body(
             state,
         } => {
             transaction.execute(
-                "INSERT INTO event_outcome_obligation_resolved VALUES (?1, ?2, ?3)",
+                "INSERT INTO event_outcome_obligation_resolved VALUES ($1, $2, $3)",
                 params![
                     event_id.value(),
                     outcome_obligation_id.value(),
@@ -15021,7 +15002,7 @@ fn insert_event_body(
             digest,
         } => {
             transaction.execute(
-                "INSERT INTO event_content_seal_receipt_recorded VALUES (?1, ?2, ?3)",
+                "INSERT INTO event_content_seal_receipt_recorded VALUES ($1, $2, $3)",
                 params![
                     event_id.value(),
                     content_seal_receipt_id.value(),
@@ -15034,7 +15015,7 @@ fn insert_event_body(
             content_seal_receipt_id,
         } => {
             transaction.execute(
-                "INSERT INTO event_content_object_registered VALUES (?1, ?2, ?3)",
+                "INSERT INTO event_content_object_registered VALUES ($1, $2, $3)",
                 params![
                     event_id.value(),
                     content_object_id.value(),
@@ -15048,7 +15029,7 @@ fn insert_event_body(
             evaluator_output_content_object_id,
         } => {
             transaction.execute(
-                "INSERT INTO event_forensic_manifest_registered VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO event_forensic_manifest_registered VALUES ($1, $2, $3, $4)",
                 params![
                     event_id.value(),
                     forensic_manifest_id.value(),
@@ -15066,7 +15047,7 @@ fn insert_event_body(
         } => {
             transaction.execute(
                 "INSERT INTO event_deterministic_evaluator_forensic_manifest_registered
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                 VALUES ($1, $2, $3, $4, $5, $6)",
                 params![
                     event_id.value(),
                     forensic_manifest_id.value(),
@@ -15083,7 +15064,7 @@ fn insert_event_body(
             input_manifest_id,
         } => {
             transaction.execute(
-                "INSERT INTO event_deterministic_experiment_registered VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO event_deterministic_experiment_registered VALUES ($1, $2, $3, $4)",
                 params![
                     event_id.value(),
                     deterministic_experiment_id.value(),
@@ -15097,7 +15078,7 @@ fn insert_event_body(
             deterministic_experiment_id,
         } => {
             transaction.execute(
-                "INSERT INTO event_deterministic_evaluation_receipt_recorded VALUES (?1, ?2, ?3)",
+                "INSERT INTO event_deterministic_evaluation_receipt_recorded VALUES ($1, $2, $3)",
                 params![
                     event_id.value(),
                     deterministic_evaluation_receipt_id.value(),
@@ -15113,7 +15094,7 @@ fn insert_event_body(
             limitation_kind,
         } => {
             transaction.execute(
-                "INSERT INTO event_deterministic_evidence_admitted VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                "INSERT INTO event_deterministic_evidence_admitted VALUES ($1, $2, $3, $4, $5, $6)",
                 params![
                     event_id.value(),
                     evidence_admission_id.value(),
@@ -15129,7 +15110,7 @@ fn insert_event_body(
             terminal_state,
         } => {
             transaction.execute(
-                "INSERT INTO event_deterministic_experiment_finalized VALUES (?1, ?2, ?3)",
+                "INSERT INTO event_deterministic_experiment_finalized VALUES ($1, $2, $3)",
                 params![
                     event_id.value(),
                     deterministic_experiment_id.value(),
@@ -15147,7 +15128,7 @@ fn insert_event_body(
                 },
         } => {
             transaction.execute(
-                "INSERT INTO event_deterministic_evaluator_native_child_admitted VALUES (?1, ?2, ?3, ?4, ?5)",
+                "INSERT INTO event_deterministic_evaluator_native_child_admitted VALUES ($1, $2, $3, $4, $5)",
                 params![event_id.value(), native_child_spawn_admission_id.value(), deterministic_experiment_id.value(), evaluator_revision_id.value(), input_manifest_id.value()],
             )?;
         }
@@ -15164,7 +15145,7 @@ fn insert_event_body(
             native_child_spawn_admission_id,
         } => {
             transaction.execute(
-                "INSERT INTO event_deterministic_evaluator_native_child_spawn_recorded VALUES (?1, ?2, ?3)",
+                "INSERT INTO event_deterministic_evaluator_native_child_spawn_recorded VALUES ($1, $2, $3)",
                 params![event_id.value(), native_child_id.value(), native_child_spawn_admission_id.value()],
             )?;
         }
@@ -15178,7 +15159,7 @@ fn insert_event_body(
                 PiChildOwner::RootAuthorityOfficeSession(id) => (None, Some(id.value())),
             };
             transaction.execute(
-                "INSERT INTO event_pi_child_spawn_admitted VALUES (?1, ?2, ?3, ?4, ?5)",
+                "INSERT INTO event_pi_child_spawn_admitted VALUES ($1, $2, $3, $4, $5)",
                 params![
                     event_id.value(),
                     native_child_spawn_admission_id.value(),
@@ -15193,7 +15174,7 @@ fn insert_event_body(
             native_child_spawn_admission_id,
         } => {
             transaction.execute(
-                "INSERT INTO event_inert_pi_child_spawn_recorded VALUES (?1, ?2, ?3)",
+                "INSERT INTO event_inert_pi_child_spawn_recorded VALUES ($1, $2, $3)",
                 params![
                     event_id.value(),
                     native_child_id.value(),
@@ -15206,7 +15187,7 @@ fn insert_event_body(
             pi_session_id,
         } => {
             transaction.execute(
-                "INSERT INTO event_pi_adapter_ready_recorded VALUES (?1, ?2, ?3)",
+                "INSERT INTO event_pi_adapter_ready_recorded VALUES ($1, $2, $3)",
                 params![
                     event_id.value(),
                     native_child_id.value(),
@@ -15216,13 +15197,13 @@ fn insert_event_body(
         }
         EventBody::PiCreateSessionAuthorized { native_child_id } => {
             transaction.execute(
-                "INSERT INTO event_pi_create_session_authorized VALUES (?1, ?2)",
+                "INSERT INTO event_pi_create_session_authorized VALUES ($1, $2)",
                 params![event_id.value(), native_child_id.value()],
             )?;
         }
         EventBody::PiCreateSessionDeliveryRecorded { native_child_id } => {
             transaction.execute(
-                "INSERT INTO event_pi_create_session_delivery_recorded VALUES (?1, ?2)",
+                "INSERT INTO event_pi_create_session_delivery_recorded VALUES ($1, $2)",
                 params![event_id.value(), native_child_id.value()],
             )?;
         }
@@ -15231,7 +15212,7 @@ fn insert_event_body(
             pi_session_id,
         } => {
             transaction.execute(
-                "INSERT INTO event_pi_session_ready_recorded VALUES (?1, ?2, ?3)",
+                "INSERT INTO event_pi_session_ready_recorded VALUES ($1, $2, $3)",
                 params![
                     event_id.value(),
                     native_child_id.value(),
@@ -15248,7 +15229,7 @@ fn insert_event_body(
             outcome,
         } => {
             transaction.execute(
-                "INSERT INTO event_pi_abort_control_delivery_recorded VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                "INSERT INTO event_pi_abort_control_delivery_recorded VALUES ($1, $2, $3, $4, $5, $6, $7)",
                 params![event_id.value(), pi_abort_control_receipt_id.value(), native_child_id.value(), cancellation_propagation_id.value(), correlation_identity.as_str(), abort_command_digest.as_bytes().as_slice(), *outcome as i64],
             )?;
         }
@@ -15259,7 +15240,7 @@ fn insert_event_body(
             completeness,
         } => {
             transaction.execute(
-                "INSERT INTO event_child_stream_sealed VALUES (?1, ?2, ?3, ?4, ?5)",
+                "INSERT INTO event_child_stream_sealed VALUES ($1, $2, $3, $4, $5)",
                 params![
                     event_id.value(),
                     native_child_stream_seal_id.value(),
@@ -15275,7 +15256,7 @@ fn insert_event_body(
             liveness,
         } => {
             transaction.execute(
-                "INSERT INTO event_child_process_liveness_observed VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO event_child_process_liveness_observed VALUES ($1, $2, $3, $4)",
                 params![
                     event_id.value(),
                     native_child_liveness_observation_id.value(),
@@ -15293,7 +15274,7 @@ fn insert_event_body(
             cause,
         } => {
             let (cause_kind, propagation_id) = signal_cause_parts(*cause);
-            transaction.execute("INSERT INTO event_process_signal_receipt_recorded VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)", params![event_id.value(), process_signal_receipt_id.value(), native_child_id.value(), *action as i64, *delivery as i64, *observed_liveness as i64, cause_kind, propagation_id])?;
+            transaction.execute("INSERT INTO event_process_signal_receipt_recorded VALUES ($1, $2, $3, $4, $5, $6, $7, $8)", params![event_id.value(), process_signal_receipt_id.value(), native_child_id.value(), *action as i64, *delivery as i64, *observed_liveness as i64, cause_kind, propagation_id])?;
         }
         EventBody::DirectChildReaped {
             native_child_reap_receipt_id,
@@ -15312,7 +15293,7 @@ fn insert_event_body(
                 DirectChildWaitStatus::Unknown => (3, None),
             };
             transaction.execute(
-                "INSERT INTO event_direct_child_reaped VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                "INSERT INTO event_direct_child_reaped VALUES ($1, $2, $3, $4, $5, $6, $7)",
                 params![
                     event_id.value(),
                     native_child_reap_receipt_id.value(),
@@ -15331,7 +15312,7 @@ fn insert_event_body(
             group_liveness_after_restart,
         } => {
             transaction.execute(
-                "INSERT INTO event_child_recovery_observed VALUES (?1, ?2, ?3, ?4, ?5)",
+                "INSERT INTO event_child_recovery_observed VALUES ($1, $2, $3, $4, $5)",
                 params![
                     event_id.value(),
                     native_child_recovery_receipt_id.value(),
@@ -15346,7 +15327,7 @@ fn insert_event_body(
             disposition,
         } => {
             transaction.execute(
-                "INSERT INTO event_child_process_finalized VALUES (?1, ?2, ?3)",
+                "INSERT INTO event_child_process_finalized VALUES ($1, $2, $3)",
                 params![
                     event_id.value(),
                     native_child_id.value(),
@@ -15359,7 +15340,7 @@ fn insert_event_body(
             cancellation_request_id,
         } => {
             transaction.execute(
-                "INSERT INTO event_cancellation_propagation_begun VALUES (?1, ?2, ?3)",
+                "INSERT INTO event_cancellation_propagation_begun VALUES ($1, $2, $3)",
                 params![
                     event_id.value(),
                     cancellation_propagation_id.value(),
@@ -15371,7 +15352,7 @@ fn insert_event_body(
             cancellation_propagation_id,
         } => {
             transaction.execute(
-                "INSERT INTO event_cancellation_propagation_reconciled VALUES (?1, ?2)",
+                "INSERT INTO event_cancellation_propagation_reconciled VALUES ($1, $2)",
                 params![event_id.value(), cancellation_propagation_id.value()],
             )?;
         }
@@ -15379,7 +15360,7 @@ fn insert_event_body(
             supervisor_epoch_id,
         } => {
             transaction.execute(
-                "INSERT INTO event_supervisor_epoch_opened VALUES (?1, ?2)",
+                "INSERT INTO event_supervisor_epoch_opened VALUES ($1, $2)",
                 params![event_id.value(), supervisor_epoch_id.value()],
             )?;
         }
@@ -15387,7 +15368,7 @@ fn insert_event_body(
             cancellation_propagation_id,
         } => {
             transaction.execute(
-                "INSERT INTO event_cancellation_propagation_containment_failed VALUES (?1, ?2)",
+                "INSERT INTO event_cancellation_propagation_containment_failed VALUES ($1, $2)",
                 params![event_id.value(), cancellation_propagation_id.value()],
             )?;
         }
@@ -15396,7 +15377,7 @@ fn insert_event_body(
             reason,
         } => {
             transaction.execute(
-                "INSERT INTO event_native_child_spawn_invalidated VALUES (?1, ?2, ?3)",
+                "INSERT INTO event_native_child_spawn_invalidated VALUES ($1, $2, $3)",
                 params![
                     event_id.value(),
                     native_child_spawn_admission_id.value(),
@@ -15411,14 +15392,14 @@ fn insert_event_body(
             correlation_identity,
             budget_reservation_id,
         } => {
-            transaction.execute("INSERT INTO event_pi_office_turn_prompt_authorized VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![event_id.value(), pi_office_turn_prompt_authorization_id.value(), office_turn_id.value(), native_child_id.value(), correlation_identity.as_str(), budget_reservation_id.value()])?;
+            transaction.execute("INSERT INTO event_pi_office_turn_prompt_authorized VALUES ($1, $2, $3, $4, $5, $6)", params![event_id.value(), pi_office_turn_prompt_authorization_id.value(), office_turn_id.value(), native_child_id.value(), correlation_identity.as_str(), budget_reservation_id.value()])?;
         }
         EventBody::PiOfficeTurnPromptDelivered {
             office_turn_id,
             correlation_identity,
         } => {
             transaction.execute(
-                "INSERT INTO event_pi_office_turn_prompt_delivered VALUES (?1, ?2, ?3)",
+                "INSERT INTO event_pi_office_turn_prompt_delivered VALUES ($1, $2, $3)",
                 params![
                     event_id.value(),
                     office_turn_id.value(),
@@ -15432,7 +15413,7 @@ fn insert_event_body(
             command_result_sequence,
         } => {
             transaction.execute(
-                "INSERT INTO event_pi_office_turn_prompt_accepted VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO event_pi_office_turn_prompt_accepted VALUES ($1, $2, $3, $4)",
                 params![
                     event_id.value(),
                     office_turn_id.value(),
@@ -15448,7 +15429,7 @@ fn insert_event_body(
             cumulative_micro_usd,
         } => {
             transaction.execute(
-                "INSERT INTO event_pi_office_turn_usage_recorded VALUES (?1, ?2, ?3, ?4, ?5)",
+                "INSERT INTO event_pi_office_turn_usage_recorded VALUES ($1, $2, $3, $4, $5)",
                 params![
                     event_id.value(),
                     pi_office_turn_usage_receipt_id.value(),
@@ -15466,7 +15447,7 @@ fn insert_event_body(
             failure,
         } => {
             let (kind, unknown, unavailable) = sql_pi_office_turn_usage_failure(*failure);
-            transaction.execute("INSERT INTO event_pi_office_turn_usage_frozen VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)", params![event_id.value(), office_turn_id.value(), budget_reservation_id.value(), cancellation_request_id.value(), postmortem_id.value(), kind, unknown, unavailable])?;
+            transaction.execute("INSERT INTO event_pi_office_turn_usage_frozen VALUES ($1, $2, $3, $4, $5, $6, $7, $8)", params![event_id.value(), office_turn_id.value(), budget_reservation_id.value(), cancellation_request_id.value(), postmortem_id.value(), kind, unknown, unavailable])?;
         }
         EventBody::PiOfficeTurnTerminalRecorded {
             pi_office_turn_terminal_receipt_id,
@@ -15475,7 +15456,7 @@ fn insert_event_body(
             assistant_outcome,
         } => {
             transaction.execute(
-                "INSERT INTO event_pi_office_turn_terminal_recorded VALUES (?1, ?2, ?3, ?4, ?5)",
+                "INSERT INTO event_pi_office_turn_terminal_recorded VALUES ($1, $2, $3, $4, $5)",
                 params![
                     event_id.value(),
                     pi_office_turn_terminal_receipt_id.value(),
@@ -15491,7 +15472,7 @@ fn insert_event_body(
             correlation_identity,
         } => {
             transaction.execute(
-                "INSERT INTO event_pi_office_session_dispose_delivered VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO event_pi_office_session_dispose_delivered VALUES ($1, $2, $3, $4)",
                 params![
                     event_id.value(),
                     session_id.value(),
@@ -15506,7 +15487,7 @@ fn insert_event_body(
             command_result_sequence,
         } => {
             transaction.execute(
-                "INSERT INTO event_pi_office_session_dispose_accepted VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO event_pi_office_session_dispose_accepted VALUES ($1, $2, $3, $4)",
                 params![
                     event_id.value(),
                     session_id.value(),
@@ -15521,7 +15502,7 @@ fn insert_event_body(
             cumulative_micro_usd,
         } => {
             transaction.execute(
-                "INSERT INTO event_pi_office_session_dispose_usage_recorded VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO event_pi_office_session_dispose_usage_recorded VALUES ($1, $2, $3, $4)",
                 params![event_id.value(), session_id.value(), protocol_sequence.value(), cumulative_micro_usd.value()],
             )?;
         }
@@ -15534,7 +15515,7 @@ fn insert_event_body(
         } => {
             let (kind, unknown, unavailable) = sql_pi_office_turn_usage_failure(*failure);
             transaction.execute(
-                "INSERT INTO event_pi_office_session_dispose_usage_frozen VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                "INSERT INTO event_pi_office_session_dispose_usage_frozen VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
                 params![event_id.value(), session_id.value(), budget_reservation_id.value(), cancellation_request_id.value(), postmortem_id.value(), kind, unknown, unavailable],
             )?;
         }
@@ -15548,7 +15529,7 @@ fn insert_event_body(
             let (kind, cancellation_request_id, postmortem_id) =
                 sql_pi_office_session_dispose_budget_disposition(*budget_disposition);
             transaction.execute(
-                "INSERT INTO event_pi_office_session_disposed VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                "INSERT INTO event_pi_office_session_disposed VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
                 params![event_id.value(), pi_office_session_dispose_receipt_id.value(), session_id.value(), budget_reservation_id.value(), observed_cumulative_micro_usd.value(), kind, cancellation_request_id, postmortem_id],
             )?;
         }
@@ -15589,7 +15570,7 @@ fn decode_event_body(
             let (mission_id, application_revision_id) = connection
                 .query_row(
                     "SELECT founding_mission_id, application_revision_id
-                     FROM event_founding_mission_installed WHERE event_id = ?1",
+                     FROM event_founding_mission_installed WHERE event_id = $1",
                     [event_id],
                     |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
                 )
@@ -15608,7 +15589,7 @@ fn decode_event_body(
             let (occupancy_id, principal_id) = connection
                 .query_row(
                     "SELECT office_occupancy_id, principal_id
-                     FROM event_root_authority_appointed WHERE event_id = ?1",
+                     FROM event_root_authority_appointed WHERE event_id = $1",
                     [event_id],
                     |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
                 )
@@ -15624,7 +15605,7 @@ fn decode_event_body(
             }
         }
         EventKind::R0HardCeilingSet => {
-            let (society, ceiling) = connection.query_row("SELECT society_id, ceiling_micros FROM event_r0_hard_ceiling_set WHERE event_id = ?1", [event_id], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing r0 ceiling event body"))?;
+            let (society, ceiling) = connection.query_row("SELECT society_id, ceiling_micros FROM event_r0_hard_ceiling_set WHERE event_id = $1", [event_id], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing r0 ceiling event body"))?;
             EventBody::R0HardCeilingSet {
                 society_id: SocietyId::try_from(society)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -15641,7 +15622,7 @@ fn decode_event_body(
             )?,
         },
         EventKind::OperatingCycleProposed => {
-            let (cycle, generation, treatment, budget_ceiling) = connection.query_row("SELECT operating_cycle_id, admission_generation, treatment, budget_ceiling_micros FROM event_operating_cycle_proposed WHERE event_id = ?1", [event_id], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing cycle proposal event body"))?;
+            let (cycle, generation, treatment, budget_ceiling) = connection.query_row("SELECT operating_cycle_id, admission_generation, treatment, budget_ceiling_micros FROM event_operating_cycle_proposed WHERE event_id = $1", [event_id], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing cycle proposal event body"))?;
             EventBody::OperatingCycleProposed {
                 cycle_id: OperatingCycleId::try_from(cycle)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -15653,7 +15634,7 @@ fn decode_event_body(
             }
         }
         EventKind::OperatingCycleStateChanged => {
-            let (cycle, state, generation) = connection.query_row("SELECT operating_cycle_id, lifecycle_state, admission_generation FROM event_operating_cycle_state_changed WHERE event_id = ?1", [event_id], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing cycle transition event body"))?;
+            let (cycle, state, generation) = connection.query_row("SELECT operating_cycle_id, lifecycle_state, admission_generation FROM event_operating_cycle_state_changed WHERE event_id = $1", [event_id], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing cycle transition event body"))?;
             EventBody::OperatingCycleStateChanged {
                 cycle_id: OperatingCycleId::try_from(cycle)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -15663,7 +15644,7 @@ fn decode_event_body(
             }
         }
         EventKind::RootAuthorityOfficeSessionStarted => {
-            let (session, cycle) = connection.query_row("SELECT root_authority_office_session_id, operating_cycle_id FROM event_root_authority_office_session_started WHERE event_id = ?1", [event_id], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing office session event body"))?;
+            let (session, cycle) = connection.query_row("SELECT root_authority_office_session_id, operating_cycle_id FROM event_root_authority_office_session_started WHERE event_id = $1", [event_id], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing office session event body"))?;
             EventBody::RootAuthorityOfficeSessionStarted {
                 session_id: RootAuthorityOfficeSessionId::try_from(session)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -15672,7 +15653,7 @@ fn decode_event_body(
             }
         }
         EventKind::RootAuthorityOfficeSessionStateChanged => {
-            let (session, state) = connection.query_row("SELECT root_authority_office_session_id, lifecycle_state FROM event_root_authority_office_session_state_changed WHERE event_id = ?1", [event_id], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing office session state event body"))?;
+            let (session, state) = connection.query_row("SELECT root_authority_office_session_id, lifecycle_state FROM event_root_authority_office_session_state_changed WHERE event_id = $1", [event_id], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing office session state event body"))?;
             EventBody::RootAuthorityOfficeSessionStateChanged {
                 session_id: RootAuthorityOfficeSessionId::try_from(session)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -15684,7 +15665,7 @@ fn decode_event_body(
             decode_office_turn_settled_event(connection, event_id_typed)?
         }
         EventKind::BudgetReserved => {
-            let (reservation, cycle, amount) = connection.query_row("SELECT budget_reservation_id, operating_cycle_id, amount_micros FROM event_budget_reserved WHERE event_id = ?1", [event_id], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing budget reserve event body"))?;
+            let (reservation, cycle, amount) = connection.query_row("SELECT budget_reservation_id, operating_cycle_id, amount_micros FROM event_budget_reserved WHERE event_id = $1", [event_id], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing budget reserve event body"))?;
             EventBody::BudgetReserved {
                 reservation_id: BudgetReservationId::try_from(reservation)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -15694,7 +15675,7 @@ fn decode_event_body(
             }
         }
         EventKind::BudgetReconciled => {
-            let (reservation, amount) = connection.query_row("SELECT budget_reservation_id, observed_micros FROM event_budget_reconciled WHERE event_id = ?1", [event_id], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing budget reconciliation event body"))?;
+            let (reservation, amount) = connection.query_row("SELECT budget_reservation_id, observed_micros FROM event_budget_reconciled WHERE event_id = $1", [event_id], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing budget reconciliation event body"))?;
             EventBody::BudgetReconciled {
                 reservation_id: BudgetReservationId::try_from(reservation)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -15703,7 +15684,7 @@ fn decode_event_body(
             }
         }
         EventKind::BudgetAdmissionFrozen => {
-            let (reservation, cycle, cancellation_request, postmortem, reason_kind, observed, reserved, unknown, unavailable) = connection.query_row("SELECT budget_reservation_id, operating_cycle_id, cancellation_request_id, postmortem_id, freeze_reason_kind, observed_micros, reserved_micros, unknown_reason, unavailable_reason FROM event_budget_admission_frozen WHERE event_id = ?1", [event_id], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?, row.get::<_, Option<i64>>(5)?, row.get::<_, Option<i64>>(6)?, row.get::<_, Option<i64>>(7)?, row.get::<_, Option<i64>>(8)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing budget frozen event body"))?;
+            let (reservation, cycle, cancellation_request, postmortem, reason_kind, observed, reserved, unknown, unavailable) = connection.query_row("SELECT budget_reservation_id, operating_cycle_id, cancellation_request_id, postmortem_id, freeze_reason_kind, observed_micros, reserved_micros, unknown_reason, unavailable_reason FROM event_budget_admission_frozen WHERE event_id = $1", [event_id], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?, row.get::<_, Option<i64>>(5)?, row.get::<_, Option<i64>>(6)?, row.get::<_, Option<i64>>(7)?, row.get::<_, Option<i64>>(8)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing budget frozen event body"))?;
             EventBody::BudgetAdmissionFrozen {
                 reservation_id: BudgetReservationId::try_from(reservation)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -15723,7 +15704,7 @@ fn decode_event_body(
             }
         }
         EventKind::CancellationRequested => {
-            let (request, cycle, mode, generation) = connection.query_row("SELECT cancellation_request_id, operating_cycle_id, cancellation_mode, admission_generation FROM event_cancellation_requested WHERE event_id = ?1", [event_id], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing cancellation request event body"))?;
+            let (request, cycle, mode, generation) = connection.query_row("SELECT cancellation_request_id, operating_cycle_id, cancellation_mode, admission_generation FROM event_cancellation_requested WHERE event_id = $1", [event_id], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing cancellation request event body"))?;
             EventBody::CancellationRequested {
                 cancellation_request_id: CancellationRequestId::try_from(request)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -15735,7 +15716,7 @@ fn decode_event_body(
             }
         }
         EventKind::CancellationReconciled => {
-            let (request, cycle) = connection.query_row("SELECT cancellation_request_id, operating_cycle_id FROM event_cancellation_reconciled WHERE event_id = ?1", [event_id], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing cancellation reconciliation event body"))?;
+            let (request, cycle) = connection.query_row("SELECT cancellation_request_id, operating_cycle_id FROM event_cancellation_reconciled WHERE event_id = $1", [event_id], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing cancellation reconciliation event body"))?;
             EventBody::CancellationReconciled {
                 cancellation_request_id: CancellationRequestId::try_from(request)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -15744,7 +15725,7 @@ fn decode_event_body(
             }
         }
         EventKind::CostPostmortemClosed => {
-            let (postmortem, reservation, cycle, resolution, charged) = connection.query_row("SELECT postmortem_id, budget_reservation_id, operating_cycle_id, resolution_kind, charged_micros FROM event_cost_postmortem_closed WHERE event_id = ?1", [event_id], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing cost postmortem closed event body"))?;
+            let (postmortem, reservation, cycle, resolution, charged) = connection.query_row("SELECT postmortem_id, budget_reservation_id, operating_cycle_id, resolution_kind, charged_micros FROM event_cost_postmortem_closed WHERE event_id = $1", [event_id], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing cost postmortem closed event body"))?;
             EventBody::CostPostmortemClosed {
                 postmortem_id: CostPostmortemId::try_from(postmortem)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -15761,7 +15742,7 @@ fn decode_event_body(
             let (project_id, application_revision_id) = connection
                 .query_row(
                     "SELECT project_id, application_revision_id FROM event_project_created
-                     WHERE event_id = ?1",
+                     WHERE event_id = $1",
                     [event_id],
                     |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
                 )
@@ -15870,7 +15851,7 @@ fn decode_event_body(
         },
         EventKind::AdversarialReviewerAssigned => {
             let (review, reviewer, actor, attempt): (i64, i64, i64, i64) = connection.query_row(
-                "SELECT adversarial_review_id, reviewer_principal_id, reviewer_actor_instance_id, reviewer_actor_attempt_id FROM event_adversarial_reviewer_assigned WHERE event_id = ?1",
+                "SELECT adversarial_review_id, reviewer_principal_id, reviewer_actor_instance_id, reviewer_actor_attempt_id FROM event_adversarial_reviewer_assigned WHERE event_id = $1",
                 [event_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             ).optional()?.ok_or(StoreError::LedgerCorruption("missing reviewer assignment event body"))?;
             EventBody::AdversarialReviewerAssigned {
@@ -15990,7 +15971,7 @@ fn decode_event_body(
         },
         EventKind::WorkItemRegistered => {
             let (work, ticket, review): (i64, i64, Option<i64>) = connection.query_row(
-                "SELECT work_item_id, ticket_id, adversarial_review_id FROM event_work_item_registered WHERE event_id = ?1",
+                "SELECT work_item_id, ticket_id, adversarial_review_id FROM event_work_item_registered WHERE event_id = $1",
                 [event_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             ).optional()?.ok_or(StoreError::LedgerCorruption("missing work item event body"))?;
             EventBody::WorkItemRegistered {
@@ -16005,7 +15986,7 @@ fn decode_event_body(
             }
         }
         EventKind::WorkItemClaimed => {
-            let (work, lease, actor): (i64, i64, i64) = connection.query_row("SELECT work_item_id, work_lease_id, actor_instance_id FROM event_work_item_claimed WHERE event_id = ?1", [event_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing work item claim event body"))?;
+            let (work, lease, actor): (i64, i64, i64) = connection.query_row("SELECT work_item_id, work_lease_id, actor_instance_id FROM event_work_item_claimed WHERE event_id = $1", [event_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing work item claim event body"))?;
             EventBody::WorkItemClaimed {
                 work_item_id: WorkItemId::try_from(work)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -16016,7 +15997,7 @@ fn decode_event_body(
             }
         }
         EventKind::ActorAttemptStarted => {
-            let (attempt, work, reservation): (i64, i64, i64) = connection.query_row("SELECT actor_attempt_id, work_item_id, budget_reservation_id FROM event_actor_attempt_started WHERE event_id = ?1", [event_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing actor attempt started event body"))?;
+            let (attempt, work, reservation): (i64, i64, i64) = connection.query_row("SELECT actor_attempt_id, work_item_id, budget_reservation_id FROM event_actor_attempt_started WHERE event_id = $1", [event_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing actor attempt started event body"))?;
             EventBody::ActorAttemptStarted {
                 actor_attempt_id: ActorAttemptId::try_from(attempt)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -16049,7 +16030,7 @@ fn decode_event_body(
             }
         }
         EventKind::ActorAttemptRetryPrepared => {
-            let (attempt, work, ticket): (i64, i64, i64) = connection.query_row("SELECT actor_attempt_id, work_item_id, ticket_id FROM event_actor_attempt_retry_prepared WHERE event_id = ?1", [event_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing retry event body"))?;
+            let (attempt, work, ticket): (i64, i64, i64) = connection.query_row("SELECT actor_attempt_id, work_item_id, ticket_id FROM event_actor_attempt_retry_prepared WHERE event_id = $1", [event_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing retry event body"))?;
             EventBody::ActorAttemptRetryPrepared {
                 actor_attempt_id: ActorAttemptId::try_from(attempt)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -16110,7 +16091,7 @@ fn decode_event_body(
             }
         }
         EventKind::ContentSealReceiptRecorded => {
-            let (receipt, digest): (i64, Vec<u8>) = connection.query_row("SELECT content_seal_receipt_id, digest FROM event_content_seal_receipt_recorded WHERE event_id = ?1", [event_id], |row| Ok((row.get(0)?, row.get(1)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing content seal receipt event body"))?;
+            let (receipt, digest): (i64, Vec<u8>) = connection.query_row("SELECT content_seal_receipt_id, digest FROM event_content_seal_receipt_recorded WHERE event_id = $1", [event_id], |row| Ok((row.get(0)?, row.get(1)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing content seal receipt event body"))?;
             EventBody::ContentSealReceiptRecorded {
                 content_seal_receipt_id: ContentSealReceiptId::try_from(receipt)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -16128,7 +16109,7 @@ fn decode_event_body(
             }
         }
         EventKind::ForensicManifestRegistered => {
-            let (manifest, experiment, output): (i64, i64, i64) = connection.query_row("SELECT forensic_manifest_id, producing_deterministic_experiment_id, evaluator_output_content_object_id FROM event_forensic_manifest_registered WHERE event_id = ?1", [event_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing forensic manifest event body"))?;
+            let (manifest, experiment, output): (i64, i64, i64) = connection.query_row("SELECT forensic_manifest_id, producing_deterministic_experiment_id, evaluator_output_content_object_id FROM event_forensic_manifest_registered WHERE event_id = $1", [event_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing forensic manifest event body"))?;
             EventBody::ForensicManifestRegistered {
                 forensic_manifest_id: ForensicManifestId::try_from(manifest)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -16148,7 +16129,7 @@ fn decode_event_body(
                             native_child_stream_seal_id,
                             evaluator_output_content_object_id
                        FROM event_deterministic_evaluator_forensic_manifest_registered
-                      WHERE event_id = ?1",
+                      WHERE event_id = $1",
                     [event_id],
                     |row| {
                         Ok((
@@ -16178,7 +16159,7 @@ fn decode_event_body(
             }
         }
         EventKind::DeterministicExperimentRegistered => {
-            let (experiment, evaluator, input): (i64,i64,i64) = connection.query_row("SELECT deterministic_experiment_id, evaluator_revision_id, input_manifest_id FROM event_deterministic_experiment_registered WHERE event_id = ?1", [event_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing deterministic experiment event body"))?;
+            let (experiment, evaluator, input): (i64,i64,i64) = connection.query_row("SELECT deterministic_experiment_id, evaluator_revision_id, input_manifest_id FROM event_deterministic_experiment_registered WHERE event_id = $1", [event_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing deterministic experiment event body"))?;
             EventBody::DeterministicExperimentRegistered {
                 deterministic_experiment_id: DeterministicExperimentId::try_from(experiment)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -16204,7 +16185,7 @@ fn decode_event_body(
             }
         }
         EventKind::DeterministicEvidenceAdmitted => {
-            let (admission, receipt, role, applicability, limitation_kind): (i64, i64, i64, i64, i64) = connection.query_row("SELECT evidence_admission_id, deterministic_evaluation_receipt_id, semantic_role, applicability, limitation_kind FROM event_deterministic_evidence_admitted WHERE event_id = ?1", [event_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing deterministic evidence event body"))?;
+            let (admission, receipt, role, applicability, limitation_kind): (i64, i64, i64, i64, i64) = connection.query_row("SELECT evidence_admission_id, deterministic_evaluation_receipt_id, semantic_role, applicability, limitation_kind FROM event_deterministic_evidence_admitted WHERE event_id = $1", [event_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing deterministic evidence event body"))?;
             EventBody::DeterministicEvidenceAdmitted {
                 evidence_admission_id: EvidenceAdmissionId::try_from(admission)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -16219,7 +16200,7 @@ fn decode_event_body(
         }
         EventKind::DeterministicExperimentFinalized => {
             let (experiment, terminal_state): (i64, i64) = connection.query_row(
-                "SELECT deterministic_experiment_id, terminal_state FROM event_deterministic_experiment_finalized WHERE event_id = ?1",
+                "SELECT deterministic_experiment_id, terminal_state FROM event_deterministic_experiment_finalized WHERE event_id = $1",
                 [event_id],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             ).optional()?.ok_or(StoreError::LedgerCorruption("missing deterministic experiment finalized event body"))?;
@@ -16231,7 +16212,7 @@ fn decode_event_body(
         }
         EventKind::DeterministicEvaluatorNativeChildAdmitted => {
             let row: (i64,i64,i64,i64) = connection.query_row(
-                "SELECT native_child_spawn_admission_id, deterministic_experiment_id, evaluator_revision_id, input_manifest_id FROM event_deterministic_evaluator_native_child_admitted WHERE event_id = ?1",
+                "SELECT native_child_spawn_admission_id, deterministic_experiment_id, evaluator_revision_id, input_manifest_id FROM event_deterministic_evaluator_native_child_admitted WHERE event_id = $1",
                 [event_id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)),
             ).optional()?.ok_or(StoreError::LedgerCorruption("missing evaluator native-child admission event body"))?;
             EventBody::DeterministicEvaluatorNativeChildAdmitted {
@@ -16249,7 +16230,7 @@ fn decode_event_body(
         }
         EventKind::DeterministicEvaluatorNativeChildSpawnRecorded => {
             let row: (i64,i64) = connection.query_row(
-                "SELECT native_child_id, native_child_spawn_admission_id FROM event_deterministic_evaluator_native_child_spawn_recorded WHERE event_id = ?1",
+                "SELECT native_child_id, native_child_spawn_admission_id FROM event_deterministic_evaluator_native_child_spawn_recorded WHERE event_id = $1",
                 [event_id], |r| Ok((r.get(0)?,r.get(1)?)),
             ).optional()?.ok_or(StoreError::LedgerCorruption("missing evaluator native-child spawn event body"))?;
             EventBody::DeterministicEvaluatorNativeChildSpawnRecorded {
@@ -16260,7 +16241,7 @@ fn decode_event_body(
             }
         }
         EventKind::PiChildSpawnAdmitted => {
-            let row: (i64, Option<i64>, Option<i64>, i64) = connection.query_row("SELECT native_child_spawn_admission_id, actor_attempt_id, root_authority_office_session_id, budget_reservation_id FROM event_pi_child_spawn_admitted WHERE event_id = ?1", [event_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi child admission event body"))?;
+            let row: (i64, Option<i64>, Option<i64>, i64) = connection.query_row("SELECT native_child_spawn_admission_id, actor_attempt_id, root_authority_office_session_id, budget_reservation_id FROM event_pi_child_spawn_admitted WHERE event_id = $1", [event_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi child admission event body"))?;
             let owner = decode_child_owner(row.1, row.2)?;
             EventBody::PiChildSpawnAdmitted {
                 native_child_spawn_admission_id: NativeChildSpawnAdmissionId::try_from(row.0)
@@ -16318,7 +16299,7 @@ fn decode_event_body(
         }
         EventKind::PiAbortControlDeliveryRecorded => {
             let row: (i64, i64, i64, String, Vec<u8>, i64) = connection.query_row(
-                "SELECT pi_abort_control_receipt_id, native_child_id, cancellation_propagation_id, correlation_identity, abort_command_digest, physical_write_outcome FROM event_pi_abort_control_delivery_recorded WHERE event_id = ?1",
+                "SELECT pi_abort_control_receipt_id, native_child_id, cancellation_propagation_id, correlation_identity, abort_command_digest, physical_write_outcome FROM event_pi_abort_control_delivery_recorded WHERE event_id = $1",
                 [event_id],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
             ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Abort event body"))?;
@@ -16336,7 +16317,7 @@ fn decode_event_body(
             }
         }
         EventKind::ChildStreamSealed => {
-            let row: (i64,i64,i64,i64) = connection.query_row("SELECT native_child_stream_seal_id, native_child_id, stream_kind, completeness FROM event_child_stream_sealed WHERE event_id = ?1", [event_id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing child stream event body"))?;
+            let row: (i64,i64,i64,i64) = connection.query_row("SELECT native_child_stream_seal_id, native_child_id, stream_kind, completeness FROM event_child_stream_sealed WHERE event_id = $1", [event_id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing child stream event body"))?;
             EventBody::ChildStreamSealed {
                 native_child_stream_seal_id: NativeChildStreamSealId::try_from(row.0)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -16347,7 +16328,7 @@ fn decode_event_body(
             }
         }
         EventKind::ChildProcessLivenessObserved => {
-            let row:(i64,i64,i64)=connection.query_row("SELECT native_child_liveness_observation_id, native_child_id, liveness FROM event_child_process_liveness_observed WHERE event_id = ?1",[event_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing liveness event body"))?;
+            let row:(i64,i64,i64)=connection.query_row("SELECT native_child_liveness_observation_id, native_child_id, liveness FROM event_child_process_liveness_observed WHERE event_id = $1",[event_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing liveness event body"))?;
             EventBody::ChildProcessLivenessObserved {
                 native_child_liveness_observation_id: NativeChildLivenessObservationId::try_from(
                     row.0,
@@ -16359,7 +16340,7 @@ fn decode_event_body(
             }
         }
         EventKind::ProcessSignalReceiptRecorded => {
-            let row:(i64,i64,i64,i64,i64,i64,Option<i64>)=connection.query_row("SELECT process_signal_receipt_id, native_child_id, signal_action, delivery, observed_liveness, cause_kind, cancellation_propagation_id FROM event_process_signal_receipt_recorded WHERE event_id = ?1",[event_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing signal event body"))?;
+            let row:(i64,i64,i64,i64,i64,i64,Option<i64>)=connection.query_row("SELECT process_signal_receipt_id, native_child_id, signal_action, delivery, observed_liveness, cause_kind, cancellation_propagation_id FROM event_process_signal_receipt_recorded WHERE event_id = $1",[event_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing signal event body"))?;
             EventBody::ProcessSignalReceiptRecorded {
                 process_signal_receipt_id: ProcessSignalReceiptId::try_from(row.0)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -16372,7 +16353,7 @@ fn decode_event_body(
             }
         }
         EventKind::DirectChildReaped => {
-            let row:(i64,i64,i64,Option<i64>,i64,i64)=connection.query_row("SELECT native_child_reap_receipt_id, native_child_id, wait_status_kind, status_value, group_liveness_before_cleanup, group_liveness_after_cleanup FROM event_direct_child_reaped WHERE event_id = ?1",[event_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing reap event body"))?;
+            let row:(i64,i64,i64,Option<i64>,i64,i64)=connection.query_row("SELECT native_child_reap_receipt_id, native_child_id, wait_status_kind, status_value, group_liveness_before_cleanup, group_liveness_after_cleanup FROM event_direct_child_reaped WHERE event_id = $1",[event_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing reap event body"))?;
             EventBody::DirectChildReaped {
                 native_child_reap_receipt_id: NativeChildReapReceiptId::try_from(row.0)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -16384,7 +16365,7 @@ fn decode_event_body(
             }
         }
         EventKind::ChildRecoveryObserved => {
-            let row:(i64,i64,i64,i64)=connection.query_row("SELECT native_child_recovery_receipt_id, native_child_id, observation, group_liveness_after_restart FROM event_child_recovery_observed WHERE event_id = ?1",[event_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing recovery event body"))?;
+            let row:(i64,i64,i64,i64)=connection.query_row("SELECT native_child_recovery_receipt_id, native_child_id, observation, group_liveness_after_restart FROM event_child_recovery_observed WHERE event_id = $1",[event_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing recovery event body"))?;
             EventBody::ChildRecoveryObserved {
                 native_child_recovery_receipt_id: NativeChildRecoveryReceiptId::try_from(row.0)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -16443,7 +16424,7 @@ fn decode_event_body(
         }
         EventKind::NativeChildSpawnInvalidated => {
             let (admission, reason): (i64, i64) = connection.query_row(
-                "SELECT native_child_spawn_admission_id, reason FROM event_native_child_spawn_invalidated WHERE event_id = ?1",
+                "SELECT native_child_spawn_admission_id, reason FROM event_native_child_spawn_invalidated WHERE event_id = $1",
                 [event_id],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             ).optional()?.ok_or(StoreError::LedgerCorruption("missing native-child invalidation event body"))?;
@@ -16455,7 +16436,7 @@ fn decode_event_body(
         }
         EventKind::PiOfficeTurnPromptAuthorized => {
             let row: (i64, i64, i64, String, i64) = connection.query_row(
-                "SELECT pi_office_turn_prompt_authorization_id, office_turn_id, native_child_id, correlation_identity, budget_reservation_id FROM event_pi_office_turn_prompt_authorized WHERE event_id = ?1",
+                "SELECT pi_office_turn_prompt_authorization_id, office_turn_id, native_child_id, correlation_identity, budget_reservation_id FROM event_pi_office_turn_prompt_authorized WHERE event_id = $1",
                 [event_id],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
             ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Office Prompt authorization event body"))?;
@@ -16475,7 +16456,7 @@ fn decode_event_body(
         }
         EventKind::PiOfficeTurnPromptDelivered => {
             let row: (i64, String) = connection.query_row(
-                "SELECT office_turn_id, correlation_identity FROM event_pi_office_turn_prompt_delivered WHERE event_id = ?1",
+                "SELECT office_turn_id, correlation_identity FROM event_pi_office_turn_prompt_delivered WHERE event_id = $1",
                 [event_id], |r| Ok((r.get(0)?, r.get(1)?)),
             ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Office Prompt delivery event body"))?;
             EventBody::PiOfficeTurnPromptDelivered {
@@ -16487,7 +16468,7 @@ fn decode_event_body(
         }
         EventKind::PiOfficeTurnPromptAccepted => {
             let row: (i64, String, i64) = connection.query_row(
-                "SELECT office_turn_id, correlation_identity, command_result_sequence FROM event_pi_office_turn_prompt_accepted WHERE event_id = ?1",
+                "SELECT office_turn_id, correlation_identity, command_result_sequence FROM event_pi_office_turn_prompt_accepted WHERE event_id = $1",
                 [event_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Office Prompt acceptance event body"))?;
             EventBody::PiOfficeTurnPromptAccepted {
@@ -16501,7 +16482,7 @@ fn decode_event_body(
         }
         EventKind::PiOfficeTurnUsageRecorded => {
             let row: (i64, i64, i64, i64) = connection.query_row(
-                "SELECT pi_office_turn_usage_receipt_id, office_turn_id, protocol_sequence, cumulative_ceiling_micros FROM event_pi_office_turn_usage_recorded WHERE event_id = ?1",
+                "SELECT pi_office_turn_usage_receipt_id, office_turn_id, protocol_sequence, cumulative_ceiling_micros FROM event_pi_office_turn_usage_recorded WHERE event_id = $1",
                 [event_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
             ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Office usage event body"))?;
             EventBody::PiOfficeTurnUsageRecorded {
@@ -16517,7 +16498,7 @@ fn decode_event_body(
         }
         EventKind::PiOfficeTurnUsageFrozen => {
             let row: (i64, i64, i64, i64, i64, Option<i64>, Option<i64>) = connection.query_row(
-                "SELECT office_turn_id, budget_reservation_id, cancellation_request_id, cost_postmortem_id, failure_kind, unknown_reason, unavailable_reason FROM event_pi_office_turn_usage_frozen WHERE event_id = ?1",
+                "SELECT office_turn_id, budget_reservation_id, cancellation_request_id, cost_postmortem_id, failure_kind, unknown_reason, unavailable_reason FROM event_pi_office_turn_usage_frozen WHERE event_id = $1",
                 [event_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)),
             ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Office usage freeze event body"))?;
             EventBody::PiOfficeTurnUsageFrozen {
@@ -16534,7 +16515,7 @@ fn decode_event_body(
         }
         EventKind::PiOfficeTurnTerminalRecorded => {
             let row: (i64, i64, i64, i64) = connection.query_row(
-                "SELECT pi_office_turn_terminal_receipt_id, office_turn_id, disposition, assistant_outcome FROM event_pi_office_turn_terminal_recorded WHERE event_id = ?1",
+                "SELECT pi_office_turn_terminal_receipt_id, office_turn_id, disposition, assistant_outcome FROM event_pi_office_turn_terminal_recorded WHERE event_id = $1",
                 [event_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
             ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Office terminal event body"))?;
             EventBody::PiOfficeTurnTerminalRecorded {
@@ -16551,7 +16532,7 @@ fn decode_event_body(
                 .query_row(
                     "SELECT root_authority_office_session_id, native_child_id,
                         correlation_identity, authorized_generation
-                 FROM event_pi_office_session_dispose_authorized WHERE event_id = ?1",
+                 FROM event_pi_office_session_dispose_authorized WHERE event_id = $1",
                     [event_id],
                     |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
                 )
@@ -16574,7 +16555,7 @@ fn decode_event_body(
             let row: (i64, i64, String) = connection
                 .query_row(
                     "SELECT root_authority_office_session_id, native_child_id, correlation_identity
-                 FROM event_pi_office_session_dispose_delivered WHERE event_id = ?1",
+                 FROM event_pi_office_session_dispose_delivered WHERE event_id = $1",
                     [event_id],
                     |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
                 )
@@ -16594,7 +16575,7 @@ fn decode_event_body(
         EventKind::PiOfficeSessionDisposeAccepted => {
             let row: (i64, String, i64) = connection.query_row(
                 "SELECT root_authority_office_session_id, correlation_identity, command_result_sequence
-                 FROM event_pi_office_session_dispose_accepted WHERE event_id = ?1",
+                 FROM event_pi_office_session_dispose_accepted WHERE event_id = $1",
                 [event_id],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Office Dispose acceptance event body"))?;
@@ -16610,7 +16591,7 @@ fn decode_event_body(
         EventKind::PiOfficeSessionDisposeUsageRecorded => {
             let row: (i64, i64, i64) = connection.query_row(
                 "SELECT root_authority_office_session_id, protocol_sequence, cumulative_ceiling_micros
-                 FROM event_pi_office_session_dispose_usage_recorded WHERE event_id = ?1",
+                 FROM event_pi_office_session_dispose_usage_recorded WHERE event_id = $1",
                 [event_id],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Office Dispose usage event body"))?;
@@ -16629,7 +16610,7 @@ fn decode_event_body(
                     "SELECT root_authority_office_session_id, budget_reservation_id,
                         cancellation_request_id, cost_postmortem_id, failure_kind,
                         unknown_reason, unavailable_reason
-                 FROM event_pi_office_session_dispose_usage_frozen WHERE event_id = ?1",
+                 FROM event_pi_office_session_dispose_usage_frozen WHERE event_id = $1",
                     [event_id],
                     |row| {
                         Ok((
@@ -16666,7 +16647,7 @@ fn decode_event_body(
                         root_authority_office_session_id, budget_reservation_id,
                         observed_cumulative_micros, budget_disposition_kind,
                         cancellation_request_id, cost_postmortem_id
-                 FROM event_pi_office_session_disposed WHERE event_id = ?1",
+                 FROM event_pi_office_session_disposed WHERE event_id = $1",
                     [event_id],
                     |row| {
                         Ok((
@@ -16705,7 +16686,7 @@ fn decode_event_body(
         },
     };
     let stored_fingerprint: Vec<u8> = connection.query_row(
-        "SELECT event_fingerprint FROM events WHERE event_id = ?1",
+        "SELECT event_fingerprint FROM events WHERE event_id = $1",
         [event_id],
         |row| row.get(0),
     )?;
@@ -16726,7 +16707,7 @@ fn decode_event_body(
 fn verify_command_bodies(connection: &Connection) -> Result<(), StoreError> {
     let mut statement =
         connection.prepare("SELECT command_row_id FROM commands ORDER BY command_row_id ASC")?;
-    let rows = statement.query_map([], |row| row.get::<_, i64>(0))?;
+    let rows = statement.query_map(params![], |row| row.get::<_, i64>(0))?;
     for row in rows {
         verify_command_body(connection, row?)?;
     }
@@ -16752,7 +16733,7 @@ fn verify_command_body(connection: &Connection, command_row_id: i64) -> Result<(
             "SELECT command_id, principal_id, capability_grant_id,
                     capability_kind, expected_generation, command_kind,
                     request_fingerprint, command_status, accepted_event_id
-             FROM commands WHERE command_row_id = ?1",
+             FROM commands WHERE command_row_id = $1",
             [command_row_id],
             |row| {
                 Ok((
@@ -16799,7 +16780,7 @@ fn verify_command_body(connection: &Connection, command_row_id: i64) -> Result<(
     if kind == CommandKind::InstallFoundingMission && status == 1 {
         let (digest, source_content_object_id): (Vec<u8>, Option<i64>) = connection.query_row(
             "SELECT source_rendering_digest, source_content_object_id
-                   FROM command_install_founding_mission WHERE command_row_id = ?1",
+                   FROM command_install_founding_mission WHERE command_row_id = $1",
             [command_row_id],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
@@ -16825,14 +16806,14 @@ fn verify_command_body(connection: &Connection, command_row_id: i64) -> Result<(
         ));
     }
     let event_count: i64 = connection.query_row(
-        "SELECT COUNT(*) FROM events WHERE command_row_id = ?1",
+        "SELECT COUNT(*) FROM events WHERE command_row_id = $1",
         [command_row_id],
         |row| row.get(0),
     )?;
     match (status, accepted_event_id, event_count) {
         (1, Some(event_id), 1) => {
             let linked: i64 = connection.query_row(
-                "SELECT COUNT(*) FROM events WHERE event_id = ?1 AND command_row_id = ?2",
+                "SELECT COUNT(*) FROM events WHERE event_id = $1 AND command_row_id = $2",
                 params![event_id, command_row_id],
                 |row| row.get(0),
             )?;
@@ -16866,7 +16847,7 @@ fn verify_mission_source_binding(
                FROM content_objects AS object
                JOIN content_seal_receipts AS receipt
                  ON receipt.content_seal_receipt_id = object.content_seal_receipt_id
-              WHERE object.content_object_id = ?1 AND receipt.digest = ?2
+              WHERE object.content_object_id = $1 AND receipt.digest = $2
          )",
         params![source_content_object_id.value(), digest],
         |row| row.get(0),
@@ -16885,7 +16866,7 @@ fn verify_application_mission_source_bindings(connection: &Connection) -> Result
         "SELECT source_rendering_digest, source_content_object_id
            FROM application_revisions ORDER BY application_revision_id",
     )?;
-    let rows = statement.query_map([], |row| {
+    let rows = statement.query_map(params![], |row| {
         Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, i64>(1)?))
     })?;
     for row in rows {
@@ -16909,7 +16890,7 @@ fn replay_command_requests(
                 accepted_event_id, rejection_code
          FROM commands ORDER BY command_row_id ASC",
     )?;
-    let rows = statement.query_map([], |row| {
+    let rows = statement.query_map(params![], |row| {
         Ok((
             row.get::<_, i64>(0)?,
             row.get::<_, String>(1)?,
@@ -17098,10 +17079,11 @@ fn materialized_state_digest(connection: &Connection) -> Result<Blake3Digest, St
     let mut bytes = Vec::with_capacity(4_096);
     for table in MATERIALIZED_TABLES {
         put_bytes(&mut bytes, table.as_bytes());
-        let mut statement = connection.prepare(&format!("SELECT * FROM {table} ORDER BY rowid"))?;
-        let column_count = statement.column_count();
+        let (column_count, order_by) = connection.ordered_table_scan(table)?;
+        let mut statement =
+            connection.prepare(&format!("SELECT * FROM {table} ORDER BY {order_by}"))?;
         put_i64(&mut bytes, column_count as i64);
-        let mut rows = statement.query([])?;
+        let mut rows = statement.query(params![])?;
         while let Some(row) = rows.next()? {
             put_i64(&mut bytes, 1);
             for index in 0..column_count {
@@ -17219,7 +17201,7 @@ fn decode_command_body(
             let (session_id, purpose) = connection
                 .query_row(
                     "SELECT root_authority_office_session_id, purpose
-                     FROM command_open_office_turn WHERE command_row_id = ?1",
+                     FROM command_open_office_turn WHERE command_row_id = $1",
                     [command_row_id],
                     |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
                 )
@@ -17237,7 +17219,7 @@ fn decode_command_body(
             let (turn, terminal): (i64, i64) = connection
                 .query_row(
                     "SELECT office_turn_id, pi_office_turn_terminal_receipt_id
-                     FROM command_settle_office_turn WHERE command_row_id = ?1",
+                     FROM command_settle_office_turn WHERE command_row_id = $1",
                     [command_row_id],
                     |row| Ok((row.get(0)?, row.get(1)?)),
                 )
@@ -17296,7 +17278,7 @@ fn decode_command_body(
             let (cycle_id, amount) = connection
                 .query_row(
                     "SELECT operating_cycle_id, amount_micros FROM command_reserve_budget
-                     WHERE command_row_id = ?1",
+                     WHERE command_row_id = $1",
                     [command_row_id],
                     |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
                 )
@@ -17315,7 +17297,7 @@ fn decode_command_body(
                 .query_row(
                     "SELECT budget_reservation_id, observation_kind, known_micros,
                             unknown_reason, unavailable_reason
-                     FROM command_reconcile_budget WHERE command_row_id = ?1",
+                     FROM command_reconcile_budget WHERE command_row_id = $1",
                     [command_row_id],
                     |row| {
                         Ok((
@@ -17346,7 +17328,7 @@ fn decode_command_body(
             let (cycle_id, mode) = connection
                 .query_row(
                     "SELECT operating_cycle_id, cancellation_mode
-                     FROM command_request_cancellation WHERE command_row_id = ?1",
+                     FROM command_request_cancellation WHERE command_row_id = $1",
                     [command_row_id],
                     |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
                 )
@@ -17372,7 +17354,7 @@ fn decode_command_body(
             let (session_id, terminal_state) = connection
                 .query_row(
                     "SELECT root_authority_office_session_id, terminal_state
-                     FROM command_record_office_session_terminal WHERE command_row_id = ?1",
+                     FROM command_record_office_session_terminal WHERE command_row_id = $1",
                     [command_row_id],
                     |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
                 )
@@ -17390,7 +17372,7 @@ fn decode_command_body(
             let (postmortem_id, resolution) = connection
                 .query_row(
                     "SELECT postmortem_id, resolution_kind
-                     FROM command_close_cost_postmortem WHERE command_row_id = ?1",
+                     FROM command_close_cost_postmortem WHERE command_row_id = $1",
                     [command_row_id],
                     |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
                 )
@@ -17410,7 +17392,7 @@ fn decode_command_body(
                     "SELECT operating_cycle_id, project_name, application_revision_id,
                             change_answer, improvement_evidence_answer,
                             boundary_commitment_answer, revisit_answer
-                     FROM command_create_project WHERE command_row_id = ?1",
+                     FROM command_create_project WHERE command_row_id = $1",
                     [command_row_id],
                     |row| {
                         Ok((
@@ -17617,7 +17599,7 @@ fn decode_command_body(
         }
         CommandKind::AssignAdversarialReviewer => {
             let (cycle, review, reviewer, actor, attempt): (i64, i64, i64, i64, i64) = connection.query_row(
-                "SELECT operating_cycle_id, adversarial_review_id, reviewer_principal_id, reviewer_actor_instance_id, reviewer_actor_attempt_id FROM command_assign_adversarial_reviewer WHERE command_row_id = ?1",
+                "SELECT operating_cycle_id, adversarial_review_id, reviewer_principal_id, reviewer_actor_instance_id, reviewer_actor_attempt_id FROM command_assign_adversarial_reviewer WHERE command_row_id = $1",
                 [command_row_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
             ).optional()?.ok_or(StoreError::LedgerCorruption("missing reviewer assignment command body"))?;
             CommandBody::AssignAdversarialReviewer {
@@ -17651,7 +17633,7 @@ fn decode_command_body(
             }
         }
         CommandKind::RespondToReviewChallenge => {
-            let (cycle, challenge, response): (i64, i64, String) = connection.query_row("SELECT operating_cycle_id, review_challenge_id, response_text FROM command_respond_to_review_challenge WHERE command_row_id = ?1", [command_row_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing review response command body"))?;
+            let (cycle, challenge, response): (i64, i64, String) = connection.query_row("SELECT operating_cycle_id, review_challenge_id, response_text FROM command_respond_to_review_challenge WHERE command_row_id = $1", [command_row_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing review response command body"))?;
             CommandBody::RespondToReviewChallenge {
                 operating_cycle_id: OperatingCycleId::try_from(cycle)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -17745,7 +17727,7 @@ fn decode_command_body(
             }
         }
         CommandKind::RegisterActorConfiguration => {
-            let (name, model, attractor): (String, i64, i64) = connection.query_row("SELECT configuration_name, model_policy, primary_attractor FROM command_register_actor_configuration WHERE command_row_id = ?1", [command_row_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing actor configuration command body"))?;
+            let (name, model, attractor): (String, i64, i64) = connection.query_row("SELECT configuration_name, model_policy, primary_attractor FROM command_register_actor_configuration WHERE command_row_id = $1", [command_row_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing actor configuration command body"))?;
             CommandBody::RegisterActorConfiguration {
                 configuration_name: crate::ActorConfigurationName::parse(name)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -17754,7 +17736,7 @@ fn decode_command_body(
             }
         }
         CommandKind::RegisterContextPack => {
-            let (cycle, purpose, digest): (i64, i64, Vec<u8>) = connection.query_row("SELECT operating_cycle_id, purpose, rendering_digest FROM command_register_context_pack WHERE command_row_id = ?1", [command_row_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing context pack command body"))?;
+            let (cycle, purpose, digest): (i64, i64, Vec<u8>) = connection.query_row("SELECT operating_cycle_id, purpose, rendering_digest FROM command_register_context_pack WHERE command_row_id = $1", [command_row_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing context pack command body"))?;
             CommandBody::RegisterContextPack {
                 operating_cycle_id: OperatingCycleId::try_from(cycle)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -17763,7 +17745,7 @@ fn decode_command_body(
             }
         }
         CommandKind::AdmitActorInstance => {
-            let (cycle, revision, profile, display): (i64, i64, i64, String) = connection.query_row("SELECT operating_cycle_id, actor_configuration_revision_id, execution_profile_id, actor_display_name FROM command_admit_actor_instance WHERE command_row_id = ?1", [command_row_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing actor admission command body"))?;
+            let (cycle, revision, profile, display): (i64, i64, i64, String) = connection.query_row("SELECT operating_cycle_id, actor_configuration_revision_id, execution_profile_id, actor_display_name FROM command_admit_actor_instance WHERE command_row_id = $1", [command_row_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing actor admission command body"))?;
             CommandBody::AdmitActorInstance {
                 operating_cycle_id: OperatingCycleId::try_from(cycle)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -17786,7 +17768,7 @@ fn decode_command_body(
             }
         }
         CommandKind::RegisterWorkItem => {
-            let (cycle, ticket, actor, context, kind, review, assignment): (i64, i64, i64, i64, i64, Option<i64>, String) = connection.query_row("SELECT operating_cycle_id, ticket_id, actor_instance_id, context_pack_id, work_kind, adversarial_review_id, assignment_text FROM command_register_work_item WHERE command_row_id = ?1", [command_row_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing work item command body"))?;
+            let (cycle, ticket, actor, context, kind, review, assignment): (i64, i64, i64, i64, i64, Option<i64>, String) = connection.query_row("SELECT operating_cycle_id, ticket_id, actor_instance_id, context_pack_id, work_kind, adversarial_review_id, assignment_text FROM command_register_work_item WHERE command_row_id = $1", [command_row_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing work item command body"))?;
             CommandBody::RegisterWorkItem {
                 operating_cycle_id: OperatingCycleId::try_from(cycle)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -17816,7 +17798,7 @@ fn decode_command_body(
             }
         }
         CommandKind::StartActorAttempt => {
-            let (cycle, work, amount): (i64, i64, i64) = connection.query_row("SELECT operating_cycle_id, work_item_id, reservation_micros FROM command_start_actor_attempt WHERE command_row_id = ?1", [command_row_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing actor attempt command body"))?;
+            let (cycle, work, amount): (i64, i64, i64) = connection.query_row("SELECT operating_cycle_id, work_item_id, reservation_micros FROM command_start_actor_attempt WHERE command_row_id = $1", [command_row_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing actor attempt command body"))?;
             CommandBody::StartActorAttempt {
                 operating_cycle_id: OperatingCycleId::try_from(cycle)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -17889,7 +17871,7 @@ fn decode_command_body(
             }
         }
         CommandKind::RegisterOutcomeObligation => {
-            let (cycle, project, obligation): (i64, i64, String) = connection.query_row("SELECT operating_cycle_id, project_id, obligation_text FROM command_register_outcome_obligation WHERE command_row_id = ?1", [command_row_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing outcome obligation command body"))?;
+            let (cycle, project, obligation): (i64, i64, String) = connection.query_row("SELECT operating_cycle_id, project_id, obligation_text FROM command_register_outcome_obligation WHERE command_row_id = $1", [command_row_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing outcome obligation command body"))?;
             CommandBody::RegisterOutcomeObligation {
                 operating_cycle_id: OperatingCycleId::try_from(cycle)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -17914,20 +17896,20 @@ fn decode_command_body(
             }
         }
         CommandKind::RecordContentSealReceipt => {
-            let digest: Vec<u8> = connection.query_row("SELECT digest FROM command_record_content_seal_receipt WHERE command_row_id = ?1", [command_row_id], |row| row.get(0)).optional()?.ok_or(StoreError::LedgerCorruption("missing content seal command body"))?;
+            let digest: Vec<u8> = connection.query_row("SELECT digest FROM command_record_content_seal_receipt WHERE command_row_id = $1", [command_row_id], |row| row.get(0)).optional()?.ok_or(StoreError::LedgerCorruption("missing content seal command body"))?;
             CommandBody::RecordContentSealReceipt {
                 digest: digest_from_stored_bytes(&digest)?,
             }
         }
         CommandKind::RegisterContentObject => {
-            let receipt: i64 = connection.query_row("SELECT content_seal_receipt_id FROM command_register_content_object WHERE command_row_id = ?1", [command_row_id], |row| row.get(0)).optional()?.ok_or(StoreError::LedgerCorruption("missing content object command body"))?;
+            let receipt: i64 = connection.query_row("SELECT content_seal_receipt_id FROM command_register_content_object WHERE command_row_id = $1", [command_row_id], |row| row.get(0)).optional()?.ok_or(StoreError::LedgerCorruption("missing content object command body"))?;
             CommandBody::RegisterContentObject {
                 content_seal_receipt_id: ContentSealReceiptId::try_from(receipt)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
             }
         }
         CommandKind::RegisterForensicManifest => {
-            let (cycle, experiment, policy, retention, output): (i64, i64, i64, i64, i64) = connection.query_row("SELECT operating_cycle_id, producing_deterministic_experiment_id, capture_policy, retention_access_class, evaluator_output_content_object_id FROM command_register_forensic_manifest WHERE command_row_id = ?1", [command_row_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing forensic manifest command body"))?;
+            let (cycle, experiment, policy, retention, output): (i64, i64, i64, i64, i64) = connection.query_row("SELECT operating_cycle_id, producing_deterministic_experiment_id, capture_policy, retention_access_class, evaluator_output_content_object_id FROM command_register_forensic_manifest WHERE command_row_id = $1", [command_row_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing forensic manifest command body"))?;
             CommandBody::RegisterForensicManifest {
                 operating_cycle_id: OperatingCycleId::try_from(cycle)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -17946,7 +17928,7 @@ fn decode_command_body(
                 .query_row(
                     "SELECT operating_cycle_id, native_child_spawn_admission_id
                        FROM command_register_deterministic_evaluator_forensic_manifest
-                      WHERE command_row_id = ?1",
+                      WHERE command_row_id = $1",
                     [command_row_id],
                     |row| Ok((row.get(0)?, row.get(1)?)),
                 )
@@ -17962,7 +17944,7 @@ fn decode_command_body(
             }
         }
         CommandKind::RegisterDeterministicExperiment => {
-            let row: (i64,i64,i64,i64,i64,i64) = connection.query_row("SELECT operating_cycle_id, project_id, ticket_id, target_graph_revision_id, evaluator_content_object_id, input_manifest_content_object_id FROM command_register_deterministic_experiment WHERE command_row_id = ?1", [command_row_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing deterministic experiment command body"))?;
+            let row: (i64,i64,i64,i64,i64,i64) = connection.query_row("SELECT operating_cycle_id, project_id, ticket_id, target_graph_revision_id, evaluator_content_object_id, input_manifest_content_object_id FROM command_register_deterministic_experiment WHERE command_row_id = $1", [command_row_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing deterministic experiment command body"))?;
             CommandBody::RegisterDeterministicExperiment {
                 operating_cycle_id: OperatingCycleId::try_from(row.0)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -17978,7 +17960,7 @@ fn decode_command_body(
             }
         }
         CommandKind::RecordDeterministicEvaluationReceipt => {
-            let row: (i64,i64,i64,i64,i64,i64) = connection.query_row("SELECT operating_cycle_id, deterministic_experiment_id, evaluator_revision_id, input_manifest_id, forensic_manifest_id, evaluator_output_content_object_id FROM command_record_deterministic_evaluation_receipt WHERE command_row_id = ?1", [command_row_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing deterministic evaluation receipt command body"))?;
+            let row: (i64,i64,i64,i64,i64,i64) = connection.query_row("SELECT operating_cycle_id, deterministic_experiment_id, evaluator_revision_id, input_manifest_id, forensic_manifest_id, evaluator_output_content_object_id FROM command_record_deterministic_evaluation_receipt WHERE command_row_id = $1", [command_row_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing deterministic evaluation receipt command body"))?;
             CommandBody::RecordDeterministicEvaluationReceipt {
                 operating_cycle_id: OperatingCycleId::try_from(row.0)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -17995,7 +17977,7 @@ fn decode_command_body(
             }
         }
         CommandKind::AdmitDeterministicEvidence => {
-            let (cycle, receipt): (i64, i64) = connection.query_row("SELECT operating_cycle_id, deterministic_evaluation_receipt_id FROM command_admit_deterministic_evidence WHERE command_row_id = ?1", [command_row_id], |row| Ok((row.get(0)?, row.get(1)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing deterministic evidence command body"))?;
+            let (cycle, receipt): (i64, i64) = connection.query_row("SELECT operating_cycle_id, deterministic_evaluation_receipt_id FROM command_admit_deterministic_evidence WHERE command_row_id = $1", [command_row_id], |row| Ok((row.get(0)?, row.get(1)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing deterministic evidence command body"))?;
             CommandBody::AdmitDeterministicEvidence {
                 operating_cycle_id: OperatingCycleId::try_from(cycle)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -18020,7 +18002,7 @@ fn decode_command_body(
         }
         CommandKind::AdmitDeterministicEvaluatorNativeChild => {
             let row: (i64,i64,i64,i64,i64,String,String,i64,String) = connection.query_row(
-                "SELECT operating_cycle_id, deterministic_experiment_id, evaluator_revision_id, input_manifest_id, execution_profile_id, native_workspace_id, canonical_workspace_path, supervisor_epoch_id, supervisor_epoch_identity FROM command_admit_deterministic_evaluator_native_child WHERE command_row_id = ?1",
+                "SELECT operating_cycle_id, deterministic_experiment_id, evaluator_revision_id, input_manifest_id, execution_profile_id, native_workspace_id, canonical_workspace_path, supervisor_epoch_id, supervisor_epoch_identity FROM command_admit_deterministic_evaluator_native_child WHERE command_row_id = $1",
                 [command_row_id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,r.get(8)?)),
             ).optional()?.ok_or(StoreError::LedgerCorruption("missing evaluator native-child admission command body"))?;
             CommandBody::AdmitDeterministicEvaluatorNativeChild {
@@ -18046,7 +18028,7 @@ fn decode_command_body(
         }
         CommandKind::RecordDeterministicEvaluatorNativeChildSpawn => {
             let row: (i64,String,i32,i32) = connection.query_row(
-                "SELECT native_child_spawn_admission_id, child_identity, direct_child_pid, process_group_id FROM command_record_deterministic_evaluator_native_child_spawn WHERE command_row_id = ?1",
+                "SELECT native_child_spawn_admission_id, child_identity, direct_child_pid, process_group_id FROM command_record_deterministic_evaluator_native_child_spawn WHERE command_row_id = $1",
                 [command_row_id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)),
             ).optional()?.ok_or(StoreError::LedgerCorruption("missing evaluator native-child spawn command body"))?;
             CommandBody::RecordDeterministicEvaluatorNativeChildSpawn {
@@ -18061,7 +18043,7 @@ fn decode_command_body(
             }
         }
         CommandKind::OpenSupervisorEpoch => {
-            let row:(i64,String)=connection.query_row("SELECT supervisor_epoch_id, supervisor_epoch_identity FROM command_open_supervisor_epoch WHERE command_row_id = ?1",[command_row_id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing supervisor epoch command body"))?;
+            let row:(i64,String)=connection.query_row("SELECT supervisor_epoch_id, supervisor_epoch_identity FROM command_open_supervisor_epoch WHERE command_row_id = $1",[command_row_id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing supervisor epoch command body"))?;
             CommandBody::OpenSupervisorEpoch {
                 supervisor_epoch_id: SupervisorEpochId::try_from(row.0)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -18070,7 +18052,7 @@ fn decode_command_body(
             }
         }
         CommandKind::AdmitPiChildSpawn => {
-            let row: StoredPiChildAdmissionCommand = connection.query_row("SELECT operating_cycle_id, actor_attempt_id, root_authority_office_session_id, budget_reservation_id, execution_profile_id, native_workspace_id, canonical_workspace_path, supervisor_epoch_id, supervisor_epoch_identity, pi_session_identity, spawn_nonce FROM command_admit_pi_child_spawn WHERE command_row_id = ?1",[command_row_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,r.get(8)?,r.get(9)?,r.get(10)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi child admission command body"))?;
+            let row: StoredPiChildAdmissionCommand = connection.query_row("SELECT operating_cycle_id, actor_attempt_id, root_authority_office_session_id, budget_reservation_id, execution_profile_id, native_workspace_id, canonical_workspace_path, supervisor_epoch_id, supervisor_epoch_identity, pi_session_identity, spawn_nonce FROM command_admit_pi_child_spawn WHERE command_row_id = $1",[command_row_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,r.get(8)?,r.get(9)?,r.get(10)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi child admission command body"))?;
             CommandBody::AdmitPiChildSpawn {
                 operating_cycle_id: OperatingCycleId::try_from(row.0)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -18094,7 +18076,7 @@ fn decode_command_body(
             }
         }
         CommandKind::RecordInertChildSpawn => {
-            let row:(i64,String,i64,i64)=connection.query_row("SELECT native_child_spawn_admission_id, child_identity, direct_child_pid, process_group_id FROM command_record_inert_pi_child_spawn WHERE command_row_id = ?1",[command_row_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing inert Pi child command body"))?;
+            let row:(i64,String,i64,i64)=connection.query_row("SELECT native_child_spawn_admission_id, child_identity, direct_child_pid, process_group_id FROM command_record_inert_pi_child_spawn WHERE command_row_id = $1",[command_row_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing inert Pi child command body"))?;
             CommandBody::RecordInertChildSpawn {
                 native_child_spawn_admission_id: NativeChildSpawnAdmissionId::try_from(row.0)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -18111,7 +18093,7 @@ fn decode_command_body(
             }
         }
         CommandKind::RecordPiAdapterReady => {
-            let row:(i64,String,String)=connection.query_row("SELECT native_child_id, pi_session_identity, spawn_nonce FROM command_record_pi_adapter_ready WHERE command_row_id = ?1",[command_row_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing adapter ready command body"))?;
+            let row:(i64,String,String)=connection.query_row("SELECT native_child_id, pi_session_identity, spawn_nonce FROM command_record_pi_adapter_ready WHERE command_row_id = $1",[command_row_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing adapter ready command body"))?;
             CommandBody::RecordPiAdapterReady {
                 native_child_id: NativeChildId::try_from(row.0)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -18122,7 +18104,7 @@ fn decode_command_body(
             }
         }
         CommandKind::AuthorizePiCreateSession | CommandKind::RecordPiCreateSessionDelivery => {
-            let row:(i64,String,Vec<u8>)=connection.query_row(if kind == CommandKind::AuthorizePiCreateSession { "SELECT native_child_id, correlation_identity, create_request_digest FROM command_authorize_pi_create_session WHERE command_row_id = ?1" } else { "SELECT native_child_id, correlation_identity, create_request_digest FROM command_record_pi_create_session_delivery WHERE command_row_id = ?1" },[command_row_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Create command body"))?;
+            let row:(i64,String,Vec<u8>)=connection.query_row(if kind == CommandKind::AuthorizePiCreateSession { "SELECT native_child_id, correlation_identity, create_request_digest FROM command_authorize_pi_create_session WHERE command_row_id = $1" } else { "SELECT native_child_id, correlation_identity, create_request_digest FROM command_record_pi_create_session_delivery WHERE command_row_id = $1" },[command_row_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Create command body"))?;
             let native_child_id =
                 NativeChildId::try_from(row.0).map_err(|_| StoreError::InvalidStoredValue)?;
             let correlation_identity =
@@ -18143,7 +18125,7 @@ fn decode_command_body(
             }
         }
         CommandKind::RecordPiSessionReady => {
-            let row:(i64,String)=connection.query_row("SELECT native_child_id, pi_session_identity FROM command_record_pi_session_ready WHERE command_row_id = ?1",[command_row_id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi ready command body"))?;
+            let row:(i64,String)=connection.query_row("SELECT native_child_id, pi_session_identity FROM command_record_pi_session_ready WHERE command_row_id = $1",[command_row_id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi ready command body"))?;
             CommandBody::RecordPiSessionReady {
                 native_child_id: NativeChildId::try_from(row.0)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -18153,7 +18135,7 @@ fn decode_command_body(
         }
         CommandKind::RecordPiAbortControlDelivery => {
             let row: (i64, i64, String, Vec<u8>, i64) = connection.query_row(
-                "SELECT native_child_id, cancellation_propagation_id, correlation_identity, abort_command_digest, physical_write_outcome FROM command_record_pi_abort_control_delivery WHERE command_row_id = ?1",
+                "SELECT native_child_id, cancellation_propagation_id, correlation_identity, abort_command_digest, physical_write_outcome FROM command_record_pi_abort_control_delivery WHERE command_row_id = $1",
                 [command_row_id],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
             ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Abort command body"))?;
@@ -18169,7 +18151,7 @@ fn decode_command_body(
             }
         }
         CommandKind::RecordChildStreamSeal => {
-            let row:(i64,i64,Vec<u8>,i64,i64)=connection.query_row("SELECT native_child_id, stream_kind, full_observed_digest, retained_content_object_id, completeness FROM command_record_child_stream_seal WHERE command_row_id = ?1",[command_row_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing stream seal command body"))?;
+            let row:(i64,i64,Vec<u8>,i64,i64)=connection.query_row("SELECT native_child_id, stream_kind, full_observed_digest, retained_content_object_id, completeness FROM command_record_child_stream_seal WHERE command_row_id = $1",[command_row_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing stream seal command body"))?;
             CommandBody::RecordChildStreamSeal {
                 native_child_id: NativeChildId::try_from(row.0)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -18193,7 +18175,7 @@ fn decode_command_body(
             }
         }
         CommandKind::RecordProcessSignalReceipt => {
-            let row:(i64,i64,i64,i64,i64,Option<i64>)=connection.query_row("SELECT native_child_id, signal_action, delivery, observed_liveness, cause_kind, cancellation_propagation_id FROM command_record_process_signal_receipt WHERE command_row_id = ?1",[command_row_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing signal command body"))?;
+            let row:(i64,i64,i64,i64,i64,Option<i64>)=connection.query_row("SELECT native_child_id, signal_action, delivery, observed_liveness, cause_kind, cancellation_propagation_id FROM command_record_process_signal_receipt WHERE command_row_id = $1",[command_row_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing signal command body"))?;
             CommandBody::RecordProcessSignalReceipt {
                 native_child_id: NativeChildId::try_from(row.0)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -18204,7 +18186,7 @@ fn decode_command_body(
             }
         }
         CommandKind::RecordDirectChildReap => {
-            let row:(i64,i64,Option<i64>,i64,i64)=connection.query_row("SELECT native_child_id, wait_status_kind, status_value, group_liveness_before_cleanup, group_liveness_after_cleanup FROM command_record_direct_child_reap WHERE command_row_id = ?1",[command_row_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing reap command body"))?;
+            let row:(i64,i64,Option<i64>,i64,i64)=connection.query_row("SELECT native_child_id, wait_status_kind, status_value, group_liveness_before_cleanup, group_liveness_after_cleanup FROM command_record_direct_child_reap WHERE command_row_id = $1",[command_row_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing reap command body"))?;
             CommandBody::RecordDirectChildReap {
                 native_child_id: NativeChildId::try_from(row.0)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -18214,7 +18196,7 @@ fn decode_command_body(
             }
         }
         CommandKind::RecordChildRecovery => {
-            let (child, obs, liveness):(i64,i64,i64) = connection.query_row("SELECT native_child_id, observation, group_liveness_after_restart FROM command_record_child_recovery WHERE command_row_id = ?1", [command_row_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing recovery command body"))?;
+            let (child, obs, liveness):(i64,i64,i64) = connection.query_row("SELECT native_child_id, observation, group_liveness_after_restart FROM command_record_child_recovery WHERE command_row_id = $1", [command_row_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing recovery command body"))?;
             CommandBody::RecordChildRecovery {
                 native_child_id: NativeChildId::try_from(child)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -18250,7 +18232,7 @@ fn decode_command_body(
         }
         CommandKind::RecordNativeChildNotSpawned => {
             let (admission, reason): (i64, i64) = connection.query_row(
-                "SELECT native_child_spawn_admission_id, reason FROM command_record_native_child_not_spawned WHERE command_row_id = ?1",
+                "SELECT native_child_spawn_admission_id, reason FROM command_record_native_child_not_spawned WHERE command_row_id = $1",
                 [command_row_id],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             ).optional()?.ok_or(StoreError::LedgerCorruption("missing native-child invalidation command body"))?;
@@ -18262,7 +18244,7 @@ fn decode_command_body(
         }
         CommandKind::AuthorizePiOfficeTurnPrompt => {
             let row: (i64, String, i64, Vec<u8>, i64) = connection.query_row(
-                "SELECT office_turn_id, correlation_identity, prompt_content_object_id, prompt_digest, frontier_event_id FROM command_authorize_pi_office_turn_prompt WHERE command_row_id = ?1",
+                "SELECT office_turn_id, correlation_identity, prompt_content_object_id, prompt_digest, frontier_event_id FROM command_authorize_pi_office_turn_prompt WHERE command_row_id = $1",
                 [command_row_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
             ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Office Prompt authorization command body"))?;
             CommandBody::AuthorizePiOfficeTurnPrompt {
@@ -18279,7 +18261,7 @@ fn decode_command_body(
         }
         CommandKind::RecordPiOfficeTurnPromptDelivery => {
             let row: (i64, String, Vec<u8>) = connection.query_row(
-                "SELECT office_turn_id, correlation_identity, prompt_digest FROM command_record_pi_office_turn_prompt_delivery WHERE command_row_id = ?1",
+                "SELECT office_turn_id, correlation_identity, prompt_digest FROM command_record_pi_office_turn_prompt_delivery WHERE command_row_id = $1",
                 [command_row_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Office Prompt delivery command body"))?;
             CommandBody::RecordPiOfficeTurnPromptDelivery {
@@ -18292,7 +18274,7 @@ fn decode_command_body(
         }
         CommandKind::RecordPiOfficeTurnPromptAccepted => {
             let row: (i64, String, i64) = connection.query_row(
-                "SELECT office_turn_id, correlation_identity, command_result_sequence FROM command_record_pi_office_turn_prompt_accepted WHERE command_row_id = ?1",
+                "SELECT office_turn_id, correlation_identity, command_result_sequence FROM command_record_pi_office_turn_prompt_accepted WHERE command_row_id = $1",
                 [command_row_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Office Prompt acceptance command body"))?;
             CommandBody::RecordPiOfficeTurnPromptAccepted {
@@ -18306,7 +18288,7 @@ fn decode_command_body(
         }
         CommandKind::RecordPiOfficeTurnUsage => {
             let row: (i64, String, i64, i64, i64, i64, i64, i64, Vec<u8>, i64) = connection.query_row(
-                "SELECT office_turn_id, correlation_identity, protocol_sequence, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, total_tokens, provider_cost_binary64, cumulative_ceiling_micros FROM command_record_pi_office_turn_usage WHERE command_row_id = ?1",
+                "SELECT office_turn_id, correlation_identity, protocol_sequence, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, total_tokens, provider_cost_binary64, cumulative_ceiling_micros FROM command_record_pi_office_turn_usage WHERE command_row_id = $1",
                 [command_row_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?, r.get(9)?)),
             ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Office usage command body"))?;
             CommandBody::RecordPiOfficeTurnUsage {
@@ -18323,7 +18305,7 @@ fn decode_command_body(
         }
         CommandKind::RecordPiOfficeTurnUsageFailure => {
             let row: (i64, String, i64, i64, Option<i64>, Option<i64>) = connection.query_row(
-                "SELECT office_turn_id, correlation_identity, protocol_sequence, failure_kind, unknown_reason, unavailable_reason FROM command_record_pi_office_turn_usage_failure WHERE command_row_id = ?1",
+                "SELECT office_turn_id, correlation_identity, protocol_sequence, failure_kind, unknown_reason, unavailable_reason FROM command_record_pi_office_turn_usage_failure WHERE command_row_id = $1",
                 [command_row_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
             ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Office usage failure command body"))?;
             CommandBody::RecordPiOfficeTurnUsageFailure {
@@ -18338,7 +18320,7 @@ fn decode_command_body(
         }
         CommandKind::RecordPiOfficeTurnTerminal => {
             let row: (i64, String, i64, Option<i64>, i64, i64, i64, i64, i64) = connection.query_row(
-                "SELECT office_turn_id, correlation_identity, terminal_evidence_kind, agent_settled_sequence, final_accounting_sequence, settled_sequence, disposition, assistant_outcome, transcript_disposition FROM command_record_pi_office_turn_terminal WHERE command_row_id = ?1",
+                "SELECT office_turn_id, correlation_identity, terminal_evidence_kind, agent_settled_sequence, final_accounting_sequence, settled_sequence, disposition, assistant_outcome, transcript_disposition FROM command_record_pi_office_turn_terminal WHERE command_row_id = $1",
                 [command_row_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?)),
             ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Office terminal command body"))?;
             CommandBody::RecordPiOfficeTurnTerminal {
@@ -18358,7 +18340,7 @@ fn decode_command_body(
             let row: (i64, String) = connection
                 .query_row(
                     "SELECT root_authority_office_session_id, correlation_identity
-                 FROM command_authorize_pi_office_session_dispose WHERE command_row_id = ?1",
+                 FROM command_authorize_pi_office_session_dispose WHERE command_row_id = $1",
                     [command_row_id],
                     |row| Ok((row.get(0)?, row.get(1)?)),
                 )
@@ -18377,7 +18359,7 @@ fn decode_command_body(
             let row: (i64, String) = connection
                 .query_row(
                     "SELECT root_authority_office_session_id, correlation_identity
-                 FROM command_record_pi_office_session_dispose_delivery WHERE command_row_id = ?1",
+                 FROM command_record_pi_office_session_dispose_delivery WHERE command_row_id = $1",
                     [command_row_id],
                     |row| Ok((row.get(0)?, row.get(1)?)),
                 )
@@ -18395,7 +18377,7 @@ fn decode_command_body(
         CommandKind::RecordPiOfficeSessionDisposeAccepted => {
             let row: (i64, String, i64) = connection.query_row(
                 "SELECT root_authority_office_session_id, correlation_identity, command_result_sequence
-                 FROM command_record_pi_office_session_dispose_accepted WHERE command_row_id = ?1",
+                 FROM command_record_pi_office_session_dispose_accepted WHERE command_row_id = $1",
                 [command_row_id],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Office Dispose acceptance command body"))?;
@@ -18413,7 +18395,7 @@ fn decode_command_body(
                 "SELECT root_authority_office_session_id, correlation_identity, protocol_sequence,
                         input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
                         total_tokens, provider_cost_binary64, cumulative_ceiling_micros
-                 FROM command_record_pi_office_session_dispose_usage WHERE command_row_id = ?1",
+                 FROM command_record_pi_office_session_dispose_usage WHERE command_row_id = $1",
                 [command_row_id],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?)),
             ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Office Dispose usage command body"))?;
@@ -18433,7 +18415,7 @@ fn decode_command_body(
             let row: (i64, String, i64, i64, Option<i64>, Option<i64>) = connection.query_row(
                 "SELECT root_authority_office_session_id, correlation_identity, protocol_sequence,
                         failure_kind, unknown_reason, unavailable_reason
-                 FROM command_record_pi_office_session_dispose_usage_failure WHERE command_row_id = ?1",
+                 FROM command_record_pi_office_session_dispose_usage_failure WHERE command_row_id = $1",
                 [command_row_id],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
             ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Office Dispose usage failure command body"))?;
@@ -18453,7 +18435,7 @@ fn decode_command_body(
                         transcript_kind, session_file, session_file_digest,
                         transcript_content_object_id, first_user_prompt_kind,
                         first_user_prompt_digest
-                 FROM command_record_pi_office_session_disposed WHERE command_row_id = ?1",
+                 FROM command_record_pi_office_session_disposed WHERE command_row_id = $1",
                 [command_row_id],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?)),
             ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Office Disposed command body"))?;
@@ -18485,9 +18467,9 @@ fn query_command_value<T>(
 where
     T: FromSql,
 {
-    let query = format!("SELECT {column} FROM {table} WHERE command_row_id = ?1");
+    let query = format!("SELECT {column} FROM {table} WHERE command_row_id = $1");
     connection
-        .query_row(&query, [command_row_id], |row| row.get(0))
+        .query_row(&query, [command_row_id], |row| T::from_row(row, 0))
         .optional()?
         .ok_or(StoreError::LedgerCorruption("missing simple command body"))
 }
@@ -18497,7 +18479,7 @@ fn query_event_pair(
     table: &str,
     event_id: i64,
 ) -> Result<(i64, i64), StoreError> {
-    let query = format!("SELECT * FROM {table} WHERE event_id = ?1");
+    let query = format!("SELECT * FROM {table} WHERE event_id = $1");
     connection
         .query_row(&query, [event_id], |row| Ok((row.get(1)?, row.get(2)?)))
         .optional()?
@@ -18509,7 +18491,7 @@ fn query_command_pair(
     table: &str,
     id: i64,
 ) -> Result<(i64, i64), StoreError> {
-    let query = format!("SELECT * FROM {table} WHERE command_row_id = ?1");
+    let query = format!("SELECT * FROM {table} WHERE command_row_id = $1");
     connection
         .query_row(&query, [id], |r| Ok((r.get(1)?, r.get(2)?)))
         .optional()?
@@ -18522,7 +18504,7 @@ fn query_command_three(
     table: &str,
     id: i64,
 ) -> Result<(i64, i64, i64), StoreError> {
-    let query = format!("SELECT * FROM {table} WHERE command_row_id = ?1");
+    let query = format!("SELECT * FROM {table} WHERE command_row_id = $1");
     connection
         .query_row(&query, [id], |r| Ok((r.get(1)?, r.get(2)?, r.get(3)?)))
         .optional()?
@@ -18535,7 +18517,7 @@ fn query_command_six(
     table: &str,
     id: i64,
 ) -> Result<(i64, i64, String, String, String), StoreError> {
-    let query = format!("SELECT * FROM {table} WHERE command_row_id = ?1");
+    let query = format!("SELECT * FROM {table} WHERE command_row_id = $1");
     connection
         .query_row(&query, [id], |r| {
             Ok((r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
@@ -18547,7 +18529,7 @@ fn query_create_ticket(
     connection: &Connection,
     id: i64,
 ) -> Result<(i64, i64, String, String, Option<i64>), StoreError> {
-    connection.query_row("SELECT operating_cycle_id, project_id, ticket_title, acceptance_condition_text, prerequisite_ticket_id FROM command_create_ticket WHERE command_row_id = ?1", [id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing ticket command body"))
+    connection.query_row("SELECT operating_cycle_id, project_id, ticket_title, acceptance_condition_text, prerequisite_ticket_id FROM command_create_ticket WHERE command_row_id = $1", [id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing ticket command body"))
 }
 type GraphRevisionCommandRow = (i64, i64, Option<i64>, Option<i64>);
 
@@ -18555,7 +18537,7 @@ fn query_graph_revision_command(
     connection: &Connection,
     id: i64,
 ) -> Result<GraphRevisionCommandRow, StoreError> {
-    connection.query_row("SELECT operating_cycle_id, project_id, causal_episode_id, graph_object_id FROM command_add_graph_object_revision WHERE command_row_id = ?1", [id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing revision command body"))
+    connection.query_row("SELECT operating_cycle_id, project_id, causal_episode_id, graph_object_id FROM command_add_graph_object_revision WHERE command_row_id = $1", [id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing revision command body"))
 }
 
 fn query_graph_revision_command_body(
@@ -18564,14 +18546,14 @@ fn query_graph_revision_command_body(
 ) -> Result<GraphRevisionBody, StoreError> {
     let observation: Option<String> = connection
         .query_row(
-            "SELECT observation_text FROM command_add_observation_revision WHERE command_row_id = ?1",
+            "SELECT observation_text FROM command_add_observation_revision WHERE command_row_id = $1",
             [command_row_id],
             |row| row.get(0),
         )
         .optional()?;
     let hypothesis: Option<String> = connection
         .query_row(
-            "SELECT hypothesis_text FROM command_add_hypothesis_revision WHERE command_row_id = ?1",
+            "SELECT hypothesis_text FROM command_add_hypothesis_revision WHERE command_row_id = $1",
             [command_row_id],
             |row| row.get(0),
         )
@@ -18594,26 +18576,26 @@ fn query_edge_command(
     connection: &Connection,
     id: i64,
 ) -> Result<(i64, i64, i64, i64, i64), StoreError> {
-    connection.query_row("SELECT operating_cycle_id, project_id, from_graph_revision_id, to_graph_revision_id, edge_kind FROM command_add_graph_edge WHERE command_row_id = ?1", [id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing edge command body"))
+    connection.query_row("SELECT operating_cycle_id, project_id, from_graph_revision_id, to_graph_revision_id, edge_kind FROM command_add_graph_edge WHERE command_row_id = $1", [id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing edge command body"))
 }
 fn query_review_submit(
     connection: &Connection,
     id: i64,
 ) -> Result<(i64, i64, i64, i64, i64, String), StoreError> {
-    connection.query_row("SELECT operating_cycle_id, adversarial_review_id, target_graph_revision_id, author_principal_id, severity, failure_hypothesis FROM command_submit_review_challenge WHERE command_row_id = ?1", [id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing review command body"))
+    connection.query_row("SELECT operating_cycle_id, adversarial_review_id, target_graph_revision_id, author_principal_id, severity, failure_hypothesis FROM command_submit_review_challenge WHERE command_row_id = $1", [id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing review command body"))
 }
 fn query_postmortem_trigger(
     connection: &Connection,
     id: i64,
 ) -> Result<(i64, i64, Option<i64>), StoreError> {
-    connection.query_row("SELECT operating_cycle_id, project_id, causal_episode_id FROM command_trigger_postmortem WHERE command_row_id = ?1", [id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing postmortem trigger command body"))
+    connection.query_row("SELECT operating_cycle_id, project_id, causal_episode_id FROM command_trigger_postmortem WHERE command_row_id = $1", [id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing postmortem trigger command body"))
 }
 fn query_postmortem_text_command(
     connection: &Connection,
     table: &str,
     id: i64,
 ) -> Result<(i64, i64, i64, String), StoreError> {
-    let query = format!("SELECT * FROM {table} WHERE command_row_id = ?1");
+    let query = format!("SELECT * FROM {table} WHERE command_row_id = $1");
     connection
         .query_row(&query, [id], |r| {
             Ok((r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
@@ -18662,7 +18644,7 @@ fn decode_application_mission_input(
         .query_row(
             "SELECT application_identity, application_name, revision_ordinal,
                     mission_statement, source_rendering_digest, source_content_object_id
-             FROM command_install_founding_mission WHERE command_row_id = ?1",
+             FROM command_install_founding_mission WHERE command_row_id = $1",
             [command_row_id],
             |row| {
                 Ok((
@@ -18690,7 +18672,7 @@ fn decode_application_mission_input(
     let mut statement_rows = connection.prepare(
         "SELECT principle_ordinal, principle_kind, principle_text
          FROM command_install_founding_mission_principles
-         WHERE command_row_id = ?1 ORDER BY principle_ordinal",
+         WHERE command_row_id = $1 ORDER BY principle_ordinal",
     )?;
     let rows = statement_rows.query_map([command_row_id], |row| {
         Ok((
@@ -18719,7 +18701,7 @@ fn decode_application_mission_input(
             "SELECT change_question, improvement_evidence_question,
                     boundary_commitment_question, revisit_question
              FROM command_install_founding_mission_north_star_questions
-             WHERE command_row_id = ?1",
+             WHERE command_row_id = $1",
             [command_row_id],
             |row| {
                 Ok((
@@ -18784,7 +18766,9 @@ fn verify_graph_revision_bodies(connection: &Connection) -> Result<(), StoreErro
          JOIN objects o ON o.graph_object_id = r.graph_object_id
          ORDER BY r.graph_revision_id",
     )?;
-    let rows = statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))?;
+    let rows = statement.query_map(params![], |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+    })?;
     for row in rows {
         let (graph_revision_id, object_kind) = row?;
         let object_kind = graph_object_kind_from_i64(object_kind)?;
@@ -18795,7 +18779,7 @@ fn verify_graph_revision_bodies(connection: &Connection) -> Result<(), StoreErro
         let mut body_count = 0_i64;
         let mut expected_present = false;
         for table in GRAPH_REVISION_BODY_TABLES {
-            let query = format!("SELECT COUNT(*) FROM {table} WHERE graph_revision_id = ?1");
+            let query = format!("SELECT COUNT(*) FROM {table} WHERE graph_revision_id = $1");
             let count: i64 = connection.query_row(&query, [graph_revision_id], |row| row.get(0))?;
             body_count += count;
             if table == expected_table {
@@ -18810,7 +18794,7 @@ fn verify_graph_revision_bodies(connection: &Connection) -> Result<(), StoreErro
         match object_kind {
             GraphObjectKind::Observation => {
                 let text: String = connection.query_row(
-                    "SELECT observation_text FROM observation_revisions WHERE graph_revision_id = ?1",
+                    "SELECT observation_text FROM observation_revisions WHERE graph_revision_id = $1",
                     [graph_revision_id],
                     |row| row.get(0),
                 )?;
@@ -18818,7 +18802,7 @@ fn verify_graph_revision_bodies(connection: &Connection) -> Result<(), StoreErro
             }
             GraphObjectKind::Hypothesis => {
                 let text: String = connection.query_row(
-                    "SELECT hypothesis_text FROM hypothesis_revisions WHERE graph_revision_id = ?1",
+                    "SELECT hypothesis_text FROM hypothesis_revisions WHERE graph_revision_id = $1",
                     [graph_revision_id],
                     |row| row.get(0),
                 )?;
@@ -18842,7 +18826,7 @@ fn verify_exact_named_body(
     let mut expected_present = false;
     for table in tables {
         let query = format!(
-            "SELECT COUNT(*) FROM {table} WHERE {} = ?1",
+            "SELECT COUNT(*) FROM {table} WHERE {} = $1",
             body_key_column(table)
         );
         let count: i64 = connection.query_row(&query, [row_id], |row| row.get(0))?;
@@ -19097,7 +19081,7 @@ fn query_event_id<T>(
 where
     T: TryFrom<i64>,
 {
-    let query = format!("SELECT {column} FROM {table} WHERE event_id = ?1");
+    let query = format!("SELECT {column} FROM {table} WHERE event_id = $1");
     let value = connection
         .query_row(&query, [event_id.value()], |row| row.get::<_, i64>(0))
         .optional()?
@@ -19112,7 +19096,7 @@ fn decode_office_turn_opened_event(
     let (turn, session, purpose) = connection
         .query_row(
             "SELECT office_turn_id, root_authority_office_session_id, purpose
-             FROM event_office_turn_opened WHERE event_id = ?1",
+             FROM event_office_turn_opened WHERE event_id = $1",
             [event_id.value()],
             |row| {
                 Ok((
@@ -19143,7 +19127,7 @@ fn decode_office_turn_settled_event(
     let (turn, session, charged_delta) = connection
         .query_row(
             "SELECT office_turn_id, root_authority_office_session_id, charged_delta_micros
-             FROM event_office_turn_settled WHERE event_id = ?1",
+             FROM event_office_turn_settled WHERE event_id = $1",
             [event_id.value()],
             |row| {
                 Ok((

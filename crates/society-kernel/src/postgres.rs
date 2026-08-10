@@ -262,6 +262,21 @@ impl PostgresKernelStore {
         })
     }
 
+    pub(crate) fn ensure_private_schema(&self, schema: &str) -> Result<(), PostgresStoreError> {
+        if !is_safe_schema_name(schema) {
+            return Err(PostgresStoreError::InvalidDatabaseUrl);
+        }
+        self.block_on(async {
+            sqlx::query(AssertSqlSafe(
+                format!("CREATE SCHEMA IF NOT EXISTS {schema}").as_str(),
+            ))
+            .execute(&self.pool)
+            .await
+            .map(|_| ())
+            .map_err(PostgresStoreError::Database)
+        })
+    }
+
     pub fn drop_private_schema(&self, schema: &str) -> Result<(), PostgresStoreError> {
         if !is_safe_schema_name(schema) {
             return Err(PostgresStoreError::InvalidDatabaseUrl);
@@ -327,7 +342,11 @@ impl PostgresKernelStore {
         })
     }
 
-    fn block_on<F>(&self, future: F) -> F::Output
+    pub(crate) fn pool(&self) -> &PgPool {
+        &self.pool
+    }
+
+    pub(crate) fn block_on<F>(&self, future: F) -> F::Output
     where
         F: std::future::Future,
     {
