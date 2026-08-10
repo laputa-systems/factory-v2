@@ -157,6 +157,27 @@ struct ForumContract {
     tool_digest: Blake3Digest,
 }
 
+fn exact_forum_contract() -> Result<ForumContract, HarnessError> {
+    use society_pi::{ForumSessionContractV1, ForumToolContractDescriptor};
+
+    ForumSessionContractV1::forum_enabled_v1()
+        .and_then(|contract| {
+            contract.assert_pinned()?;
+            Ok(contract)
+        })
+        .map_err(|_| HarnessError::UnexpectedEvent("pinned Pi Forum session contract"))?;
+    let descriptor = ForumToolContractDescriptor::ForumEnabledV1;
+    if descriptor.awareness_bytes() != Some(society_kernel::FORUM_F0_AWARENESS_BYTES)
+        || descriptor.tool_names().len() != 2
+    {
+        return Err(HarnessError::UnexpectedEvent("Pi Forum descriptor"));
+    }
+    Ok(ForumContract {
+        prompt_digest: forum_f0_awareness_digest(),
+        tool_digest: forum_f0_tool_contract_digest(),
+    })
+}
+
 /// Runs the complete provider-free retained/reset pair through protocol
 /// admission, replacement, one atomic matched correction, measurements,
 /// closure, and fresh replay validation.
@@ -165,10 +186,7 @@ pub fn run_provider_free_pair() -> Result<PairedReport, HarnessError> {
     let mut store = KernelStore::open_in_memory()?;
     install_application_revision(&mut store)?;
     let mut sequence = 1_u32;
-    let forum_contract = ForumContract {
-        prompt_digest: forum_f0_awareness_digest(),
-        tool_digest: forum_f0_tool_contract_digest(),
-    };
+    let forum_contract = exact_forum_contract()?;
     let actor_policy_digest = digest_fields(
         "cl-001|actor-policy|provider-free-v2",
         &[

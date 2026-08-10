@@ -720,7 +720,7 @@ impl RoleSpecification {
         let phase_tag = phase.tag();
         let role_ordinal = self.ordinal.value();
         let message_kind = match self.kind {
-            RoleKind::Observer if role_ordinal % 2 == 0 => RoleMessageKind::Question,
+            RoleKind::Observer if role_ordinal.is_multiple_of(2) => RoleMessageKind::Question,
             RoleKind::Observer => RoleMessageKind::Finding,
             RoleKind::Challenger => RoleMessageKind::Challenge,
             RoleKind::Synthesizer => RoleMessageKind::Synthesis,
