@@ -15,12 +15,16 @@ the resolved transitive graph is committed in `Cargo.lock`.
 | Crate | Exact version | Allowed responsibility |
 | --- | ---: | --- |
 | `rusqlite` | 0.40.2 | Sole SQLite binding in `society-kernel`; the canonical fresh schema is embedded SQL executed by the kernel rather than an ORM or migration framework. |
+| `sqlx` | 0.9.0 | PostgreSQL-only storage binding in `society-kernel`; exact features are `postgres`, `runtime-tokio`, and `tls-rustls-ring-webpki`, with defaults disabled. Macros, SQLite, `any`, JSON, and alternate runtimes remain disabled. |
+| `sqlx-core` | 0.9.0 | The direct SQLx migration API used to run the PostgreSQL-only canonical migration without activating SQLx's SQLite backend or compile-time query macros. |
+| `sqlx-postgres` | 0.9.0 | PostgreSQL driver migration implementation; its `migrate` feature is enabled directly because SQLx's umbrella crate otherwise activates backend migration features together with the legacy SQLite binding during the staged cutover. |
 | `thiserror` | 2.0.20 | Closed, inspectable error enums at trusted boundaries. |
 | `blake3` | 1.8.5 | Canonical 32-byte BLAKE3 identities for immutable content, command bodies, revisions, trees, execution artifacts, and the resident physical content store. Git object IDs remain governed by each repository's own object format. |
 | `tracing` | 0.1.44 | Typed spans and lifecycle events in `societyd`. |
 | `tracing-subscriber` | 0.3.23 | Mandatory monitor and bounded diagnostic rendering; only `fmt`, `registry`, and `std` features are enabled. |
 | `miniserde` | 0.1.46 | Provider-free JSONL and closed submission parsing only in `society-pi`, at the closed Pi SDK-host protocol boundary; SQLite and the local daemon protocol remain non-JSON. |
-| `libc` | 0.2.177 | Narrow Unix process-group, signal, peer-credential, ownership, and content-store file-lock calls. The stable 0.2 line is used instead of the 1.0 prerelease. |
+| `libc` | 0.2.189 | Narrow Unix process-group, signal, peer-credential, ownership, and content-store file-lock calls, plus Tokio's PostgreSQL socket runtime. The stable 0.2 line is used instead of the 1.0 prerelease. |
+| `tokio` | 1.53.1 | One owned current-thread runtime inside the synchronous PostgreSQL kernel boundary; only the runtime, networking, synchronization, and timer primitives required by SQLx are enabled. |
 
 `rusqlite` disables its default feature set and enables `bundled`. This pins the
 SQLite implementation through `libsqlite3-sys`, avoids dependence on the host's
@@ -36,11 +40,13 @@ isolated application workspaces and may depend on public generic identity
 boundaries by path. Separate lockfiles with the same exact dependency versions
 grant no daemon or kernel authority.
 
-The workspace deliberately has no async runtime, ORM, workflow framework,
+The PostgreSQL cutover deliberately uses no ORM, workflow framework,
 process-control framework, tracing appender, UUID crate, time/date crate, or
-generic schema/validation framework. Identifier generation, clocks, codecs,
-state transitions, supervision, and canonical schema bootstrapping are trusted
-kernel contracts rather than delegated policy.
+generic schema/validation framework. `society-kernel` owns one bounded
+PostgreSQL pool and one current-thread Tokio runtime behind its synchronous
+public API. Identifier generation, clocks, codecs, state transitions,
+supervision, and canonical schema bootstrapping are trusted kernel contracts
+rather than delegated policy.
 
 CL-001's initial chronological Forum authorizes no new dependency. Explicit
 turn-bound read/post tools use the current resident and Pi boundaries. In

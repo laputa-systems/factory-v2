@@ -7,7 +7,11 @@ license.workspace = true
 [dependencies]
 rusqlite.workspace = true
 blake3.workspace = true
+sqlx.workspace = true
+sqlx-core.workspace = true
+sqlx-postgres.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
 
 [lints]
 workspace = true

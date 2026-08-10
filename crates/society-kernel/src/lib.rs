@@ -5,10 +5,15 @@
 //! body table.  JSON is reserved for the separately-owned Pi SDK-host adapter.
 
 mod domain;
+mod postgres;
 mod store;
 mod study;
 
 pub use domain::*;
+pub use postgres::{
+    KernelDatabaseUrl, PostgresAdvisoryLockGuard, PostgresCatalogSnapshot, PostgresKernelStore,
+    PostgresStoreError,
+};
 pub use store::{
     ContentIdentityState, DeterministicEvaluatorNativeChildAdmission,
     DeterministicEvaluatorScheduleClaim, DeterministicEvaluatorScheduleClaimRequest,
