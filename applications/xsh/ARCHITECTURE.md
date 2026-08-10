@@ -100,10 +100,22 @@ only diverge through a rejected or incomplete constitutional amendment.
 generic `ApplicationMissionInput` and `ProjectNorthStarAlignment` values. It is
 an application input factory, not an authority: it cannot install the mission,
 resolve the kernel-issued `ApplicationRevisionId`, seal content, or create a
-Project. A future trusted composition root submits those values through the
-generic supervisor boundary without linking XSH into `societyd` or
-`societyctl`. The versioned source artifact is `UNIVERSE-SEED.v1.md`; a future
-prompt builder may materialize those exact bytes under the session-local name
+Project. It returns only `ApplicationMissionInput`, the canonical bounded
+`MissionSourceRendering` from `UNIVERSE-SEED.v1.md`, and their matching BLAKE3
+digest; it imports neither `societyd` nor `societyctl` and knows no
+`ContentObjectId`. The resident's private founding-source path checks those
+bytes against the declared digest, preflights the outer command without
+mutation, physically seals them, records the receipt/object chain, and only
+then lets `InstallFoundingMission` bind the registered object. The supervisor
+carries `MissionSourceRendering` only beside that mission command; it has no
+generic content mutation or content-writer authority. Deterministic internal
+operation identities make the content primitive retry-stable while that daemon
+authority is retained; they do not resume a failed supervisor handler. The
+request ends on handler failure, and restart is `RecoveryFenced`, not
+source-operation recovery. This records byte custody, not producer provenance,
+semantic/evidence admission, or VS-001 execution.
+The versioned source artifact is `UNIVERSE-SEED.v1.md`; a future prompt builder
+may materialize those exact bytes under the session-local name
 `UNIVERSE-SEED.md`, but that alias cannot identify a different rendering.
 The application office `TheGrandArchitect` is realized through the generic
 `RootAuthorityOffice`; the application title and reserved-power prose never

@@ -16,11 +16,12 @@ use std::{
 use society_kernel::{
     AdmissionGeneration, ApplicationIdentity, ApplicationMissionInput, ApplicationName,
     ApplicationRevisionOrdinal, Blake3Digest, Capability, CapabilityGrantId, CommandId,
-    ExpectedGeneration, MissionPrinciple, MissionPrincipleKind, MissionPrincipleText,
-    MissionPrinciples, MissionStatement, NorthStarBoundaryCommitmentQuestion,
-    NorthStarChangeQuestion, NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet,
-    NorthStarRevisitQuestion, OperatingCycleId, OperatingCycleTreatment, PrincipalDisplayName,
-    PrincipalId, SocietyName, UsdMicros,
+    ContentIdentityState, ExpectedGeneration, KernelStore, MissionPrinciple, MissionPrincipleKind,
+    MissionPrincipleText, MissionPrinciples, MissionSourceRendering, MissionStatement,
+    NorthStarBoundaryCommitmentQuestion, NorthStarChangeQuestion,
+    NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet, NorthStarRevisitQuestion,
+    OperatingCycleId, OperatingCycleTreatment, PrincipalDisplayName, PrincipalId, SocietyName,
+    UsdMicros,
 };
 use societyctl::{SocietyctlClient, SocietyctlError, SupervisorClient};
 use societyd::protocol::{
@@ -64,6 +65,31 @@ fn resident_application_mission() -> ApplicationMissionInput {
         },
         source_rendering_digest: Blake3Digest::of_bytes(b"resident-protocol-fixture-mission"),
     }
+}
+
+fn resident_mission_source_rendering() -> MissionSourceRendering {
+    MissionSourceRendering::parse(b"resident-protocol-fixture-mission".to_vec()).unwrap()
+}
+
+fn changed_resident_mission_source_rendering() -> MissionSourceRendering {
+    MissionSourceRendering::parse(b"resident-protocol-fixture-mission-changed".to_vec()).unwrap()
+}
+
+fn founding_mission_body() -> ClientCommandBody {
+    ClientCommandBody::InstallFoundingMission {
+        mission: Box::new(resident_application_mission()),
+        source_rendering: resident_mission_source_rendering(),
+    }
+}
+
+fn mission_source_operation_label(digest: Blake3Digest) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut label = String::from("mission-source-");
+    for byte in digest.as_bytes() {
+        label.push(char::from(HEX[(byte >> 4) as usize]));
+        label.push(char::from(HEX[(byte & 0x0F) as usize]));
+    }
+    label
 }
 
 fn temporary_runtime_root(label: &str) -> PathBuf {
@@ -200,6 +226,23 @@ fn execute_with_active_grant(
     )
 }
 
+fn create_society(supervisor: &mut SupervisorClient, correlation_value: u64, command_id: &str) {
+    accepted(
+        execute_with_active_grant(
+            supervisor,
+            correlation(correlation_value),
+            command_id,
+            BOOTSTRAP,
+            Capability::CreateSocietyIdentity,
+            ExpectedGeneration::NotApplicable,
+            ClientCommandBody::CreateSocietyIdentity {
+                name: SocietyName::parse("daemon sealed mission society").unwrap(),
+            },
+        )
+        .unwrap(),
+    );
+}
+
 fn founding_commands(client: &mut SupervisorClient, start_correlation: u64) {
     accepted(
         execute_with_active_grant(
@@ -225,6 +268,7 @@ fn founding_commands(client: &mut SupervisorClient, start_correlation: u64) {
             ExpectedGeneration::NotApplicable,
             ClientCommandBody::InstallFoundingMission {
                 mission: Box::new(resident_application_mission()),
+                source_rendering: resident_mission_source_rendering(),
             },
         )
         .unwrap(),
@@ -926,6 +970,293 @@ fn deterministic_crash_seams_preserve_the_commit_boundary() {
     ));
     stop(shutdown, join);
     fs::remove_dir_all(after_root).unwrap();
+}
+
+#[test]
+fn founding_mission_digest_mismatch_and_preflight_rejection_leave_no_content_side_effect() {
+    let mismatch_root = temporary_runtime_root("mission-digest-mismatch");
+    let (_client, mut supervisor, shutdown, join, _socket_path, _) =
+        start(&mismatch_root, FaultInjection::None);
+    create_society(&mut supervisor, 10, "mission-mismatch-society");
+    let mismatched = ClientCommandBody::InstallFoundingMission {
+        mission: Box::new(resident_application_mission()),
+        source_rendering: changed_resident_mission_source_rendering(),
+    };
+    assert!(matches!(
+        execute_with_active_grant(
+            &mut supervisor,
+            correlation(11),
+            "mission-mismatch",
+            BOOTSTRAP,
+            Capability::InstallFoundingMission,
+            ExpectedGeneration::NotApplicable,
+            mismatched,
+        ),
+        Err(SocietyctlError::Daemon(
+            ProtocolErrorCode::MissionSourceDigestMismatch
+        ))
+    ));
+    stop(shutdown, join);
+    let kernel = KernelStore::open(mismatch_root.join("society.sqlite3")).unwrap();
+    assert_eq!(kernel.command_count().unwrap(), 1);
+    assert!(
+        kernel
+            .command_receipt(&CommandId::parse("mission-mismatch").unwrap())
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        kernel
+            .content_identity_state(resident_application_mission().source_rendering_digest)
+            .unwrap(),
+        ContentIdentityState::Absent
+    );
+    drop(kernel);
+    fs::remove_dir_all(mismatch_root).unwrap();
+
+    let rejected_root = temporary_runtime_root("mission-preflight-rejection");
+    let (_client, mut supervisor, shutdown, join, _socket_path, _) =
+        start(&rejected_root, FaultInjection::None);
+    let receipt = execute_with_active_grant(
+        &mut supervisor,
+        correlation(20),
+        "mission-preflight-rejected",
+        BOOTSTRAP,
+        Capability::InstallFoundingMission,
+        ExpectedGeneration::NotApplicable,
+        founding_mission_body(),
+    )
+    .unwrap();
+    assert!(matches!(receipt, CommandReceiptView::Rejected { .. }));
+    stop(shutdown, join);
+    let kernel = KernelStore::open(rejected_root.join("society.sqlite3")).unwrap();
+    assert_eq!(kernel.command_count().unwrap(), 1);
+    assert_eq!(
+        kernel
+            .content_identity_state(resident_application_mission().source_rendering_digest)
+            .unwrap(),
+        ContentIdentityState::Absent
+    );
+    drop(kernel);
+    fs::remove_dir_all(rejected_root).unwrap();
+}
+
+#[test]
+fn founding_mission_exact_retry_and_conflict_are_decided_before_resealing() {
+    let root = temporary_runtime_root("mission-exact-retry");
+    let (_client, mut supervisor, shutdown, join, _socket_path, _) =
+        start(&root, FaultInjection::None);
+    create_society(&mut supervisor, 30, "mission-retry-society");
+    let grant = active_grant(
+        &mut supervisor,
+        BOOTSTRAP,
+        Capability::InstallFoundingMission,
+    );
+    let original = command(
+        "mission-retry",
+        BOOTSTRAP,
+        grant,
+        Capability::InstallFoundingMission,
+        ExpectedGeneration::NotApplicable,
+        founding_mission_body(),
+    );
+    let first = supervisor
+        .execute(correlation(31), original.clone())
+        .unwrap();
+    assert!(matches!(
+        first,
+        CommandReceiptView::Accepted {
+            idempotent: false,
+            ..
+        }
+    ));
+    let retry = supervisor.execute(correlation(32), original).unwrap();
+    assert!(matches!(
+        retry,
+        CommandReceiptView::Accepted {
+            idempotent: true,
+            ..
+        }
+    ));
+
+    let mut changed_mission = resident_application_mission();
+    changed_mission.source_rendering_digest =
+        Blake3Digest::of_bytes(changed_resident_mission_source_rendering().as_bytes());
+    assert!(matches!(
+        supervisor.execute(
+            correlation(33),
+            command(
+                "mission-retry",
+                BOOTSTRAP,
+                grant,
+                Capability::InstallFoundingMission,
+                ExpectedGeneration::NotApplicable,
+                ClientCommandBody::InstallFoundingMission {
+                    mission: Box::new(changed_mission),
+                    source_rendering: changed_resident_mission_source_rendering(),
+                },
+            )
+        ),
+        Err(SocietyctlError::Daemon(
+            ProtocolErrorCode::IdempotencyConflict
+        ))
+    ));
+    stop(shutdown, join);
+    let kernel = KernelStore::open(root.join("society.sqlite3")).unwrap();
+    assert_eq!(kernel.command_count().unwrap(), 4);
+    assert!(matches!(
+        kernel
+            .content_identity_state(resident_application_mission().source_rendering_digest)
+            .unwrap(),
+        ContentIdentityState::Registered { .. }
+    ));
+    let operation =
+        mission_source_operation_label(resident_application_mission().source_rendering_digest);
+    assert!(
+        kernel
+            .command_receipt(
+                &CommandId::parse(format!("content-seal-v1/{operation}/receipt")).unwrap()
+            )
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        kernel
+            .command_receipt(
+                &CommandId::parse(format!("content-seal-v1/{operation}/object")).unwrap()
+            )
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(
+        kernel
+            .content_identity_state(Blake3Digest::of_bytes(
+                changed_resident_mission_source_rendering().as_bytes()
+            ))
+            .unwrap(),
+        ContentIdentityState::Absent
+    );
+    drop(kernel);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn founding_mission_crash_boundaries_leave_a_recovery_fenced_successor() {
+    for (label, fault, expected_command_count, expected_identity) in [
+        (
+            "physical",
+            FaultInjection::AfterFoundingMissionPhysicalSeal,
+            1,
+            ContentIdentityState::Absent,
+        ),
+        (
+            "receipt",
+            FaultInjection::AfterFoundingMissionReceipt,
+            2,
+            ContentIdentityState::SealReceiptOnly {
+                content_seal_receipt_id: society_kernel::ContentSealReceiptId::new(1).unwrap(),
+            },
+        ),
+        (
+            "object",
+            FaultInjection::AfterFoundingMissionObjectRegistrationBeforeOuterCommand,
+            3,
+            ContentIdentityState::Registered {
+                content_seal_receipt_id: society_kernel::ContentSealReceiptId::new(1).unwrap(),
+                content_object_id: society_kernel::ContentObjectId::new(1).unwrap(),
+            },
+        ),
+    ] {
+        let root = temporary_runtime_root(&format!("mission-crash-{label}"));
+        let (_client, mut supervisor, _shutdown, join, _socket_path, _) = start(&root, fault);
+        create_society(
+            &mut supervisor,
+            40,
+            &format!("mission-crash-society-{label}"),
+        );
+        let original = command(
+            &format!("mission-crash-{label}"),
+            BOOTSTRAP,
+            active_grant(
+                &mut supervisor,
+                BOOTSTRAP,
+                Capability::InstallFoundingMission,
+            ),
+            Capability::InstallFoundingMission,
+            ExpectedGeneration::NotApplicable,
+            founding_mission_body(),
+        );
+        assert!(
+            supervisor
+                .execute(correlation(41), original.clone())
+                .is_err()
+        );
+        assert!(matches!(
+            join.join().unwrap(),
+            Err(DaemonError::InjectedCrashAfterFoundingMissionPhysicalSeal)
+                | Err(DaemonError::InjectedCrashAfterFoundingMissionReceipt)
+                | Err(DaemonError::InjectedCrashAfterFoundingMissionObjectRegistration)
+        ));
+        let kernel = KernelStore::open(root.join("society.sqlite3")).unwrap();
+        assert_eq!(kernel.command_count().unwrap(), expected_command_count);
+        assert_eq!(
+            kernel
+                .content_identity_state(resident_application_mission().source_rendering_digest)
+                .unwrap(),
+            expected_identity
+        );
+        drop(kernel);
+
+        let (_client, mut supervisor, shutdown, join, _socket_path, mode) =
+            start(&root, FaultInjection::None);
+        assert_eq!(mode, StartupMode::RecoveryFenced);
+        assert!(matches!(
+            supervisor.execute(correlation(42), original),
+            Err(SocietyctlError::Daemon(ProtocolErrorCode::RecoveryFenced))
+        ));
+        stop(shutdown, join);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    let root = temporary_runtime_root("mission-crash-outer-commit");
+    let (_client, mut supervisor, _shutdown, join, _socket_path, _) = start(
+        &root,
+        FaultInjection::AfterFoundingMissionOuterCommitBeforeResponse,
+    );
+    create_society(&mut supervisor, 50, "mission-outer-commit-society");
+    let original = command(
+        "mission-crash-outer-commit",
+        BOOTSTRAP,
+        active_grant(
+            &mut supervisor,
+            BOOTSTRAP,
+            Capability::InstallFoundingMission,
+        ),
+        Capability::InstallFoundingMission,
+        ExpectedGeneration::NotApplicable,
+        founding_mission_body(),
+    );
+    assert!(
+        supervisor
+            .execute(correlation(51), original.clone())
+            .is_err()
+    );
+    assert!(matches!(
+        join.join().unwrap(),
+        Err(DaemonError::InjectedCrashAfterFoundingMissionOuterCommit)
+    ));
+    let (_client, mut supervisor, shutdown, join, _socket_path, mode) =
+        start(&root, FaultInjection::None);
+    assert_eq!(mode, StartupMode::RecoveryFenced);
+    assert!(matches!(
+        supervisor.execute(correlation(52), original).unwrap(),
+        CommandReceiptView::Accepted {
+            idempotent: true,
+            ..
+        }
+    ));
+    stop(shutdown, join);
+    fs::remove_dir_all(root).unwrap();
 }
 
 fn raw_frame(socket_path: &PathBuf, payload: &[u8]) {

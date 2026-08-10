@@ -12,15 +12,15 @@ use society_kernel::{
     ApplicationRevisionOrdinal, Blake3Digest, CancellationMode, Capability, CapabilityGrantId,
     CommandBody, CommandDisposition, CommandId, CommandReceipt, CommandRequest, CostPostmortemId,
     CostPostmortemResolution, ExpectedGeneration, MissionPrinciple, MissionPrincipleKind,
-    MissionPrincipleText, MissionPrinciples, MissionStatement, NorthStarBoundaryCommitmentQuestion,
-    NorthStarChangeQuestion, NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet,
-    NorthStarRevisitQuestion, OfficeTurnPurpose, OperatingCycleId, OperatingCycleTreatment,
-    PrincipalDisplayName, PrincipalId, Rejection, RootAuthorityOfficeSessionId, SocietyName,
-    UsdMicros,
+    MissionPrincipleText, MissionPrinciples, MissionSourceRendering, MissionStatement,
+    NorthStarBoundaryCommitmentQuestion, NorthStarChangeQuestion,
+    NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet, NorthStarRevisitQuestion,
+    OfficeTurnPurpose, OperatingCycleId, OperatingCycleTreatment, PrincipalDisplayName,
+    PrincipalId, Rejection, RootAuthorityOfficeSessionId, SocietyName, UsdMicros,
 };
 use thiserror::Error;
 
-pub const PROTOCOL_VERSION: u16 = 5;
+pub const PROTOCOL_VERSION: u16 = 6;
 pub const MAX_FRAME_BYTES: usize = 64 * 1024;
 
 // Request discriminants are intentionally partitioned by transport. A raw
@@ -57,6 +57,7 @@ pub enum ClientCommandBody {
     InstallRootAuthorityOffice,
     InstallFoundingMission {
         mission: Box<ApplicationMissionInput>,
+        source_rendering: MissionSourceRendering,
     },
     AppointInitialRootAuthority {
         actor_display_name: PrincipalDisplayName,
@@ -132,7 +133,7 @@ impl ClientCommandBody {
         match self {
             Self::CreateSocietyIdentity { name } => CommandBody::CreateSocietyIdentity { name },
             Self::InstallRootAuthorityOffice => CommandBody::InstallRootAuthorityOffice,
-            Self::InstallFoundingMission { mission } => {
+            Self::InstallFoundingMission { mission, .. } => {
                 CommandBody::InstallFoundingMission { mission: *mission }
             }
             Self::AppointInitialRootAuthority { actor_display_name } => {
@@ -313,6 +314,7 @@ pub enum ProtocolErrorCode {
     IdempotencyConflict = 6,
     KernelFailure = 7,
     DaemonStopping = 8,
+    MissionSourceDigestMismatch = 9,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -363,6 +365,8 @@ pub enum WireError {
     InvalidUtf8,
     #[error("text field exceeds its declared maximum")]
     StringTooLong,
+    #[error("byte field exceeds its declared maximum")]
+    BytesTooLong,
     #[error("field does not satisfy its closed domain type")]
     InvalidValue,
     #[error("trailing bytes after a complete closed message")]
@@ -673,8 +677,12 @@ fn encode_command_request(
     match &command.body {
         ClientCommandBody::CreateSocietyIdentity { name } => put_string(bytes, name.as_str()),
         ClientCommandBody::InstallRootAuthorityOffice | ClientCommandBody::BootstrapSociety => {}
-        ClientCommandBody::InstallFoundingMission { mission } => {
-            encode_application_mission_input(bytes, mission)
+        ClientCommandBody::InstallFoundingMission {
+            mission,
+            source_rendering,
+        } => {
+            encode_application_mission_input(bytes, mission);
+            put_bytes(bytes, source_rendering.as_bytes());
         }
         ClientCommandBody::AppointInitialRootAuthority { actor_display_name } => {
             put_string(bytes, actor_display_name.as_str());
@@ -749,6 +757,10 @@ fn decode_client_command_body(
         2 => Ok(ClientCommandBody::InstallRootAuthorityOffice),
         3 => Ok(ClientCommandBody::InstallFoundingMission {
             mission: Box::new(decode_application_mission_input(cursor)?),
+            source_rendering: MissionSourceRendering::parse(
+                cursor.bytes(MissionSourceRendering::MAX_BYTES)?,
+            )
+            .map_err(|_| WireError::InvalidValue)?,
         }),
         4 => Ok(ClientCommandBody::AppointInitialRootAuthority {
             actor_display_name: PrincipalDisplayName::parse(cursor.string(160)?)
@@ -947,6 +959,12 @@ fn put_string(bytes: &mut Vec<u8>, value: &str) {
     bytes.extend_from_slice(value.as_bytes());
 }
 
+fn put_bytes(bytes: &mut Vec<u8>, value: &[u8]) {
+    let length = u32::try_from(value.len()).expect("bounded domain bytes fit u32");
+    bytes.extend_from_slice(&length.to_be_bytes());
+    bytes.extend_from_slice(value);
+}
+
 fn put_u8(bytes: &mut Vec<u8>, value: u8) {
     bytes.push(value);
 }
@@ -1033,6 +1051,18 @@ impl<'a> Cursor<'a> {
             return Err(WireError::StringTooLong);
         }
         String::from_utf8(self.take(length)?.to_vec()).map_err(|_| WireError::InvalidUtf8)
+    }
+
+    fn bytes(&mut self, maximum: usize) -> Result<Vec<u8>, WireError> {
+        let bytes: [u8; 4] = self
+            .take(4)?
+            .try_into()
+            .map_err(|_| WireError::MissingField)?;
+        let length = u32::from_be_bytes(bytes) as usize;
+        if length > maximum {
+            return Err(WireError::BytesTooLong);
+        }
+        Ok(self.take(length)?.to_vec())
     }
 
     fn finish(self) -> Result<(), WireError> {
@@ -1160,6 +1190,7 @@ fn protocol_error_from_u8(value: u8) -> Result<ProtocolErrorCode, WireError> {
         6 => Ok(ProtocolErrorCode::IdempotencyConflict),
         7 => Ok(ProtocolErrorCode::KernelFailure),
         8 => Ok(ProtocolErrorCode::DaemonStopping),
+        9 => Ok(ProtocolErrorCode::MissionSourceDigestMismatch),
         _ => Err(WireError::InvalidValue),
     }
 }
@@ -1222,6 +1253,10 @@ mod tests {
                 expected_generation: ExpectedGeneration::NotApplicable,
                 body: ClientCommandBody::InstallFoundingMission {
                     mission: Box::new(mission),
+                    source_rendering: MissionSourceRendering::parse(
+                        b"wire-mission-fixture-revision-7".to_vec(),
+                    )
+                    .expect("the fixed source rendering is valid"),
                 },
             },
         }
@@ -1260,6 +1295,7 @@ mod tests {
         put_string(&mut payload, "Which authority boundary must remain intact?");
         put_string(&mut payload, "When should this mission be revisited?");
         payload.extend_from_slice(&[0x5A; 32]);
+        put_bytes(&mut payload, b"wire source rendering");
         payload
     }
 
@@ -1293,6 +1329,20 @@ mod tests {
     }
 
     #[test]
+    fn mission_source_digest_mismatch_round_trips_as_a_closed_protocol_error() {
+        let response = Response::Error {
+            correlation: CorrelationId::new(1).expect("the fixed nonzero correlation is valid"),
+            code: ProtocolErrorCode::MissionSourceDigestMismatch,
+        };
+        let mut encoded = Vec::new();
+        write_response(&mut encoded, &response).expect("the closed error must encode");
+        assert_eq!(
+            read_response(&mut encoded.as_slice()).expect("the closed error must decode"),
+            response
+        );
+    }
+
+    #[test]
     fn supervisor_founding_mission_round_trips_as_one_exact_typed_input() {
         let request = mission_request(example_application_mission());
         let mut encoded = Vec::new();
@@ -1301,6 +1351,38 @@ mod tests {
         assert_eq!(
             read_supervisor_request(&mut encoded.as_slice())
                 .expect("the closed supervisor request must decode"),
+            request
+        );
+    }
+
+    #[test]
+    fn supervisor_founding_mission_admits_the_exact_rendering_byte_bound() {
+        let request = SupervisorRequest::Execute {
+            correlation: CorrelationId::new(2).expect("the fixed nonzero correlation is valid"),
+            command: ClientCommandRequest {
+                command_id: CommandId::parse("wire-mission-rendering-max")
+                    .expect("the fixed command identity is valid"),
+                principal_id: PrincipalId::new(3).expect("the fixed nonzero principal is valid"),
+                capability_grant_id: CapabilityGrantId::new(1)
+                    .expect("the fixed nonzero capability grant is valid"),
+                capability: Capability::InstallFoundingMission,
+                expected_generation: ExpectedGeneration::NotApplicable,
+                body: ClientCommandBody::InstallFoundingMission {
+                    mission: Box::new(example_application_mission()),
+                    source_rendering: MissionSourceRendering::parse(vec![
+                        0xA5;
+                        MissionSourceRendering::MAX_BYTES
+                    ])
+                    .expect("the exact source rendering bound is valid"),
+                },
+            },
+        };
+        let mut encoded = Vec::new();
+        write_supervisor_request(&mut encoded, &request)
+            .expect("the exact rendering bound fits one supervisor frame");
+        assert_eq!(
+            read_supervisor_request(&mut encoded.as_slice())
+                .expect("the exact rendering bound must decode"),
             request
         );
     }
@@ -1344,6 +1426,45 @@ mod tests {
         assert!(matches!(
             read_supervisor_request(&mut trailing.as_slice()),
             Err(WireError::TrailingBytes)
+        ));
+
+        let mut empty_rendering =
+            raw_mission_request_payload("wire-mission-fixture", 7, "A bounded mission.", &[1]);
+        let rendering_length_offset = empty_rendering.len() - b"wire source rendering".len() - 4;
+        empty_rendering.splice(rendering_length_offset.., [0, 0, 0, 0]);
+        let encoded = framed(&empty_rendering);
+        assert!(matches!(
+            read_supervisor_request(&mut encoded.as_slice()),
+            Err(WireError::InvalidValue)
+        ));
+
+        let mut oversized_rendering =
+            raw_mission_request_payload("wire-mission-fixture", 7, "A bounded mission.", &[1]);
+        let rendering_length_offset =
+            oversized_rendering.len() - b"wire source rendering".len() - 4;
+        oversized_rendering.splice(
+            rendering_length_offset..,
+            u32::try_from(MissionSourceRendering::MAX_BYTES + 1)
+                .expect("the closed byte bound fits the wire length")
+                .to_be_bytes(),
+        );
+        let encoded = framed(&oversized_rendering);
+        assert!(matches!(
+            read_supervisor_request(&mut encoded.as_slice()),
+            Err(WireError::BytesTooLong)
+        ));
+    }
+
+    #[test]
+    fn digest_only_v5_founding_mission_frame_is_rejected_by_version_before_decoding() {
+        let mut historical =
+            raw_mission_request_payload("wire-mission-fixture", 7, "A bounded mission.", &[1]);
+        historical[0..2].copy_from_slice(&5_u16.to_be_bytes());
+        historical.truncate(historical.len() - 4 - b"wire source rendering".len());
+        let encoded = framed(&historical);
+        assert!(matches!(
+            read_supervisor_request(&mut encoded.as_slice()),
+            Err(WireError::UnsupportedVersion)
         ));
     }
 

@@ -152,6 +152,30 @@ fn rejected(
     assert_eq!(receipt.disposition, CommandDisposition::Rejected(expected));
 }
 
+fn seal_and_register_mission_source(store: &mut KernelStore, mission: &ApplicationMissionInput) {
+    let kernel = PrincipalId::KERNEL;
+    accepted(
+        store,
+        "m3-seal-mission-source",
+        kernel,
+        Capability::RecordContentSealReceipt,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::RecordContentSealReceipt {
+            digest: mission.source_rendering_digest,
+        },
+    );
+    accepted(
+        store,
+        "m3-register-mission-source",
+        kernel,
+        Capability::RegisterContentObject,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::RegisterContentObject {
+            content_seal_receipt_id: ContentSealReceiptId::new(1).unwrap(),
+        },
+    );
+}
+
 fn founded_cycle(
     store: &mut KernelStore,
     treatment: OperatingCycleTreatment,
@@ -167,15 +191,15 @@ fn founded_cycle(
             name: SocietyName::parse("Execution foundation society").unwrap(),
         },
     );
+    let mission = example_application_mission();
+    seal_and_register_mission_source(store, &mission);
     accepted(
         store,
         "m3-found-founding-mission",
         bootstrap,
         Capability::InstallFoundingMission,
         ExpectedGeneration::NotApplicable,
-        CommandBody::InstallFoundingMission {
-            mission: example_application_mission(),
-        },
+        CommandBody::InstallFoundingMission { mission },
     );
     accepted(
         store,
@@ -540,7 +564,7 @@ fn finalize_fixture_child(
             Capability::RegisterContentObject,
             ExpectedGeneration::NotApplicable,
             CommandBody::RegisterContentObject {
-                content_seal_receipt_id: ContentSealReceiptId::new(number).unwrap(),
+                content_seal_receipt_id: ContentSealReceiptId::new(number + 1).unwrap(),
             },
         );
         accepted(
@@ -553,7 +577,7 @@ fn finalize_fixture_child(
                 child_process_id: fixture.child,
                 stream_kind: stream,
                 full_observed_digest: digest,
-                retained_content_object_id: ContentObjectId::new(number).unwrap(),
+                retained_content_object_id: ContentObjectId::new(number + 1).unwrap(),
                 completeness: ChildStreamSealCompleteness::Complete,
             },
         );
@@ -1090,7 +1114,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
         Capability::RegisterContentObject,
         ExpectedGeneration::NotApplicable,
         CommandBody::RegisterContentObject {
-            content_seal_receipt_id: ContentSealReceiptId::new(1).unwrap(),
+            content_seal_receipt_id: ContentSealReceiptId::new(2).unwrap(),
         },
     );
     accepted(
@@ -1110,7 +1134,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
         Capability::RegisterContentObject,
         ExpectedGeneration::NotApplicable,
         CommandBody::RegisterContentObject {
-            content_seal_receipt_id: ContentSealReceiptId::new(2).unwrap(),
+            content_seal_receipt_id: ContentSealReceiptId::new(3).unwrap(),
         },
     );
     accepted(
@@ -1124,8 +1148,8 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
             project_id: project,
             ticket_id: ticket,
             target_graph_revision_id: target,
-            evaluator_content_object_id: ContentObjectId::new(1).unwrap(),
-            input_manifest_content_object_id: ContentObjectId::new(2).unwrap(),
+            evaluator_content_object_id: ContentObjectId::new(2).unwrap(),
+            input_manifest_content_object_id: ContentObjectId::new(3).unwrap(),
         },
     );
     accepted(
@@ -1139,8 +1163,8 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
             project_id: project,
             ticket_id: ticket,
             target_graph_revision_id: target,
-            evaluator_content_object_id: ContentObjectId::new(1).unwrap(),
-            input_manifest_content_object_id: ContentObjectId::new(2).unwrap(),
+            evaluator_content_object_id: ContentObjectId::new(2).unwrap(),
+            input_manifest_content_object_id: ContentObjectId::new(3).unwrap(),
         },
     );
     let first_experiment = DeterministicExperimentId::new(1).unwrap();
@@ -1162,7 +1186,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
         Capability::RegisterContentObject,
         ExpectedGeneration::NotApplicable,
         CommandBody::RegisterContentObject {
-            content_seal_receipt_id: ContentSealReceiptId::new(3).unwrap(),
+            content_seal_receipt_id: ContentSealReceiptId::new(4).unwrap(),
         },
     );
     accepted(
@@ -1182,7 +1206,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
         Capability::RegisterContentObject,
         ExpectedGeneration::NotApplicable,
         CommandBody::RegisterContentObject {
-            content_seal_receipt_id: ContentSealReceiptId::new(4).unwrap(),
+            content_seal_receipt_id: ContentSealReceiptId::new(5).unwrap(),
         },
     );
     accepted(
@@ -1196,7 +1220,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
             producing_deterministic_experiment_id: first_experiment,
             capture_policy: ForensicManifestCapturePolicy::DeterministicExperimentEvaluatorV1,
             retention_access_class: RetentionAccessClass::ProjectScoped,
-            evaluator_output_content_object_id: ContentObjectId::new(3).unwrap(),
+            evaluator_output_content_object_id: ContentObjectId::new(4).unwrap(),
         },
     );
     // Byte identity is global. Two exact deterministic runs may emit the same
@@ -1212,7 +1236,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
             producing_deterministic_experiment_id: second_experiment,
             capture_policy: ForensicManifestCapturePolicy::DeterministicExperimentEvaluatorV1,
             retention_access_class: RetentionAccessClass::ForensicRestricted,
-            evaluator_output_content_object_id: ContentObjectId::new(3).unwrap(),
+            evaluator_output_content_object_id: ContentObjectId::new(4).unwrap(),
         },
     );
     rejected(
@@ -1227,7 +1251,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
             evaluator_revision_id: EvaluatorRevisionId::new(2).unwrap(),
             input_manifest_id: InputManifestId::new(1).unwrap(),
             forensic_manifest_id: ForensicManifestId::new(1).unwrap(),
-            evaluator_output_content_object_id: ContentObjectId::new(3).unwrap(),
+            evaluator_output_content_object_id: ContentObjectId::new(4).unwrap(),
         },
         Rejection::DeterministicEvaluationBindingMismatch,
     );
@@ -1243,7 +1267,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
             evaluator_revision_id: EvaluatorRevisionId::new(1).unwrap(),
             input_manifest_id: InputManifestId::new(1).unwrap(),
             forensic_manifest_id: ForensicManifestId::new(1).unwrap(),
-            evaluator_output_content_object_id: ContentObjectId::new(4).unwrap(),
+            evaluator_output_content_object_id: ContentObjectId::new(5).unwrap(),
         },
         Rejection::DeterministicEvaluationBindingMismatch,
     );
@@ -1259,7 +1283,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
             evaluator_revision_id: EvaluatorRevisionId::new(1).unwrap(),
             input_manifest_id: InputManifestId::new(1).unwrap(),
             forensic_manifest_id: ForensicManifestId::new(1).unwrap(),
-            evaluator_output_content_object_id: ContentObjectId::new(3).unwrap(),
+            evaluator_output_content_object_id: ContentObjectId::new(4).unwrap(),
         },
         Rejection::DeterministicEvaluationBindingMismatch,
     );
@@ -1287,7 +1311,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
             evaluator_revision_id: EvaluatorRevisionId::new(1).unwrap(),
             input_manifest_id: InputManifestId::new(1).unwrap(),
             forensic_manifest_id: ForensicManifestId::new(1).unwrap(),
-            evaluator_output_content_object_id: ContentObjectId::new(3).unwrap(),
+            evaluator_output_content_object_id: ContentObjectId::new(4).unwrap(),
         },
     );
     accepted(
@@ -1302,7 +1326,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
             deterministic_experiment_id: first_experiment,
             evaluator_revision_id: EvaluatorRevisionId::new(1).unwrap(),
             input_manifest_id: InputManifestId::new(1).unwrap(),
-            evaluator_output_content_object_id: ContentObjectId::new(3).unwrap(),
+            evaluator_output_content_object_id: ContentObjectId::new(4).unwrap(),
             related_graph_revision_id: target,
             semantic_role: EvidenceSemanticRole::DeterministicObservation,
             applicability: EvidenceApplicability::TestsTargetHypothesis,
@@ -1324,7 +1348,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
             evaluator_revision_id: EvaluatorRevisionId::new(1).unwrap(),
             input_manifest_id: InputManifestId::new(1).unwrap(),
             forensic_manifest_id: ForensicManifestId::new(2).unwrap(),
-            evaluator_output_content_object_id: ContentObjectId::new(3).unwrap(),
+            evaluator_output_content_object_id: ContentObjectId::new(4).unwrap(),
         },
     );
     accepted(
@@ -1339,7 +1363,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
             deterministic_experiment_id: second_experiment,
             evaluator_revision_id: EvaluatorRevisionId::new(1).unwrap(),
             input_manifest_id: InputManifestId::new(1).unwrap(),
-            evaluator_output_content_object_id: ContentObjectId::new(3).unwrap(),
+            evaluator_output_content_object_id: ContentObjectId::new(4).unwrap(),
             related_graph_revision_id: target,
             semantic_role: EvidenceSemanticRole::DeterministicObservation,
             applicability: EvidenceApplicability::TestsTargetHypothesis,
@@ -1574,7 +1598,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
     let shared_output_occurrences: i64 = inspect
         .query_row(
             "SELECT COUNT(*) FROM forensic_manifest_objects
-             WHERE content_object_id = 3 AND object_role = 1",
+             WHERE content_object_id = 4 AND object_role = 1",
             [],
             |row| row.get(0),
         )
@@ -1586,7 +1610,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
              FROM forensic_manifests manifest
              JOIN forensic_manifest_objects object
                ON object.forensic_manifest_id = manifest.forensic_manifest_id
-             WHERE object.content_object_id = 3",
+             WHERE object.content_object_id = 4",
             [],
             |row| row.get(0),
         )
@@ -2363,7 +2387,7 @@ fn lingering_group_cleanup_requires_later_absence_before_finalization() {
             Capability::RegisterContentObject,
             ExpectedGeneration::NotApplicable,
             CommandBody::RegisterContentObject {
-                content_seal_receipt_id: ContentSealReceiptId::new((index + 1) as i64).unwrap(),
+                content_seal_receipt_id: ContentSealReceiptId::new((index + 2) as i64).unwrap(),
             },
         );
         accepted(
@@ -2376,7 +2400,7 @@ fn lingering_group_cleanup_requires_later_absence_before_finalization() {
                 child_process_id: child,
                 stream_kind,
                 full_observed_digest: digest,
-                retained_content_object_id: ContentObjectId::new((index + 1) as i64).unwrap(),
+                retained_content_object_id: ContentObjectId::new((index + 2) as i64).unwrap(),
                 completeness: society_kernel::ChildStreamSealCompleteness::Complete,
             },
         );
@@ -2611,7 +2635,7 @@ fn supervised_office_turns_recheck_the_exact_live_pi_child() {
             Capability::RegisterContentObject,
             ExpectedGeneration::NotApplicable,
             CommandBody::RegisterContentObject {
-                content_seal_receipt_id: ContentSealReceiptId::new(number).unwrap(),
+                content_seal_receipt_id: ContentSealReceiptId::new(number + 1).unwrap(),
             },
         );
         accepted(
@@ -2624,7 +2648,7 @@ fn supervised_office_turns_recheck_the_exact_live_pi_child() {
                 child_process_id: fixture.child,
                 stream_kind: stream,
                 full_observed_digest: digest,
-                retained_content_object_id: ContentObjectId::new(number).unwrap(),
+                retained_content_object_id: ContentObjectId::new(number + 1).unwrap(),
                 completeness: ChildStreamSealCompleteness::Complete,
             },
         );

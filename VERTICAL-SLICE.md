@@ -16,8 +16,9 @@ required generic decision and review gates succeed.
 ## Intended typed application port
 
 The following contract is the required complete boundary. The current
-prototype implements the normalized mission and Project alignment portion, but
-not the sealed source binding or durable authorized product-change output.
+prototype implements the normalized mission, its daemon-private sealed-source
+binding, and Project alignment portion, but not durable authorized
+product-change output.
 
 ```text
 ApplicationMissionInput
@@ -30,7 +31,10 @@ ApplicationMissionInput
     improvement_evidence
     boundary_commitment
     revisit
-  source_content: ContentObjectId
+  source_rendering_digest: Blake3Digest
+
+MissionSourceRendering
+  canonical nonempty bytes, bounded to 16,384 bytes
 
 ProjectNorthStarAlignment
   application_revision: ApplicationRevisionId
@@ -92,9 +96,21 @@ being able to run a tool.
 The repository currently implements a normalized `ApplicationMissionInput`,
 four typed north-star questions, founding-mission-revision-bound
 `ProjectNorthStarAlignment`, and closed daemon transport for that founding
-input. The source rendering is currently identified by a declared BLAKE3
-digest only; no `ContentObjectId`, physical seal, retention, or provenance is
-established. The materializer's caller-supplied
+input. The application owns bounded `MissionSourceRendering` bytes plus the
+input's BLAKE3 digest, but never a `ContentObjectId`. A daemon-private
+founding-source path checks those bytes, side-effect-free preflights the outer
+command, physically seals them, records the seal receipt and global object,
+then invokes `InstallFoundingMission`; the kernel resolves the declared digest
+to the registered object and persists a derived private binding. Deterministic
+internal operation identities make the content primitive retry-stable while the
+authority remains live; they do not make a failed supervisor handler resumable.
+The request ends on that failure, and restart remains `RecoveryFenced`, with no
+partial source-operation recovery. The supervisor carries
+`MissionSourceRendering` only with `InstallFoundingMission`; no public or
+supervisor generic content-mutation command or content-writer authority exists.
+This is byte custody only: it establishes no producer provenance,
+semantic/evidence admission, or end-to-end application execution.
+The materializer's caller-supplied
 `ProductChangeAuthorizationInput` and local receipt are likewise not a durable
 kernel-issued `AuthorizedProductChange`.
 

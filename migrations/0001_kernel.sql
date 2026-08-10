@@ -17,8 +17,8 @@ CREATE TABLE office_contracts (
     installed_by_command_id INTEGER NOT NULL
 );
 -- The application mission is a first-class, normalized constitution. Its
--- source rendering has a BLAKE3 byte identity, while the mission remains
--- queryable. It is not a physical content-seal or retention receipt.
+-- source rendering has a BLAKE3 byte identity and an exact, already sealed
+-- ContentObject binding, while the mission remains queryable.
 CREATE TABLE applications (
     application_id INTEGER PRIMARY KEY,
     application_identity TEXT NOT NULL UNIQUE,
@@ -31,6 +31,8 @@ CREATE TABLE application_revisions (
     revision_ordinal INTEGER NOT NULL CHECK (revision_ordinal > 0),
     mission_statement TEXT NOT NULL,
     source_rendering_digest BLOB NOT NULL CHECK (length(source_rendering_digest) = 32),
+    source_content_object_id INTEGER NOT NULL
+        REFERENCES content_objects(content_object_id),
     installed_by_command_id INTEGER NOT NULL,
     UNIQUE(application_id, revision_ordinal)
 );
@@ -203,7 +205,9 @@ CREATE TABLE command_install_founding_mission (
     application_name TEXT NOT NULL,
     revision_ordinal INTEGER NOT NULL CHECK (revision_ordinal > 0),
     mission_statement TEXT NOT NULL,
-    source_rendering_digest BLOB NOT NULL CHECK (length(source_rendering_digest) = 32)
+    source_rendering_digest BLOB NOT NULL CHECK (length(source_rendering_digest) = 32),
+    source_content_object_id INTEGER
+        REFERENCES content_objects(content_object_id)
 );
 CREATE TABLE command_install_founding_mission_principles (
     command_row_id INTEGER NOT NULL REFERENCES command_install_founding_mission(command_row_id),
@@ -2016,6 +2020,6 @@ INSERT INTO capability_grants VALUES(51,2,94,NULL,NULL,1,3,NULL,NULL);
 INSERT INTO capability_grants VALUES(52,2,95,NULL,NULL,1,3,NULL,NULL);
 INSERT INTO capability_grants VALUES(53,2,96,NULL,NULL,1,3,NULL,NULL);
 INSERT INTO capability_grants VALUES(54,2,97,NULL,NULL,1,3,NULL,NULL);
-PRAGMA user_version = 12;
+PRAGMA user_version = 13;
 COMMIT;
 PRAGMA foreign_keys = ON;

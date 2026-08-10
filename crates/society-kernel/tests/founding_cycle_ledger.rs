@@ -17,16 +17,16 @@ use society_kernel::{
     ChildProcessId, CommandBody, CommandDisposition, CommandId, CommandReceipt, CommandRequest,
     CostObservation, CostPostmortemResolution, CostUnavailableReason, CostUnknownReason,
     EpisodeState, EventBody, ExpectedGeneration, GraphEdgeKind, GraphRevisionBody, GraphRevisionId,
-    HypothesisRevisionText, KernelStore, MissionPrinciple, MissionPrincipleKind,
-    MissionPrincipleText, MissionPrinciples, MissionStatement, NativeChildPid, NativeWorkspaceId,
-    NorthStarBoundaryCommitmentQuestion, NorthStarChangeQuestion,
-    NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet, NorthStarRevisitQuestion,
-    ObservationRevisionText, OfficeSessionTerminalState, OfficeTurnId, OfficeTurnPurpose,
-    OperatingCycleId, OperatingCycleState, OperatingCycleTreatment, OwnedProcessGroupId,
-    PiBoundarySessionIdentity, PiChildOwner, PiChildSpawnAdmissionId, PiCorrelationIdentity,
-    PiCumulativeUsage, PiOfficeSessionTranscriptReceipt, PiOfficeTurnAssistantOutcome,
-    PiOfficeTurnDisposition, PiOfficeTurnTerminalEvidence, PiOfficeTurnTerminalReceiptId,
-    PiOfficeTurnTranscriptDisposition, PiOfficeTurnUsageFailure,
+    HypothesisRevisionText, InstallFoundingMissionPreflight, KernelStore, MissionPrinciple,
+    MissionPrincipleKind, MissionPrincipleText, MissionPrinciples, MissionSourceRendering,
+    MissionStatement, NativeChildPid, NativeWorkspaceId, NorthStarBoundaryCommitmentQuestion,
+    NorthStarChangeQuestion, NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet,
+    NorthStarRevisitQuestion, ObservationRevisionText, OfficeSessionTerminalState, OfficeTurnId,
+    OfficeTurnPurpose, OperatingCycleId, OperatingCycleState, OperatingCycleTreatment,
+    OwnedProcessGroupId, PiBoundarySessionIdentity, PiChildOwner, PiChildSpawnAdmissionId,
+    PiCorrelationIdentity, PiCumulativeUsage, PiOfficeSessionTranscriptReceipt,
+    PiOfficeTurnAssistantOutcome, PiOfficeTurnDisposition, PiOfficeTurnTerminalEvidence,
+    PiOfficeTurnTerminalReceiptId, PiOfficeTurnTranscriptDisposition, PiOfficeTurnUsageFailure,
     PiOfficeTurnUsageUnavailableReason, PiProtocolSequence, PiTokenCount, PostmortemActionKind,
     PostmortemActionProposalText, PostmortemCausalClaimKind, PostmortemCausalClaimText,
     PostmortemId, PrincipalDisplayName, PrincipalId, ProjectId, ProjectMilestoneName, ProjectName,
@@ -165,6 +165,34 @@ fn rejected(
     receipt
 }
 
+fn seal_and_register_mission_source(
+    store: &mut KernelStore,
+    command_prefix: &str,
+    mission: &ApplicationMissionInput,
+) {
+    let kernel = PrincipalId::KERNEL;
+    accepted(
+        store,
+        &format!("{command_prefix}-seal-mission-source"),
+        kernel,
+        Capability::RecordContentSealReceipt,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::RecordContentSealReceipt {
+            digest: mission.source_rendering_digest,
+        },
+    );
+    accepted(
+        store,
+        &format!("{command_prefix}-register-mission-source"),
+        kernel,
+        Capability::RegisterContentObject,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::RegisterContentObject {
+            content_seal_receipt_id: society_kernel::ContentSealReceiptId::new(1).unwrap(),
+        },
+    );
+}
+
 fn found_cycle(store: &mut KernelStore) -> (PrincipalId, OperatingCycleId) {
     let bootstrap = PrincipalId::BOOTSTRAP;
     accepted(
@@ -177,15 +205,15 @@ fn found_cycle(store: &mut KernelStore) -> (PrincipalId, OperatingCycleId) {
             name: SocietyName::parse("Founding Society").unwrap(),
         },
     );
+    let mission = example_application_mission();
+    seal_and_register_mission_source(store, "found", &mission);
     accepted(
         store,
         "found-install-founding-mission",
         bootstrap,
         Capability::InstallFoundingMission,
         ExpectedGeneration::NotApplicable,
-        CommandBody::InstallFoundingMission {
-            mission: example_application_mission(),
-        },
+        CommandBody::InstallFoundingMission { mission },
     );
     accepted(
         store,
@@ -244,6 +272,238 @@ fn found_cycle(store: &mut KernelStore) -> (PrincipalId, OperatingCycleId) {
         CommandBody::AdmitOperatingCycle { cycle_id },
     );
     (PrincipalId::new(3).unwrap(), cycle_id)
+}
+
+#[test]
+fn founding_mission_requires_a_registered_exact_source_object_and_preflight_is_side_effect_free() {
+    let mut store = KernelStore::open_in_memory().unwrap();
+    let bootstrap = PrincipalId::BOOTSTRAP;
+    accepted(
+        &mut store,
+        "source-create-society",
+        bootstrap,
+        Capability::CreateSocietyIdentity,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::CreateSocietyIdentity {
+            name: SocietyName::parse("Source-bound Society").unwrap(),
+        },
+    );
+    let mission = example_application_mission();
+    let request = CommandRequest {
+        command_id: CommandId::parse("source-install-mission").unwrap(),
+        principal_id: bootstrap,
+        capability_grant_id: store
+            .active_capability_grant(bootstrap, Capability::InstallFoundingMission)
+            .unwrap()
+            .unwrap(),
+        capability: Capability::InstallFoundingMission,
+        expected_generation: ExpectedGeneration::NotApplicable,
+        body: CommandBody::InstallFoundingMission {
+            mission: mission.clone(),
+        },
+    };
+    assert_eq!(
+        store.preflight_install_founding_mission(&request).unwrap(),
+        InstallFoundingMissionPreflight::Ready
+    );
+    assert_eq!(store.command_count().unwrap(), 1);
+    assert!(
+        store
+            .active_capability_grant(bootstrap, Capability::InstallFoundingMission)
+            .unwrap()
+            .is_some()
+    );
+
+    let unsealed = store.execute(request.clone()).unwrap();
+    assert_eq!(
+        unsealed.disposition,
+        CommandDisposition::Rejected(Rejection::MissionSourceContentNotSealed)
+    );
+    assert!(
+        store
+            .active_capability_grant(bootstrap, Capability::InstallFoundingMission)
+            .unwrap()
+            .is_some()
+    );
+
+    accepted(
+        &mut store,
+        "source-record-receipt",
+        PrincipalId::KERNEL,
+        Capability::RecordContentSealReceipt,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::RecordContentSealReceipt {
+            digest: mission.source_rendering_digest,
+        },
+    );
+    let receipt_only = CommandRequest {
+        command_id: CommandId::parse("source-receipt-only-install").unwrap(),
+        ..request.clone()
+    };
+    assert_eq!(
+        store.execute(receipt_only).unwrap().disposition,
+        CommandDisposition::Rejected(Rejection::MissionSourceContentNotSealed)
+    );
+    accepted(
+        &mut store,
+        "source-register-object",
+        PrincipalId::KERNEL,
+        Capability::RegisterContentObject,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::RegisterContentObject {
+            content_seal_receipt_id: society_kernel::ContentSealReceiptId::new(1).unwrap(),
+        },
+    );
+    let accepted_request = CommandRequest {
+        command_id: CommandId::parse("source-bound-install").unwrap(),
+        ..request
+    };
+    let accepted_receipt = store.execute(accepted_request.clone()).unwrap();
+    assert!(matches!(
+        accepted_receipt.disposition,
+        CommandDisposition::Accepted(_)
+    ));
+    assert_eq!(
+        store
+            .preflight_install_founding_mission(&accepted_request)
+            .unwrap(),
+        InstallFoundingMissionPreflight::ExistingReceipt(CommandReceipt {
+            disposition: accepted_receipt.disposition,
+            idempotent: true,
+        })
+    );
+    let mut conflicting_mission = mission;
+    conflicting_mission.statement =
+        MissionStatement::parse("A conflicting source mission.").unwrap();
+    let conflicting_request = CommandRequest {
+        body: CommandBody::InstallFoundingMission {
+            mission: conflicting_mission,
+        },
+        ..accepted_request
+    };
+    assert!(matches!(
+        store.preflight_install_founding_mission(&conflicting_request),
+        Err(StoreError::IdempotencyConflict)
+    ));
+}
+
+#[test]
+fn mission_source_rendering_is_bounded_and_hashes_its_exact_bytes() {
+    let rendering =
+        MissionSourceRendering::parse(vec![7; MissionSourceRendering::MAX_BYTES]).unwrap();
+    assert_eq!(
+        rendering.digest(),
+        Blake3Digest::of_bytes(rendering.as_bytes())
+    );
+    assert!(MissionSourceRendering::parse(Vec::new()).is_err());
+    assert!(MissionSourceRendering::parse(vec![0; MissionSourceRendering::MAX_BYTES + 1]).is_err());
+}
+
+#[test]
+fn replay_rejects_recombined_persisted_mission_source_objects() {
+    let path = std::env::temp_dir().join(format!(
+        "society-mission-source-tamper-{}-{}.sqlite",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let mut store = KernelStore::open(&path).unwrap();
+    let bootstrap = PrincipalId::BOOTSTRAP;
+    accepted(
+        &mut store,
+        "tamper-source-create-society",
+        bootstrap,
+        Capability::CreateSocietyIdentity,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::CreateSocietyIdentity {
+            name: SocietyName::parse("Tamper source Society").unwrap(),
+        },
+    );
+    let mission = example_application_mission();
+    accepted(
+        &mut store,
+        "tamper-source-seal-mission",
+        PrincipalId::KERNEL,
+        Capability::RecordContentSealReceipt,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::RecordContentSealReceipt {
+            digest: mission.source_rendering_digest,
+        },
+    );
+    accepted(
+        &mut store,
+        "tamper-source-register-mission",
+        PrincipalId::KERNEL,
+        Capability::RegisterContentObject,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::RegisterContentObject {
+            content_seal_receipt_id: society_kernel::ContentSealReceiptId::new(1).unwrap(),
+        },
+    );
+    accepted(
+        &mut store,
+        "tamper-source-seal-other",
+        PrincipalId::KERNEL,
+        Capability::RecordContentSealReceipt,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::RecordContentSealReceipt {
+            digest: Blake3Digest::of_bytes(b"different sealed source"),
+        },
+    );
+    accepted(
+        &mut store,
+        "tamper-source-register-other",
+        PrincipalId::KERNEL,
+        Capability::RegisterContentObject,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::RegisterContentObject {
+            content_seal_receipt_id: society_kernel::ContentSealReceiptId::new(2).unwrap(),
+        },
+    );
+    accepted(
+        &mut store,
+        "tamper-source-install",
+        bootstrap,
+        Capability::InstallFoundingMission,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::InstallFoundingMission { mission },
+    );
+    drop(store);
+
+    let tamper = Connection::open(&path).unwrap();
+    tamper
+        .execute(
+            "UPDATE application_revisions SET source_content_object_id = 2",
+            [],
+        )
+        .unwrap();
+    drop(tamper);
+    assert!(matches!(
+        KernelStore::open(&path).unwrap().replay_ledger(),
+        Err(StoreError::LedgerCorruption(_))
+    ));
+
+    let repair = Connection::open(&path).unwrap();
+    repair
+        .execute(
+            "UPDATE application_revisions SET source_content_object_id = 1",
+            [],
+        )
+        .unwrap();
+    repair
+        .execute(
+            "UPDATE command_install_founding_mission SET source_content_object_id = 2",
+            [],
+        )
+        .unwrap();
+    drop(repair);
+    assert!(matches!(
+        KernelStore::open(&path).unwrap().replay_ledger(),
+        Err(StoreError::LedgerCorruption(_))
+    ));
+    fs::remove_file(path).unwrap();
 }
 
 #[test]
@@ -599,7 +859,7 @@ fn founding_cycle_is_idempotent_fenced_and_replayable() {
         }
     )));
     assert!(store.validate_replayed_materialized_state().is_ok());
-    assert_eq!(store.command_count().unwrap(), 16);
+    assert_eq!(store.command_count().unwrap(), 18);
 }
 
 #[test]
@@ -1150,7 +1410,7 @@ fn current_schema_reopens_after_atomic_fresh_bootstrap() {
         connection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        12
+        13
     );
     drop(connection);
     drop(KernelStore::open(&path).unwrap());
@@ -1159,7 +1419,7 @@ fn current_schema_reopens_after_atomic_fresh_bootstrap() {
         reopened
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        12
+        13
     );
     assert_eq!(
         reopened
@@ -1182,9 +1442,9 @@ fn current_schema_reopens_after_atomic_fresh_bootstrap() {
 }
 
 #[test]
-fn historical_schema_eleven_is_rejected_without_current_schema_mutation() {
+fn historical_schema_current_minus_one_is_rejected_without_current_schema_mutation() {
     let path = std::env::temp_dir().join(format!(
-        "society-historical-schema-eleven-{}-{}.sqlite",
+        "society-historical-schema-twelve-{}-{}.sqlite",
         std::process::id(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -1192,32 +1452,32 @@ fn historical_schema_eleven_is_rejected_without_current_schema_mutation() {
             .as_nanos()
     ));
     let historical = Connection::open(&path).unwrap();
-    // Schema eleven was the immediately preceding fresh-only identity. Schema
-    // twelve must not mistake its durable Dispose shape for current data.
+    // Schema twelve was the immediately preceding fresh-only identity. Schema
+    // thirteen must not mistake its durable Dispose shape for current data.
     historical
         .execute_batch(
-            "CREATE TABLE previous_v11_ledger_marker (entry_id INTEGER PRIMARY KEY);
-             INSERT INTO previous_v11_ledger_marker VALUES (1);
-             PRAGMA user_version = 11;",
+            "CREATE TABLE previous_v12_ledger_marker (entry_id INTEGER PRIMARY KEY);
+             INSERT INTO previous_v12_ledger_marker VALUES (1);
+             PRAGMA user_version = 12;",
         )
         .unwrap();
     drop(historical);
 
     assert!(matches!(
         KernelStore::open(&path),
-        Err(StoreError::UnsupportedSchemaVersion(11))
+        Err(StoreError::UnsupportedSchemaVersion(12))
     ));
     let inspection = Connection::open(&path).unwrap();
     assert_eq!(
         inspection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        11
+        12
     );
     assert_eq!(
         inspection
             .query_row(
-                "SELECT COUNT(*) FROM previous_v11_ledger_marker",
+                "SELECT COUNT(*) FROM previous_v12_ledger_marker",
                 [],
                 |row| { row.get::<_, i64>(0) }
             )
@@ -1279,15 +1539,15 @@ fn founding_budget_policy_is_explicit_per_closed_treatment() {
                 name: SocietyName::parse("Synthetic budget society").unwrap(),
             },
         );
+        let mission = example_application_mission();
+        seal_and_register_mission_source(&mut store, "policy", &mission);
         accepted(
             &mut store,
             "policy-install-founding-mission",
             bootstrap,
             Capability::InstallFoundingMission,
             ExpectedGeneration::NotApplicable,
-            CommandBody::InstallFoundingMission {
-                mission: example_application_mission(),
-            },
+            CommandBody::InstallFoundingMission { mission },
         );
         accepted(
             &mut store,
@@ -2490,7 +2750,7 @@ fn pi_office_session_dispose_orders_peer_facts_and_reconciles_its_parent_budget(
         Capability::RegisterContentObject,
         ExpectedGeneration::NotApplicable,
         CommandBody::RegisterContentObject {
-            content_seal_receipt_id: society_kernel::ContentSealReceiptId::new(1).unwrap(),
+            content_seal_receipt_id: society_kernel::ContentSealReceiptId::new(2).unwrap(),
         },
     );
     let opened = accepted(
@@ -2519,7 +2779,7 @@ fn pi_office_session_dispose_orders_peer_facts_and_reconciles_its_parent_budget(
         CommandBody::AuthorizePiOfficeTurnPrompt {
             office_turn_id: first_turn,
             correlation_identity: first_correlation.clone(),
-            prompt_content_object_id: society_kernel::ContentObjectId::new(1).unwrap(),
+            prompt_content_object_id: society_kernel::ContentObjectId::new(2).unwrap(),
             prompt_digest: first_prompt_digest,
             frontier_event_id,
         },
@@ -2620,7 +2880,7 @@ fn pi_office_session_dispose_orders_peer_facts_and_reconciles_its_parent_budget(
         Capability::RegisterContentObject,
         ExpectedGeneration::NotApplicable,
         CommandBody::RegisterContentObject {
-            content_seal_receipt_id: society_kernel::ContentSealReceiptId::new(2).unwrap(),
+            content_seal_receipt_id: society_kernel::ContentSealReceiptId::new(3).unwrap(),
         },
     );
     accepted(
@@ -2783,7 +3043,7 @@ fn pi_office_session_dispose_orders_peer_facts_and_reconciles_its_parent_budget(
                 )
                 .unwrap(),
                 session_file_digest: transcript_digest,
-                transcript_content_object_id: society_kernel::ContentObjectId::new(2).unwrap(),
+                transcript_content_object_id: society_kernel::ContentObjectId::new(3).unwrap(),
                 first_user_prompt:
                     society_kernel::PiOfficeSessionFirstUserPromptReceipt::Verified {
                         digest: first_prompt_digest,
@@ -2819,7 +3079,7 @@ fn pi_office_session_dispose_orders_peer_facts_and_reconciles_its_parent_budget(
             session_file: CanonicalPiSessionTranscriptPath::parse("/tmp/m7-dispose-session.jsonl")
                 .unwrap(),
             session_file_digest: transcript_digest,
-            transcript_content_object_id: society_kernel::ContentObjectId::new(2).unwrap(),
+            transcript_content_object_id: society_kernel::ContentObjectId::new(3).unwrap(),
             first_user_prompt: society_kernel::PiOfficeSessionFirstUserPromptReceipt::Verified {
                 digest: first_prompt_digest,
             },
@@ -3077,7 +3337,7 @@ fn pi_office_session_dispose_accepts_a_materialized_no_prompt_transcript_with_ab
         Capability::RegisterContentObject,
         ExpectedGeneration::NotApplicable,
         CommandBody::RegisterContentObject {
-            content_seal_receipt_id: society_kernel::ContentSealReceiptId::new(1).unwrap(),
+            content_seal_receipt_id: society_kernel::ContentSealReceiptId::new(2).unwrap(),
         },
     );
     accepted(
@@ -3135,7 +3395,7 @@ fn pi_office_session_dispose_accepts_a_materialized_no_prompt_transcript_with_ab
             )
             .unwrap(),
             session_file_digest: transcript_digest,
-            transcript_content_object_id: society_kernel::ContentObjectId::new(1).unwrap(),
+            transcript_content_object_id: society_kernel::ContentObjectId::new(2).unwrap(),
             first_user_prompt,
         },
     };
@@ -3440,7 +3700,7 @@ fn pi_office_turn_requires_authorized_delivered_peer_terminal_chain_and_debits_o
         Capability::RegisterContentObject,
         ExpectedGeneration::NotApplicable,
         CommandBody::RegisterContentObject {
-            content_seal_receipt_id: society_kernel::ContentSealReceiptId::new(1).unwrap(),
+            content_seal_receipt_id: society_kernel::ContentSealReceiptId::new(2).unwrap(),
         },
     );
 
@@ -3470,7 +3730,7 @@ fn pi_office_turn_requires_authorized_delivered_peer_terminal_chain_and_debits_o
         CommandBody::AuthorizePiOfficeTurnPrompt {
             office_turn_id: turn_one,
             correlation_identity: correlation_one.clone(),
-            prompt_content_object_id: society_kernel::ContentObjectId::new(1).unwrap(),
+            prompt_content_object_id: society_kernel::ContentObjectId::new(2).unwrap(),
             prompt_digest: Blake3Digest::of_bytes(b"recombined"),
             frontier_event_id: frontier,
         },
@@ -3485,7 +3745,7 @@ fn pi_office_turn_requires_authorized_delivered_peer_terminal_chain_and_debits_o
         CommandBody::AuthorizePiOfficeTurnPrompt {
             office_turn_id: turn_one,
             correlation_identity: correlation_one.clone(),
-            prompt_content_object_id: society_kernel::ContentObjectId::new(1).unwrap(),
+            prompt_content_object_id: society_kernel::ContentObjectId::new(2).unwrap(),
             prompt_digest,
             frontier_event_id: frontier,
         },
@@ -3709,7 +3969,7 @@ fn pi_office_turn_requires_authorized_delivered_peer_terminal_chain_and_debits_o
         CommandBody::AuthorizePiOfficeTurnPrompt {
             office_turn_id: turn_two,
             correlation_identity: correlation_two.clone(),
-            prompt_content_object_id: society_kernel::ContentObjectId::new(1).unwrap(),
+            prompt_content_object_id: society_kernel::ContentObjectId::new(2).unwrap(),
             prompt_digest,
             frontier_event_id: frontier_two,
         },
@@ -3841,7 +4101,7 @@ fn pi_office_turn_requires_authorized_delivered_peer_terminal_chain_and_debits_o
         CommandBody::AuthorizePiOfficeTurnPrompt {
             office_turn_id: turn_three,
             correlation_identity: correlation_three.clone(),
-            prompt_content_object_id: society_kernel::ContentObjectId::new(1).unwrap(),
+            prompt_content_object_id: society_kernel::ContentObjectId::new(2).unwrap(),
             prompt_digest,
             frontier_event_id: frontier_three,
         },
@@ -4093,7 +4353,7 @@ fn pi_office_turn_late_receipts_after_cancellation_never_restore_office_authorit
         Capability::RegisterContentObject,
         ExpectedGeneration::NotApplicable,
         CommandBody::RegisterContentObject {
-            content_seal_receipt_id: society_kernel::ContentSealReceiptId::new(1).unwrap(),
+            content_seal_receipt_id: society_kernel::ContentSealReceiptId::new(2).unwrap(),
         },
     );
     let opened = accepted(
@@ -4122,7 +4382,7 @@ fn pi_office_turn_late_receipts_after_cancellation_never_restore_office_authorit
         CommandBody::AuthorizePiOfficeTurnPrompt {
             office_turn_id: turn_id,
             correlation_identity: correlation.clone(),
-            prompt_content_object_id: society_kernel::ContentObjectId::new(1).unwrap(),
+            prompt_content_object_id: society_kernel::ContentObjectId::new(2).unwrap(),
             prompt_digest: digest,
             frontier_event_id: frontier,
         },
@@ -4571,7 +4831,7 @@ fn rejected_missing_subject_and_tampered_extra_body_are_detected() {
     assert!(store.replay_ledger().is_ok());
     tamper
         .execute(
-            "UPDATE event_r0_hard_ceiling_set SET ceiling_micros = ?1 WHERE event_id = 5",
+            "UPDATE event_r0_hard_ceiling_set SET ceiling_micros = ?1 WHERE event_id = 7",
             [1_i64],
         )
         .unwrap();
@@ -4581,7 +4841,7 @@ fn rejected_missing_subject_and_tampered_extra_body_are_detected() {
     ));
     tamper
         .execute(
-            "UPDATE event_r0_hard_ceiling_set SET ceiling_micros = ?1 WHERE event_id = 5",
+            "UPDATE event_r0_hard_ceiling_set SET ceiling_micros = ?1 WHERE event_id = 7",
             [1_030_000_i64],
         )
         .unwrap();
@@ -4609,7 +4869,7 @@ fn rejected_missing_subject_and_tampered_extra_body_are_detected() {
     // detectable without relying on a missing-link side effect.
     tamper
         .execute(
-            "UPDATE events SET command_row_id = 9 WHERE event_id = 1",
+            "UPDATE events SET command_row_id = 11 WHERE event_id = 1",
             [],
         )
         .unwrap();
@@ -4643,7 +4903,7 @@ fn rejected_missing_subject_and_tampered_extra_body_are_detected() {
     ));
     tamper
         .execute(
-            "UPDATE events SET command_row_id = 9 WHERE event_id = 1",
+            "UPDATE events SET command_row_id = 11 WHERE event_id = 1",
             [],
         )
         .unwrap();

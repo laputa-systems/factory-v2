@@ -11,17 +11,28 @@ which this application may consume but may not modify through application code.
   become generic concepts merely because an evaluator emits them.
 - Keep source claims, XSH APIs, fixtures, evaluators, validation profiles, and
   product conclusions inside this application directory.
-- The application may use generic public crates for content identity and
-  typed mission/alignment and eventually product authorization. It must not
-  write SQLite, own the resident control channel, supervise Pi, reap children,
-  assign capabilities, settle budgets, or move a delivery ref.
+- The application may use generic public crates for typed mission/alignment and
+  eventually product authorization. It must not write SQLite, own the resident
+  control channel, supervise Pi, reap children, assign capabilities, settle
+  budgets, move a delivery ref, import `societyd` or `societyctl`, or receive a
+  `ContentObjectId` for its mission source.
 - `society-xsh-contract` owns the XSH mission rendering and constructs the
-  generic typed mission/alignment inputs. It does not admit them, assign their
-  durable identifiers, or receive daemon authority. The source rendering is
-  not yet content-sealed. Durable authorized product-change output also
-  remains unimplemented. The XSH VS-001 contract records its intended
-  end-to-end gates; it does not claim that the present foundation completed
-  them.
+  generic typed mission/alignment inputs. It returns only
+  `ApplicationMissionInput`, canonical bounded `MissionSourceRendering` bytes,
+  and their BLAKE3 digest; it does not admit them, assign durable identifiers,
+  or receive daemon authority. The daemon-private path checks the digest,
+  side-effect-free preflights the outer command, seals the bytes, records the
+  receipt/object chain, and lets the kernel derive the mission's private object
+  binding. The supervisor carries this typed rendering only beside
+  `InstallFoundingMission`; it has neither generic content mutation nor
+  content-writer authority. Deterministic internal operation identities make
+  the content primitive retry-stable while the daemon authority is retained;
+  they do not resume a failed supervisor handler. The request ends on handler
+  failure, and restart is `RecoveryFenced`, not source-operation recovery. This
+  custody boundary establishes neither provenance nor semantic/evidence meaning.
+  Durable authorized product-change output remains unimplemented. The XSH
+  VS-001 contract records its intended end-to-end gates; it does not claim that
+  the present foundation completed them.
 - No application JSON, metadata map, EAV relation, or stringly discriminator
   may be introduced as a shortcut around a typed evaluator or generic boundary.
 

@@ -8,10 +8,11 @@
 
 use society_kernel::{
     ApplicationIdentity, ApplicationMissionInput, ApplicationName, ApplicationRevisionId,
-    ApplicationRevisionOrdinal, Blake3Digest, MissionPrinciple, MissionPrincipleKind,
-    MissionPrincipleText, MissionPrinciples, MissionStatement, NorthStarBoundaryCommitmentQuestion,
-    NorthStarChangeQuestion, NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet,
-    NorthStarRevisitQuestion, ProjectNorthStarAlignment, ProjectNorthStarBoundaryCommitmentAnswer,
+    ApplicationRevisionOrdinal, MissionPrinciple, MissionPrincipleKind, MissionPrincipleText,
+    MissionPrinciples, MissionSourceRendering, MissionStatement,
+    NorthStarBoundaryCommitmentQuestion, NorthStarChangeQuestion,
+    NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet, NorthStarRevisitQuestion,
+    ProjectNorthStarAlignment, ProjectNorthStarBoundaryCommitmentAnswer,
     ProjectNorthStarChangeAnswer, ProjectNorthStarImprovementEvidenceAnswer,
     ProjectNorthStarRevisitAnswer,
 };
@@ -33,13 +34,15 @@ const ALIGNMENT_IMPROVEMENT_EVIDENCE: &str = "Normative registry, executable beh
 const ALIGNMENT_BOUNDARY_COMMITMENT: &str = "Preserve explicit Command fields, owned process lifecycle, structured setup errors, default inheritance, and ordinary Path sinks.";
 const ALIGNMENT_REVISIT: &str = "Revisit after C1 prototype review, C2 delivery review, the immediate contract outcome, the delayed Laputa use-site obligation, or any contradictory process test.";
 
-/// Exact application-owned bytes committed by [`founding_mission_v1`].
-pub const fn universe_seed_v1_rendering() -> &'static [u8] {
-    UNIVERSE_SEED_V1
+/// Exact, bounded application-owned bytes committed by [`founding_mission_v1`].
+pub fn universe_seed_v1_rendering() -> MissionSourceRendering {
+    MissionSourceRendering::parse(UNIVERSE_SEED_V1.to_vec())
+        .expect("the compiled Universe Seed respects the generic source bound")
 }
 
 /// XSH revision 1 expressed through the generic mission input port.
 pub fn founding_mission_v1() -> ApplicationMissionInput {
+    let source_rendering = universe_seed_v1_rendering();
     ApplicationMissionInput {
         application_identity: ApplicationIdentity::parse("xsh").expect("static identity is valid"),
         application_name: ApplicationName::parse("XSH").expect("static name is valid"),
@@ -68,7 +71,7 @@ pub fn founding_mission_v1() -> ApplicationMissionInput {
             revisit: NorthStarRevisitQuestion::parse(REVISIT_QUESTION)
                 .expect("static question is valid"),
         },
-        source_rendering_digest: Blake3Digest::of_bytes(universe_seed_v1_rendering()),
+        source_rendering_digest: source_rendering.digest(),
     }
 }
 
@@ -107,6 +110,7 @@ mod tests {
     #[test]
     fn founding_mission_binds_the_exact_application_rendering() {
         let mission = founding_mission_v1();
+        let rendering = universe_seed_v1_rendering();
 
         assert_eq!(mission.application_identity.as_str(), "xsh");
         assert_eq!(mission.application_name.as_str(), "XSH");
@@ -143,13 +147,11 @@ mod tests {
             mission.north_star_questions.revisit.as_str(),
             REVISIT_QUESTION
         );
-        assert_eq!(
-            mission.source_rendering_digest,
-            Blake3Digest::of_bytes(universe_seed_v1_rendering())
-        );
-        assert_eq!(
-            universe_seed_v1_rendering(),
-            expected_rendering().as_bytes()
+        assert_eq!(mission.source_rendering_digest, rendering.digest());
+        assert_eq!(rendering.as_bytes(), expected_rendering().as_bytes());
+        assert!(
+            rendering.as_bytes().len() <= MissionSourceRendering::MAX_BYTES,
+            "the canonical source rendering must remain bounded by the generic input type"
         );
     }
 

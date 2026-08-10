@@ -13,10 +13,19 @@ and the evidence around it be what survives.
   and SQLite schema must not gain generic payloads, metadata maps, EAV tables,
   or stringly typed discriminants.
 - Application purpose crosses the generic boundary only through the typed
-  mission and north-star records defined in `VERTICAL-SLICE.md`. Those records
-  are implemented; sealed mission-source content and kernel-issued product
-  authorization are not. A declared rendering digest is not a substitute for
-  a physical content seal.
+  mission and north-star records defined in `VERTICAL-SLICE.md`. An application
+  retains its canonical bounded `MissionSourceRendering` bytes and declares
+  their BLAKE3 digest in `ApplicationMissionInput`; it neither receives nor
+  supplies a `ContentObjectId`. The resident's private founding-source path
+  checks those bytes against that digest, side-effect-free preflights the outer
+  command, physically seals them, records the existing receipt/object chain,
+  and only then permits `InstallFoundingMission` to bind the registered object.
+  The supervisor carries `MissionSourceRendering` only with that mission
+  command; it has neither a generic content-mutation command nor content-writer
+  authority. This is byte custody, not provenance, semantic admission, or an
+  end-to-end application execution claim. A restart remains `RecoveryFenced`
+  rather than resuming a partial source operation. Kernel-issued product
+  authorization remains unimplemented.
 - Test observable transitions and cross-boundary invariants. Favor
   integration, replay, migration, fault-injection, and process tests over
   trivial units.

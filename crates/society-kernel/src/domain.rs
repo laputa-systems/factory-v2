@@ -534,8 +534,8 @@ pub struct NorthStarQuestionSet {
 }
 
 /// The complete first-class mission boundary for one application revision.
-/// Its source rendering retains a BLAKE3 byte identity, but this input does
-/// not claim physical sealing, retention, or `ContentObject` admission. The
+/// Its source rendering retains a BLAKE3 byte identity. `InstallFoundingMission`
+/// separately binds that identity to one already admitted `ContentObject`; the
 /// kernel uses the normalized fields below for durable reasoning and alignment
 /// rather than treating the rendering as an opaque prompt.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -581,6 +581,31 @@ impl fmt::Debug for Blake3Digest {
             write!(formatter, "{byte:02x}")?;
         }
         Ok(())
+    }
+}
+
+/// Bounded canonical bytes whose BLAKE3 digest is proposed as a founding
+/// mission's source rendering. These bytes are supervisor-composition input;
+/// this value keeps that framed boundary bounded and nonempty.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MissionSourceRendering(Vec<u8>);
+
+impl MissionSourceRendering {
+    pub const MAX_BYTES: usize = 16_384;
+
+    pub fn parse(bytes: Vec<u8>) -> Result<Self, DomainValueError> {
+        if bytes.is_empty() || bytes.len() > Self::MAX_BYTES {
+            return Err(DomainValueError::InvalidMissionSourceRendering);
+        }
+        Ok(Self(bytes))
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+
+    pub fn digest(&self) -> Blake3Digest {
+        Blake3Digest::of_bytes(self.as_bytes())
     }
 }
 
@@ -3043,6 +3068,7 @@ closed_rejection_codes! {
     PiOfficeSessionDisposeBindingMismatch = 59,
     PiOfficeSessionDisposeUsageNotMonotonic = 60,
     PiOfficeSessionDisposeReceiptMissing = 61,
+    MissionSourceContentNotSealed = 62,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -3706,6 +3732,8 @@ pub enum DomainValueError {
     NonPositiveApplicationRevisionOrdinal(i64),
     #[error("mission principle relation must contain 1 through 16 ordered principles, got {count}")]
     InvalidMissionPrincipleCount { count: usize },
+    #[error("mission source rendering must be nonempty and at most 16384 bytes")]
+    InvalidMissionSourceRendering,
     #[error("{type_name} must use canonical boundary identity grammar")]
     InvalidOperationalIdentity { type_name: &'static str },
     #[error("micro-US-dollars cannot be negative: {0}")]

@@ -22,12 +22,13 @@ use society_content::{
 };
 use society_kernel::{
     Capability, CommandBody, CommandDisposition, CommandId, CommandRequest, ExpectedGeneration,
-    KernelStore, PrincipalId, StoreError,
+    InstallFoundingMissionPreflight, KernelStore, PrincipalId, StoreError,
 };
 use thiserror::Error;
 
 use crate::content::{
-    ContentObjectRegistration, ContentSealOperationId, ContentSealingAuthority, ContentSealingError,
+    ContentObjectRegistration, ContentSealCrashSeam, ContentSealOperationId,
+    ContentSealingAuthority, ContentSealingError,
 };
 use crate::pi_execution::{
     OfficePiExecutionChild, OfficePiExecutionStart, OfficePiSessionDispose,
@@ -71,6 +72,10 @@ pub enum FaultInjection {
     None,
     BeforeNextCommandCommit,
     AfterNextCommandCommit,
+    AfterFoundingMissionPhysicalSeal,
+    AfterFoundingMissionReceipt,
+    AfterFoundingMissionObjectRegistrationBeforeOuterCommand,
+    AfterFoundingMissionOuterCommitBeforeResponse,
 }
 
 pub struct DaemonConfig {
@@ -127,14 +132,26 @@ pub enum DaemonError {
     ContentStoreRoot(#[from] ContentStoreRootError),
     #[error("daemon content-store failed: {0}")]
     ContentStore(#[from] ContentStoreError),
+    #[error("daemon founding-mission content sealing failed")]
+    FoundingMissionContentSealingFailed,
     #[error("compiled daemon content seal limit must be nonzero")]
     InvalidContentSealLimit,
+    #[error("compiled founding-mission content operation identity is invalid")]
+    InvalidFoundingMissionContentOperation,
     #[error("supervisor authority must be a connected same-user Unix stream")]
     InvalidSupervisorStream,
     #[error("the test-only fault seam stopped before command commit")]
     InjectedCrashBeforeCommit,
     #[error("the test-only fault seam stopped after command commit")]
     InjectedCrashAfterCommit,
+    #[error("the test-only fault seam stopped after founding-mission physical sealing")]
+    InjectedCrashAfterFoundingMissionPhysicalSeal,
+    #[error("the test-only fault seam stopped after founding-mission seal receipt")]
+    InjectedCrashAfterFoundingMissionReceipt,
+    #[error("the test-only fault seam stopped after founding-mission object registration")]
+    InjectedCrashAfterFoundingMissionObjectRegistration,
+    #[error("the test-only fault seam stopped after founding-mission outer command commit")]
+    InjectedCrashAfterFoundingMissionOuterCommit,
 }
 
 /// A resident daemon owns exactly one kernel connection and serially dispatches
@@ -906,6 +923,12 @@ impl Daemon {
             self.fault_injection = FaultInjection::None;
             return Err(DaemonError::InjectedCrashBeforeCommit);
         }
+        if matches!(
+            command.body,
+            ClientCommandBody::InstallFoundingMission { .. }
+        ) {
+            return self.execute_founding_mission(correlation, command);
+        }
         let command_id = command.command_id.clone();
         let drain_cycle_id = match &command.body {
             ClientCommandBody::QuiesceOperatingCycle { cycle_id } => Some(*cycle_id),
@@ -936,6 +959,155 @@ impl Daemon {
             && !receipt.idempotent
         {
             self.record_empty_cycle_drained(&command_id, cycle_id)?;
+        }
+        Ok(Response::CommandReceipt {
+            correlation,
+            receipt: receipt.into(),
+        })
+    }
+
+    /// A founding mission is the one supervisor command whose declared source
+    /// rendering must cross the resident content boundary. The kernel command
+    /// itself remains digest-only: the daemon first proves the supplied bytes
+    /// match that declaration, preflights ordinary authority without mutation,
+    /// and only then seals/registers the physical source before executing the
+    /// original outer command.
+    fn execute_founding_mission(
+        &mut self,
+        correlation: CorrelationId,
+        command: ClientCommandRequest,
+    ) -> Result<Response, DaemonError> {
+        let ClientCommandBody::InstallFoundingMission {
+            mission,
+            source_rendering,
+        } = &command.body
+        else {
+            unreachable!("founding mission dispatch selects only this body");
+        };
+        let source_digest = mission.source_rendering_digest;
+        let source_bytes = source_rendering.as_bytes().to_vec();
+        if source_rendering.digest() != source_digest {
+            return Ok(Response::Error {
+                correlation,
+                code: ProtocolErrorCode::MissionSourceDigestMismatch,
+            });
+        }
+
+        let outer_command = command.into_kernel();
+        let preflight = match self
+            .store
+            .preflight_install_founding_mission(&outer_command)
+        {
+            Ok(preflight) => preflight,
+            Err(StoreError::IdempotencyConflict) => {
+                return Ok(Response::Error {
+                    correlation,
+                    code: ProtocolErrorCode::IdempotencyConflict,
+                });
+            }
+            Err(error) => return Err(DaemonError::Kernel(error)),
+        };
+        match preflight {
+            InstallFoundingMissionPreflight::ExistingReceipt(receipt) => {
+                return Ok(Response::CommandReceipt {
+                    correlation,
+                    receipt: receipt.into(),
+                });
+            }
+            InstallFoundingMissionPreflight::RejectionRequiresExecution(_) => {
+                return self
+                    .execute_preflight_rejected_founding_mission(correlation, outer_command);
+            }
+            InstallFoundingMissionPreflight::Ready => {}
+        }
+
+        let operation = ContentSealOperationId::mission_source(source_digest)
+            .map_err(|_| DaemonError::InvalidFoundingMissionContentOperation)?;
+        let crash_seam = match self.fault_injection {
+            FaultInjection::AfterFoundingMissionPhysicalSeal => {
+                Some(ContentSealCrashSeam::PhysicalSealComplete)
+            }
+            FaultInjection::AfterFoundingMissionReceipt => {
+                Some(ContentSealCrashSeam::ReceiptRecorded)
+            }
+            FaultInjection::AfterFoundingMissionObjectRegistrationBeforeOuterCommand => {
+                Some(ContentSealCrashSeam::ObjectRegistered)
+            }
+            FaultInjection::None
+            | FaultInjection::BeforeNextCommandCommit
+            | FaultInjection::AfterNextCommandCommit
+            | FaultInjection::AfterFoundingMissionOuterCommitBeforeResponse => None,
+        };
+        let seal_result = self.content_sealing.seal_and_register_with_crash_seam(
+            &mut self.store,
+            &operation,
+            &source_bytes,
+            crash_seam,
+        );
+        match seal_result {
+            Ok(_) => {}
+            Err(ContentSealingError::TestCrashAfterPhysicalSeal) => {
+                self.fault_injection = FaultInjection::None;
+                return Err(DaemonError::InjectedCrashAfterFoundingMissionPhysicalSeal);
+            }
+            Err(ContentSealingError::TestCrashAfterReceiptCommand) => {
+                self.fault_injection = FaultInjection::None;
+                return Err(DaemonError::InjectedCrashAfterFoundingMissionReceipt);
+            }
+            Err(ContentSealingError::TestCrashAfterObjectRegistration) => {
+                self.fault_injection = FaultInjection::None;
+                return Err(DaemonError::InjectedCrashAfterFoundingMissionObjectRegistration);
+            }
+            Err(error) => {
+                tracing::error!(target: "society.ledger", error = %error, "founding mission content sealing failed");
+                return Err(DaemonError::FoundingMissionContentSealingFailed);
+            }
+        }
+        self.finish_founding_mission_outer_command(correlation, outer_command)
+    }
+
+    fn execute_preflight_rejected_founding_mission(
+        &mut self,
+        correlation: CorrelationId,
+        outer_command: CommandRequest,
+    ) -> Result<Response, DaemonError> {
+        self.finish_founding_mission_outer_command(correlation, outer_command)
+    }
+
+    fn finish_founding_mission_outer_command(
+        &mut self,
+        correlation: CorrelationId,
+        outer_command: CommandRequest,
+    ) -> Result<Response, DaemonError> {
+        let receipt = match self.store.execute(outer_command) {
+            Ok(receipt) => receipt,
+            Err(StoreError::IdempotencyConflict) => {
+                return Ok(Response::Error {
+                    correlation,
+                    code: ProtocolErrorCode::IdempotencyConflict,
+                });
+            }
+            Err(error) => {
+                tracing::error!(target: "society.ledger", error = %error, "kernel rejected a transport-valid founding mission");
+                return Ok(Response::Error {
+                    correlation,
+                    code: ProtocolErrorCode::KernelFailure,
+                });
+            }
+        };
+        let fault_injection = self.fault_injection;
+        if matches!(
+            fault_injection,
+            FaultInjection::AfterNextCommandCommit
+                | FaultInjection::AfterFoundingMissionOuterCommitBeforeResponse
+        ) {
+            self.fault_injection = FaultInjection::None;
+            return Err(match fault_injection {
+                FaultInjection::AfterFoundingMissionOuterCommitBeforeResponse => {
+                    DaemonError::InjectedCrashAfterFoundingMissionOuterCommit
+                }
+                _ => DaemonError::InjectedCrashAfterCommit,
+            });
         }
         Ok(Response::CommandReceipt {
             correlation,

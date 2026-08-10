@@ -383,6 +383,24 @@ The purpose and worldview content inside the Universe Seed: why XSH exists,
 who it serves, what domain it claims, what it preserves, what it rejects, and
 what it refuses to optimize away.
 
+### Mission source rendering
+
+The canonical bounded `MissionSourceRendering` returned by
+`society-xsh-contract::universe_seed_v1_rendering()` beside
+`founding_mission_v1()`. Its bytes must digest exactly to the mission input's
+`source_rendering_digest`; the contract crate does not seal them, import
+`societyd` or `societyctl`, or know a `ContentObjectId`. In resident-only
+composition, the daemon privately checks this equality and side-effect-free
+preflights the outer command before physical sealing, receipt/object recording,
+and mission installation. The supervisor carries the rendering only beside
+`InstallFoundingMission`; it has neither generic content mutation nor
+content-writer authority. Deterministic internal operation identities make the
+content primitive retry-stable while the daemon authority is retained; they do
+not resume a failed supervisor handler. The request ends on handler failure and
+a restarted nonempty daemon is `RecoveryFenced`. The resulting byte binding
+establishes no producer provenance, semantic role, evidence admission, or
+completed XSH execution.
+
 ### Model catalog policy
 
 The non-secret, qualified identity of the exact Pi model catalog bytes and the

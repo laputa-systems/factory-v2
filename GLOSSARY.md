@@ -21,9 +21,26 @@ They are domain types, not a package name interpreted by the kernel.
 The typed purpose and worldview supplied by an application at bootstrap. It
 contains a named `MissionStatement`, ordered `MissionPrinciple` relation,
 `NorthStarQuestionSet`, and a BLAKE3 identity for its source rendering. The
-current digest is a caller attestation, not a physical content seal or
-provenance claim. Mission is durable input, not ambient documentation or a
-copied prompt fragment.
+application supplies a bounded `MissionSourceRendering` separately and neither
+knows nor supplies the resulting `ContentObjectId`. The resident privately
+checks the bytes against the declared digest, preflights the outer command
+without mutation, physically seals them, records the receipt/object chain, and
+then the kernel resolves the digest to the registered object during founding
+installation. The binding is byte custody, not producer provenance,
+semantic/evidence admission, or a copied prompt fragment.
+
+### Founding mission source operation
+
+The daemon-private, retry-stable path from one application rendering to its
+founding-mission binding: digest preflight, physical byte seal, kernel seal
+receipt, global content-object registration, then `InstallFoundingMission`.
+Its deterministic operation identities make the internal content primitive
+retry-stable while the same daemon authority is retained. That is not a
+supervisor-visible continuation after a handler failure: the request ends, and
+a restarted nonempty daemon is `RecoveryFenced` rather than completing a
+partial operation. The supervisor carries `MissionSourceRendering` with
+`InstallFoundingMission`, but no public or supervisor protocol offers a generic
+content mutation or content-writer authority through this path.
 
 ### Founding mission
 

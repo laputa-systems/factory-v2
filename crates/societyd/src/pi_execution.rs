@@ -3733,7 +3733,10 @@ mod tests {
         os::unix::fs::{PermissionsExt, symlink},
         path::{Path, PathBuf},
         process::Command,
-        sync::atomic::{AtomicU64, Ordering},
+        sync::{
+            Mutex, MutexGuard, OnceLock,
+            atomic::{AtomicU64, Ordering},
+        },
         thread,
         time::Duration,
     };
@@ -3782,12 +3785,13 @@ mod tests {
     };
 
     static NEXT_TEMPORARY: AtomicU64 = AtomicU64::new(1);
+    static PROCESS_PHYSICS_FIXTURE_GUARD: OnceLock<Mutex<()>> = OnceLock::new();
 
     #[test]
     fn provider_free_office_create_dispose_reap_records_ready_only_after_live_session() {
         let fixture = NativeFixture::new("m5-office-bridge");
         let mut store = KernelStore::open_in_memory().unwrap();
-        let office = found_office_start(&mut store, "m5-office-bridge");
+        let office = found_office_start(&mut store, &fixture, "m5-office-bridge");
         let start = OfficePiExecutionStart {
             operation: PiExecutionOperationId::parse("m5-office-bridge").unwrap(),
             operating_cycle_id: office.cycle_id,
@@ -3937,7 +3941,7 @@ mod tests {
     fn m7_dispose_authorizes_at_quiesced_generation_then_records_unmaterialized_terminal() {
         let fixture = NativeFixture::new("m7-dispose-unmaterialized");
         let mut store = KernelStore::open_in_memory().unwrap();
-        let office = found_office_start(&mut store, "m7-dispose-unmaterialized");
+        let office = found_office_start(&mut store, &fixture, "m7-dispose-unmaterialized");
         let mut driver = PiExecutionDriver::new();
         let mut child = ready_office_child(
             &mut driver,
@@ -4081,7 +4085,7 @@ mod tests {
     fn m7_dispose_seals_the_peer_validated_materialized_transcript_before_terminal_commit() {
         let fixture = NativeFixture::new("m7-dispose-materialized");
         let mut store = KernelStore::open_in_memory().unwrap();
-        let office = found_office_start(&mut store, "m7-dispose-materialized");
+        let office = found_office_start(&mut store, &fixture, "m7-dispose-materialized");
         let mut driver = PiExecutionDriver::new();
         let mut child = ready_office_child(
             &mut driver,
@@ -4264,7 +4268,11 @@ mod tests {
     fn m7_dispose_usage_unavailable_freezes_without_fabricating_a_disposed_session() {
         let fixture = NativeFixture::new("m7-dispose-usage-unavailable-ignore-term");
         let mut store = KernelStore::open_in_memory().unwrap();
-        let office = found_office_start(&mut store, "m7-dispose-usage-unavailable-ignore-term");
+        let office = found_office_start(
+            &mut store,
+            &fixture,
+            "m7-dispose-usage-unavailable-ignore-term",
+        );
         let mut driver = PiExecutionDriver::new();
         let mut child = ready_office_child(
             &mut driver,
@@ -4362,7 +4370,7 @@ mod tests {
     fn m7_missing_forced_dispose_usage_freezes_at_the_observed_disposed_sequence() {
         let fixture = NativeFixture::new("m7-dispose-missing-final-usage");
         let mut store = KernelStore::open_in_memory().unwrap();
-        let office = found_office_start(&mut store, "m7-dispose-missing-final-usage");
+        let office = found_office_start(&mut store, &fixture, "m7-dispose-missing-final-usage");
         let mut driver = PiExecutionDriver::new();
         let mut child = ready_office_child(
             &mut driver,
@@ -4444,7 +4452,7 @@ mod tests {
     fn m7_stale_dispose_generation_is_rejected_before_any_host_control_write() {
         let fixture = NativeFixture::new("m7-dispose-stale-generation");
         let mut store = KernelStore::open_in_memory().unwrap();
-        let office = found_office_start(&mut store, "m7-dispose-stale-generation");
+        let office = found_office_start(&mut store, &fixture, "m7-dispose-stale-generation");
         let mut driver = PiExecutionDriver::new();
         let mut child = ready_office_child(
             &mut driver,
@@ -4649,7 +4657,7 @@ mod tests {
     fn provider_free_m6_prompt_projects_full_cumulative_usage_and_settles_only_stop() {
         let fixture = NativeFixture::new("m6-turn-stop");
         let mut store = KernelStore::open_in_memory().unwrap();
-        let office = found_office_start(&mut store, "m6-turn-stop");
+        let office = found_office_start(&mut store, &fixture, "m6-turn-stop");
         let mut driver = PiExecutionDriver::new();
         let mut child = ready_office_child(&mut driver, &mut store, &fixture, &office, "m6-child");
 
@@ -4770,7 +4778,7 @@ mod tests {
     fn provider_free_m6_same_total_final_known_usage_is_terminal_evidence_not_a_second_charge() {
         let fixture = NativeFixture::new("m6-known-before-and-final-same");
         let mut store = KernelStore::open_in_memory().unwrap();
-        let office = found_office_start(&mut store, "m6-known-before-and-final-same");
+        let office = found_office_start(&mut store, &fixture, "m6-known-before-and-final-same");
         let mut driver = PiExecutionDriver::new();
         let mut child = ready_office_child(
             &mut driver,
@@ -4850,7 +4858,7 @@ mod tests {
     fn provider_free_m6_known_error_records_terminal_but_never_returns_office_ready() {
         let fixture = NativeFixture::new("m6-prompt-error");
         let mut store = KernelStore::open_in_memory().unwrap();
-        let office = found_office_start(&mut store, "m6-prompt-error");
+        let office = found_office_start(&mut store, &fixture, "m6-prompt-error");
         let mut driver = PiExecutionDriver::new();
         let mut child =
             ready_office_child(&mut driver, &mut store, &fixture, &office, "m6-error-child");
@@ -4891,7 +4899,8 @@ mod tests {
     fn provider_free_m6_sdk_promise_rejection_records_adjacent_known_terminal_without_agent_fact() {
         let fixture = NativeFixture::new("m6-sdk-promise-rejected-final-known");
         let mut store = KernelStore::open_in_memory().unwrap();
-        let office = found_office_start(&mut store, "m6-sdk-promise-rejected-final-known");
+        let office =
+            found_office_start(&mut store, &fixture, "m6-sdk-promise-rejected-final-known");
         let mut driver = PiExecutionDriver::new();
         let mut child = ready_office_child(
             &mut driver,
@@ -4969,7 +4978,7 @@ mod tests {
     fn provider_free_m6_protocol_failure_records_terminal_then_contains_fatal_session() {
         let fixture = NativeFixture::new("m6-protocol-failed-final-known-ignore-term");
         let mut store = KernelStore::open_in_memory().unwrap();
-        let office = found_office_start(&mut store, "m6-protocol-failed-terminal");
+        let office = found_office_start(&mut store, &fixture, "m6-protocol-failed-terminal");
         let mut driver = PiExecutionDriver::new();
         let mut child = ready_office_child(
             &mut driver,
@@ -5045,7 +5054,7 @@ mod tests {
     fn provider_free_m6_control_usage_after_agent_settled_cannot_replace_final_prompt_usage() {
         let fixture = NativeFixture::new("m6-control-interleave");
         let mut store = KernelStore::open_in_memory().unwrap();
-        let office = found_office_start(&mut store, "m6-control-interleave");
+        let office = found_office_start(&mut store, &fixture, "m6-control-interleave");
         let mut driver = PiExecutionDriver::new();
         let mut child = ready_office_child(
             &mut driver,
@@ -5126,7 +5135,7 @@ mod tests {
     fn pending_m6_prompt_cannot_be_observed_or_delivered_until_its_full_pipe_write() {
         let fixture = NativeFixture::new("m6-turn-stop");
         let mut store = KernelStore::open_in_memory().unwrap();
-        let office = found_office_start(&mut store, "m6-prompt-pending");
+        let office = found_office_start(&mut store, &fixture, "m6-prompt-pending");
         let mut driver = PiExecutionDriver::new();
         let mut child = ready_office_child(
             &mut driver,
@@ -5189,7 +5198,7 @@ mod tests {
     fn cancellation_after_m6_authorization_fences_late_physical_delivery_without_office_ready() {
         let fixture = NativeFixture::new("m6-turn-stop");
         let mut store = KernelStore::open_in_memory().unwrap();
-        let office = found_office_start(&mut store, "m6-cancel-after-auth");
+        let office = found_office_start(&mut store, &fixture, "m6-cancel-after-auth");
         let mut driver = PiExecutionDriver::new();
         let mut child = ready_office_child(
             &mut driver,
@@ -5319,7 +5328,7 @@ mod tests {
     fn output_loss_after_m6_prompt_acceptance_is_contained_without_fabricating_usage_or_ready() {
         let fixture = NativeFixture::new("m6-exit-after-prompt-accepted");
         let mut store = KernelStore::open_in_memory().unwrap();
-        let office = found_office_start(&mut store, "m6-output-loss");
+        let office = found_office_start(&mut store, &fixture, "m6-output-loss");
         let mut driver = PiExecutionDriver::new();
         let mut child =
             ready_office_child(&mut driver, &mut store, &fixture, &office, "m6-loss-child");
@@ -5392,7 +5401,7 @@ mod tests {
     fn provider_free_m6_unavailable_usage_is_recorded_then_frozen_before_containment() {
         let fixture = NativeFixture::new("m6-usage-unavailable-ignore-term");
         let mut store = KernelStore::open_in_memory().unwrap();
-        let office = found_office_start(&mut store, "m6-usage-unavailable-ignore-term");
+        let office = found_office_start(&mut store, &fixture, "m6-usage-unavailable-ignore-term");
         let mut driver = PiExecutionDriver::new();
         let mut child = ready_office_child(
             &mut driver,
@@ -5465,7 +5474,7 @@ mod tests {
     fn provider_free_m6_pre_agent_settled_unavailable_freezes_the_observed_snapshot_then_reaps() {
         let fixture = NativeFixture::new("m6-usage-unavailable-pre-agent-settled-ignore-term");
         let mut store = KernelStore::open_in_memory().unwrap();
-        let office = found_office_start(&mut store, "m6-pre-agent-unavailable");
+        let office = found_office_start(&mut store, &fixture, "m6-pre-agent-unavailable");
         let mut driver = PiExecutionDriver::new();
         let mut child = ready_office_child(
             &mut driver,
@@ -5613,7 +5622,7 @@ mod tests {
     fn provider_free_m6_missing_final_usage_freezes_at_the_observed_settled_sequence() {
         let fixture = NativeFixture::new("m6-missing-final-usage");
         let mut store = KernelStore::open_in_memory().unwrap();
-        let office = found_office_start(&mut store, "m6-missing-final-usage");
+        let office = found_office_start(&mut store, &fixture, "m6-missing-final-usage");
         let mut driver = PiExecutionDriver::new();
         let mut child = ready_office_child(
             &mut driver,
@@ -5709,7 +5718,7 @@ mod tests {
     fn session_ready_then_direct_child_exit_refuses_office_ready_and_reconciles_wait() {
         let fixture = NativeFixture::new("m5-exit-after-session-ready");
         let mut store = KernelStore::open_in_memory().unwrap();
-        let office = found_office_start(&mut store, "m5-exit-after-session-ready");
+        let office = found_office_start(&mut store, &fixture, "m5-exit-after-session-ready");
         let start = OfficePiExecutionStart {
             operation: PiExecutionOperationId::parse("m5-exit-after-session-ready").unwrap(),
             operating_cycle_id: office.cycle_id,
@@ -5803,7 +5812,8 @@ mod tests {
     fn cancellation_between_admission_and_native_registration_uses_current_generation() {
         let fixture = NativeFixture::new("m5-generation-race-exit-before-ready");
         let mut store = KernelStore::open_in_memory().unwrap();
-        let office = found_office_start(&mut store, "m5-generation-race-exit-before-ready");
+        let office =
+            found_office_start(&mut store, &fixture, "m5-generation-race-exit-before-ready");
         let start = OfficePiExecutionStart {
             operation: PiExecutionOperationId::parse("m5-generation-race").unwrap(),
             operating_cycle_id: office.cycle_id,
@@ -5904,7 +5914,7 @@ mod tests {
         let mut fixture = NativeFixture::new("m5-reject-task-attempt-office");
         fixture.create.session_kind = SessionKind::TaskAttempt;
         let mut store = KernelStore::open_in_memory().unwrap();
-        let office = found_office_start(&mut store, "m5-reject-task-attempt-office");
+        let office = found_office_start(&mut store, &fixture, "m5-reject-task-attempt-office");
         let before_commands = store.command_count().unwrap();
         let start = OfficePiExecutionStart {
             operation: PiExecutionOperationId::parse("m5-reject-task-attempt-office").unwrap(),
@@ -5933,7 +5943,11 @@ mod tests {
     fn inert_registration_rejection_keeps_admission_unresolved_but_reaps_the_native_child() {
         let fixture = NativeFixture::new("m5-unresolved-registration-ignore-term");
         let mut store = KernelStore::open_in_memory().unwrap();
-        let office = found_office_start(&mut store, "m5-unresolved-registration-ignore-term");
+        let office = found_office_start(
+            &mut store,
+            &fixture,
+            "m5-unresolved-registration-ignore-term",
+        );
         let before_commands = store.command_count().unwrap();
         let start = OfficePiExecutionStart {
             operation: PiExecutionOperationId::parse("m5-unresolved-registration").unwrap(),
@@ -5994,7 +6008,7 @@ mod tests {
     fn pending_dispose_cannot_be_observed_until_its_full_native_delivery() {
         let fixture = NativeFixture::new("m5-pending-dispose");
         let mut store = KernelStore::open_in_memory().unwrap();
-        let office = found_office_start(&mut store, "m5-pending-dispose");
+        let office = found_office_start(&mut store, &fixture, "m5-pending-dispose");
         let start = OfficePiExecutionStart {
             operation: PiExecutionOperationId::parse("m5-pending-dispose").unwrap(),
             operating_cycle_id: office.cycle_id,
@@ -6078,7 +6092,7 @@ mod tests {
     fn never_session_ready_boundary_error_drives_term_kill_then_ordered_reap() {
         let fixture = NativeFixture::new("m5-never-session-ready-ignore-term");
         let mut store = KernelStore::open_in_memory().unwrap();
-        let office = found_office_start(&mut store, "m5-never-session-ready-ignore-term");
+        let office = found_office_start(&mut store, &fixture, "m5-never-session-ready-ignore-term");
         let operation = PiExecutionOperationId::parse("m5-never-session-ready").unwrap();
         let start = OfficePiExecutionStart {
             operation: operation.clone(),
@@ -6098,6 +6112,26 @@ mod tests {
             other => panic!("ordinary provider-free host fixture must complete setup: {other:?}"),
         };
         wait_for_adapter_ready(&mut driver, &mut store, &mut child);
+        // The deterministic deadline clock advances much faster than a fresh
+        // Node process can initialize. This private fixture marker is written
+        // only after the TERM handler and keepalive are active; it prevents a
+        // pre-handler TERM / voluntary EOF race from masquerading as an owned
+        // process-group accessibility failure.
+        let ready_marker = fixture
+            .workspace
+            .directory()
+            .as_path()
+            .join(".m5-never-session-ready-ready");
+        for _ in 0..1_000 {
+            if ready_marker.exists() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert!(
+            ready_marker.exists(),
+            "never-SessionReady fixture never reached signal readiness"
+        );
         let progress = driver
             .authorize_and_begin_create(
                 &mut store,
@@ -6160,10 +6194,13 @@ mod tests {
                 store.ledger_event(event_id).unwrap().body,
                 society_kernel::EventBody::ProcessSignalReceiptRecorded {
                     action: observed,
+                    delivery: society_kernel::ProcessSignalDelivery::Delivered,
                     ..
                 } if observed == action
             ));
         }
+        drop(child);
+        drop(driver);
         fixture.cleanup();
     }
 
@@ -6175,7 +6212,7 @@ mod tests {
         ] {
             let fixture = NativeFixture::new(label);
             let mut store = KernelStore::open_in_memory().unwrap();
-            let office = found_office_start(&mut store, label);
+            let office = found_office_start(&mut store, &fixture, label);
             let start = OfficePiExecutionStart {
                 operation: PiExecutionOperationId::parse(format!("{label}-operation")).unwrap(),
                 operating_cycle_id: office.cycle_id,
@@ -6211,7 +6248,7 @@ mod tests {
     fn owned_descendant_requires_direct_reap_then_lingering_kill_then_later_absence() {
         let fixture = NativeFixture::new("m5-owned-descendant-after-ready");
         let mut store = KernelStore::open_in_memory().unwrap();
-        let office = found_office_start(&mut store, "m5-owned-descendant-after-ready");
+        let office = found_office_start(&mut store, &fixture, "m5-owned-descendant-after-ready");
         let operation = PiExecutionOperationId::parse("m5-owned-descendant").unwrap();
         let start = OfficePiExecutionStart {
             operation: operation.clone(),
@@ -6255,7 +6292,7 @@ mod tests {
     fn post_spawn_setup_failure_is_registered_then_contained_not_recorded_as_not_spawned() {
         let fixture = NativeFixture::new("m5-setup-fault-ignore-term");
         let mut store = KernelStore::open_in_memory().unwrap();
-        let office = found_office_start(&mut store, "m5-setup-fault-ignore-term");
+        let office = found_office_start(&mut store, &fixture, "m5-setup-fault-ignore-term");
         let start = OfficePiExecutionStart {
             operation: PiExecutionOperationId::parse("m5-setup-fault-ignore-term").unwrap(),
             operating_cycle_id: office.cycle_id,
@@ -6494,7 +6531,11 @@ mod tests {
         }
     }
 
-    fn found_office_start(store: &mut KernelStore, label: &str) -> OfficeStart {
+    fn found_office_start(
+        store: &mut KernelStore,
+        fixture: &NativeFixture,
+        label: &str,
+    ) -> OfficeStart {
         let bootstrap = PrincipalId::BOOTSTRAP;
         accepted(
             store,
@@ -6506,15 +6547,32 @@ mod tests {
                 name: SocietyName::parse("M5 office bridge").unwrap(),
             },
         );
+        let mission_source = b"office-bridge-fixture-mission";
+        let mission = office_bridge_application_mission();
+        assert_eq!(
+            mission.source_rendering_digest,
+            KernelDigest::of_bytes(mission_source)
+        );
+        let authority = ContentSealingAuthority::open(
+            ContentStoreRoot::parse(fixture.root.join("founding-mission-content")).unwrap(),
+            ContentSealLimit::new(4 * 1024 * 1024).unwrap(),
+        )
+        .unwrap();
+        let operation = ContentSealOperationId::parse(
+            format!("founding-source-{label}"),
+            mission.source_rendering_digest,
+        )
+        .unwrap();
+        authority
+            .seal_and_register(store, &operation, mission_source)
+            .unwrap();
         accepted(
             store,
             "found-founding-mission",
             bootstrap,
             Capability::InstallFoundingMission,
             ExpectedGeneration::NotApplicable,
-            CommandBody::InstallFoundingMission {
-                mission: office_bridge_application_mission(),
-            },
+            CommandBody::InstallFoundingMission { mission },
         );
         accepted(
             store,
@@ -6908,6 +6966,13 @@ mod tests {
     }
 
     struct NativeFixture {
+        /// Synthetic monotonic deadlines intentionally advance independently
+        /// of host scheduling. Serializing only these native-host fixture
+        /// lifetimes prevents unrelated Node startup/PGID churn in Rust's
+        /// parallel unit runner from changing a process-physics assertion.
+        /// Dedicated supervision integration tests remain the explicit
+        /// concurrency judge.
+        _process_physics_guard: MutexGuard<'static, ()>,
         root: PathBuf,
         workspace: NativeWorkspace,
         session: SessionIdentity,
@@ -6918,6 +6983,10 @@ mod tests {
 
     impl NativeFixture {
         fn new(label: &str) -> Self {
+            let process_physics_guard = PROCESS_PHYSICS_FIXTURE_GUARD
+                .get_or_init(|| Mutex::new(()))
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             let nonce = NEXT_TEMPORARY.fetch_add(1, Ordering::Relaxed);
             let root = std::env::temp_dir().join(format!(
                 "society-pi-execution-{label}-{}-{nonce}",
@@ -6993,6 +7062,7 @@ mod tests {
                 settings: settings(),
             };
             Self {
+                _process_physics_guard: process_physics_guard,
                 root,
                 workspace,
                 session: SessionIdentity::parse(format!("session-{label}-{nonce}")).unwrap(),

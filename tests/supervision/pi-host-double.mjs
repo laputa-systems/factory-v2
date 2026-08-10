@@ -39,6 +39,11 @@ if (sessionIdentity.includes("m5-never-session-ready-ignore-term")) {
 	// this exact TERM-escalation fixture exit before its SIGKILL deadline.
 	const keepAlive = setInterval(() => {}, 60_000);
 	process.once("exit", () => clearInterval(keepAlive));
+	// This is deliberately outside the JSONL protocol: the paired process
+	// regression has already crossed AdapterReady, but still needs a direct
+	// proof that the TERM handler and retained event-loop handle existed before
+	// it advances synthetic containment deadlines.
+	writeFileSync(".m5-never-session-ready-ready", "ready\n", { mode: 0o600 });
 }
 if (sessionIdentity.includes("m5-setup-fault-ignore-term")) {
 	// The post-spawn setup-failure regression closes stdin before it begins its

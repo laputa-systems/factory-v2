@@ -7,9 +7,6 @@
 //! provenance, retention, evaluator, or evidence fields: the resulting
 //! `ContentObject` is global byte identity only.
 
-#[cfg(test)]
-use std::cell::Cell;
-
 use society_content::{
     ContentDigest, ContentObjectStore, ContentSealDisposition, ContentSealLimit, ContentStoreError,
     ContentStoreRoot,
@@ -40,6 +37,21 @@ pub(crate) struct ContentSealOperationId {
 }
 
 impl ContentSealOperationId {
+    /// The fixed daemon-private operation namespace for one founding mission
+    /// source digest. Its 79-byte label is canonical ASCII and therefore
+    /// derives the same receipt/object command identities across retries.
+    pub(crate) fn mission_source(
+        expected_digest: Blake3Digest,
+    ) -> Result<Self, ContentSealOperationIdError> {
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        let mut label = String::from("mission-source-");
+        for byte in expected_digest.as_bytes() {
+            label.push(char::from(HEX[(byte >> 4) as usize]));
+            label.push(char::from(HEX[(byte & 0x0F) as usize]));
+        }
+        Self::parse(label, expected_digest)
+    }
+
     /// Constructs the identity from its closed label and expected byte digest.
     /// The generated command IDs are fixed v1 spellings, not caller-provided
     /// text, so their relation cannot drift across crash retries.
@@ -116,8 +128,6 @@ pub(crate) struct ContentObjectRegistration {
 pub(crate) struct ContentSealingAuthority {
     store: ContentObjectStore,
     limit: ContentSealLimit,
-    #[cfg(test)]
-    test_crash_seam: Cell<Option<ContentSealTestCrashSeam>>,
 }
 
 impl ContentSealingAuthority {
@@ -128,8 +138,6 @@ impl ContentSealingAuthority {
         Ok(Self {
             store: ContentObjectStore::open(root)?,
             limit,
-            #[cfg(test)]
-            test_crash_seam: Cell::new(None),
         })
     }
 
@@ -142,7 +150,21 @@ impl ContentSealingAuthority {
         operation: &ContentSealOperationId,
         bytes: &[u8],
     ) -> Result<ContentObjectRegistration, ContentSealingError> {
-        self.seal_and_register_inner(kernel, operation, bytes)
+        self.seal_and_register_inner(kernel, operation, bytes, None)
+    }
+
+    /// Deterministic resident-only crash seam used to prove that each durable
+    /// boundary fences a successor before it can continue content work. This
+    /// has no wire representation and callers cannot choose an arbitrary
+    /// location.
+    pub(crate) fn seal_and_register_with_crash_seam(
+        &self,
+        kernel: &mut KernelStore,
+        operation: &ContentSealOperationId,
+        bytes: &[u8],
+        crash_seam: Option<ContentSealCrashSeam>,
+    ) -> Result<ContentObjectRegistration, ContentSealingError> {
+        self.seal_and_register_inner(kernel, operation, bytes, crash_seam)
     }
 
     fn seal_and_register_inner(
@@ -150,6 +172,7 @@ impl ContentSealingAuthority {
         kernel: &mut KernelStore,
         operation: &ContentSealOperationId,
         bytes: &[u8],
+        crash_seam: Option<ContentSealCrashSeam>,
     ) -> Result<ContentObjectRegistration, ContentSealingError> {
         let supplied_digest = kernel_digest(ContentDigest::of_bytes(bytes));
         if supplied_digest != operation.expected_digest() {
@@ -161,8 +184,7 @@ impl ContentSealingAuthority {
         if digest != operation.expected_digest() {
             return Err(ContentSealingError::PhysicalDigestMismatch);
         }
-        #[cfg(test)]
-        if self.take_test_crash(ContentSealTestCrashSeam::AfterPhysicalSeal) {
+        if crash_seam == Some(ContentSealCrashSeam::PhysicalSealComplete) {
             return Err(ContentSealingError::TestCrashAfterPhysicalSeal);
         }
 
@@ -185,6 +207,7 @@ impl ContentSealingAuthority {
                     digest,
                     physical.disposition,
                     content_seal_receipt_id,
+                    crash_seam,
                 );
             }
             ContentIdentityState::Absent => {}
@@ -196,8 +219,7 @@ impl ContentSealingAuthority {
             Capability::RecordContentSealReceipt,
             CommandBody::RecordContentSealReceipt { digest },
         )?;
-        #[cfg(test)]
-        if self.take_test_crash(ContentSealTestCrashSeam::AfterReceiptCommand) {
+        if crash_seam == Some(ContentSealCrashSeam::ReceiptRecorded) {
             return Err(ContentSealingError::TestCrashAfterReceiptCommand);
         }
 
@@ -217,6 +239,7 @@ impl ContentSealingAuthority {
                 digest,
                 physical.disposition,
                 content_seal_receipt_id,
+                crash_seam,
             ),
             ContentIdentityState::Absent => Err(ContentSealingError::ReceiptNotMaterialized),
         }
@@ -229,6 +252,7 @@ impl ContentSealingAuthority {
         digest: Blake3Digest,
         physical_disposition: ContentSealDisposition,
         content_seal_receipt_id: society_kernel::ContentSealReceiptId,
+        crash_seam: Option<ContentSealCrashSeam>,
     ) -> Result<ContentObjectRegistration, ContentSealingError> {
         execute_kernel_service_command(
             kernel,
@@ -238,6 +262,9 @@ impl ContentSealingAuthority {
                 content_seal_receipt_id,
             },
         )?;
+        if crash_seam == Some(ContentSealCrashSeam::ObjectRegistered) {
+            return Err(ContentSealingError::TestCrashAfterObjectRegistration);
+        }
         match kernel.content_identity_state(digest)? {
             ContentIdentityState::Registered {
                 content_object_id, ..
@@ -258,22 +285,9 @@ impl ContentSealingAuthority {
         kernel: &mut KernelStore,
         operation: &ContentSealOperationId,
         bytes: &[u8],
-        seam: ContentSealTestCrashSeam,
+        seam: ContentSealCrashSeam,
     ) -> Result<ContentObjectRegistration, ContentSealingError> {
-        self.test_crash_seam.set(Some(seam));
-        let result = self.seal_and_register_inner(kernel, operation, bytes);
-        self.test_crash_seam.set(None);
-        result
-    }
-
-    #[cfg(test)]
-    fn take_test_crash(&self, expected: ContentSealTestCrashSeam) -> bool {
-        if self.test_crash_seam.get() == Some(expected) {
-            self.test_crash_seam.set(None);
-            true
-        } else {
-            false
-        }
+        self.seal_and_register_inner(kernel, operation, bytes, Some(seam))
     }
 }
 
@@ -309,11 +323,11 @@ fn execute_kernel_service_command(
     }
 }
 
-#[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ContentSealTestCrashSeam {
-    AfterPhysicalSeal,
-    AfterReceiptCommand,
+pub(crate) enum ContentSealCrashSeam {
+    PhysicalSealComplete,
+    ReceiptRecorded,
+    ObjectRegistered,
 }
 
 #[derive(Debug, Error)]
@@ -339,12 +353,12 @@ pub(crate) enum ContentSealingError {
     ContentObjectNotMaterialized,
     #[error("daemon restart recovery is fenced before content sealing can resume")]
     RecoveryFenced,
-    #[cfg(test)]
     #[error("test crash seam after the physical content seal")]
     TestCrashAfterPhysicalSeal,
-    #[cfg(test)]
     #[error("test crash seam after the receipt command")]
     TestCrashAfterReceiptCommand,
+    #[error("test crash seam after content object registration")]
+    TestCrashAfterObjectRegistration,
 }
 
 #[cfg(test)]
@@ -651,7 +665,7 @@ mod tests {
                 &mut kernel,
                 &operation,
                 bytes,
-                ContentSealTestCrashSeam::AfterPhysicalSeal,
+                ContentSealCrashSeam::PhysicalSealComplete,
             ),
             Err(ContentSealingError::TestCrashAfterPhysicalSeal)
         ));
@@ -684,7 +698,7 @@ mod tests {
                 &mut kernel,
                 &operation,
                 bytes,
-                ContentSealTestCrashSeam::AfterReceiptCommand,
+                ContentSealCrashSeam::ReceiptRecorded,
             ),
             Err(ContentSealingError::TestCrashAfterReceiptCommand)
         ));
@@ -694,6 +708,39 @@ mod tests {
                 .content_identity_state(Blake3Digest::of_bytes(bytes))
                 .unwrap(),
             ContentIdentityState::SealReceiptOnly { .. }
+        ));
+
+        let retry = authority
+            .seal_and_register(&mut kernel, &operation, bytes)
+            .unwrap();
+        assert_eq!(retry.content_object_id, ContentObjectId::new(1).unwrap());
+        assert_eq!(kernel.command_count().unwrap(), 2);
+        drop(kernel);
+        drop(authority);
+        fs::remove_dir_all(parent).unwrap();
+    }
+
+    #[test]
+    fn retry_after_object_registration_crash_reuses_the_one_global_object() {
+        let (authority, mut kernel, parent) = harness("object-crash", limit());
+        let bytes = b"crash after object registration";
+        let operation = operation("object-crash", bytes);
+
+        assert!(matches!(
+            authority.seal_and_register_after_test_crash(
+                &mut kernel,
+                &operation,
+                bytes,
+                ContentSealCrashSeam::ObjectRegistered,
+            ),
+            Err(ContentSealingError::TestCrashAfterObjectRegistration)
+        ));
+        assert_eq!(kernel.command_count().unwrap(), 2);
+        assert!(matches!(
+            kernel
+                .content_identity_state(Blake3Digest::of_bytes(bytes))
+                .unwrap(),
+            ContentIdentityState::Registered { .. }
         ));
 
         let retry = authority

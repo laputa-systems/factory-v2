@@ -35,5 +35,7 @@ and dependency boundary are [`ARCHITECTURE.md`](ARCHITECTURE.md),
 [`DEPENDENCIES.md`](DEPENDENCIES.md). The root documents define only the
 generic authority. `society-xsh-contract` now owns the concrete XSH mission and
 alignment inputs, but this workspace cannot admit them or assign their durable
-revision identity. Sealed mission-source and authorized product-output
-bindings remain open.
+revision identity. The daemon-private sealed mission-source binding is
+implemented; authorized product-output binding remains open. The source binding
+is byte custody only, not provenance, semantic admission, or an end-to-end XSH
+execution claim.

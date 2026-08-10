@@ -64,7 +64,7 @@ const CURRENT_SCHEMA: &str = include_str!("../../../migrations/0001_kernel.sql")
 // Historical prototype schemas used versions one through ten. The collapsed
 // fresh schema deliberately occupies a noncolliding identity, so an old
 // ledger cannot be mistaken for current trusted physics.
-const CURRENT_SCHEMA_VERSION: i64 = 12;
+const CURRENT_SCHEMA_VERSION: i64 = 13;
 
 struct PiChildSpawnAdmissionInput<'a> {
     operating_cycle_id: OperatingCycleId,
@@ -398,6 +398,18 @@ pub enum ContentIdentityState {
     },
 }
 
+/// The only outcomes of a side-effect-free founding-mission preflight.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InstallFoundingMissionPreflight {
+    /// A new request may proceed to physical sealing and object registration.
+    Ready,
+    /// The command already has a durable result; no physical seal is needed.
+    ExistingReceipt(CommandReceipt),
+    /// The daemon must call `execute` with its original request so the
+    /// rejection and typed body become durable operational history.
+    RejectionRequiresExecution(Rejection),
+}
+
 #[derive(Debug, Error)]
 pub enum StoreError {
     #[error(transparent)]
@@ -579,7 +591,21 @@ impl KernelStore {
             ],
         )?;
         let command_row_id = transaction.last_insert_rowid();
-        insert_command_body(&transaction, command_row_id, &request.body)?;
+        // Rejections also retain their exact typed request. A missing source
+        // binding is therefore represented as NULL in that command material;
+        // accepted installations must carry the resolved object below.
+        let source_content_object_id = match &request.body {
+            CommandBody::InstallFoundingMission { mission } => {
+                mission_source_content_object_id(&transaction, mission.source_rendering_digest).ok()
+            }
+            _ => None,
+        };
+        insert_command_body(
+            &transaction,
+            command_row_id,
+            &request.body,
+            source_content_object_id,
+        )?;
 
         transaction.execute_batch("SAVEPOINT apply_command")?;
         let transition = apply_command(&transaction, command_row_id, &request);
@@ -619,11 +645,75 @@ impl KernelStore {
         Ok(receipt)
     }
 
+    /// Checks whether a founding mission command may proceed to physical
+    /// source sealing. This never records a command or consumes a capability.
+    /// A fresh predicted rejection is deliberately returned separately so the
+    /// daemon can call `execute` and preserve rejected-command history.
+    pub fn preflight_install_founding_mission(
+        &self,
+        request: &CommandRequest,
+    ) -> Result<InstallFoundingMissionPreflight, StoreError> {
+        let fingerprint = request_fingerprint(request);
+        if let Some((stored_fingerprint, status, event_id, rejection)) = self
+            .connection
+            .query_row(
+                "SELECT request_fingerprint, command_status, accepted_event_id, rejection_code
+                   FROM commands WHERE command_id = ?1",
+                [request.command_id.as_str()],
+                |row| {
+                    Ok((
+                        row.get::<_, Vec<u8>>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, Option<i64>>(2)?,
+                        row.get::<_, Option<i64>>(3)?,
+                    ))
+                },
+            )
+            .optional()?
+        {
+            if stored_fingerprint.as_slice() != fingerprint.as_bytes() {
+                return Err(StoreError::IdempotencyConflict);
+            }
+            let receipt = match status {
+                1 => CommandReceipt {
+                    disposition: CommandDisposition::Accepted(
+                        EventId::try_from(event_id.ok_or(StoreError::LedgerCorruption(
+                            "accepted command has no event",
+                        ))?)
+                        .map_err(|_| StoreError::InvalidStoredValue)?,
+                    ),
+                    idempotent: true,
+                },
+                2 => CommandReceipt {
+                    disposition: CommandDisposition::Rejected(rejection_from_i64(
+                        rejection.ok_or(StoreError::LedgerCorruption(
+                            "rejected command has no rejection code",
+                        ))?,
+                    )?),
+                    idempotent: true,
+                },
+                _ => return Err(StoreError::LedgerCorruption("unknown command status")),
+            };
+            return Ok(InstallFoundingMissionPreflight::ExistingReceipt(receipt));
+        }
+
+        let transaction = self.connection.unchecked_transaction()?;
+        let result = preflight_founding_mission_request(&transaction, request)?;
+        drop(transaction);
+        Ok(match result {
+            Ok(()) => InstallFoundingMissionPreflight::Ready,
+            Err(rejection) => {
+                InstallFoundingMissionPreflight::RejectionRequiresExecution(rejection)
+            }
+        })
+    }
+
     /// Validates and decodes the append-only event ledger through its named
     /// bodies and stored fingerprints. `validate_replayed_materialized_state`
     /// performs the separate fresh-state reconstruction and comparison.
     pub fn replay_ledger(&self) -> Result<Vec<LedgerEvent>, StoreError> {
         verify_command_bodies(&self.connection)?;
+        verify_application_mission_source_bindings(&self.connection)?;
         verify_graph_revision_bodies(&self.connection)?;
         let mut statement = self.connection.prepare(
             "SELECT e.event_id, c.command_id, e.event_kind, e.event_sequence
@@ -864,6 +954,69 @@ impl KernelStore {
         })
         .transpose()
     }
+}
+
+fn preflight_founding_mission_request(
+    transaction: &Transaction<'_>,
+    request: &CommandRequest,
+) -> Result<Result<(), Rejection>, StoreError> {
+    let CommandBody::InstallFoundingMission { .. } = &request.body else {
+        return Ok(Err(Rejection::CapabilityMismatch));
+    };
+    if request.capability != Capability::InstallFoundingMission {
+        return Ok(Err(Rejection::CapabilityMismatch));
+    }
+    if request.expected_generation != ExpectedGeneration::NotApplicable {
+        return Ok(Err(Rejection::InvalidExpectedGeneration));
+    }
+    let (grant_id, office_occupancy_id, actor_instance_id) = match capability_grant(
+        transaction,
+        request.principal_id,
+        request.capability,
+        request.capability_grant_id,
+    )? {
+        Some(CapabilityGrantLookup::Active {
+            grant_id,
+            office_occupancy_id,
+            actor_instance_id,
+        }) => (grant_id, office_occupancy_id, actor_instance_id),
+        Some(CapabilityGrantLookup::Inactive) => {
+            return Ok(Err(Rejection::CapabilityNoLongerActive));
+        }
+        None => return Ok(Err(Rejection::CapabilityNotGranted)),
+    };
+    if request.principal_id != PrincipalId::BOOTSTRAP && request.principal_id != PrincipalId::KERNEL
+    {
+        let active = match (office_occupancy_id, actor_instance_id) {
+            (Some(_), None) => grant_has_active_occupancy(transaction, grant_id)?,
+            (None, Some(_)) => grant_has_active_actor_instance(transaction, grant_id)?,
+            _ => false,
+        };
+        if !active {
+            return Ok(Err(Rejection::CapabilityNoLongerActive));
+        }
+        let target_occupancy_id = match command_target_occupancy(transaction, &request.body) {
+            Ok(target_occupancy_id) => target_occupancy_id,
+            Err(rejection) => return Ok(Err(rejection)),
+        };
+        if let Some(target_occupancy_id) = target_occupancy_id
+            && office_occupancy_id != Some(target_occupancy_id)
+        {
+            return Ok(Err(Rejection::CapabilityNoLongerActive));
+        }
+    }
+    if qualification_treatment_fences_request(transaction, request.principal_id, &request.body)? {
+        return Ok(Err(Rejection::QualificationTreatmentRestricted));
+    }
+    let has_founding_mission = exists(
+        transaction,
+        "SELECT 1 FROM founding_missions WHERE society_id = (SELECT society_id FROM societies LIMIT 1)",
+    )
+    .map_err(|_| StoreError::LedgerCorruption("cannot read founding mission preflight"))?;
+    if only_society_id(transaction).is_err() || has_founding_mission {
+        return Ok(Err(Rejection::FoundingInvariant));
+    }
+    Ok(Ok(()))
 }
 
 /// `PiSdkQualificationV1` is a bootstrap-only native lab treatment. It has
@@ -2409,6 +2562,8 @@ fn install_founding_mission(
     )? {
         return Err(Rejection::FoundingInvariant);
     }
+    let source_content_object_id =
+        mission_source_content_object_id(transaction, mission.source_rendering_digest)?;
     transaction
         .execute(
             "INSERT INTO applications(application_identity, application_name, created_by_command_id)
@@ -2425,13 +2580,14 @@ fn install_founding_mission(
         .execute(
             "INSERT INTO application_revisions(
                  application_id, revision_ordinal, mission_statement,
-                 source_rendering_digest, installed_by_command_id
-             ) VALUES (?1, ?2, ?3, ?4, ?5)",
+                 source_rendering_digest, source_content_object_id, installed_by_command_id
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 application_id.value(),
                 mission.revision_ordinal.value(),
                 mission.statement.as_str(),
                 mission.source_rendering_digest.as_bytes().as_slice(),
+                source_content_object_id.value(),
                 command_row_id,
             ],
         )
@@ -7406,6 +7562,30 @@ fn record_content_seal_receipt(
     })
 }
 
+/// Resolves the one globally registered object which attests the exact bytes
+/// named by a founding mission rendering. The digest is never a substitute for
+/// this physical-seal admission: both the receipt and its one `ContentObject`
+/// must exist, and their joined digest must agree exactly.
+fn mission_source_content_object_id(
+    transaction: &Transaction<'_>,
+    digest: Blake3Digest,
+) -> Result<ContentObjectId, Rejection> {
+    let object = transaction
+        .query_row(
+            "SELECT object.content_object_id
+               FROM content_seal_receipts AS receipt
+               JOIN content_objects AS object
+                 ON object.content_seal_receipt_id = receipt.content_seal_receipt_id
+              WHERE receipt.digest = ?1",
+            [digest.as_bytes().as_slice()],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .map_err(|_| Rejection::MissionSourceContentNotSealed)?
+        .ok_or(Rejection::MissionSourceContentNotSealed)?;
+    ContentObjectId::try_from(object).map_err(|_| Rejection::MissionSourceContentNotSealed)
+}
+
 fn register_content_object(
     transaction: &Transaction<'_>,
     command_row_id: i64,
@@ -11529,6 +11709,7 @@ fn insert_command_body(
     transaction: &Transaction<'_>,
     command_row_id: i64,
     body: &CommandBody,
+    source_content_object_id: Option<ContentObjectId>,
 ) -> Result<(), StoreError> {
     match body {
         CommandBody::CreateSocietyIdentity { name } => {
@@ -11559,8 +11740,9 @@ fn insert_command_body(
             transaction.execute(
                 "INSERT INTO command_install_founding_mission(
                      command_row_id, application_identity, application_name,
-                     revision_ordinal, mission_statement, source_rendering_digest
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                     revision_ordinal, mission_statement, source_rendering_digest,
+                     source_content_object_id
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 params![
                     command_row_id,
                     mission.application_identity.as_str(),
@@ -11568,6 +11750,7 @@ fn insert_command_body(
                     mission.revision_ordinal.value(),
                     mission.statement.as_str(),
                     mission.source_rendering_digest.as_bytes().as_slice(),
+                    source_content_object_id.map(ContentObjectId::value),
                 ],
             )?;
             for (index, principle) in mission.principles.as_slice().iter().enumerate() {
@@ -14930,6 +15113,24 @@ fn verify_command_body(connection: &Connection, command_row_id: i64) -> Result<(
         },
         body: decode_command_body(connection, command_row_id, kind)?,
     };
+    if kind == CommandKind::InstallFoundingMission && status == 1 {
+        let (digest, source_content_object_id): (Vec<u8>, Option<i64>) = connection.query_row(
+            "SELECT source_rendering_digest, source_content_object_id
+                   FROM command_install_founding_mission WHERE command_row_id = ?1",
+            [command_row_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        let source_content_object_id =
+            source_content_object_id.ok_or(StoreError::LedgerCorruption(
+                "accepted founding mission command has no source content object",
+            ))?;
+        verify_mission_source_binding(
+            connection,
+            &digest,
+            ContentObjectId::try_from(source_content_object_id)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+        )?;
+    }
     if request.body.kind() != kind {
         return Err(StoreError::LedgerCorruption(
             "command body does not match command kind",
@@ -14964,6 +15165,54 @@ fn verify_command_body(connection: &Connection, command_row_id: i64) -> Result<(
                 "command receipt and event relation disagree",
             ));
         }
+    }
+    Ok(())
+}
+
+/// Proves that an object identifier still joins through its one receipt to the
+/// exact stored rendering digest. Foreign keys alone cannot express this
+/// cross-table byte-identity invariant.
+fn verify_mission_source_binding(
+    connection: &Connection,
+    digest: &[u8],
+    source_content_object_id: ContentObjectId,
+) -> Result<(), StoreError> {
+    let matches: bool = connection.query_row(
+        "SELECT EXISTS(
+             SELECT 1
+               FROM content_objects AS object
+               JOIN content_seal_receipts AS receipt
+                 ON receipt.content_seal_receipt_id = object.content_seal_receipt_id
+              WHERE object.content_object_id = ?1 AND receipt.digest = ?2
+         )",
+        params![source_content_object_id.value(), digest],
+        |row| row.get(0),
+    )?;
+    if matches {
+        Ok(())
+    } else {
+        Err(StoreError::LedgerCorruption(
+            "mission source content object does not match rendering digest",
+        ))
+    }
+}
+
+fn verify_application_mission_source_bindings(connection: &Connection) -> Result<(), StoreError> {
+    let mut statement = connection.prepare(
+        "SELECT source_rendering_digest, source_content_object_id
+           FROM application_revisions ORDER BY application_revision_id",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, i64>(1)?))
+    })?;
+    for row in rows {
+        let (digest, source_content_object_id) = row?;
+        verify_mission_source_binding(
+            connection,
+            &digest,
+            ContentObjectId::try_from(source_content_object_id)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+        )?;
     }
     Ok(())
 }
@@ -16650,10 +16899,10 @@ fn decode_application_mission_input(
     connection: &Connection,
     command_row_id: i64,
 ) -> Result<ApplicationMissionInput, StoreError> {
-    let (identity, name, ordinal, statement, rendering_digest) = connection
+    let (identity, name, ordinal, statement, rendering_digest, source_object_id) = connection
         .query_row(
             "SELECT application_identity, application_name, revision_ordinal,
-                    mission_statement, source_rendering_digest
+                    mission_statement, source_rendering_digest, source_content_object_id
              FROM command_install_founding_mission WHERE command_row_id = ?1",
             [command_row_id],
             |row| {
@@ -16663,6 +16912,7 @@ fn decode_application_mission_input(
                     row.get::<_, i64>(2)?,
                     row.get::<_, String>(3)?,
                     row.get::<_, Vec<u8>>(4)?,
+                    row.get::<_, Option<i64>>(5)?,
                 ))
             },
         )
@@ -16670,6 +16920,14 @@ fn decode_application_mission_input(
         .ok_or(StoreError::LedgerCorruption(
             "missing founding mission command body",
         ))?;
+    if let Some(source_object_id) = source_object_id {
+        verify_mission_source_binding(
+            connection,
+            &rendering_digest,
+            ContentObjectId::try_from(source_object_id)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+        )?;
+    }
     let mut statement_rows = connection.prepare(
         "SELECT principle_ordinal, principle_kind, principle_text
          FROM command_install_founding_mission_principles

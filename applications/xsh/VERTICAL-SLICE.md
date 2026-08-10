@@ -89,6 +89,30 @@ and the active `TheGrandArchitect` office contract. This rendering is also the
 first durable prompt component of the Grand Architect's persistent Office
 session; Office identity does not exempt its occupant from the Universe Seed.
 
+### Implemented founding-source custody foundation
+
+`society-xsh-contract::founding_mission_v1()` returns the typed
+`ApplicationMissionInput`, while
+`society-xsh-contract::universe_seed_v1_rendering()` returns the same
+revision's canonical bounded `MissionSourceRendering`. Its contract test proves
+those bytes digest exactly to `source_rendering_digest`. The application
+package imports neither `societyd` nor `societyctl` and knows no
+`ContentObjectId`.
+
+Before the generic `InstallFoundingMission` command can install this input, the
+resident's daemon-private path checks the bytes against that digest,
+side-effect-free preflights the outer command, physically seals them, records
+the kernel seal receipt and global content object, and lets the kernel bind
+that already-registered object to the mission. The supervisor carries
+`MissionSourceRendering` only beside that mission command; it has neither
+generic content mutation nor content-writer authority. Deterministic internal
+operation identities make the content primitive retry-stable while the daemon
+authority is retained; they do not resume a failed supervisor handler. The
+request ends on handler failure, and after a nonempty restart the daemon is
+`RecoveryFenced`, not a source-recovery engine. This is only byte custody: it
+does not admit evidence, establish provenance or semantic meaning, or make the
+planned VS-001 end-to-end execution real.
+
 The bootstrap transaction creates exactly one active seed, installs exactly
 one Grand Architect Office and actor occupant, and records
 `ActorModelPolicyV1` and the society hard cost ceiling of
@@ -3057,7 +3081,7 @@ An enclosing milestone remains open until its exit judge passes.
 | `748fec0` | provider-free native Pi-host process physics: private fresh workspaces, verified artifacts, inert process-group spawn, nonblocking and deadline-bounded control/handshake streams, pending-create cancellation fences, honest logical-versus-physical transient byte receipts, typed TERM/KILL race outcomes, escalation, direct-child reap, and Drop containment across 20 process tests, five library tests, and one exact built-host `CreateSession` to `Dispose` smoke | resident daemon ownership and durable child/session/signal/reap rows; content sealing; budget reservation, charge, and cancellation transactions; restart recovery; package import/qualification proof; detached-descendant containment; and Milestone 4 as a whole |
 | `7931d32` | isolated local product mechanics: clean exact-ref qualification, immutable candidate-tree capture, binary patch/path binding, opaque anti-recombination receipts, fresh materialization, bounded trusted-Git validation, externally supervised XSH/Xsht receipt seam, controlled no-hook commit, guarded CAS delivery, explicit checkout-recovery fence, and no-follow cleanup ownership across 22 provider-free tests | kernel C2/delivery authority, SQLite persistence/idempotency, daemon workspace/process custody, authentic validation/process evidence, content sealing, budgets/cancellation, outcome scheduling, remote delivery, and Milestone 6 as a whole |
 | `71ad51e` | normalized deterministic content/evidence foundation: global digest identity is separated from run-specific manifest producer/schema/retention, evaluator/input revisions and evaluation receipts are exact, evidence admission preserves semantic role/applicability/limitations, two experiments may reuse identical output bytes without merging provenance, and all command/event bodies, material replay, migration rollback, and resident rejection/treatment wire values are closed across 30 kernel and 11 daemon integration tests | physical content-store invocation, evaluator execution and artifact authentication, parsed observation persistence, Pi/process receipts, curation/graph conversion, daemon command integration, influence/disclosure/propagation, and Milestone 1 as a whole |
-| `64a5977` | root-workspace physical content integration: the resident daemon exclusively owns the physical store, seals exact bytes before issuing the existing receipt and global-object commands, resumes the closed `Absent`/`SealReceiptOnly`/`Registered` split within one live authority using retry-stable command identities, rejects tamper/symlink/limit and changed-byte recombination, and exposes no public or supervisor content mutation tag across 14 daemon integration tests plus the nine physical-store tests | post-process restart completion or reconciliation (restart remains `RecoveryFenced`); evaluator execution or artifact authentication; media/schema, producer, retention, provenance, evidence, graph, or influence meaning; durable child/process integration; and Milestone 1 as a whole |
+| `64a5977` | root-workspace physical content integration: the resident daemon exclusively owns the physical store, seals exact bytes before issuing the existing receipt and global-object commands, and uses retry-stable command identities in the private content primitive's `Absent`/`SealReceiptOnly`/`Registered` split-state evidence; it rejects tamper/symlink/limit and changed-byte recombination, and exposes no public or supervisor content mutation tag across 14 daemon integration tests plus the nine physical-store tests | post-process restart completion or reconciliation (restart remains `RecoveryFenced`); evaluator execution or artifact authentication; media/schema, producer, retention, provenance, evidence, graph, or influence meaning; durable child/process integration; and Milestone 1 as a whole |
 | `6e2931e` | durable native Pi-child and cancellation authority foundation: one restart-fenced supervisor epoch; exact pre-spawn owner/budget/profile/generation/workspace/session admission; separately recorded inert spawn, `AdapterReady`, final Create authorization and delivery, and `SessionReady`; live-child Office gates; typed four-direction stream seals; append-only liveness, Pi Abort, TERM/KILL, direct reap, recovery-containment, finalization, admitted-not-spawned, and frozen cancellation-target receipts; closed migration/body/rejection-wire/replay contracts across 42 kernel tests | resident `PiSupervisor`-to-kernel driver; actual stream/transcript sealing; Prompt/FollowUp/Steer and semantic settlement; provider cost charging; elapsed-time/deadline proof; workspace disposal; native SDK qualification; post-restart containment orchestration and successor policy; deterministic evaluator children; and Milestone 5 as a whole |
 | `8e4bf4e` | daemon-private same-lifetime Office bridge from native `PiSupervisor` physics to M5 receipts: exact Office-kind preflight; pre-spawn admission; immediate PID/PGID registration; ordered `AdapterReady`/final Create authorization/complete physical delivery/`SessionReady` and repeated live-child Office gates; provider-free `Dispose`; direct-reap-before-lingering-kill ordering; content sealing of logical admitted control and physical stdin/stdout/stderr; finalization; typed recovery-fenced custody when registration fails after `exec`; and generic boundary-error containment across ten bridge tests, 23 process tests, 48 host tests, and one exact built-host no-Prompt smoke | resident scheduler/control-loop call site; Prompt/FollowUp/Steer and turn/Attempt settlement; cancellation-propagation/Abort driver; usage, cost, transcript-file, and workspace reconciliation; post-restart child recovery; dynamic Pi import-graph proof and native qualification; task/evaluator children; and Milestone 5 as a whole |
 | `c329798` | fresh-only canonical SQLite schema plus deterministic Pi Office-turn authority: exact prompt content/correlation/current-ledger-head authorization, separate KERNEL-service delivery and accepted-result attestations, a session-wide protocol-sequence watermark, closed Known cumulative-usage snapshots and typed Unknown/Unavailable accounting failures, terminal finality, incremental charging of the single existing Office-session parent reservation, cancellation/live-child/generation fences, and atomic `Completed`/`ObservedStop` return to Office `Ready`; replay, raw collision, idempotency, accounting, and material-tamper controls pass across 41 kernel integration tests | resident Prompt transport and peer-observation projection; disclosure-frontier policy enforcement; FollowUp/Steer; semantic submission; settlement of non-ready terminal outcomes; live/paid profile admission; and Milestone 5 or VS-001 as a whole |
@@ -3077,9 +3101,10 @@ and narrow evidence admissions are typed trusted-kernel attestations. The
 daemon now invokes its private physical store before recording the narrow seal
 receipt and global object identity, but does not invoke an evaluator,
 authenticate evaluator artifacts, persist parsed observations, or turn an
-admission into graph truth. Its two split-transition retry seams are
-same-lifetime evidence only: a restarted nonempty daemon remains
-`RecoveryFenced` and cannot complete a half-recorded content operation.
+admission into graph truth. Its private content primitive has two
+split-transition retry seams while the authority remains live; that is not
+proof that a failed supervisor handler continues. A restarted nonempty daemon
+remains `RecoveryFenced` and cannot complete a half-recorded content operation.
 Curation, delivery, notices/outbox, resident scheduler integration for the
 private process bridge, native qualification, recovery orchestration, and the
 full graph vocabulary are still open.

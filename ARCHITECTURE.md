@@ -17,7 +17,7 @@ change is desirable.
 The intended dependency direction is one-way:
 
 ```text
-applications/<product>  ->  generic Rust crates and public daemon protocol
+applications/<product>  ->  generic public Rust crates
 generic Rust crates     -X-> applications/<product>
 ```
 
@@ -54,10 +54,22 @@ purpose; north-star alignment tests a particular proposed action. Neither is a
 second authority and neither is an extensible document-shaped field.
 
 The current fresh schema normalizes this mission and requires every Project to
-persist the exact four-field alignment against its founding-mission revision. Its source
-rendering field is presently a declared BLAKE3 byte identity, not a content
-seal or provenance claim. Binding that rendering to a daemon-sealed
-`ContentObjectId` remains the intended stronger boundary.
+persist the exact four-field alignment against its founding-mission revision.
+The application returns bounded `MissionSourceRendering` bytes separately from
+its digest-only `ApplicationMissionInput`; it does not know a `ContentObjectId`.
+Before founding installation, the resident's private source path checks the
+bytes against that digest, preflights the outer command without mutation,
+physically seals them, records the existing seal receipt and global object,
+then issues `InstallFoundingMission`. The kernel atomically resolves the digest
+to that registered object and persists the derived private binding. Its
+deterministic internal operation identities make the content primitive
+retry-stable while that authority is retained; they do not prove a supervisor
+request can continue after handler failure. A handler failure ends the request,
+and a nonempty restart is `RecoveryFenced` rather than source-operation
+recovery. The supervisor carries `MissionSourceRendering` only with that
+mission command; no public or supervisor generic content mutation or
+content-writer authority exists. This establishes byte identity and custody only, not producer
+provenance, semantic/evidence admission, or a complete application execution.
 
 ## Trusted substrate
 
