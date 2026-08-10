@@ -11,6 +11,8 @@ use std::{collections::BTreeSet, fmt, path::Path};
 use miniserde::json::{Array, Number, Object, Value};
 use thiserror::Error;
 
+use crate::forum::ForumSessionContractV1;
+
 pub const ADAPTER_PROTOCOL_VERSION: &str = "society-pi-host/v4";
 pub const ADAPTER_VERSION: &str = "1";
 pub const PINNED_PI_SDK_VERSION: &str = "0.83.0";
@@ -528,6 +530,7 @@ pub struct CreateSessionPayload {
     pub model_catalog: ModelCatalogPolicyV1,
     pub tool_profile: ToolProfile,
     pub settings: ActorModelPolicyV1,
+    pub forum_contract: ForumSessionContractV1,
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PromptPayload {
@@ -647,6 +650,7 @@ pub struct EffectiveSessionConfiguration {
     pub tool_profile: ToolProfile,
     pub tools: Vec<PiToolName>,
     pub settings: ActorModelPolicyV1,
+    pub forum_contract: ForumSessionContractV1,
 }
 impl EffectiveSessionConfiguration {
     /// Rejects any configuration that does not use the current pinned Pi SDK
@@ -654,6 +658,7 @@ impl EffectiveSessionConfiguration {
     pub fn assert_pinned(&self) -> Result<(), ProtocolError> {
         self.model_catalog.assert_pinned()?;
         self.settings.assert_pinned()?;
+        self.forum_contract.assert_pinned()?;
         if self.model.provider != Provider::OpenRouter
             || self.model.model_id != ModelId::DeepseekV4Flash0731
             || self.model.thinking_level != ThinkingLevel::High
@@ -1169,6 +1174,9 @@ pub enum TranscriptFlushReceiptV1 {
         session_file: AbsolutePath,
     },
 }
+// SessionReady deliberately carries the complete typed effective profile in
+// one boundary event; boxing it would make the public event shape less direct.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug)]
 pub enum OutboundEvent {
     AdapterReady {
@@ -1392,7 +1400,41 @@ fn encode_create_session(payload: &CreateSessionPayload) -> Value {
         "modelCatalog" => encode_model_catalog(&payload.model_catalog),
         "toolProfile" => json_string(tool_profile_wire(payload.tool_profile)),
         "settings" => encode_settings(&payload.settings),
+        "forumContract" => encode_forum_session_contract(&payload.forum_contract),
     )
+}
+fn encode_forum_session_contract(value: &ForumSessionContractV1) -> Value {
+    match value {
+        ForumSessionContractV1::ForumEnabledV1 {
+            awareness_blake3,
+            tool_contract_blake3,
+        } => json_object!(
+            "kind" => json_string("forum_enabled_v1"),
+            "awarenessBlake3" => json_string(awareness_blake3.as_str()),
+            "toolContractBlake3" => json_string(tool_contract_blake3.as_str()),
+        ),
+        ForumSessionContractV1::SequesteredV1 => {
+            json_object!("kind" => json_string("sequestered_v1"))
+        }
+    }
+}
+fn decode_forum_session_contract(value: &Object) -> Result<ForumSessionContractV1, ProtocolError> {
+    match string(value, "kind")? {
+        "forum_enabled_v1" => {
+            exact_keys(value, &["kind", "awarenessBlake3", "toolContractBlake3"])?;
+            let contract = ForumSessionContractV1::ForumEnabledV1 {
+                awareness_blake3: Blake3Digest::parse(string(value, "awarenessBlake3")?)?,
+                tool_contract_blake3: Blake3Digest::parse(string(value, "toolContractBlake3")?)?,
+            };
+            contract.assert_pinned()?;
+            Ok(contract)
+        }
+        "sequestered_v1" => {
+            exact_keys(value, &["kind"])?;
+            Ok(ForumSessionContractV1::SequesteredV1)
+        }
+        _ => Err(ProtocolError::InvalidFrame("Forum session contract")),
+    }
 }
 fn encode_model_selection(value: &ModelSelection) -> Value {
     json_object!("provider" => json_string(provider_wire(value.provider)), "modelId" => json_string(model_id_wire(value.model_id)), "thinkingLevel" => json_string(thinking_level_wire(value.thinking_level)))
@@ -1743,6 +1785,7 @@ fn decode_create_session(value: &Object) -> Result<CreateSessionPayload, Protoco
             "modelCatalog",
             "toolProfile",
             "settings",
+            "forumContract",
         ],
     )?;
     let model = object(required(value, "model")?)?;
@@ -1770,9 +1813,11 @@ fn decode_create_session(value: &Object) -> Result<CreateSessionPayload, Protoco
         model_catalog: decode_model_catalog(object(required(value, "modelCatalog")?)?)?,
         tool_profile: tool_profile(string(value, "toolProfile")?)?,
         settings: decode_settings(object(required(value, "settings")?)?)?,
+        forum_contract: decode_forum_session_contract(object(required(value, "forumContract")?)?)?,
     };
     decoded.model_catalog.assert_pinned()?;
     decoded.settings.assert_pinned()?;
+    decoded.forum_contract.assert_pinned()?;
     Ok(decoded)
 }
 fn decode_prompt(value: &Object) -> Result<PromptPayload, ProtocolError> {
@@ -1977,6 +2022,7 @@ fn decode_effective_configuration(
             "toolProfile",
             "tools",
             "settings",
+            "forumContract",
         ],
     )?;
     let model = object(required(value, "model")?)?;
@@ -1996,6 +2042,7 @@ fn decode_effective_configuration(
         tool_profile: profile,
         tools,
         settings: decode_settings(object(required(value, "settings")?)?)?,
+        forum_contract: decode_forum_session_contract(object(required(value, "forumContract")?)?)?,
     };
     config.assert_pinned()?;
     Ok(config)
@@ -2742,10 +2789,78 @@ mod protocol_tests {
     // keeps invalid test data local and legible without weakening production code.
     #![allow(clippy::unwrap_used)]
 
+    use crate::forum::{FORUM_F0_AWARENESS_BLAKE3, FORUM_F0_TOOL_CONTRACT_BLAKE3};
+
     use super::*;
 
     fn json_value(input: &str) -> Value {
         miniserde::json::from_str(input).unwrap()
+    }
+
+    fn create_session_fixture(forum_contract: Value) -> String {
+        let frame = json_object!(
+            "protocolVersion" => json_string(ADAPTER_PROTOCOL_VERSION),
+            "sequence" => json_u64(1),
+            "sessionIdentity" => json_string("session-001"),
+            "correlationIdentity" => json_string("create-001"),
+            "command" => json_string("CreateSession"),
+            "payload" => json_object!(
+                "sessionKind" => json_string("TaskAttempt"),
+                "cwd" => json_string("/tmp/cwd"),
+                "agentDirectory" => json_string("/tmp/agent"),
+                "authPath" => json_string("/tmp/agent/auth.json"),
+                "modelsPath" => json_string("/tmp/agent/models.json"),
+                "sessionDirectory" => json_string("/tmp/sessions"),
+                "systemPrompt" => json_string("mission"),
+                "systemPromptDigest" => json_string("a".repeat(64).as_str()),
+                "model" => json_object!(
+                    "provider" => json_string("openrouter"),
+                    "modelId" => json_string(PINNED_MODEL),
+                    "thinkingLevel" => json_string(PINNED_THINKING_LEVEL),
+                ),
+                "modelCatalog" => json_object!(
+                    "catalogBlake3" => json_string("b".repeat(64).as_str()),
+                    "effectiveModel" => json_object!(
+                        "provider" => json_string("openrouter"),
+                        "baseUrl" => json_string(PINNED_OPENROUTER_BASE_URL),
+                        "api" => json_string("openai-completions"),
+                        "modelId" => json_string(PINNED_MODEL),
+                        "canonicalSlug" => json_string(PINNED_CANONICAL_MODEL_SLUG),
+                        "input" => json_string("text_only"),
+                        "contextWindow" => json_u64(1_048_576),
+                        "maxTokens" => json_u64(384_000),
+                        "inputUsdPerMillion" => json_object!("kind" => json_string("Known"), "usdPerMillion" => json_string("0.09")),
+                        "outputUsdPerMillion" => json_object!("kind" => json_string("Known"), "usdPerMillion" => json_string("0.18")),
+                        "cacheReadUsdPerMillion" => json_object!("kind" => json_string("Known"), "usdPerMillion" => json_string("0.018")),
+                        "cacheWriteUsdPerMillion" => json_object!("kind" => json_string("Absent")),
+                    ),
+                ),
+                "toolProfile" => json_string("read_execute_v1"),
+                "settings" => json_object!(
+                    "retry" => json_object!(
+                        "maxRetries" => json_u64(2),
+                        "baseDelayMilliseconds" => json_u64(2_000),
+                        "providerTimeoutMilliseconds" => json_u64(300_000),
+                        "providerMaxRetries" => json_u64(1),
+                        "providerMaxRetryDelayMilliseconds" => json_u64(30_000),
+                    ),
+                    "compaction" => json_object!(
+                        "mode" => json_string("enabled"),
+                        "reserveTokens" => json_u64(16_384),
+                        "keepRecentTokens" => json_u64(20_000),
+                    ),
+                    "steeringMode" => json_string("one-at-a-time"),
+                    "followUpMode" => json_string("one-at-a-time"),
+                    "transport" => json_string("sse"),
+                    "projectTrust" => json_string("never"),
+                    "installTelemetryEnabled" => json_bool(false),
+                    "analyticsEnabled" => json_bool(false),
+                    "images" => json_string("blocked"),
+                ),
+                "forumContract" => forum_contract,
+            ),
+        );
+        miniserde::json::to_string(&frame)
     }
     #[test]
     fn rejects_duplicate_nested_keys_and_negative_zero() {
@@ -2802,6 +2917,41 @@ mod protocol_tests {
         assert!(decode_inbound_jsonl(r#"{"protocolVersion":"society-pi-host/v4","sequence":1,"sessionIdentity":"session-1","correlationIdentity":"correlation-1","command":"GetState","payload":{"x":1}}"#).is_err());
         assert!(AbsolutePath::parse("/tmp/../secret").is_err());
         assert!(AbsolutePath::parse("/tmp//secret").is_err());
+    }
+
+    #[test]
+    fn create_session_forum_contract_is_digest_bound_and_closed() {
+        let valid = json_object!(
+            "kind" => json_string("forum_enabled_v1"),
+            "awarenessBlake3" => json_string(FORUM_F0_AWARENESS_BLAKE3),
+            "toolContractBlake3" => json_string(FORUM_F0_TOOL_CONTRACT_BLAKE3),
+        );
+        let frame = decode_inbound_jsonl(&create_session_fixture(valid)).unwrap();
+        let InboundCommand::CreateSession(payload) = &frame.command else {
+            panic!("expected create session");
+        };
+        assert_eq!(
+            payload.forum_contract,
+            ForumSessionContractV1::forum_enabled_v1().unwrap()
+        );
+        assert!(
+            encode_inbound_jsonl(&frame)
+                .unwrap()
+                .contains("forumContract")
+        );
+
+        let drifted = json_object!(
+            "kind" => json_string("forum_enabled_v1"),
+            "awarenessBlake3" => json_string(&"0".repeat(64)),
+            "toolContractBlake3" => json_string(FORUM_F0_TOOL_CONTRACT_BLAKE3),
+        );
+        assert!(decode_inbound_jsonl(&create_session_fixture(drifted)).is_err());
+
+        let sequestered_with_digest = json_object!(
+            "kind" => json_string("sequestered_v1"),
+            "awarenessBlake3" => json_string(FORUM_F0_AWARENESS_BLAKE3),
+        );
+        assert!(decode_inbound_jsonl(&create_session_fixture(sequestered_with_digest)).is_err());
     }
     #[test]
     fn encode_reenters_the_same_closed_inbound_decoder() {

@@ -2139,6 +2139,7 @@ CREATE TABLE study_protocol_revisions (
     forum_prompt_digest BLOB NOT NULL CHECK (length(forum_prompt_digest) = 32),
     forum_tool_digest BLOB NOT NULL CHECK (length(forum_tool_digest) = 32),
     evidence_digest BLOB NOT NULL CHECK (length(evidence_digest) = 32),
+    correction_digest BLOB NOT NULL CHECK (length(correction_digest) = 32),
     topology_digest BLOB NOT NULL CHECK (length(topology_digest) = 32),
     episode_budget_units INTEGER NOT NULL CHECK (episode_budget_units >= 0),
     admitted_by_command_id INTEGER NOT NULL
@@ -2169,8 +2170,7 @@ CREATE TABLE study_population_snapshots (
     study_protocol_revision_id INTEGER NOT NULL REFERENCES study_protocol_revisions(study_protocol_revision_id),
     population_digest BLOB NOT NULL CHECK (length(population_digest) = 32),
     population_size INTEGER NOT NULL CHECK (population_size > 0),
-    admitted_by_command_id INTEGER NOT NULL,
-    UNIQUE(study_protocol_revision_id, population_digest)
+    admitted_by_command_id INTEGER NOT NULL
 );
 CREATE TABLE study_episodes (
     study_episode_id INTEGER PRIMARY KEY,
@@ -2183,6 +2183,11 @@ CREATE TABLE study_episodes (
     lifecycle_state INTEGER NOT NULL CHECK (lifecycle_state BETWEEN 1 AND 7),
     admitted_by_command_id INTEGER NOT NULL,
     last_transition_command_id INTEGER NOT NULL
+);
+CREATE TABLE study_episode_successor_populations (
+    study_episode_id INTEGER PRIMARY KEY REFERENCES study_episodes(study_episode_id),
+    study_population_snapshot_id INTEGER NOT NULL REFERENCES study_population_snapshots(study_population_snapshot_id),
+    replaced_by_command_id INTEGER NOT NULL
 );
 CREATE TABLE study_treatment_assignments (
     study_treatment_assignment_id INTEGER PRIMARY KEY,
@@ -2217,6 +2222,7 @@ CREATE TABLE study_forum_threads (
 CREATE TABLE study_actor_obligations (
     study_actor_obligation_id INTEGER PRIMARY KEY,
     study_episode_id INTEGER NOT NULL REFERENCES study_episodes(study_episode_id),
+    study_population_snapshot_id INTEGER NOT NULL REFERENCES study_population_snapshots(study_population_snapshot_id),
     population_phase INTEGER NOT NULL CHECK (population_phase IN (1, 2)),
     role_ordinal INTEGER NOT NULL CHECK (role_ordinal BETWEEN 1 AND 64),
     private_view_digest BLOB NOT NULL CHECK (length(private_view_digest) = 32),
@@ -2226,6 +2232,8 @@ CREATE TABLE study_actor_obligations (
     charged_budget_units INTEGER NOT NULL DEFAULT 0 CHECK (charged_budget_units >= 0),
     read_budget INTEGER NOT NULL CHECK (read_budget > 0),
     reads_used INTEGER NOT NULL DEFAULT 0 CHECK (reads_used >= 0),
+    post_budget INTEGER NOT NULL CHECK (post_budget > 0),
+    posts_used INTEGER NOT NULL DEFAULT 0 CHECK (posts_used >= 0 AND posts_used <= post_budget),
     lifecycle_state INTEGER NOT NULL CHECK (lifecycle_state IN (1, 2)),
     admitted_by_command_id INTEGER NOT NULL,
     completed_by_command_id INTEGER,
@@ -2273,11 +2281,21 @@ CREATE TABLE study_forum_read_receipts (
     forum_thread_id INTEGER NOT NULL REFERENCES study_forum_threads(forum_thread_id),
     first_message_ordinal INTEGER NOT NULL CHECK (first_message_ordinal > 0),
     through_message_ordinal INTEGER NOT NULL CHECK (through_message_ordinal >= first_message_ordinal),
+    rendering_revision INTEGER NOT NULL CHECK (rendering_revision = 1),
+    returned_byte_count INTEGER NOT NULL CHECK (returned_byte_count > 0),
     rendering_digest BLOB NOT NULL CHECK (length(rendering_digest) = 32),
     returned_by_command_id INTEGER NOT NULL
 );
+-- A read receipt is a durable delivery fact.  It retains the exact bounded
+-- rendering that crossed the actor tool boundary rather than reconstructing
+-- it from later-mutated Messages (for example after a retraction).
+CREATE TABLE study_forum_read_receipt_renderings (
+    forum_read_receipt_id INTEGER PRIMARY KEY REFERENCES study_forum_read_receipts(forum_read_receipt_id),
+    rendered_bytes BLOB NOT NULL CHECK (length(rendered_bytes) > 0)
+);
 CREATE TABLE study_decisions (
     study_actor_obligation_id INTEGER PRIMARY KEY REFERENCES study_actor_obligations(study_actor_obligation_id),
+    decision_utf8 TEXT NOT NULL,
     decision_digest BLOB NOT NULL CHECK (length(decision_digest) = 32),
     cited_forum_message_id INTEGER REFERENCES study_forum_messages(forum_message_id),
     recorded_by_command_id INTEGER NOT NULL
@@ -2287,12 +2305,13 @@ CREATE TABLE study_measurement_results (
     study_episode_id INTEGER NOT NULL REFERENCES study_episodes(study_episode_id),
     measurement_slot INTEGER NOT NULL CHECK (measurement_slot BETWEEN 1 AND 64),
     result_status INTEGER NOT NULL CHECK (result_status IN (1, 2, 3)),
+    observed_value INTEGER,
     value_digest BLOB CHECK (length(value_digest) = 32),
     reason_digest BLOB CHECK (length(reason_digest) = 32),
     recorded_by_command_id INTEGER NOT NULL,
     UNIQUE(study_episode_id, measurement_slot),
-    CHECK((result_status = 1 AND value_digest IS NOT NULL AND reason_digest IS NULL)
-       OR (result_status IN (2, 3) AND value_digest IS NULL AND reason_digest IS NOT NULL))
+    CHECK((result_status = 1 AND observed_value IS NOT NULL AND value_digest IS NOT NULL AND reason_digest IS NULL)
+       OR (result_status IN (2, 3) AND observed_value IS NULL AND value_digest IS NULL AND reason_digest IS NOT NULL))
 );
 CREATE TABLE study_experimental_forks (
     experimental_fork_id INTEGER PRIMARY KEY,
@@ -2333,11 +2352,13 @@ CREATE TABLE command_study_transition (
     budget_units INTEGER,
     charged_budget_units INTEGER,
     read_budget INTEGER,
+    post_budget INTEGER,
     protocol_digest BLOB,
     actor_policy_digest BLOB,
     forum_prompt_digest BLOB,
     forum_tool_digest BLOB,
     evidence_digest BLOB,
+    correction_digest BLOB,
     topology_digest BLOB,
     world_digest BLOB,
     analysis_digest BLOB,
@@ -2348,6 +2369,7 @@ CREATE TABLE command_study_transition (
     private_view_digest BLOB,
     body_digest BLOB,
     decision_digest BLOB,
+    observed_value INTEGER,
     value_digest BLOB,
     reason_digest BLOB,
     text_value TEXT,
@@ -2374,6 +2396,6 @@ CREATE TABLE event_study_transition (
     body_digest BLOB,
     rendered_digest BLOB
 );
-PRAGMA user_version = 19;
+PRAGMA user_version = 25;
 COMMIT;
 PRAGMA foreign_keys = ON;

@@ -20,13 +20,13 @@ use std::{
 use society_pi::{
     AbsolutePath, ActorModelPolicyV1, AdapterVersion, Blake3Digest, BoundarySequence,
     CacheWritePerMillionRateV1, CanonicalModelSlug, CompactionMode, CompactionPolicyV1,
-    CorrelationIdentity, CreateSessionPayload, Disabled, EffectiveModelDescriptorV1, Images,
-    InboundCommand, InboundFrame, KnownPerMillionRateV1, MAX_JSONL_FRAME_BYTES, ModelApi,
-    ModelCatalogPolicyV1, ModelId, ModelInput, ModelSelection, NodeRuntimeVersion,
-    NonNegativeInteger, OpenRouterBaseUrl, OutboundEvent, PiSdkVersion, PositiveInteger,
-    ProjectTrust, Provider, QueueMode, RetryPolicyV1, RuntimeIdentity, SessionIdentity,
-    SessionKind, SpawnNonce, ThinkingLevel, ToolProfile, TranscriptFlushReceiptV1, Transport,
-    UsdPerMillionDecimal, encode_inbound_jsonl,
+    CorrelationIdentity, CreateSessionPayload, Disabled, EffectiveModelDescriptorV1,
+    ForumSessionContractV1, Images, InboundCommand, InboundFrame, KnownPerMillionRateV1,
+    MAX_JSONL_FRAME_BYTES, ModelApi, ModelCatalogPolicyV1, ModelId, ModelInput, ModelSelection,
+    NodeRuntimeVersion, NonNegativeInteger, OpenRouterBaseUrl, OutboundEvent, PiSdkVersion,
+    PositiveInteger, ProjectTrust, Provider, QueueMode, RetryPolicyV1, RuntimeIdentity,
+    SessionIdentity, SessionKind, SpawnNonce, ThinkingLevel, ToolProfile, TranscriptFlushReceiptV1,
+    Transport, UsdPerMillionDecimal, encode_inbound_jsonl,
 };
 use societyd::supervision::{
     AdmissionDenied, CancellationMode, CancellationReason, CancellationRequest,
@@ -1290,6 +1290,7 @@ impl Fixture {
             },
             tool_profile: ToolProfile::ReadExecuteV1,
             settings: admitted_settings(),
+            forum_contract: ForumSessionContractV1::forum_enabled_v1().unwrap(),
         };
         if large_control_frame {
             maximize_create_session_frame(&mut create_session, &session_identity);

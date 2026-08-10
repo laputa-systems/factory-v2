@@ -70,6 +70,20 @@ fn committed_host_create_then_dispose_is_sealed_without_a_provider_call() {
             ),
             ("toolProfile", string("read_execute_v1")),
             ("settings", admitted_settings()),
+            (
+                "forumContract",
+                object([
+                    ("kind", string("forum_enabled_v1")),
+                    (
+                        "awarenessBlake3",
+                        string("b058dadccdc7c3fb8e2e3558bd16e726e1f00aa60fda5a849da20eb6e86ad46a"),
+                    ),
+                    (
+                        "toolContractBlake3",
+                        string("738e664f66be09dfb7f8e5e4873521d7b9f1600d385dd0c8a41c80ca087566be"),
+                    ),
+                ]),
+            ),
         ]),
     );
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));

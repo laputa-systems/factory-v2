@@ -423,6 +423,7 @@ export class PiSdkHost {
 			toolProfile: command.payload.toolProfile,
 			tools: toolsForProfile(command.payload.toolProfile),
 			settings: command.payload.settings,
+			forumContract: command.payload.forumContract,
 		};
 	}
 

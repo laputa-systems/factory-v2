@@ -23,6 +23,11 @@ test("protocol: decodes the complete pinned CreateSession profile and rejects am
 	assert.equal(command.payload.settings.retry.providerMaxRetryDelayMilliseconds, 30_000);
 	assert.equal(command.payload.settings.projectTrust, "never");
 	assert.equal(command.payload.settings.images, "blocked");
+	assert.deepEqual(command.payload.forumContract, {
+		kind: "forum_enabled_v1",
+		awarenessBlake3: "b058dadccdc7c3fb8e2e3558bd16e726e1f00aa60fda5a849da20eb6e86ad46a",
+		toolContractBlake3: "738e664f66be09dfb7f8e5e4873521d7b9f1600d385dd0c8a41c80ca087566be",
+	});
 
 	const injected = createSessionPayload();
 	const settings = injected.settings as Record<string, unknown>;
@@ -32,6 +37,24 @@ test("protocol: decodes the complete pinned CreateSession profile and rejects am
 	const retryDrift = createSessionPayload();
 	((retryDrift.settings as Record<string, unknown>).retry as Record<string, unknown>).baseDelayMilliseconds = 100;
 	assert.throws(() => decodeCommand(1, "CreateSession", retryDrift), ProtocolDecodeError);
+});
+
+test("protocol: Forum session contract rejects digest drift and invalid pairings", () => {
+	const awarenessDrift = createSessionPayload();
+	(awarenessDrift.forumContract as Record<string, unknown>).awarenessBlake3 = "0".repeat(64);
+	assert.throws(() => decodeCommand(1, "CreateSession", awarenessDrift), ProtocolDecodeError);
+
+	const toolDrift = createSessionPayload();
+	(toolDrift.forumContract as Record<string, unknown>).toolContractBlake3 = "1".repeat(64);
+	assert.throws(() => decodeCommand(1, "CreateSession", toolDrift), ProtocolDecodeError);
+
+	const enabledAsSequestered = createSessionPayload();
+	(enabledAsSequestered.forumContract as Record<string, unknown>).kind = "sequestered_v1";
+	assert.throws(() => decodeCommand(1, "CreateSession", enabledAsSequestered), ProtocolDecodeError);
+
+	const sequesteredWithDigest = createSessionPayload();
+	sequesteredWithDigest.forumContract = { kind: "sequestered_v1", awarenessBlake3: "0".repeat(64) };
+	assert.throws(() => decodeCommand(1, "CreateSession", sequesteredWithDigest), ProtocolDecodeError);
 });
 
 test("protocol: rejects noncanonical paths, model drift, and nonempty GetState payloads", () => {

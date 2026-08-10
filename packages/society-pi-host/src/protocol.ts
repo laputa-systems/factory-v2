@@ -15,6 +15,8 @@ export const PINNED_MODEL = "deepseek/deepseek-v4-flash-0731" as const;
 export const PINNED_CANONICAL_MODEL_SLUG = "deepseek/deepseek-v4-flash-20260731" as const;
 export const PINNED_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1" as const;
 export const PINNED_THINKING_LEVEL = "high" as const;
+export const PINNED_FORUM_F0_AWARENESS_BLAKE3 = "b058dadccdc7c3fb8e2e3558bd16e726e1f00aa60fda5a849da20eb6e86ad46a" as Blake3Digest;
+export const PINNED_FORUM_F0_TOOL_CONTRACT_BLAKE3 = "738e664f66be09dfb7f8e5e4873521d7b9f1600d385dd0c8a41c80ca087566be" as Blake3Digest;
 export const MAX_JSONL_FRAME_BYTES = 1024 * 1024;
 /**
  * The duplicate-key pre-scan is intentionally stack-bounded. A deeply nested
@@ -79,6 +81,29 @@ export function spawnNonce(value: string): SpawnNonce {
 export function blake3Digest(value: string): Blake3Digest {
 	if (!BLAKE3_PATTERN.test(value)) throw new ProtocolDecodeError("invalid_blake3_digest");
 	return value as Blake3Digest;
+}
+
+export type ForumSessionContract =
+	| {
+			readonly kind: "forum_enabled_v1";
+			readonly awarenessBlake3: Blake3Digest;
+			readonly toolContractBlake3: Blake3Digest;
+	  }
+	| { readonly kind: "sequestered_v1" };
+
+/** Rejects any Forum policy identity other than the sealed F0 pair. */
+export function assertPinnedForumSessionContract(value: ForumSessionContract): ForumSessionContract {
+	if (value === null || typeof value !== "object") throw new ProtocolDecodeError("invalid_frame");
+	if (value.kind === "forum_enabled_v1") {
+		if (
+			!hasExactKeys(value, ["kind", "awarenessBlake3", "toolContractBlake3"]) ||
+			value.awarenessBlake3 !== PINNED_FORUM_F0_AWARENESS_BLAKE3 ||
+			value.toolContractBlake3 !== PINNED_FORUM_F0_TOOL_CONTRACT_BLAKE3
+		) throw new ProtocolDecodeError("invalid_frame");
+		return value;
+	}
+	if (value.kind === "sequestered_v1" && hasExactKeys(value, ["kind"])) return value;
+	throw new ProtocolDecodeError("invalid_frame");
 }
 
 export function boundarySequence(value: number): BoundarySequence {
@@ -340,6 +365,7 @@ export interface CreateSessionPayload {
 	readonly modelCatalog: ModelCatalogPolicyV1;
 	readonly toolProfile: ToolProfile;
 	readonly settings: ActorModelPolicyV1;
+	readonly forumContract: ForumSessionContract;
 }
 
 export interface PromptPayload {
@@ -452,6 +478,7 @@ export interface EffectiveSessionConfiguration {
 	readonly toolProfile: ToolProfile;
 	readonly tools: readonly PiToolName[];
 	readonly settings: ActorModelPolicyV1;
+	readonly forumContract: ForumSessionContract;
 }
 
 export interface UsageTotals {
@@ -774,11 +801,13 @@ function decodeCreateSessionPayload(value: Record<string, unknown>): CreateSessi
 		"modelCatalog",
 		"toolProfile",
 		"settings",
+		"forumContract",
 	]);
 	const model = requiredRecord(value.model);
 	requireExactKeys(model, ["provider", "modelId", "thinkingLevel"]);
 	const settings = requiredRecord(value.settings);
 	const modelCatalog = requiredRecord(value.modelCatalog);
+	const forumContract = decodeForumSessionContract(requiredRecord(value.forumContract));
 	return {
 		sessionKind: requiredOneOf(value, "sessionKind", ["TaskAttempt", "RootAuthorityOffice"] as const),
 		cwd: requiredAbsolutePath(value, "cwd"),
@@ -800,7 +829,25 @@ function decodeCreateSessionPayload(value: Record<string, unknown>): CreateSessi
 			"workspace_mutation_v1",
 		] as const),
 		settings: assertPinnedActorModelPolicy(decodeSettings(settings)),
+		forumContract,
 	};
+}
+
+function decodeForumSessionContract(value: Record<string, unknown>): ForumSessionContract {
+	const kind = requiredString(value, "kind");
+	if (kind === "forum_enabled_v1") {
+		requireExactKeys(value, ["kind", "awarenessBlake3", "toolContractBlake3"]);
+		return assertPinnedForumSessionContract({
+			kind,
+			awarenessBlake3: blake3Digest(requiredString(value, "awarenessBlake3")),
+			toolContractBlake3: blake3Digest(requiredString(value, "toolContractBlake3")),
+		});
+	}
+	if (kind === "sequestered_v1") {
+		requireExactKeys(value, ["kind"]);
+		return assertPinnedForumSessionContract({ kind });
+	}
+	throw new ProtocolDecodeError("invalid_frame");
 }
 
 function decodeModelCatalogPolicy(value: Record<string, unknown>): ModelCatalogPolicyV1 {
@@ -946,6 +993,11 @@ function requireExactKeys(value: Record<string, unknown>, expected: readonly str
 	if (actual.length !== expected.length || actual.some((key) => !expected.includes(key))) {
 		throw new ProtocolDecodeError("invalid_frame");
 	}
+}
+
+function hasExactKeys(value: object, expected: readonly string[]): boolean {
+	const actual = Object.keys(value);
+	return actual.length === expected.length && expected.every((key) => actual.includes(key));
 }
 
 function requiredString(value: Record<string, unknown>, key: string): string {

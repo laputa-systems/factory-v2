@@ -1,6 +1,7 @@
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
 import { blake3Hex } from "../src/digest.js";
+import { FORUM_F0_AWARENESS_BLAKE3, FORUM_F0_TOOL_CONTRACT_BLAKE3 } from "../src/forum.js";
 import {
 	absolutePath,
 	decodeInboundJsonl,
@@ -73,6 +74,11 @@ export function createSessionPayload(sessionKind: "TaskAttempt" | "RootAuthority
 			},
 		},
 		toolProfile: "read_execute_v1",
+		forumContract: {
+			kind: "forum_enabled_v1",
+			awarenessBlake3: FORUM_F0_AWARENESS_BLAKE3,
+			toolContractBlake3: FORUM_F0_TOOL_CONTRACT_BLAKE3,
+		},
 		settings: {
 			retry: {
 				maxRetries: 2,

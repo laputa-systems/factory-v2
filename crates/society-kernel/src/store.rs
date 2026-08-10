@@ -65,7 +65,7 @@ const CURRENT_SCHEMA: &str = include_str!("../../../migrations/0001_kernel.sql")
 // Historical prototype schemas used versions one through thirteen. The collapsed
 // fresh schema deliberately occupies a noncolliding identity, so an old
 // ledger cannot be mistaken for current trusted physics.
-const CURRENT_SCHEMA_VERSION: i64 = 19;
+const CURRENT_SCHEMA_VERSION: i64 = 25;
 
 struct PiChildSpawnAdmissionInput<'a> {
     operating_cycle_id: OperatingCycleId,
@@ -764,14 +764,17 @@ impl KernelStore {
         })
     }
 
-    /// Reconstructs the exact deterministic bytes returned by one durable
-    /// F0 read receipt.  It exposes only a receipt-owned range; it is not a
-    /// search, transcript, alias, or unrestricted content-retrieval API.
-    pub fn forum_read_receipt_rendering(
+    /// Returns the exact deterministic bytes delivered to one obligation by a
+    /// durable F0 read receipt.  The caller must name that same obligation;
+    /// this is not a transcript, search, alias, or foreign-receipt retrieval
+    /// API.  The bytes are preserved at delivery time and are never rebuilt
+    /// from mutable Message state.
+    pub fn forum_read_receipt_rendering_for_obligation(
         &self,
         receipt_id: crate::ForumReadReceiptId,
+        obligation_id: crate::StudyActorObligationId,
     ) -> Result<Vec<u8>, StoreError> {
-        crate::study::rendering_for_read_receipt(&self.connection, receipt_id)
+        crate::study::rendering_for_read_receipt(&self.connection, receipt_id, obligation_id)
     }
 
     pub fn deterministic_evaluator_native_child_admission(
@@ -16968,7 +16971,7 @@ fn replay_command_requests(
     Ok(commands)
 }
 
-const MATERIALIZED_TABLES: [&str; 116] = [
+const MATERIALIZED_TABLES: [&str; 118] = [
     "principals",
     "societies",
     "office_contracts",
@@ -17072,6 +17075,7 @@ const MATERIALIZED_TABLES: [&str; 116] = [
     "study_institution_revisions",
     "study_population_snapshots",
     "study_episodes",
+    "study_episode_successor_populations",
     "study_treatment_assignments",
     "study_pairs",
     "study_episode_forums",
@@ -17082,6 +17086,7 @@ const MATERIALIZED_TABLES: [&str; 116] = [
     "study_forum_exposures",
     "study_forum_messages",
     "study_forum_read_receipts",
+    "study_forum_read_receipt_renderings",
     "study_decisions",
     "study_measurement_results",
     "study_experimental_forks",

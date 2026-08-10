@@ -47,6 +47,7 @@ test("host: remains inert through AdapterReady and creates exactly one session o
 	const ready = frames[2];
 	assert.equal(ready?.event, "SessionReady");
 	if (ready?.event === "SessionReady") {
+		assert.deepEqual(ready.configuration.forumContract, createSessionPayload().forumContract);
 		assert.equal(ready.configuration.settings.transport, "sse");
 		assert.equal(ready.configuration.settings.projectTrust, "never");
 		assert.equal(ready.configuration.settings.installTelemetryEnabled, false);

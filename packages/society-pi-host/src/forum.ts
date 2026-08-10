@@ -6,8 +6,11 @@
  * exposure cursor, or mutable peer content.
  */
 
-import { blake3Hex } from "./digest.js";
-import { blake3Digest, type Blake3Digest } from "./protocol.js";
+import {
+	PINNED_FORUM_F0_AWARENESS_BLAKE3,
+	PINNED_FORUM_F0_TOOL_CONTRACT_BLAKE3,
+	type Blake3Digest,
+} from "./protocol.js";
 
 export const FORUM_F0_AWARENESS_REVISION = "society-forum-f0-awareness-v1" as const;
 
@@ -17,10 +20,10 @@ export const FORUM_F0_AWARENESS_TEXT = "Society Forum is a public, durable, attr
 const FORUM_F0_AWARENESS_BYTES = Buffer.from(FORUM_F0_AWARENESS_TEXT, "utf8");
 
 /** BLAKE3 of the exact UTF-8 awareness bytes. */
-export const FORUM_F0_AWARENESS_BLAKE3: Blake3Digest = blake3Digest(blake3Hex(FORUM_F0_AWARENESS_BYTES));
+export const FORUM_F0_AWARENESS_BLAKE3: Blake3Digest = PINNED_FORUM_F0_AWARENESS_BLAKE3;
 
 export const FORUM_F0_TOOL_CONTRACT_TEXT = "society_forum_read(first_message_ordinal,through_message_ordinal);society_forum_post(message_kind,body_utf8,in_reply_to_message_id,supersedes_message_id)" as const;
-export const FORUM_F0_TOOL_CONTRACT_BLAKE3: Blake3Digest = blake3Digest(blake3Hex(FORUM_F0_TOOL_CONTRACT_TEXT));
+export const FORUM_F0_TOOL_CONTRACT_BLAKE3: Blake3Digest = PINNED_FORUM_F0_TOOL_CONTRACT_BLAKE3;
 
 /** Return a fresh byte copy so callers cannot mutate the sealed source. */
 export function forumF0AwarenessBytes(): Uint8Array {

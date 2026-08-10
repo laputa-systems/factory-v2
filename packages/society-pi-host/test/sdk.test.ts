@@ -5,7 +5,7 @@ import test from "node:test";
 import { tmpdir } from "node:os";
 
 import { blake3Hex } from "../src/digest.js";
-import { absolutePath, sessionIdentity } from "../src/protocol.js";
+import { absolutePath, blake3Digest, sessionIdentity } from "../src/protocol.js";
 import {
 	PinnedPiSdkRuntime,
 	SdkConstructionError,
@@ -53,6 +53,23 @@ test("sdk: typed callers cannot bypass the pinned execution-profile constants", 
 		settings: {
 			...command.payload.settings,
 			retry: { ...command.payload.settings.retry, baseDelayMilliseconds: 1 as typeof command.payload.settings.retry.baseDelayMilliseconds },
+		},
+	};
+	await assert.rejects(
+		new PinnedPiSdkRuntime().create(command.sessionIdentity, bypassed),
+		(error: unknown) => error instanceof SdkConstructionError && error.code === "execution_profile_drift",
+	);
+});
+
+test("sdk: typed callers cannot bypass the pinned Forum session contract", async () => {
+	const payload = createSessionPayload();
+	const command = decodeCommand(1, "CreateSession", payload);
+	if (command.command !== "CreateSession") throw new Error("expected_create_session");
+	const bypassed = {
+		...command.payload,
+		forumContract: {
+			...command.payload.forumContract,
+			awarenessBlake3: blake3Digest("0".repeat(64)),
 		},
 	};
 	await assert.rejects(

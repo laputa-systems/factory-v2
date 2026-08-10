@@ -554,6 +554,7 @@ impl BoundaryPeer {
                 }
                 payload.model_catalog.assert_pinned()?;
                 payload.settings.assert_pinned()?;
+                payload.forum_contract.assert_pinned()?;
             }
             InboundCommand::Prompt(payload) => {
                 let Some(create) = self.create.as_ref() else {
@@ -746,6 +747,7 @@ impl BoundaryPeer {
             || configuration.model_catalog != create.model_catalog
             || configuration.tool_profile != create.tool_profile
             || configuration.settings != create.settings
+            || configuration.forum_contract != create.forum_contract
             || !configuration
                 .session_file
                 .is_strict_descendant_of(&create.session_directory)
@@ -1310,6 +1312,7 @@ mod peer_tests {
             model_catalog: catalog(),
             tool_profile: ToolProfile::ReadExecuteV1,
             settings: policy(),
+            forum_contract: crate::forum::ForumSessionContractV1::forum_enabled_v1().unwrap(),
         }
     }
     fn frame(sequence: u64, correlation: Option<&str>, event: OutboundEvent) -> OutboundFrame {
@@ -1366,6 +1369,7 @@ mod peer_tests {
             tool_profile: payload.tool_profile,
             tools: payload.tool_profile.tools().to_vec(),
             settings: payload.settings.clone(),
+            forum_contract: payload.forum_contract.clone(),
         };
         peer.observe_outbound(frame(
             3,
@@ -1583,6 +1587,7 @@ mod peer_tests {
             tool_profile: payload.tool_profile,
             tools: payload.tool_profile.tools().to_vec(),
             settings: payload.settings,
+            forum_contract: payload.forum_contract,
         };
         assert_eq!(
             session_ready.observe_outbound(frame(

@@ -3757,11 +3757,11 @@ mod tests {
     use society_pi::{
         AbsolutePath, ActorModelPolicyV1, AdapterVersion, Blake3Digest, CacheWritePerMillionRateV1,
         CanonicalModelSlug, CompactionMode, CompactionPolicyV1, CorrelationIdentity,
-        CreateSessionPayload, Disabled, EffectiveModelDescriptorV1, Images, KnownPerMillionRateV1,
-        ModelApi, ModelCatalogPolicyV1, ModelId, ModelInput, ModelSelection, NodeRuntimeVersion,
-        NonNegativeInteger, OpenRouterBaseUrl, PiSdkVersion, PositiveInteger, ProjectTrust,
-        Provider, QueueMode, RetryPolicyV1, RuntimeIdentity, SessionIdentity, SessionKind,
-        SpawnNonce, ThinkingLevel, ToolProfile, TranscriptFlushReceiptV1, Transport,
+        CreateSessionPayload, Disabled, EffectiveModelDescriptorV1, ForumSessionContractV1, Images,
+        KnownPerMillionRateV1, ModelApi, ModelCatalogPolicyV1, ModelId, ModelInput, ModelSelection,
+        NodeRuntimeVersion, NonNegativeInteger, OpenRouterBaseUrl, PiSdkVersion, PositiveInteger,
+        ProjectTrust, Provider, QueueMode, RetryPolicyV1, RuntimeIdentity, SessionIdentity,
+        SessionKind, SpawnNonce, ThinkingLevel, ToolProfile, TranscriptFlushReceiptV1, Transport,
         UsdPerMillionDecimal,
     };
 
@@ -7058,6 +7058,7 @@ mod tests {
                 },
                 tool_profile: ToolProfile::ReadExecuteV1,
                 settings: settings(),
+                forum_contract: ForumSessionContractV1::forum_enabled_v1().unwrap(),
             };
             Self {
                 _process_physics_guard: process_physics_guard,

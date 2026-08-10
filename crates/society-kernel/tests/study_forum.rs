@@ -9,14 +9,14 @@ use rusqlite::Connection;
 use society_kernel::{
     ApplicationIdentity, ApplicationMissionInput, ApplicationName, ApplicationRevisionId,
     ApplicationRevisionOrdinal, Blake3Digest, Capability, CommandBody, CommandId, CommandRequest,
-    ExpectedGeneration, ForumMessageBody, ForumMessageKind, ForumReadBudget, ForumThreadTitle,
-    KernelStore, MissionPrinciple, MissionPrincipleKind, MissionPrincipleText, MissionPrinciples,
-    MissionStatement, NorthStarBoundaryCommitmentQuestion, NorthStarChangeQuestion,
-    NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet, NorthStarRevisitQuestion,
-    PrincipalId, Rejection, StoreError, StudyBudgetUnits, StudyCommand, StudyEpisodeId, StudyEvent,
-    StudyMeasurementSlot, StudyMeasurementStatus, StudyPopulationPhase, StudyRoleOrdinal,
-    StudyTransitionDisposition, StudyTreatment, forum_f0_awareness_digest,
-    forum_f0_tool_contract_digest,
+    ExpectedGeneration, ForumMessageBody, ForumMessageKind, ForumPostBudget, ForumReadBudget,
+    ForumThreadTitle, KernelStore, MissionPrinciple, MissionPrincipleKind, MissionPrincipleText,
+    MissionPrinciples, MissionStatement, NorthStarBoundaryCommitmentQuestion,
+    NorthStarChangeQuestion, NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet,
+    NorthStarRevisitQuestion, PrincipalId, Rejection, StoreError, StudyBudgetUnits, StudyCommand,
+    StudyDecisionBody, StudyEpisodeId, StudyEvent, StudyMeasurementSlot, StudyMeasurementStatus,
+    StudyPopulationPhase, StudyRoleOrdinal, StudyTransitionDisposition, StudyTreatment,
+    forum_f0_awareness_digest, forum_f0_tool_contract_digest,
 };
 
 fn application_mission() -> ApplicationMissionInput {
@@ -210,6 +210,7 @@ fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
             forum_prompt_digest: prompt,
             forum_tool_digest: tools,
             evidence_digest: Blake3Digest::of_bytes(b"evidence-v1"),
+            correction_digest: Blake3Digest::of_bytes(b"correction: proposition one"),
             topology_digest: Blake3Digest::of_bytes(b"topology-v1"),
             episode_budget: StudyBudgetUnits::new(10).unwrap(),
         },
@@ -252,6 +253,42 @@ fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
         },
     )))
     .unwrap();
+    let retained_successor_population =
+        society_kernel::StudyPopulationSnapshotId::try_from(event_id(submit_study(
+            &mut store,
+            &mut ordinal,
+            StudyCommand::AdmitPopulationSnapshot {
+                protocol_revision_id: protocol,
+                population_digest: Blake3Digest::of_bytes(b"population-v1"),
+                population_size: 1,
+            },
+        )))
+        .unwrap();
+    let reset_successor_population =
+        society_kernel::StudyPopulationSnapshotId::try_from(event_id(submit_study(
+            &mut store,
+            &mut ordinal,
+            StudyCommand::AdmitPopulationSnapshot {
+                protocol_revision_id: protocol,
+                population_digest: Blake3Digest::of_bytes(b"population-v1"),
+                population_size: 1,
+            },
+        )))
+        .unwrap();
+    let mismatched_successor_population =
+        society_kernel::StudyPopulationSnapshotId::try_from(event_id(submit_study(
+            &mut store,
+            &mut ordinal,
+            StudyCommand::AdmitPopulationSnapshot {
+                protocol_revision_id: protocol,
+                population_digest: Blake3Digest::of_bytes(b"population-v2"),
+                population_size: 1,
+            },
+        )))
+        .unwrap();
+    assert_ne!(population, retained_successor_population);
+    assert_ne!(population, reset_successor_population);
+    assert_ne!(retained_successor_population, reset_successor_population);
     let randomization = Blake3Digest::of_bytes(b"matched-seed-v1");
     let retained = StudyEpisodeId::try_from(event_id(submit_study(
         &mut store,
@@ -279,6 +316,37 @@ fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
         },
     )))
     .unwrap();
+    let unassigned = StudyEpisodeId::try_from(event_id(submit_study(
+        &mut store,
+        &mut ordinal,
+        StudyCommand::AdmitEpisode {
+            protocol_revision_id: protocol,
+            world_revision_id: world,
+            measurement_revision_id: measurement,
+            institution_revision_id: institution,
+            population_snapshot_id: population,
+            randomization_digest: randomization,
+        },
+    )))
+    .unwrap();
+    assert_eq!(
+        rejected_study(
+            &mut store,
+            &mut ordinal,
+            StudyCommand::AdmitActorObligation {
+                episode_id: unassigned,
+                phase: StudyPopulationPhase::Source,
+                role: StudyRoleOrdinal::new(1).unwrap(),
+                private_view_digest: Blake3Digest::of_bytes(b"unassigned-private-view-v1"),
+                prompt_digest: prompt,
+                tool_digest: tools,
+                budget: StudyBudgetUnits::new(3).unwrap(),
+                read_budget: ForumReadBudget::new(3).unwrap(),
+                post_budget: ForumPostBudget::new(1).unwrap(),
+            },
+        ),
+        Rejection::InvalidLifecycleTransition
+    );
     submit_study(
         &mut store,
         &mut ordinal,
@@ -294,6 +362,38 @@ fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
             episode_id: reset,
             treatment: StudyTreatment::Reset,
         },
+    );
+    let mismatched_reset = StudyEpisodeId::try_from(event_id(submit_study(
+        &mut store,
+        &mut ordinal,
+        StudyCommand::AdmitEpisode {
+            protocol_revision_id: protocol,
+            world_revision_id: world,
+            measurement_revision_id: measurement,
+            institution_revision_id: institution,
+            population_snapshot_id: population,
+            randomization_digest: Blake3Digest::of_bytes(b"different-seed-v1"),
+        },
+    )))
+    .unwrap();
+    submit_study(
+        &mut store,
+        &mut ordinal,
+        StudyCommand::AssignTreatment {
+            episode_id: mismatched_reset,
+            treatment: StudyTreatment::Reset,
+        },
+    );
+    assert_eq!(
+        rejected_study(
+            &mut store,
+            &mut ordinal,
+            StudyCommand::AdmitMatchedPair {
+                retained_episode_id: retained,
+                reset_episode_id: mismatched_reset,
+            },
+        ),
+        Rejection::InvalidLifecycleTransition
     );
     let pair = match submit_study(
         &mut store,
@@ -351,13 +451,25 @@ fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
         StudyEvent::ForumThreadOpened { thread_id, .. } => thread_id,
         unexpected => panic!("unexpected event: {unexpected:?}"),
     };
+    assert_eq!(
+        rejected_study(
+            &mut store,
+            &mut ordinal,
+            StudyCommand::OpenForumThread {
+                forum_id: retained_forum,
+                title: ForumThreadTitle::parse("second thread must be rejected").unwrap(),
+            },
+        ),
+        Rejection::InvalidLifecycleTransition
+    );
 
     let private_view = Blake3Digest::of_bytes(b"same-private-view-v1");
     let admit = |store: &mut KernelStore,
                  ordinal: &mut u16,
                  episode_id,
                  phase,
-                 role|
+                 role,
+                 expected_population_snapshot_id|
      -> society_kernel::StudyActorObligationId {
         match submit_study(
             store,
@@ -371,9 +483,17 @@ fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
                 tool_digest: tools,
                 budget: StudyBudgetUnits::new(3).unwrap(),
                 read_budget: ForumReadBudget::new(3).unwrap(),
+                post_budget: ForumPostBudget::new(1).unwrap(),
             },
         ) {
-            StudyEvent::ActorObligationAdmitted { obligation_id, .. } => obligation_id,
+            StudyEvent::ActorObligationAdmitted {
+                obligation_id,
+                population_snapshot_id,
+                ..
+            } => {
+                assert_eq!(population_snapshot_id, expected_population_snapshot_id);
+                obligation_id
+            }
             unexpected => panic!("unexpected event: {unexpected:?}"),
         }
     };
@@ -384,6 +504,7 @@ fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
         retained,
         StudyPopulationPhase::Source,
         source_role,
+        population,
     );
     let reset_source = admit(
         &mut store,
@@ -391,6 +512,7 @@ fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
         reset,
         StudyPopulationPhase::Source,
         source_role,
+        population,
     );
     for (obligation, forum) in [
         (retained_source, retained_forum),
@@ -442,6 +564,20 @@ fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
         StudyEvent::ForumMessagePublished { message_id, .. } => message_id,
         unexpected => panic!("unexpected event: {unexpected:?}"),
     };
+    assert_eq!(
+        rejected_study(
+            &mut store,
+            &mut ordinal,
+            StudyCommand::PublishForumMessage {
+                obligation_id: retained_source,
+                kind: ForumMessageKind::Finding,
+                body: ForumMessageBody::parse("second source post must exceed the quota").unwrap(),
+                in_reply_to_message_id: Some(retained_false),
+                supersedes_message_id: None,
+            },
+        ),
+        Rejection::BudgetPolicyViolation
+    );
     for (obligation_id, message_id) in [
         (retained_source, retained_false),
         (reset_source, reset_false),
@@ -469,7 +605,10 @@ fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
             },
         );
     }
-    for (episode, thread) in [(retained, retained_thread), (reset, reset_thread)] {
+    for (episode, thread, successor_population_snapshot_id) in [
+        (retained, retained_thread, retained_successor_population),
+        (reset, reset_thread, reset_successor_population),
+    ] {
         submit_study(
             &mut store,
             &mut ordinal,
@@ -478,13 +617,72 @@ fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
                 thread_id: thread,
             },
         );
-        submit_study(
+        assert_eq!(
+            rejected_study(
+                &mut store,
+                &mut ordinal,
+                StudyCommand::AdmitActorObligation {
+                    episode_id: episode,
+                    phase: StudyPopulationPhase::Source,
+                    role: StudyRoleOrdinal::new(2).unwrap(),
+                    private_view_digest: private_view,
+                    prompt_digest: prompt,
+                    tool_digest: tools,
+                    budget: StudyBudgetUnits::new(3).unwrap(),
+                    read_budget: ForumReadBudget::new(3).unwrap(),
+                    post_budget: ForumPostBudget::new(3).unwrap(),
+                },
+            ),
+            Rejection::InvalidLifecycleTransition
+        );
+        assert_eq!(
+            rejected_study(
+                &mut store,
+                &mut ordinal,
+                StudyCommand::ReplacePopulation {
+                    episode_id: episode,
+                    successor_population_snapshot_id: population,
+                },
+            ),
+            Rejection::InvalidLifecycleTransition
+        );
+        assert_eq!(
+            rejected_study(
+                &mut store,
+                &mut ordinal,
+                StudyCommand::ReplacePopulation {
+                    episode_id: episode,
+                    successor_population_snapshot_id: mismatched_successor_population,
+                },
+            ),
+            Rejection::InvalidLifecycleTransition
+        );
+        assert_eq!(
+            rejected_study(
+                &mut store,
+                &mut ordinal,
+                StudyCommand::ReplacePopulation {
+                    episode_id: episode,
+                    successor_population_snapshot_id:
+                        society_kernel::StudyPopulationSnapshotId::new(999).unwrap(),
+                },
+            ),
+            Rejection::SubjectNotFound
+        );
+        match submit_study(
             &mut store,
             &mut ordinal,
             StudyCommand::ReplacePopulation {
                 episode_id: episode,
+                successor_population_snapshot_id,
             },
-        );
+        ) {
+            StudyEvent::PopulationReplaced {
+                successor_population_snapshot_id: emitted,
+                ..
+            } => assert_eq!(emitted, successor_population_snapshot_id),
+            unexpected => panic!("unexpected event: {unexpected:?}"),
+        }
     }
     assert_eq!(
         rejected_study(
@@ -514,6 +712,7 @@ fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
                 tool_digest: tools,
                 budget: StudyBudgetUnits::new(3).unwrap(),
                 read_budget: ForumReadBudget::new(3).unwrap(),
+                post_budget: ForumPostBudget::new(3).unwrap(),
             },
         ),
         Rejection::InvalidLifecycleTransition
@@ -524,6 +723,7 @@ fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
         retained,
         StudyPopulationPhase::Successor,
         source_role,
+        retained_successor_population,
     );
     let reset_successor = admit(
         &mut store,
@@ -531,6 +731,7 @@ fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
         reset,
         StudyPopulationPhase::Successor,
         source_role,
+        reset_successor_population,
     );
     submit_study(
         &mut store,
@@ -550,7 +751,33 @@ fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
             visible_from_message_ordinal: 2,
         },
     );
+    assert_eq!(
+        rejected_study(
+            &mut store,
+            &mut ordinal,
+            StudyCommand::ReadForum {
+                obligation_id: retained_successor,
+                first_message_ordinal: 1,
+                through_message_ordinal: 1,
+            },
+        ),
+        Rejection::InvalidLifecycleTransition
+    );
     let correction = ForumMessageBody::parse("correction: proposition one").unwrap();
+    assert_eq!(
+        rejected_study(
+            &mut store,
+            &mut ordinal,
+            StudyCommand::ReleaseMatchedCorrection {
+                pair_id: pair,
+                retained_thread_id: retained_thread,
+                reset_thread_id: reset_thread,
+                correction: ForumMessageBody::parse("substituted correction").unwrap(),
+            },
+        ),
+        Rejection::InvalidLifecycleTransition,
+        "a matched release cannot substitute bytes after protocol admission"
+    );
     let (retained_correction, reset_correction) = match submit_study(
         &mut store,
         &mut ordinal,
@@ -610,9 +837,11 @@ fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
         unexpected => panic!("unexpected event: {unexpected:?}"),
     };
     let retained_rendering = store
-        .forum_read_receipt_rendering(retained_receipt)
+        .forum_read_receipt_rendering_for_obligation(retained_receipt, retained_successor)
         .unwrap();
-    let reset_rendering = store.forum_read_receipt_rendering(reset_receipt).unwrap();
+    let reset_rendering = store
+        .forum_read_receipt_rendering_for_obligation(reset_receipt, reset_successor)
+        .unwrap();
     assert!(
         retained_rendering
             .windows(false_claim.as_str().len())
@@ -622,6 +851,25 @@ fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
         !reset_rendering
             .windows(false_claim.as_str().len())
             .any(|window| window == false_claim.as_str().as_bytes())
+    );
+    assert!(
+        store
+            .forum_read_receipt_rendering_for_obligation(retained_receipt, reset_successor)
+            .is_err()
+    );
+    assert_eq!(
+        rejected_study(
+            &mut store,
+            &mut ordinal,
+            StudyCommand::PublishForumMessage {
+                obligation_id: reset_successor,
+                kind: ForumMessageKind::Challenge,
+                body: ForumMessageBody::parse("hidden source target must be rejected").unwrap(),
+                in_reply_to_message_id: Some(reset_false),
+                supersedes_message_id: None,
+            },
+        ),
+        Rejection::SubjectNotFound
     );
 
     for (obligation, correction_message) in [
@@ -633,7 +881,7 @@ fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
             &mut ordinal,
             StudyCommand::RecordDecision {
                 obligation_id: obligation,
-                decision_digest: Blake3Digest::of_bytes(b"corrected-decision-v1"),
+                decision: StudyDecisionBody::parse("corrected decision v1").unwrap(),
                 cited_message_id: Some(correction_message),
             },
         );
@@ -650,17 +898,11 @@ fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
         submit_study(
             &mut store,
             &mut ordinal,
-            StudyCommand::CloseEpisode {
-                episode_id: episode,
-            },
-        );
-        submit_study(
-            &mut store,
-            &mut ordinal,
             StudyCommand::RecordMeasurementResult {
                 episode_id: episode,
                 measurement_slot: StudyMeasurementSlot::new(1).unwrap(),
                 status: StudyMeasurementStatus::Observed,
+                value: Some(1),
                 value_digest: Some(Blake3Digest::of_bytes(b"latency-value-v1")),
                 reason_digest: None,
             },
@@ -672,6 +914,7 @@ fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
                 episode_id: episode,
                 measurement_slot: StudyMeasurementSlot::new(2).unwrap(),
                 status: StudyMeasurementStatus::Unavailable,
+                value: None,
                 value_digest: None,
                 reason_digest: Some(Blake3Digest::of_bytes(b"runtime-cost-unavailable")),
             },
@@ -683,8 +926,16 @@ fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
                 episode_id: episode,
                 measurement_slot: StudyMeasurementSlot::new(3).unwrap(),
                 status: StudyMeasurementStatus::Invalidated,
+                value: None,
                 value_digest: None,
                 reason_digest: Some(Blake3Digest::of_bytes(b"invalidated-control")),
+            },
+        );
+        submit_study(
+            &mut store,
+            &mut ordinal,
+            StudyCommand::CloseEpisode {
+                episode_id: episode,
             },
         );
     }
@@ -699,6 +950,7 @@ fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
                 forum_prompt_digest: prompt,
                 forum_tool_digest: tools,
                 evidence_digest: Blake3Digest::of_bytes(b"evidence-v1"),
+                correction_digest: Blake3Digest::of_bytes(b"correction: proposition one"),
                 topology_digest: Blake3Digest::of_bytes(b"topology-v1"),
                 episode_budget: StudyBudgetUnits::new(10).unwrap(),
             },
@@ -715,6 +967,7 @@ fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
                 forum_prompt_digest: prompt,
                 forum_tool_digest: tools,
                 evidence_digest: Blake3Digest::of_bytes(b"evidence-v1"),
+                correction_digest: Blake3Digest::of_bytes(b"correction: proposition one"),
                 topology_digest: Blake3Digest::of_bytes(b"topology-v1"),
                 episode_budget: StudyBudgetUnits::new(10).unwrap(),
             },

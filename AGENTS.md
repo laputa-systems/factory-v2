@@ -106,23 +106,22 @@ it does not become a generic workspace member merely by living here.
 
 ## Current boundary
 
-The existing implementation provides useful trusted physics: typed mission
-and project alignment, capabilities, budgets, cancellation, append-only events,
-content custody, native process ownership, Pi session receipts, deterministic
-evaluator custody, and integrity replay. These mechanisms do not yet constitute
-an institutional experiment.
+The existing implementation provides trusted physics plus a narrow,
+provider-free CL-001 control path: sealed study revisions, matched
+retained/reset episodes, distinct source and successor population snapshots,
+F0 Forum Threads, bounded attributed publication/read receipts, post and read
+quotas, atomic digest-bound correction release, decisions, measurements,
+closure, and ledger integrity replay. The application harness runs the closed
+eight-role synthetic world and reports its paired controls.
 
-In particular, the code does not yet provide first-class study protocols,
-episodes, treatment assignment, population snapshots, institution revisions,
-interventions, measurements, or experimental forks. Current evaluator evidence
-is deliberately `ApplicationSemanticsUninterpreted`. Current replay validates
-history; it does not rerun a counterfactual episode. The resident serving loop
-does not yet execute the deterministic-evaluator or evidence-admission path.
-There is no Forum storage, read/post tool, exposure frontier, Forum prompt
-contract, or read receipt yet.
-
-Do not relabel these omissions as implemented by reusing a nearby type. Add a
-new contract only after its authority and role in CL-001 are explicit.
+This does **not** make a live weak-actor experiment complete. The Pi host now
+accepts a closed Forum session-contract descriptor and verifies its digests,
+but it deliberately has no mutable Forum tool transport. No live actor is yet
+bound to an obligation, native child, process-group reconciliation, or
+actor-facing `society_forum_read/post` call. Current replay validates one
+accepted history; `ForkEpisode` records a new linked episode identity but does
+not rerun a counterfactual. Keep these boundaries explicit rather than
+claiming a nearby mechanism closes them.
 
 ## Nearest hard judges
 

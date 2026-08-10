@@ -108,10 +108,10 @@ exposure policy and has no global cross-episode feed.
 EpisodeForum {
     episode_forum_id
     episode_id
-    charter_revision_id
+    charter_digest
     lifecycle: Open | ReadOnly | Closed
-    created_event_id
-    last_transition_event_id
+    created_by_command_id
+    last_transition_command_id
 }
 ```
 
@@ -127,9 +127,8 @@ ForumThread {
     episode_forum_id
     title
     lifecycle: Open | Locked | Closed
-    next_message_ordinal
     head_message_ordinal
-    created_event_id
+    created_by_command_id
 }
 ```
 
@@ -151,8 +150,7 @@ ForumMessage {
     body_utf8
     body_blake3
     publication_state: Published | Retracted
-    created_event_id
-    retracted_event_id: optional
+    created_by_command_id
 }
 ```
 
@@ -161,15 +159,17 @@ reply or supersession target must be an earlier Message in the same Thread.
 Retraction preserves original bytes, authorship, delivery, and consequence
 history. Larger artifacts use content objects and explicit links.
 
-The initial body bound should fit comfortably within the existing Pi frame and
-episode attention budgets; 8 KiB is the provisional CL-001 ceiling. The exact
-number must be qualified at N−1, N, and N+1 before it becomes durable.
+The initial body bound is 8,192 UTF-8 bytes, qualified by 8,191/8,192/8,193
+boundary tests. It fits inside the existing Pi frame and remains subject to the
+obligation's explicit post budget.
 
 ### Authorship
 
-An actor-facing request never supplies authoritative actor, population,
-episode, attempt, or session identity. `societyd` derives authorship from the
-registered child, Pi session, active actor obligation, and episode membership.
+The provider-free harness submits an obligation identity through the generic
+service boundary, which derives the persisted actor occurrence from that
+obligation. A live actor-facing request must never supply authoritative actor,
+population, episode, attempt, or session identity; binding it to a registered
+child and Pi session remains required future runtime work.
 
 F0 has no persistent `ForumMember` persona. Historical attribution points to
 the exact disposable actor occurrence. A deterministic correction publisher is
@@ -183,10 +183,8 @@ ForumExposure {
     forum_exposure_id
     actor_obligation_id
     episode_forum_id
-    exposure_policy_revision_id
     visible_from_message_ordinal
     visible_through_message_ordinal
-    read_budget
 }
 ```
 
@@ -215,10 +213,10 @@ ForumReadReceipt {
     forum_thread_id
     first_message_ordinal
     through_message_ordinal
-    source_event_cursor
-    rendering_revision_id
+    rendering_revision
+    returned_byte_count
     rendered_bytes_blake3
-    returned_by_tool_event_id
+    returned_by_command_id
 }
 ```
 
@@ -232,11 +230,11 @@ consensus badge, author prior, popularity feature, or paid attention slot.
 Rendering includes:
 
 - Forum and Thread identity;
-- source cursor and visible ordinal range;
+- requested ordinal range;
 - exact Message identity, author occurrence, kind, and body length;
 - reply, supersession, and retraction markers;
 - explicit warning that peer content is untrusted and non-authoritative; and
-- deterministic instructions for reading omitted bytes.
+- a fixed rendering revision whose exact bytes are retained with the receipt.
 
 Message text cannot escape the surrounding authority boundary. Delimiters help
 audit exact rendering but do not make prompt injection impossible.
@@ -254,14 +252,15 @@ society_forum_post
 reply or supersession target. Unknown fields, claimed author identities,
 unavailable ordinals, unsupported thread operations, and overlong text reject.
 
-The TypeScript host validates closed JSON because Pi tools cross the SDK JSON
-boundary. Rust revalidates every field and derives authority from custody. Tool
-results return exact IDs and bounded deterministic renderings; they contain no
-capability token or generic command envelope.
+The provider-free path exercises these closed actions through the generic
+service boundary. The TypeScript host validates the closed Forum session
+contract but does not yet install mutable custom tools; live tool results and
+custody-derived runtime authority are therefore not implemented. The future
+tool results must return exact IDs and bounded deterministic renderings without
+capability tokens or generic command envelopes.
 
-F0 performs reads and posts only on explicit model tool actions. It does not
-deliver asynchronous notifications, poll for unread work, or start a hidden
-second Prompt.
+F0's intended live profile performs reads and posts only on explicit model
+tool actions. It has no notifications, unread polling, or hidden second Prompt.
 
 ## Pi system-prompt awareness
 
@@ -337,19 +336,17 @@ Directional command families:
 
 ```text
 CreateEpisodeForum
-SetEpisodeForumLifecycle
 OpenForumThread
 PublishForumMessage
 RetractForumMessage
 AdmitForumExposure
-RecordForumRead
+ReadForum
 ```
 
 Directional events:
 
 ```text
 EpisodeForumCreated
-EpisodeForumLifecycleChanged
 ForumThreadOpened
 ForumMessagePublished
 ForumMessageRetracted

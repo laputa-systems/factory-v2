@@ -42,9 +42,13 @@ trusted physics
   ledger, content, authority, budget, process custody, replay
 ```
 
-Only the bottom layer is substantially implemented today. The next work is to
-make one complete experiment real, not to fill in a general-purpose swarm
-framework.
+The trusted-physics layer and one narrow provider-free experiment path are
+implemented today. `applications/correction-latency` executes a deterministic
+retained/reset Forum pair through the generic ledger and reports raw-derived
+measurements plus controls. It is not a live model/runtime study: custom Forum
+tool transport and actor-to-native-child custody remain separate work. The
+next work is to close those named experimental boundaries, not to fill in a
+general-purpose swarm framework.
 
 ## Documents
 

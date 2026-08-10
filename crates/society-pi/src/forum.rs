@@ -111,6 +111,49 @@ impl ForumToolContractDescriptor {
     }
 }
 
+/// The closed Forum policy carried by a Pi session's create and effective
+/// configuration.  It contains only the sealed contract identity: mutable
+/// Forum messages, cursors, budgets, and actor context never cross this
+/// boundary.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum ForumSessionContractV1 {
+    ForumEnabledV1 {
+        awareness_blake3: Blake3Digest,
+        tool_contract_blake3: Blake3Digest,
+    },
+    SequesteredV1,
+}
+
+impl ForumSessionContractV1 {
+    /// Constructs the only admitted Forum-enabled contract from the sealed
+    /// canonical digests.
+    pub fn forum_enabled_v1() -> Result<Self, ProtocolError> {
+        Ok(Self::ForumEnabledV1 {
+            awareness_blake3: Blake3Digest::parse(FORUM_F0_AWARENESS_BLAKE3)?,
+            tool_contract_blake3: Blake3Digest::parse(FORUM_F0_TOOL_CONTRACT_BLAKE3)?,
+        })
+    }
+
+    /// Rejects digest drift and any enabled pairing other than the registered
+    /// F0 awareness/tool contract.
+    pub fn assert_pinned(&self) -> Result<(), ProtocolError> {
+        match self {
+            Self::ForumEnabledV1 {
+                awareness_blake3,
+                tool_contract_blake3,
+            } if awareness_blake3.as_str() == FORUM_F0_AWARENESS_BLAKE3
+                && tool_contract_blake3.as_str() == FORUM_F0_TOOL_CONTRACT_BLAKE3 =>
+            {
+                Ok(())
+            }
+            Self::SequesteredV1 => Ok(()),
+            Self::ForumEnabledV1 { .. } => {
+                Err(ProtocolError::InvalidFrame("pinned Forum session contract"))
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -133,5 +176,22 @@ mod tests {
         assert!(contract.awareness_blake3_hex().is_none());
         assert!(contract.tool_contract_blake3_hex().is_none());
         assert!(contract.tool_names().is_empty());
+    }
+
+    #[test]
+    fn session_contract_binds_the_exact_digest_pair() {
+        let Ok(contract) = ForumSessionContractV1::forum_enabled_v1() else {
+            panic!("the registered Forum digest pair must be valid");
+        };
+        assert!(contract.assert_pinned().is_ok());
+        let ForumSessionContractV1::ForumEnabledV1 {
+            awareness_blake3,
+            tool_contract_blake3,
+        } = contract
+        else {
+            panic!("expected enabled contract");
+        };
+        assert_eq!(awareness_blake3.as_str(), FORUM_F0_AWARENESS_BLAKE3);
+        assert_eq!(tool_contract_blake3.as_str(), FORUM_F0_TOOL_CONTRACT_BLAKE3);
     }
 }

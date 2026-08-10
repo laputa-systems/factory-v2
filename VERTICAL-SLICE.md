@@ -141,28 +141,32 @@ ordinal 1. Neither treatment transfers private actor state.
 
 ### Forum prompt and tools
 
-Every Forum-enabled Pi actor receives the same sealed
-`ForumPromptContractRevision`, composed into the existing digest-bound system
-prompt. It explains only the installed read/post tools, public durable
-publication, untrusted peer content, and obligation-local budgets. Mutable
-Messages never enter the system prompt.
+The sealed `ForumSessionContract` carries the exact awareness/tool digest pair
+through Pi `CreateSession` and `SessionReady`, while `Sequestered` carries no
+Forum digest. The current host validates that metadata but deliberately
+installs no mutable custom tools. The provider-free harness uses the same exact
+bytes through generic transitions. A live Forum profile must compose them into
+the session prompt and install only the named read/post tools; mutable Messages
+never enter the system prompt.
 
 `Sequestered` actors receive no claim that Forum tools exist. Reputation is
 absent from CL-001 and therefore absent from its prompt. A later reputation
 treatment requires a separate exact fragment explaining that reputation is
 scoped, uncertain, non-authoritative, and not evidence that a Message is true.
 
-F0 exposes only explicit `society_forum_read` and `society_forum_post` actions.
-There is no polling or asynchronous `Steer` delivery.
+The future live F0 profile exposes only explicit `society_forum_read` and
+`society_forum_post` actions. There is no polling or asynchronous `Steer`
+delivery.
 
 ### Intervention
 
 The first slice needs three exact interventions:
 
-- `ReplacePopulation`, which closes all source actor authority, proves their
-  process/session reconciliation, and admits a fresh population snapshot;
-- `SetSuccessorForumExposure`, which atomically installs Retained or Reset
-  visibility for the new actor obligations; and
+- `ReplacePopulation`, which in the provider-free path requires every source
+  obligation to complete, then binds a distinct fresh population snapshot;
+  live process/session reconciliation is a separate required runtime proof;
+- `AdmitForumExposure`, which installs Retained or Reset visibility for each
+  new actor obligation; and
 - `ReleaseMatchedCorrection`, which publishes the same exact correction
   through deterministic-service custody into both paired Threads in one
   transaction only after both arms' successor exposures are admitted.
@@ -188,9 +192,11 @@ never converted to zero or a favorable result.
 
 ### Experimental fork
 
-`ExperimentalFork` names a closed source checkpoint and one treatment delta,
-then creates a new Episode identity. It may reuse sealed world and institution
+`ExperimentalFork` names a source episode and one treatment delta, then
+creates a new Episode identity. It may reuse sealed world and institution
 content but cannot reuse command, event, actor, budget, or result identities.
+The present implementation records that link only; an independently executed
+counterfactual rerun remains required.
 
 The first implementation may create paired episodes from a common declared
 initial state rather than pause and clone a live process image. It must not call

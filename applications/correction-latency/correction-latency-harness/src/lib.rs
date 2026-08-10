@@ -8,18 +8,24 @@
 
 use std::fmt;
 
-use correction_latency_world::{BinaryOutcome, WorldFixture};
+use correction_latency_world::{
+    canonical_role_prompt_revision_digest, canonical_role_specifications,
+    canonical_role_topology_digest, ActorPopulationPhase, BinaryOutcome, RoleMessageKind,
+    WorldFixture,
+};
 use society_kernel::{
     ApplicationIdentity, ApplicationMissionInput, ApplicationName, ApplicationRevisionId,
     ApplicationRevisionOrdinal, Blake3Digest, Capability, CommandBody, CommandDisposition,
     CommandId, CommandRequest, ExpectedGeneration, ForumMessageBody, ForumMessageId,
-    ForumMessageKind, ForumReadBudget, ForumThreadId, ForumThreadTitle, KernelStore,
+    ForumMessageKind, ForumPostBudget, ForumReadBudget, ForumThreadId, ForumThreadTitle,
+    KernelStore,
     MissionPrinciple, MissionPrincipleKind, MissionPrincipleText, MissionPrinciples,
     MissionStatement, NorthStarBoundaryCommitmentQuestion, NorthStarChangeQuestion,
     NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet, NorthStarRevisitQuestion,
     PrincipalId, Rejection, StoreError, StudyActorObligationId, StudyBudgetUnits, StudyCommand,
-    StudyEpisodeId, StudyEvent, StudyMeasurementSlot, StudyMeasurementStatus, StudyPopulationPhase,
-    StudyProtocolRevisionId, StudyRoleOrdinal, StudyTransitionDisposition, StudyTreatment,
+    StudyDecisionBody, StudyEpisodeId, StudyEvent, StudyMeasurementSlot,
+    StudyMeasurementStatus, StudyPopulationPhase, StudyProtocolRevisionId, StudyRoleOrdinal,
+    StudyPopulationSnapshotId, StudyTransitionDisposition, StudyTreatment,
     forum_f0_awareness_digest, forum_f0_tool_contract_digest,
 };
 
@@ -55,7 +61,20 @@ pub struct ArmReport {
     pub false_claim_persistence: MeasurementOutcome,
     pub correction_visibility: MeasurementOutcome,
     pub dissent_survival: MeasurementOutcome,
+    pub forum_history_utilization: MeasurementOutcome,
     pub forum_attention_bytes: MeasurementOutcome,
+    pub forum_attention_turns: MeasurementOutcome,
+    pub forum_attention_runtime_micros: MeasurementOutcome,
+}
+
+/// A named provider-free control run. It retains the exact observation
+/// values and their derivation identities rather than assigning a favorable
+/// implicit zero to a baseline that lacks Forum history.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BaselineReport {
+    pub name: &'static str,
+    pub final_decision_correct: MeasurementOutcome,
+    pub actor_turns: MeasurementOutcome,
 }
 
 /// Complete deterministic paired result. A positive latency delta means the
@@ -68,6 +87,8 @@ pub struct PairedReport {
     pub retained_minus_reset_latency: Option<i64>,
     pub source_authority_rejected_after_replacement: bool,
     pub reset_history_read_rejected: bool,
+    pub isolated_baseline: BaselineReport,
+    pub unstructured_baseline: BaselineReport,
     pub replay_materialized_state_digest: Blake3Digest,
 }
 
@@ -111,9 +132,22 @@ struct ArmRun {
     thread_id: ForumThreadId,
     source_obligations: Vec<StudyActorObligationId>,
     successor_obligations: Vec<StudyActorObligationId>,
+    successor_population_snapshot_id: Option<StudyPopulationSnapshotId>,
     source_false_claim_id: ForumMessageId,
+    source_message_ids: Vec<ForumMessageId>,
+    source_challenge_message_id: Option<ForumMessageId>,
     frozen_head: i64,
     correction_message_id: Option<ForumMessageId>,
+    correction_release_sequence: Option<u32>,
+    post_correction_admitted_steps: i64,
+    first_corrected_statement_step: Option<i64>,
+    final_decision_sequence: Option<u32>,
+    final_decision: Option<BinaryOutcome>,
+    successor_correction_reads: i64,
+    successor_history_references: i64,
+    false_claim_rebutted: bool,
+    dissent_consulted: bool,
+    successor_turns: i64,
     returned_forum_bytes: i64,
 }
 
@@ -135,7 +169,14 @@ pub fn run_provider_free_pair() -> Result<PairedReport, HarnessError> {
         prompt_digest: forum_f0_awareness_digest(),
         tool_digest: forum_f0_tool_contract_digest(),
     };
-    let actor_policy_digest = Blake3Digest::of_bytes(b"cl-001|weak-policy|provider-free-v1");
+    let actor_policy_digest = digest_fields(
+        "cl-001|actor-policy|provider-free-v2",
+        &[
+            canonical_role_prompt_revision_digest(),
+            Blake3Digest::of_bytes(b"cl-001|weak-policy|provider-free-v1"),
+        ],
+        &[],
+    );
     let protocol = admit_protocol(
         &mut store,
         &mut sequence,
@@ -192,8 +233,8 @@ pub fn run_provider_free_pair() -> Result<PairedReport, HarnessError> {
     )?;
     run_source_population(&mut store, &mut sequence, &fixture, &mut retained)?;
     run_source_population(&mut store, &mut sequence, &fixture, &mut reset)?;
-    replace_population(&mut store, &mut sequence, &mut retained)?;
-    replace_population(&mut store, &mut sequence, &mut reset)?;
+    replace_population(&mut store, &mut sequence, protocol, &mut retained)?;
+    replace_population(&mut store, &mut sequence, protocol, &mut reset)?;
 
     let source_authority_rejected_after_replacement = matches!(
         rejected(
@@ -226,8 +267,7 @@ pub fn run_provider_free_pair() -> Result<PairedReport, HarnessError> {
         StudyTreatment::Reset,
         forum_contract,
     )?;
-    let reset_history_read_rejected = matches!(
-        rejected(
+    let reset_history_read_rejection = rejected(
             &mut store,
             &mut sequence,
             StudyCommand::ReadForum {
@@ -235,14 +275,21 @@ pub fn run_provider_free_pair() -> Result<PairedReport, HarnessError> {
                 first_message_ordinal: 1,
                 through_message_ordinal: reset.frozen_head,
             },
-        )?,
-        Rejection::SubjectNotFound
+        )?;
+    let reset_history_read_rejected = matches!(
+        reset_history_read_rejection,
+        // Before atomic correction release neither treatment can consume
+        // Forum history; after release, the reset exposure boundary makes
+        // this same request a missing subject. Both prove no prehistory
+        // bytes were returned to the reset successor.
+        Rejection::InvalidLifecycleTransition | Rejection::SubjectNotFound
     );
 
     let correction = body(
         std::str::from_utf8(fixture.correction_package().bytes())
             .map_err(|_| HarnessError::UnexpectedEvent("UTF-8 correction fixture"))?,
     );
+    let correction_release_sequence = sequence;
     let (retained_correction, reset_correction) = match accepted(
         &mut store,
         &mut sequence,
@@ -268,13 +315,22 @@ pub fn run_provider_free_pair() -> Result<PairedReport, HarnessError> {
     };
     retained.correction_message_id = Some(retained_correction);
     reset.correction_message_id = Some(reset_correction);
+    retained.correction_release_sequence = Some(correction_release_sequence);
+    reset.correction_release_sequence = Some(correction_release_sequence);
     run_successor_population(
         &mut store,
         &mut sequence,
+        &fixture,
         &mut retained,
         StudyTreatment::Retained,
     )?;
-    run_successor_population(&mut store, &mut sequence, &mut reset, StudyTreatment::Reset)?;
+    run_successor_population(
+        &mut store,
+        &mut sequence,
+        &fixture,
+        &mut reset,
+        StudyTreatment::Reset,
+    )?;
 
     let retained_report = close_and_measure(
         &mut store,
@@ -294,12 +350,15 @@ pub fn run_provider_free_pair() -> Result<PairedReport, HarnessError> {
     let replay_materialized_state_digest = store.validate_replayed_materialized_state()?;
     let retained_latency = observed_value(&retained_report.correction_adoption_latency);
     let reset_latency = observed_value(&reset_report.correction_adoption_latency);
+    let (isolated_baseline, unstructured_baseline) = run_baselines(&fixture)?;
     Ok(PairedReport {
         retained: retained_report,
         reset: reset_report,
         retained_minus_reset_latency: retained_latency.zip(reset_latency).map(|(a, b)| a - b),
         source_authority_rejected_after_replacement,
         reset_history_read_rejected,
+        isolated_baseline,
+        unstructured_baseline,
         replay_materialized_state_digest,
     })
 }
@@ -437,9 +496,8 @@ fn admit_protocol(
             forum_prompt_digest: forum_contract.prompt_digest,
             forum_tool_digest: forum_contract.tool_digest,
             evidence_digest: fixture.evidence().identity(),
-            topology_digest: Blake3Digest::of_bytes(
-                b"cl-001|roles=4-observer,2-challenger,1-synthesizer,1-decision|v1",
-            ),
+            correction_digest: fixture.correction_package().digest(),
+            topology_digest: canonical_role_topology_digest(),
             episode_budget: budget(EPISODE_BUDGET_UNITS)?,
         },
     )? {
@@ -606,10 +664,23 @@ fn create_arm(
         thread_id,
         source_obligations,
         successor_obligations: Vec::new(),
+        successor_population_snapshot_id: None,
         source_false_claim_id: ForumMessageId::new(1)
             .ok_or(HarnessError::UnexpectedEvent("placeholder message id"))?,
+        source_message_ids: Vec::new(),
+        source_challenge_message_id: None,
         frozen_head: 0,
         correction_message_id: None,
+        correction_release_sequence: None,
+        post_correction_admitted_steps: 0,
+        first_corrected_statement_step: None,
+        final_decision_sequence: None,
+        final_decision: None,
+        successor_correction_reads: 0,
+        successor_history_references: 0,
+        false_claim_rebutted: false,
+        dissent_consulted: false,
+        successor_turns: 0,
         returned_forum_bytes: 0,
     })
 }
@@ -623,11 +694,16 @@ fn admit_actor(
     fixture: &WorldFixture,
     forum_contract: ForumContract,
 ) -> Result<StudyActorObligationId, HarnessError> {
-    let private_view_digest = if role <= 4 {
-        fixture.cards()[usize::from(role - 1)].digest()
-    } else {
-        Blake3Digest::of_bytes(format!("cl-001|private-role-view|{role}|v1").as_bytes())
-    };
+    let specification = canonical_role_specifications()
+        .into_iter()
+        .find(|specification| specification.ordinal().value() == role)
+        .ok_or(HarnessError::UnexpectedEvent("canonical role specification"))?;
+    // The role fragment is part of the sealed actor-policy revision; this
+    // per-occurrence private-view digest binds the exact card or Forum view
+    // allocated to this particular disposable role seat.
+    let private_view_digest = specification
+        .private_view_digest(fixture)
+        .map_err(|_| HarnessError::UnexpectedEvent("canonical private view"))?;
     match accepted(
         store,
         sequence,
@@ -642,6 +718,8 @@ fn admit_actor(
             budget: budget(ACTOR_BUDGET_UNITS)?,
             read_budget: ForumReadBudget::new(FORUM_READ_BUDGET)
                 .ok_or(HarnessError::UnexpectedEvent("read budget"))?,
+            post_budget: ForumPostBudget::new(1)
+                .ok_or(HarnessError::UnexpectedEvent("post budget"))?,
         },
     )? {
         StudyEvent::ActorObligationAdmitted { obligation_id, .. } => Ok(obligation_id),
@@ -656,7 +734,11 @@ fn run_source_population(
     arm: &mut ArmRun,
 ) -> Result<(), HarnessError> {
     let mut false_claim = None;
-    for (index, obligation_id) in arm.source_obligations.iter().copied().enumerate() {
+    for (index, (specification, obligation_id)) in canonical_role_specifications()
+        .into_iter()
+        .zip(arm.source_obligations.iter().copied())
+        .enumerate()
+    {
         let role = index + 1;
         if role > 1 {
             let _ = accepted(
@@ -670,46 +752,61 @@ fn run_source_population(
                 },
             )?;
         }
-        let text = if role == 1 {
-            std::str::from_utf8(fixture.false_claim().bytes())
-                .map_err(|_| HarnessError::UnexpectedEvent("UTF-8 false claim"))?
-                .to_owned()
-        } else {
-            format!("source role {role} records a bounded, untrusted observation")
-        };
+        let view = specification
+            .private_view(fixture)
+            .map_err(|_| HarnessError::UnexpectedEvent("source private view"))?;
+        let output = specification
+            .deterministic_output(ActorPopulationPhase::Source, &view, None)
+            .map_err(|_| HarnessError::UnexpectedEvent("source actor output"))?;
+        if output.private_view_digest() != view.digest() {
+            return Err(HarnessError::UnexpectedEvent("source output private view"));
+        }
         let event = accepted(
             store,
             sequence,
             StudyCommand::PublishForumMessage {
                 obligation_id,
-                kind: if role == 5 || role == 6 {
-                    ForumMessageKind::Challenge
-                } else if role == 7 {
-                    ForumMessageKind::Synthesis
-                } else {
-                    ForumMessageKind::Finding
-                },
-                body: body(&text),
+                kind: forum_message_kind(output.message().kind()),
+                body: body_from_bytes(output.message().body_bytes())?,
                 in_reply_to_message_id: false_claim,
                 supersedes_message_id: None,
             },
         )?;
         if let StudyEvent::ForumMessagePublished { message_id, .. } = event {
+            arm.source_message_ids.push(message_id);
             if role == 1 {
+                if output.message().body_digest() != fixture.false_claim().digest() {
+                    return Err(HarnessError::UnexpectedEvent("sealed false claim output"));
+                }
                 false_claim = Some(message_id);
                 arm.source_false_claim_id = message_id;
+            }
+            if output.message().kind() == RoleMessageKind::Challenge
+                && arm.source_challenge_message_id.is_none()
+            {
+                arm.source_challenge_message_id = Some(message_id);
             }
         } else {
             return Err(HarnessError::UnexpectedEvent("ForumMessagePublished"));
         }
     }
     let decision_actor = arm.source_obligations[usize::from(POPULATION_SIZE - 1)];
+    let decision_specification = canonical_role_specifications()[usize::from(POPULATION_SIZE - 1)];
+    let decision_view = decision_specification
+        .private_view(fixture)
+        .map_err(|_| HarnessError::UnexpectedEvent("source decision view"))?;
+    let decision = decision_specification
+        .deterministic_output(ActorPopulationPhase::Source, &decision_view, None)
+        .map_err(|_| HarnessError::UnexpectedEvent("source decision output"))?
+        .decision()
+        .ok_or(HarnessError::UnexpectedEvent("source decision observation"))?
+        .clone();
     accepted(
         store,
         sequence,
         StudyCommand::RecordDecision {
             obligation_id: decision_actor,
-            decision_digest: Blake3Digest::of_bytes(b"cl-001|source-early-decision|zero|v1"),
+            decision: decision_body_from_bytes(decision.bytes())?,
             cited_message_id: false_claim,
         },
     )?;
@@ -744,15 +841,34 @@ fn run_source_population(
 fn replace_population(
     store: &mut KernelStore,
     sequence: &mut u32,
+    protocol_revision_id: StudyProtocolRevisionId,
     arm: &mut ArmRun,
 ) -> Result<(), HarnessError> {
+    let successor_population_snapshot_id = match accepted(
+        store,
+        sequence,
+        StudyCommand::AdmitPopulationSnapshot {
+            protocol_revision_id,
+            // A fresh snapshot identity represents a fresh disposable actor
+            // population, even when its sealed role composition is identical.
+            population_digest: Blake3Digest::of_bytes(b"cl-001|fixed-eight-role-population|v1"),
+            population_size: i64::from(POPULATION_SIZE),
+        },
+    )? {
+        StudyEvent::PopulationSnapshotAdmitted {
+            population_snapshot_id,
+        } => population_snapshot_id,
+        _ => return Err(HarnessError::UnexpectedEvent("PopulationSnapshotAdmitted")),
+    };
     accepted(
         store,
         sequence,
         StudyCommand::ReplacePopulation {
             episode_id: arm.episode_id,
+            successor_population_snapshot_id,
         },
     )?;
+    arm.successor_population_snapshot_id = Some(successor_population_snapshot_id);
     Ok(())
 }
 
@@ -764,6 +880,9 @@ fn admit_successor_population(
     treatment: StudyTreatment,
     forum_contract: ForumContract,
 ) -> Result<(), HarnessError> {
+    if arm.successor_population_snapshot_id.is_none() {
+        return Err(HarnessError::UnexpectedEvent("fresh successor population"));
+    }
     for role in 1..=POPULATION_SIZE {
         arm.successor_obligations.push(admit_actor(
             store,
@@ -796,6 +915,7 @@ fn admit_successor_population(
 fn run_successor_population(
     store: &mut KernelStore,
     sequence: &mut u32,
+    fixture: &WorldFixture,
     arm: &mut ArmRun,
     treatment: StudyTreatment,
 ) -> Result<(), HarnessError> {
@@ -807,7 +927,11 @@ fn run_successor_population(
         StudyTreatment::Reset => arm.frozen_head + 1,
     };
     let correction_ordinal = arm.frozen_head + 1;
-    for (index, obligation_id) in arm.successor_obligations.iter().copied().enumerate() {
+    for (index, (specification, obligation_id)) in canonical_role_specifications()
+        .into_iter()
+        .zip(arm.successor_obligations.iter().copied())
+        .enumerate()
+    {
         let read = accepted(
             store,
             sequence,
@@ -817,47 +941,103 @@ fn run_successor_population(
                 through_message_ordinal: correction_ordinal,
             },
         )?;
-        if let StudyEvent::ForumMessagesRead { receipt_id, .. } = read {
-            arm.returned_forum_bytes +=
-                i64::try_from(store.forum_read_receipt_rendering(receipt_id)?.len())
-                    .map_err(|_| HarnessError::UnexpectedEvent("read rendering length"))?;
+        if let StudyEvent::ForumMessagesRead {
+            receipt_id,
+            through_message_ordinal,
+            ..
+        } = read
+        {
+            let rendering = store
+                .forum_read_receipt_rendering_for_obligation(receipt_id, obligation_id)?;
+            arm.returned_forum_bytes += i64::try_from(rendering.len())
+                .map_err(|_| HarnessError::UnexpectedEvent("read rendering length"))?;
+            if through_message_ordinal >= correction_ordinal
+                && rendering
+                    .windows(fixture.correction_package().bytes().len())
+                    .any(|window| window == fixture.correction_package().bytes())
+            {
+                arm.successor_correction_reads += 1;
+            }
+            arm.post_correction_admitted_steps += 1;
         } else {
             return Err(HarnessError::UnexpectedEvent("ForumMessagesRead"));
         }
         let role = index + 1;
-        let message = if role == 1 {
-            "successor treats correction as decision-relevant untrusted peer content".to_owned()
-        } else {
-            format!("successor role {role} records bounded post-correction work")
+        let view = specification
+            .private_view(fixture)
+            .map_err(|_| HarnessError::UnexpectedEvent("successor private view"))?;
+        let output = specification
+            .deterministic_output(
+                ActorPopulationPhase::Successor,
+                &view,
+                Some(fixture.correction_package()),
+            )
+            .map_err(|_| HarnessError::UnexpectedEvent("successor actor output"))?;
+        if output.correction_digest() != Some(fixture.correction_package().digest()) {
+            return Err(HarnessError::UnexpectedEvent("successor correction input"));
+        }
+        let in_reply_to_message_id = match (treatment, role) {
+            // This retained successor both reads and explicitly preserves a
+            // valid source challenge; the reset arm cannot name it.
+            (StudyTreatment::Retained, 5) => arm.source_challenge_message_id,
+            // This is the exact retained-arm rebuttal used by the false-claim
+            // persistence derivation. Its body also names the correction.
+            (StudyTreatment::Retained, 6) => Some(arm.source_false_claim_id),
+            _ => Some(correction_message_id),
         };
         let published = accepted(
             store,
             sequence,
             StudyCommand::PublishForumMessage {
                 obligation_id,
-                kind: if role == 5 || role == 6 {
-                    ForumMessageKind::Challenge
-                } else if role == 7 {
-                    ForumMessageKind::Synthesis
-                } else {
-                    ForumMessageKind::Finding
-                },
-                body: body(&message),
-                in_reply_to_message_id: Some(correction_message_id),
+                kind: forum_message_kind(output.message().kind()),
+                body: body_from_bytes(output.message().body_bytes())?,
+                in_reply_to_message_id,
                 supersedes_message_id: None,
             },
         )?;
-        if !matches!(published, StudyEvent::ForumMessagePublished { .. }) {
+        if let StudyEvent::ForumMessagePublished { .. } = published {
+            arm.post_correction_admitted_steps += 1;
+            arm.successor_turns += 1;
+            if arm.first_corrected_statement_step.is_none() {
+                arm.first_corrected_statement_step = Some(arm.post_correction_admitted_steps);
+            }
+            if matches!(treatment, StudyTreatment::Retained) && (role == 5 || role == 6) {
+                arm.successor_history_references += 1;
+            }
+            if matches!(treatment, StudyTreatment::Retained) && role == 5 {
+                arm.dissent_consulted = true;
+            }
+            if matches!(treatment, StudyTreatment::Retained) && role == 6 {
+                arm.false_claim_rebutted = true;
+            }
+        } else {
             return Err(HarnessError::UnexpectedEvent("ForumMessagePublished"));
         }
     }
     let decision_actor = arm.successor_obligations[usize::from(POPULATION_SIZE - 1)];
+    let decision_specification = canonical_role_specifications()[usize::from(POPULATION_SIZE - 1)];
+    let decision_view = decision_specification
+        .private_view(fixture)
+        .map_err(|_| HarnessError::UnexpectedEvent("successor decision view"))?;
+    let decision = decision_specification
+        .deterministic_output(
+            ActorPopulationPhase::Successor,
+            &decision_view,
+            Some(fixture.correction_package()),
+        )
+        .map_err(|_| HarnessError::UnexpectedEvent("successor decision output"))?
+        .decision()
+        .ok_or(HarnessError::UnexpectedEvent("successor decision observation"))?
+        .clone();
+    arm.final_decision_sequence = Some(*sequence);
+    arm.final_decision = Some(decision.outcome());
     accepted(
         store,
         sequence,
         StudyCommand::RecordDecision {
             obligation_id: decision_actor,
-            decision_digest: Blake3Digest::of_bytes(b"cl-001|successor-final-decision|one|v1"),
+            decision: decision_body_from_bytes(decision.bytes())?,
             cited_message_id: Some(correction_message_id),
         },
     )?;
@@ -881,44 +1061,96 @@ fn close_and_measure(
     arm: &ArmRun,
     treatment: StudyTreatment,
 ) -> Result<ArmReport, HarnessError> {
-    accepted(
-        store,
-        sequence,
-        StudyCommand::CloseEpisode {
-            episode_id: arm.episode_id,
-        },
-    )?;
+    let correction_release_sequence = arm
+        .correction_release_sequence
+        .ok_or(HarnessError::UnexpectedEvent("correction release occurrence"))?;
+    let first_corrected_statement_step = arm
+        .first_corrected_statement_step
+        .ok_or(HarnessError::UnexpectedEvent("corrected statement occurrence"))?;
+    let adoption_steps = first_corrected_statement_step;
+    let final_decision = arm
+        .final_decision
+        .ok_or(HarnessError::UnexpectedEvent("final decision occurrence"))?;
     let final_correct = fixture
         .analysis_evaluator()
-        .evaluate_decision(fixture.evidence(), BinaryOutcome::One)
+        .evaluate_decision(fixture.evidence(), final_decision)
         .map_err(|_| HarnessError::WorldEvaluation)?
         .decision_correct();
     let correction_digest = fixture.correction_package().digest();
-    let adoption = observed(1, b"cl-001|CorrectionAdoptionLatency|steps=1");
-    let correctness = observed(
-        i64::from(final_correct),
-        b"cl-001|FinalDecisionCorrect|true",
+    let adoption = observed_from_raw(
+        adoption_steps,
+        "CorrectionAdoptionLatency",
+        &[correction_digest],
+        &[
+            ("correction_release_command", i64::from(correction_release_sequence)),
+            ("first_corrected_statement_arm_step", first_corrected_statement_step),
+        ],
     );
-    let false_persistence = observed(0, b"cl-001|FalseClaimPersistence|false");
-    let visibility = observed(
-        i64::from(POPULATION_SIZE),
-        b"cl-001|CorrectionVisibility|8-of-8",
+    let correctness = observed_from_raw(
+        i64::from(final_correct),
+        "FinalDecisionCorrect",
+        &[fixture.identity()],
+        &[("final_decision", i64::from(final_decision.bit()))],
+    );
+    let false_persistence = observed_from_raw(
+        i64::from(!arm.false_claim_rebutted),
+        "FalseClaimPersistence",
+        &[fixture.false_claim().digest()],
+        &[("rebutted_by_successor", i64::from(arm.false_claim_rebutted))],
+    );
+    let visibility = observed_from_raw(
+        arm.successor_correction_reads * 10_000 / i64::from(POPULATION_SIZE),
+        "CorrectionVisibilityBasisPoints",
+        &[correction_digest],
+        &[
+            ("eligible_successors", i64::from(POPULATION_SIZE)),
+            ("returned_correction_reads", arm.successor_correction_reads),
+        ],
     );
     let dissent = match treatment {
-        StudyTreatment::Retained => observed(1, b"cl-001|DissentSurvival|consulted"),
+        StudyTreatment::Retained => observed_from_raw(
+            i64::from(arm.dissent_consulted),
+            "DissentSurvival",
+            &[],
+            &[
+                ("source_challenge_present", i64::from(arm.source_challenge_message_id.is_some())),
+                ("retained_successor_consulted", i64::from(arm.dissent_consulted)),
+            ],
+        ),
         StudyTreatment::Reset => MeasurementOutcome::Unavailable {
             reason_digest: Blake3Digest::of_bytes(
                 b"cl-001|DissentSurvival|pre-replacement-range-not-authorized",
             ),
         },
     };
-    let attention = observed(
+    let history_utilization = observed_from_raw(
+        arm.successor_history_references * 10_000 / arm.frozen_head,
+        "ForumHistoryUtilizationBasisPoints",
+        &[],
+        &[
+            ("visible_pre_replacement_messages", arm.frozen_head),
+            ("successor_history_references", arm.successor_history_references),
+        ],
+    );
+    let attention_bytes = observed_from_raw(
         arm.returned_forum_bytes,
-        format!(
-            "cl-001|ForumAttentionCost|bytes={}",
-            arm.returned_forum_bytes
-        )
-        .as_bytes(),
+        "ForumAttentionCostReturnedBytes",
+        &[],
+        &[("returned_bytes", arm.returned_forum_bytes)],
+    );
+    let attention_turns = observed_from_raw(
+        arm.successor_turns,
+        "ForumAttentionCostActorTurns",
+        &[],
+        &[("successor_turns", arm.successor_turns)],
+    );
+    // The provider-free double has no wall-clock runtime; zero is an explicit
+    // observed execution property, not missing data or an inferred benefit.
+    let attention_runtime_micros = observed_from_raw(
+        0,
+        "ForumAttentionCostRuntimeMicros",
+        &[],
+        &[("provider_free_runtime_micros", 0)],
     );
     record_measurements(
         store,
@@ -930,8 +1162,18 @@ fn close_and_measure(
             false_persistence,
             visibility,
             dissent,
-            attention,
+            history_utilization,
+            attention_bytes,
+            attention_turns,
+            attention_runtime_micros,
         ],
+    )?;
+    accepted(
+        store,
+        sequence,
+        StudyCommand::CloseEpisode {
+            episode_id: arm.episode_id,
+        },
     )?;
     Ok(ArmReport {
         treatment,
@@ -942,7 +1184,10 @@ fn close_and_measure(
         false_claim_persistence: false_persistence,
         correction_visibility: visibility,
         dissent_survival: dissent,
-        forum_attention_bytes: attention,
+        forum_history_utilization: history_utilization,
+        forum_attention_bytes: attention_bytes,
+        forum_attention_turns: attention_turns,
+        forum_attention_runtime_micros: attention_runtime_micros,
     })
 }
 
@@ -958,17 +1203,19 @@ fn record_measurements(
                 .map_err(|_| HarnessError::UnexpectedEvent("measurement slot"))?,
         )
         .ok_or(HarnessError::UnexpectedEvent("measurement slot"))?;
-        let (status, value_digest, reason_digest) = match outcome {
-            MeasurementOutcome::Observed { value_digest, .. } => {
-                (StudyMeasurementStatus::Observed, Some(*value_digest), None)
+        let (status, value, value_digest, reason_digest) = match outcome {
+            MeasurementOutcome::Observed { value, value_digest } => {
+                (StudyMeasurementStatus::Observed, Some(*value), Some(*value_digest), None)
             }
             MeasurementOutcome::Unavailable { reason_digest } => (
                 StudyMeasurementStatus::Unavailable,
+                None,
                 None,
                 Some(*reason_digest),
             ),
             MeasurementOutcome::Invalidated { reason_digest } => (
                 StudyMeasurementStatus::Invalidated,
+                None,
                 None,
                 Some(*reason_digest),
             ),
@@ -980,6 +1227,7 @@ fn record_measurements(
                 episode_id,
                 measurement_slot: slot,
                 status,
+                value,
                 value_digest,
                 reason_digest,
             },
@@ -1028,15 +1276,160 @@ fn body(value: &str) -> ForumMessageBody {
     ForumMessageBody::parse(value).expect("fixed provider-free Forum body is valid")
 }
 
+fn body_from_bytes(bytes: &[u8]) -> Result<ForumMessageBody, HarnessError> {
+    let value = std::str::from_utf8(bytes)
+        .map_err(|_| HarnessError::UnexpectedEvent("actor Forum message UTF-8"))?;
+    ForumMessageBody::parse(value)
+        .map_err(|_| HarnessError::UnexpectedEvent("bounded actor Forum message"))
+}
+
+fn decision_body_from_bytes(bytes: &[u8]) -> Result<StudyDecisionBody, HarnessError> {
+    let value = std::str::from_utf8(bytes)
+        .map_err(|_| HarnessError::UnexpectedEvent("actor decision UTF-8"))?;
+    StudyDecisionBody::parse(value)
+        .map_err(|_| HarnessError::UnexpectedEvent("bounded actor decision"))
+}
+
+fn forum_message_kind(kind: RoleMessageKind) -> ForumMessageKind {
+    match kind {
+        RoleMessageKind::Finding => ForumMessageKind::Finding,
+        RoleMessageKind::Question => ForumMessageKind::Question,
+        RoleMessageKind::Challenge => ForumMessageKind::Challenge,
+        RoleMessageKind::Synthesis => ForumMessageKind::Synthesis,
+    }
+}
+
 fn budget(value: i64) -> Result<StudyBudgetUnits, HarnessError> {
     StudyBudgetUnits::new(value).ok_or(HarnessError::UnexpectedEvent("study budget"))
 }
 
-fn observed(value: i64, bytes: &[u8]) -> MeasurementOutcome {
+fn observed_from_raw(
+    value: i64,
+    measurement: &str,
+    digests: &[Blake3Digest],
+    values: &[(&str, i64)],
+) -> MeasurementOutcome {
     MeasurementOutcome::Observed {
         value,
-        value_digest: Blake3Digest::of_bytes(bytes),
+        value_digest: digest_fields(measurement, digests, values),
     }
+}
+
+fn digest_fields(
+    domain: &str,
+    digests: &[Blake3Digest],
+    values: &[(&str, i64)],
+) -> Blake3Digest {
+    let mut bytes = Vec::with_capacity(64 + digests.len() * 32 + values.len() * 24);
+    bytes.extend_from_slice(domain.as_bytes());
+    bytes.push(0);
+    for digest in digests {
+        bytes.extend_from_slice(&digest.as_bytes());
+    }
+    for (name, value) in values {
+        bytes.extend_from_slice(name.as_bytes());
+        bytes.push(b'=');
+        bytes.extend_from_slice(&value.to_be_bytes());
+        bytes.push(0);
+    }
+    Blake3Digest::of_bytes(&bytes)
+}
+
+fn run_baselines(
+    fixture: &WorldFixture,
+) -> Result<(BaselineReport, BaselineReport), HarnessError> {
+    let specifications = canonical_role_specifications();
+    let decision_specification = specifications[usize::from(POPULATION_SIZE - 1)];
+    let decision_view = decision_specification
+        .private_view(fixture)
+        .map_err(|_| HarnessError::UnexpectedEvent("baseline decision view"))?;
+
+    // Isolated actors receive only their canonical private views. The loop is
+    // the provider-free occurrence of all eight actor turns; no Forum output
+    // is passed between them.
+    for specification in specifications {
+        let view = specification
+            .private_view(fixture)
+            .map_err(|_| HarnessError::UnexpectedEvent("isolated private view"))?;
+        specification
+            .deterministic_output(ActorPopulationPhase::Source, &view, None)
+            .map_err(|_| HarnessError::UnexpectedEvent("isolated actor output"))?;
+    }
+    let isolated_decision = decision_specification
+        .deterministic_output(ActorPopulationPhase::Source, &decision_view, None)
+        .map_err(|_| HarnessError::UnexpectedEvent("isolated decision output"))?
+        .decision()
+        .ok_or(HarnessError::UnexpectedEvent("isolated decision occurrence"))?
+        .outcome();
+    let isolated_correct = fixture
+        .analysis_evaluator()
+        .evaluate_decision(fixture.evidence(), isolated_decision)
+        .map_err(|_| HarnessError::WorldEvaluation)?
+        .decision_correct();
+
+    // This control has the same eight fresh actor turns and the same sealed
+    // correction package, but no durable Forum read/receipt/history surface.
+    // It is deliberately reported alongside the pair, never pooled with it.
+    for specification in specifications {
+        let view = specification
+            .private_view(fixture)
+            .map_err(|_| HarnessError::UnexpectedEvent("unstructured private view"))?;
+        specification
+            .deterministic_output(
+                ActorPopulationPhase::Successor,
+                &view,
+                Some(fixture.correction_package()),
+            )
+            .map_err(|_| HarnessError::UnexpectedEvent("unstructured actor output"))?;
+    }
+    let unstructured_decision = decision_specification
+        .deterministic_output(
+            ActorPopulationPhase::Successor,
+            &decision_view,
+            Some(fixture.correction_package()),
+        )
+        .map_err(|_| HarnessError::UnexpectedEvent("unstructured decision output"))?
+        .decision()
+        .ok_or(HarnessError::UnexpectedEvent("unstructured decision occurrence"))?
+        .outcome();
+    let unstructured_correct = fixture
+        .analysis_evaluator()
+        .evaluate_decision(fixture.evidence(), unstructured_decision)
+        .map_err(|_| HarnessError::WorldEvaluation)?
+        .decision_correct();
+
+    Ok((
+        BaselineReport {
+            name: "isolated-private-view",
+            final_decision_correct: observed_from_raw(
+                i64::from(isolated_correct),
+                "BaselineFinalDecisionCorrect",
+                &[fixture.identity()],
+                &[("isolated_decision", i64::from(isolated_decision.bit()))],
+            ),
+            actor_turns: observed_from_raw(
+                i64::from(POPULATION_SIZE),
+                "BaselineActorTurns",
+                &[],
+                &[("isolated_turns", i64::from(POPULATION_SIZE))],
+            ),
+        },
+        BaselineReport {
+            name: "unstructured-ephemeral-exchange",
+            final_decision_correct: observed_from_raw(
+                i64::from(unstructured_correct),
+                "BaselineFinalDecisionCorrect",
+                &[fixture.identity(), fixture.correction_package().digest()],
+                &[("unstructured_decision", i64::from(unstructured_decision.bit()))],
+            ),
+            actor_turns: observed_from_raw(
+                i64::from(POPULATION_SIZE),
+                "BaselineActorTurns",
+                &[],
+                &[("unstructured_turns", i64::from(POPULATION_SIZE))],
+            ),
+        },
+    ))
 }
 
 fn observed_value(outcome: &MeasurementOutcome) -> Option<i64> {
@@ -1066,6 +1459,52 @@ mod tests {
             first.reset.frozen_forum_head
         );
         assert_eq!(first.retained_minus_reset_latency, Some(0));
+        assert_eq!(
+            observed_value(&first.retained.final_decision_correct),
+            Some(1),
+            "analysis evaluates the recorded successor decision, not a fixture literal"
+        );
+        assert_eq!(
+            observed_value(&first.retained.false_claim_persistence),
+            Some(0),
+            "the retained successor's recorded rebuttal names the source claim"
+        );
+        assert_eq!(
+            observed_value(&first.reset.false_claim_persistence),
+            Some(1),
+            "reset actors cannot read or rebut the hidden source claim"
+        );
+        assert_eq!(
+            observed_value(&first.retained.forum_history_utilization),
+            Some(2_500),
+            "two distinct source-message relations out of eight frozen messages"
+        );
+        assert_eq!(
+            observed_value(&first.reset.forum_history_utilization),
+            Some(0)
+        );
+        assert_eq!(
+            observed_value(&first.retained.correction_visibility),
+            Some(10_000),
+            "every successor has a retained receipt containing correction bytes"
+        );
+        assert_eq!(
+            observed_value(&first.retained.forum_attention_turns),
+            Some(i64::from(POPULATION_SIZE))
+        );
+        assert_eq!(
+            observed_value(&first.retained.forum_attention_runtime_micros),
+            Some(0)
+        );
+        assert_eq!(
+            observed_value(&first.isolated_baseline.final_decision_correct),
+            Some(0)
+        );
+        assert_eq!(
+            observed_value(&first.unstructured_baseline.final_decision_correct),
+            Some(1),
+            "the no-history control remains reportable rather than an implicit success"
+        );
         assert!(matches!(
             first.reset.dissent_survival,
             MeasurementOutcome::Unavailable { .. }

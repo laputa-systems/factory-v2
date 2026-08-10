@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import { blake3Hex } from "../src/digest.js";
+import { FORUM_F0_AWARENESS_BLAKE3, FORUM_F0_TOOL_CONTRACT_BLAKE3 } from "../src/forum.js";
 import { MAX_JSONL_FRAME_BYTES, type OutboundFrame } from "../src/protocol.js";
 import { consumeInboundJsonl } from "../src/main.js";
 
@@ -93,6 +94,11 @@ test("main: real-pipe CreateSession then Dispose flushes before EOF without a pr
 		modelCatalog: { catalogBlake3: blake3Hex(catalog), effectiveModel: admittedDescriptor() },
 		toolProfile: "read_execute_v1",
 		settings: admittedSettings(),
+		forumContract: {
+			kind: "forum_enabled_v1",
+			awarenessBlake3: FORUM_F0_AWARENESS_BLAKE3,
+			toolContractBlake3: FORUM_F0_TOOL_CONTRACT_BLAKE3,
+		},
 	};
 	const result = await runHost([
 		JSON.stringify(envelope(1, "CreateSession", createPayload)),
@@ -130,6 +136,11 @@ test("main: a broken stdout after SessionReady fences a later Prompt before it c
 		model: { provider: "openrouter", modelId: "deepseek/deepseek-v4-flash-0731", thinkingLevel: "high" },
 		modelCatalog: { catalogBlake3: blake3Hex(catalog), effectiveModel: admittedDescriptor() },
 		toolProfile: "read_execute_v1", settings: admittedSettings(),
+		forumContract: {
+			kind: "forum_enabled_v1",
+			awarenessBlake3: FORUM_F0_AWARENESS_BLAKE3,
+			toolContractBlake3: FORUM_F0_TOOL_CONTRACT_BLAKE3,
+		},
 	});
 	// GetState forces an outbound write after the parent closes the pipe. The
 	// following Prompt is intentionally sequenced only after that fault trigger;

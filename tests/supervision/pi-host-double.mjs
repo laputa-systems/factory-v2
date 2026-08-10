@@ -223,6 +223,7 @@ function accept(frame) {
 					toolProfile: createPayload.toolProfile,
 					tools: toolsForProfile(createPayload.toolProfile),
 					settings: createPayload.settings,
+					forumContract: createPayload.forumContract,
 				},
 			});
 			if (sessionIdentity.includes("exit-after-session-ready")) {

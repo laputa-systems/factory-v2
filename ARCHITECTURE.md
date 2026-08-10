@@ -99,10 +99,15 @@ Measurement
 ExperimentalFork
 ```
 
-These are planned contracts, not aliases for current kernel types. In
-particular, a current deterministic evaluator occurrence is not an `Episode`,
-an Operating Cycle is not a `StudyProtocolRevision`, and ledger replay is not
-an `ExperimentalFork`.
+These contracts are implemented as a narrow provider-free generic boundary:
+`StudyProtocolRevision`, `Episode`, `TreatmentAssignment`, population
+snapshots, F0 Forum state, measurements, and a linked `ExperimentalFork` have
+closed Rust/SQLite representations. They are not aliases for nearby legacy
+types. A current deterministic evaluator occurrence is not an `Episode`, an
+Operating Cycle is not a `StudyProtocolRevision`, and ledger replay is not an
+experimental replay. The present `ExperimentalFork` records a new linked
+episode and declared treatment delta; it does not itself execute a
+counterfactual rerun.
 
 An episode freezes all variables needed to interpret its result: world,
 population, institutional state, budget, treatment, intervention schedule,
@@ -116,8 +121,9 @@ output schemas, deterministic fixtures, and analysis procedures. It may parse
 application semantics but cannot acquire resident authority through them.
 
 The first world is the correction-latency laboratory beneath
-`applications/correction-latency/`. It is documentation-only until its exact
-port is implemented.
+`applications/correction-latency/`. Its provider-free deterministic harness
+uses only the public generic control boundary. It does not stand in for the
+later live Pi/native-child custody profile.
 
 ## Mission and constitutional input
 

@@ -27,6 +27,7 @@ import {
 	absolutePath,
 	assertPinnedActorModelPolicy,
 	assertPinnedModelCatalogPolicy,
+	assertPinnedForumSessionContract,
 	binary64BigEndianHex,
 	nonNegativeInteger,
 	providerCostObservation,
@@ -199,6 +200,7 @@ function assertExactCreatePayload(payload: CreateSessionPayload): void {
 	try {
 		assertPinnedActorModelPolicy(payload.settings);
 		assertPinnedModelCatalogPolicy(payload.modelCatalog);
+		assertPinnedForumSessionContract(payload.forumContract);
 	} catch {
 		throw new SdkConstructionError("execution_profile_drift");
 	}

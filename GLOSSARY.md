@@ -54,40 +54,41 @@ multi-agent transcript looks sophisticated.
 
 ## Experimental-control terms
 
-### Study protocol revision — planned
+### Study protocol revision — implemented provider-free for CL-001
 
 An immutable specification of the research question, eligibility rules,
 treatment variables, assignment procedure, episode budget, interventions,
 measurements, exclusions, and analysis. It cannot require a preferred outcome.
 
-### Episode — planned
+### Episode — implemented provider-free for CL-001
 
 One bounded execution under an exact protocol, world revision, population,
 institution revision and initial state, treatment assignment, budget,
 intervention schedule, measurement specification, and randomization identity.
 
 An Operating Cycle is not an Episode; the former is current authority and
-budget machinery, while the latter is a not-yet-implemented scientific unit.
+budget machinery, while the latter is the bounded provider-free scientific
+unit. It does not yet establish a live actor/process execution profile.
 
-### Treatment assignment — planned
+### Treatment assignment — implemented provider-free for CL-001
 
 The immutable relation binding an episode to its controlled variable values.
 Assignment occurs before treatment-dependent work and remains distinct from an
 institution's own decisions.
 
-### Population snapshot — planned
+### Population snapshot — implemented provider-free for CL-001
 
 The complete episode-local roster of actor-policy revisions, runtime profiles,
 role assignments, and replacement status. It records which actors existed; it
 does not preserve their hidden local state.
 
-### Actor-policy revision — planned
+### Actor-policy revision — implemented provider-free for CL-001
 
 The fixed model/runtime/prompt/tool contract from which disposable actor
 instances are created for an episode. It is not an actor biography or durable
 memory container.
 
-### Institution revision — planned
+### Institution revision — implemented provider-free for CL-001
 
 A sealed executable coordination policy defining information visibility,
 knowledge-promotion rules, authority routing, work allocation, and resource
@@ -96,22 +97,24 @@ retained or reset by treatment.
 
 An office title or system prompt alone is not an Institution revision.
 
-### Intervention — planned
+### Intervention — implemented provider-free for CL-001
 
 A protocol-authorized manipulation at an exact episode point, such as actor
 replacement, memory reset, correction release, or communication-edge removal.
 
-### Measurement — planned
+### Measurement — implemented provider-free for CL-001
 
 A typed observation derived under a named analysis procedure from retained raw
 facts. A measurement is not mission authority, reward, selection, or truth by
 fiat.
 
-### Experimental fork — planned
+### Experimental fork — partial
 
 A new episode derived from a declared source state with explicit treatment
 changes. It preserves a cross-link to the source but has new identity,
 authority, events, and outcomes.
+The current generic transition creates the link and new episode identity; it
+does not copy/rerun source state or constitute experimental replay.
 
 ### Integrity replay — current
 
@@ -125,7 +128,9 @@ does not rerun actors or create a counterfactual.
 
 A bounded participant acting under a declared policy/runtime revision, local
 authority, admitted context, and budget. Current Actor attempts provide some
-execution custody, but population and disposable-actor contracts are planned.
+execution custody. CL-001 additionally has provider-free population and
+disposable-obligation contracts; live binding of those obligations to a
+Pi/native child remains planned.
 
 ### Artifact — partial
 
