@@ -1,8 +1,4 @@
-use std::sync::atomic::{AtomicU64, Ordering};
-
 use society_kernel::{KernelDatabaseUrl, PostgresKernelStore};
-
-static NEXT_SCHEMA: AtomicU64 = AtomicU64::new(1);
 
 fn test_url() -> Option<KernelDatabaseUrl> {
     let value = std::env::var("SOCIETY_POSTGRES_TEST_URL").ok()?;
@@ -10,40 +6,6 @@ fn test_url() -> Option<KernelDatabaseUrl> {
         KernelDatabaseUrl::parse(&value)
             .unwrap_or_else(|error| panic!("SOCIETY_POSTGRES_TEST_URL is invalid: {error}")),
     )
-}
-
-fn fresh_schema() -> String {
-    format!(
-        "society_test_{}_{}",
-        std::process::id(),
-        NEXT_SCHEMA.fetch_add(1, Ordering::Relaxed)
-    )
-}
-
-#[test]
-fn fresh_and_second_migration_are_idempotent() {
-    let Some(url) = test_url() else { return };
-    let admin = PostgresKernelStore::connect(&url).expect("connect PostgreSQL test database");
-    let schema = fresh_schema();
-    admin
-        .create_private_schema(&schema)
-        .expect("create private PostgreSQL test schema");
-    {
-        let store = PostgresKernelStore::connect_in_schema(&url, &schema)
-            .expect("connect private PostgreSQL test schema");
-        store.migrate().expect("apply fresh PostgreSQL migration");
-        store.migrate().expect("reapply PostgreSQL migration");
-        let snapshot = store.catalog_snapshot().expect("read PostgreSQL catalog");
-        assert_eq!(snapshot.table_count, 322);
-        assert_eq!(snapshot.foreign_key_count, 727);
-        assert_eq!(snapshot.partial_index_count, 8);
-        assert_eq!(snapshot.trigger_count, 24);
-        assert_eq!(snapshot.migration_count, 1);
-        assert!(snapshot.check_constraint_count > 100);
-    }
-    admin
-        .drop_private_schema(&schema)
-        .expect("drop private PostgreSQL test schema");
 }
 
 #[test]

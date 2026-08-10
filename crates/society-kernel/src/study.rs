@@ -8,10 +8,11 @@
 
 use thiserror::Error;
 
-use crate::postgres_compat::{Connection, OptionalExtension, Transaction, params};
+use crate::postgres_db::{Connection, OptionalExtension, Transaction, params};
 use crate::{
-    ApplicationRevisionId, Blake3Digest, ChildProcessState, ExecutionProfileId, NativeChildId,
-    NativeChildSpawnAdmissionId, Rejection, RootAuthorityOfficeSessionId, StoreError,
+    ApplicationRevisionId, Blake3Digest, ChildProcessState, ContentObjectId, ExecutionProfileId,
+    NativeChildId, NativeChildSpawnAdmissionId, Rejection, RootAuthorityOfficeSessionId,
+    StoreError,
 };
 
 // The PostgreSQL decoder deliberately keeps each exact row shape named.  These
@@ -80,6 +81,7 @@ type StoredStudyEventRow = (
     Option<i64>,
     Option<Vec<u8>>,
     Option<Vec<u8>>,
+    Option<i64>,
 );
 
 macro_rules! study_identifier {
@@ -478,7 +480,7 @@ pub fn forum_f0_tool_contract_digest() -> Blake3Digest {
 
 /// The sole new generic command family.  Its inner alternatives are closed,
 /// typed, normalized into named PostgreSQL bodies, and replayed through the
-/// existing command/event ledger.  This keeps the legacy ledger's one-command
+/// existing command/event ledger. This keeps the ledger's one-command
 /// append discipline while avoiding an application-specific wire surface.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum StudyCommand {
@@ -617,6 +619,7 @@ pub enum StudyCommand {
         obligation_id: StudyActorObligationId,
         first_message_ordinal: i64,
         through_message_ordinal: i64,
+        rendered_content_object_id: ContentObjectId,
     },
     RecordDecision {
         obligation_id: StudyActorObligationId,
@@ -816,6 +819,7 @@ pub enum StudyEvent {
         first_message_ordinal: i64,
         through_message_ordinal: i64,
         rendered_digest: Blake3Digest,
+        rendered_content_object_id: ContentObjectId,
     },
     DecisionRecorded {
         obligation_id: StudyActorObligationId,
@@ -1180,10 +1184,12 @@ pub(crate) fn append_command_fingerprint(bytes: &mut Vec<u8>, command: &StudyCom
             obligation_id,
             first_message_ordinal,
             through_message_ordinal,
+            rendered_content_object_id,
         } => {
             put_i64(bytes, obligation_id.value());
             put_i64(bytes, *first_message_ordinal);
             put_i64(bytes, *through_message_ordinal);
+            put_i64(bytes, rendered_content_object_id.value());
         }
         StudyCommand::RecordDecision {
             obligation_id,
@@ -1260,7 +1266,7 @@ pub(crate) fn insert_command_body(
         StudyCommand::PublishForumMessage { obligation_id, kind: message_kind, body, in_reply_to_message_id, supersedes_message_id } => transaction.execute("INSERT INTO command_study_transition(command_row_id, study_command_kind, obligation_id, message_kind, text_value, message_id, related_message_id) VALUES ($1, $2, $3, $4, $5, $6, $7)", params![command_row_id, kind, obligation_id.value(), *message_kind as i64, body.as_str(), in_reply_to_message_id.map(ForumMessageId::value), supersedes_message_id.map(ForumMessageId::value)])?,
         StudyCommand::RetractForumMessage { obligation_id, message_id } => transaction.execute("INSERT INTO command_study_transition(command_row_id, study_command_kind, obligation_id, message_id) VALUES ($1, $2, $3, $4)", params![command_row_id, kind, obligation_id.value(), message_id.value()])?,
         StudyCommand::ReleaseMatchedCorrection { pair_id, retained_thread_id, reset_thread_id, correction } => transaction.execute("INSERT INTO command_study_transition(command_row_id, study_command_kind, study_pair_id, thread_id, related_thread_id, text_value) VALUES ($1, $2, $3, $4, $5, $6)", params![command_row_id, kind, pair_id.value(), retained_thread_id.value(), reset_thread_id.value(), correction.as_str()])?,
-        StudyCommand::ReadForum { obligation_id, first_message_ordinal, through_message_ordinal } => transaction.execute("INSERT INTO command_study_transition(command_row_id, study_command_kind, obligation_id, first_ordinal, through_ordinal) VALUES ($1, $2, $3, $4, $5)", params![command_row_id, kind, obligation_id.value(), first_message_ordinal, through_message_ordinal])?,
+        StudyCommand::ReadForum { obligation_id, first_message_ordinal, through_message_ordinal, rendered_content_object_id } => transaction.execute("INSERT INTO command_study_transition(command_row_id, study_command_kind, obligation_id, first_ordinal, through_ordinal, rendered_content_object_id) VALUES ($1, $2, $3, $4, $5, $6)", params![command_row_id, kind, obligation_id.value(), first_message_ordinal, through_message_ordinal, rendered_content_object_id.value()])?,
         StudyCommand::RecordDecision { obligation_id, decision, cited_message_id } => transaction.execute("INSERT INTO command_study_transition(command_row_id, study_command_kind, obligation_id, decision_digest, text_value, message_id) VALUES ($1, $2, $3, $4, $5, $6)", params![command_row_id, kind, obligation_id.value(), decision.digest().as_bytes().as_slice(), decision.as_str(), cited_message_id.map(ForumMessageId::value)])?,
         StudyCommand::RevealGroundTruth { episode_id, reveal } => transaction.execute("INSERT INTO command_study_transition(command_row_id, study_command_kind, study_episode_id, body_digest, text_value) VALUES ($1, $2, $3, $4, $5)", params![command_row_id, kind, episode_id.value(), reveal.digest().as_bytes().as_slice(), reveal.as_str()])?,
         StudyCommand::RecordMeasurementResult { episode_id, measurement_slot, status, value, value_digest, reason_digest } => transaction.execute("INSERT INTO command_study_transition(command_row_id, study_command_kind, study_episode_id, measurement_slot, measurement_status, observed_value, value_digest, reason_digest) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)", params![command_row_id, kind, episode_id.value(), i64::from(measurement_slot.value()), *status as i64, value, value_digest.map(Blake3Digest::as_bytes).map(Vec::from), reason_digest.map(Blake3Digest::as_bytes).map(Vec::from)])?,
@@ -2038,12 +2044,14 @@ pub(crate) fn apply(
             obligation_id,
             first_message_ordinal,
             through_message_ordinal,
+            rendered_content_object_id,
         } => read_forum(
             transaction,
             command_row_id,
             *obligation_id,
             *first_message_ordinal,
             *through_message_ordinal,
+            *rendered_content_object_id,
         ),
         StudyCommand::RecordDecision {
             obligation_id,
@@ -2573,37 +2581,25 @@ fn forum_rendering(
     Ok(bytes)
 }
 
-pub(crate) fn rendering_for_read_receipt(
+pub(crate) fn prepare_forum_read(
     connection: &Connection,
-    receipt_id: ForumReadReceiptId,
-    obligation_id: StudyActorObligationId,
-) -> Result<Vec<u8>, StoreError> {
-    let row: Option<(Vec<u8>, Vec<u8>)> = connection
-        .query_row(
-            "SELECT rendering.rendered_bytes, receipt.rendering_digest
-             FROM study_forum_read_receipts receipt
-             JOIN study_forum_read_receipt_renderings rendering
-               ON rendering.forum_read_receipt_id = receipt.forum_read_receipt_id
-             WHERE receipt.forum_read_receipt_id = $1
-               AND receipt.study_actor_obligation_id = $2",
-            [receipt_id.value(), obligation_id.value()],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .optional()?;
-    let (rendering, stored_digest) = row.ok_or(StoreError::InvalidStoredValue)?;
-    if Blake3Digest::of_bytes(&rendering).as_bytes().as_slice() != stored_digest.as_slice() {
-        return Err(StoreError::InvalidStoredValue);
-    }
-    Ok(rendering)
-}
-
-fn read_forum(
-    transaction: &Transaction<'_>,
-    command_row_id: i64,
     obligation_id: StudyActorObligationId,
     first: i64,
     through: i64,
-) -> Result<StudyEvent, Rejection> {
+) -> Result<Vec<u8>, StoreError> {
+    let transaction = connection.unchecked_transaction()?;
+    let thread_id = forum_read_thread(&transaction, obligation_id, first, through)
+        .map_err(|_| StoreError::InvalidStoredValue)?;
+    forum_rendering(&transaction, thread_id, first, through)
+        .map_err(|_| StoreError::InvalidStoredValue)
+}
+
+fn forum_read_thread(
+    transaction: &Transaction<'_>,
+    obligation_id: StudyActorObligationId,
+    first: i64,
+    through: i64,
+) -> Result<ForumThreadId, Rejection> {
     let (episode_id, phase, lifecycle, read_budget, reads_used) =
         obligation_row(transaction, obligation_id)?;
     if lifecycle != 1
@@ -2638,15 +2634,40 @@ fn read_forum(
     {
         return Err(Rejection::SubjectNotFound);
     }
-    let thread_id = ForumThreadId::try_from(thread).map_err(|_| Rejection::SubjectNotFound)?;
+    ForumThreadId::try_from(thread).map_err(|_| Rejection::SubjectNotFound)
+}
+
+fn read_forum(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    obligation_id: StudyActorObligationId,
+    first: i64,
+    through: i64,
+    rendered_content_object_id: ContentObjectId,
+) -> Result<StudyEvent, Rejection> {
+    let thread_id = forum_read_thread(transaction, obligation_id, first, through)?;
     let rendering = forum_rendering(transaction, thread_id, first, through)?;
     let digest = Blake3Digest::of_bytes(&rendering);
-    transaction.execute("INSERT INTO study_forum_read_receipts(study_actor_obligation_id, forum_thread_id, first_message_ordinal, through_message_ordinal, rendering_revision, returned_byte_count, rendering_digest, returned_by_command_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)", params![obligation_id.value(), thread_id.value(), first, through, FORUM_RENDERING_REVISION, i64::try_from(rendering.len()).map_err(|_| Rejection::InvalidLifecycleTransition)?, digest.as_bytes().as_slice(), command_row_id]).map_err(|_| Rejection::InvalidLifecycleTransition)?;
+    let rendered_byte_count =
+        i64::try_from(rendering.len()).map_err(|_| Rejection::InvalidLifecycleTransition)?;
+    let stored_digest: Vec<u8> = transaction
+        .query_row(
+            "SELECT seal.digest
+             FROM content_objects object
+             JOIN content_seal_receipts seal
+               ON seal.content_seal_receipt_id = object.content_seal_receipt_id
+             WHERE object.content_object_id = $1",
+            [rendered_content_object_id.value()],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|_| Rejection::ContentObjectNotSealed)?
+        .ok_or(Rejection::ContentObjectNotSealed)?;
+    if stored_digest.as_slice() != digest.as_bytes() {
+        return Err(Rejection::ContentObjectNotSealed);
+    }
+    transaction.execute("INSERT INTO study_forum_read_receipts(study_actor_obligation_id, forum_thread_id, first_message_ordinal, through_message_ordinal, rendering_revision, returned_byte_count, rendering_digest, rendered_content_object_id, returned_by_command_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)", params![obligation_id.value(), thread_id.value(), first, through, FORUM_RENDERING_REVISION, rendered_byte_count, digest.as_bytes().as_slice(), rendered_content_object_id.value(), command_row_id]).map_err(|_| Rejection::InvalidLifecycleTransition)?;
     let receipt_id: ForumReadReceiptId = last_id(transaction)?;
-    transaction.execute(
-        "INSERT INTO study_forum_read_receipt_renderings(forum_read_receipt_id, rendered_bytes) VALUES ($1, $2)",
-        params![receipt_id.value(), rendering],
-    ).map_err(|_| Rejection::InvalidLifecycleTransition)?;
     transaction.execute("UPDATE study_actor_obligations SET reads_used = reads_used + 1 WHERE study_actor_obligation_id = $1", [obligation_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
     Ok(StudyEvent::ForumMessagesRead {
         receipt_id,
@@ -2655,6 +2676,7 @@ fn read_forum(
         first_message_ordinal: first,
         through_message_ordinal: through,
         rendered_digest: digest,
+        rendered_content_object_id,
     })
 }
 
@@ -2916,6 +2938,7 @@ pub(crate) fn append_event_fingerprint(bytes: &mut Vec<u8>, event: &StudyEvent) 
             first_message_ordinal,
             through_message_ordinal,
             rendered_digest,
+            rendered_content_object_id,
         } => {
             put_i64(bytes, receipt_id.value());
             put_i64(bytes, obligation_id.value());
@@ -2923,6 +2946,7 @@ pub(crate) fn append_event_fingerprint(bytes: &mut Vec<u8>, event: &StudyEvent) 
             put_i64(bytes, *first_message_ordinal);
             put_i64(bytes, *through_message_ordinal);
             put_digest(bytes, *rendered_digest);
+            put_i64(bytes, rendered_content_object_id.value());
         }
         StudyEvent::MeasurementResultRecorded {
             result_id,
@@ -2982,7 +3006,7 @@ pub(crate) fn insert_event_body(
         StudyEvent::ForumExposureAdmitted { exposure_id, obligation_id, visible_from_message_ordinal, visible_through_message_ordinal } => transaction.execute("INSERT INTO event_study_transition(event_id, study_event_kind, primary_id, obligation_id, first_ordinal, through_ordinal) VALUES ($1, $2, $3, $4, $5, $6)", params![event_id, kind, exposure_id.value(), obligation_id.value(), visible_from_message_ordinal, visible_through_message_ordinal])?,
         StudyEvent::ForumMessagePublished { message_id, thread_id, message_ordinal, author_occurrence_id, kind: message_kind, body_digest } => transaction.execute("INSERT INTO event_study_transition(event_id, study_event_kind, message_id, thread_id, actor_occurrence_id, through_ordinal, message_kind, body_digest) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)", params![event_id, kind, message_id.value(), thread_id.value(), author_occurrence_id.value(), message_ordinal, *message_kind as i64, body_digest.as_bytes().as_slice()])?,
         StudyEvent::MatchedCorrectionReleased { pair_id, retained_message_id, reset_message_id, body_digest } => transaction.execute("INSERT INTO event_study_transition(event_id, study_event_kind, primary_id, secondary_id, tertiary_id, body_digest) VALUES ($1, $2, $3, $4, $5, $6)", params![event_id, kind, pair_id.value(), retained_message_id.value(), reset_message_id.value(), body_digest.as_bytes().as_slice()])?,
-        StudyEvent::ForumMessagesRead { receipt_id, obligation_id, thread_id, first_message_ordinal, through_message_ordinal, rendered_digest } => transaction.execute("INSERT INTO event_study_transition(event_id, study_event_kind, primary_id, obligation_id, thread_id, first_ordinal, through_ordinal, rendered_digest) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)", params![event_id, kind, receipt_id.value(), obligation_id.value(), thread_id.value(), first_message_ordinal, through_message_ordinal, rendered_digest.as_bytes().as_slice()])?,
+        StudyEvent::ForumMessagesRead { receipt_id, obligation_id, thread_id, first_message_ordinal, through_message_ordinal, rendered_digest, rendered_content_object_id } => transaction.execute("INSERT INTO event_study_transition(event_id, study_event_kind, primary_id, obligation_id, thread_id, first_ordinal, through_ordinal, rendered_digest, rendered_content_object_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)", params![event_id, kind, receipt_id.value(), obligation_id.value(), thread_id.value(), first_message_ordinal, through_message_ordinal, rendered_digest.as_bytes().as_slice(), rendered_content_object_id.value()])?,
         StudyEvent::MeasurementResultRecorded { result_id, episode_id, status } => transaction.execute("INSERT INTO event_study_transition(event_id, study_event_kind, primary_id, study_episode_id, measurement_status) VALUES ($1, $2, $3, $4, $5)", params![event_id, kind, result_id.value(), episode_id.value(), *status as i64])?,
         StudyEvent::ExperimentalForkCreated { fork_id, episode_id, source_episode_id, treatment_delta } => transaction.execute("INSERT INTO event_study_transition(event_id, study_event_kind, primary_id, secondary_id, tertiary_id, study_treatment) VALUES ($1, $2, $3, $4, $5, $6)", params![event_id, kind, fork_id.value(), episode_id.value(), source_episode_id.value(), *treatment_delta as i64])?,
         StudyEvent::ForumMessageRetracted { message_id, obligation_id } => transaction.execute("INSERT INTO event_study_transition(event_id, study_event_kind, message_id, obligation_id) VALUES ($1, $2, $3, $4)", params![event_id, kind, message_id.value(), obligation_id.value()])?,
@@ -3345,11 +3369,12 @@ pub(crate) fn decode_command_body(
             })
         }
         StudyCommandKind::ReadForum => {
-            let row:(Option<i64>,Option<i64>,Option<i64>)=connection.query_row("SELECT obligation_id,first_ordinal,through_ordinal FROM command_study_transition WHERE command_row_id=$1",[command_row_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
+            let row:(Option<i64>,Option<i64>,Option<i64>,Option<i64>)=connection.query_row("SELECT obligation_id,first_ordinal,through_ordinal,rendered_content_object_id FROM command_study_transition WHERE command_row_id=$1",[command_row_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?;
             Ok(StudyCommand::ReadForum {
                 obligation_id: stored(row.0)?,
                 first_message_ordinal: row.1.ok_or(StoreError::InvalidStoredValue)?,
                 through_message_ordinal: row.2.ok_or(StoreError::InvalidStoredValue)?,
+                rendered_content_object_id: stored(row.3)?,
             })
         }
         StudyCommandKind::RecordDecision => {
@@ -3423,9 +3448,9 @@ pub(crate) fn decode_event_body(
     event_id: i64,
 ) -> Result<StudyEvent, StoreError> {
     let row: StoredStudyEventRow = connection.query_row(
-        "SELECT study_event_kind, primary_id, secondary_id, tertiary_id, study_episode_id, forum_id, thread_id, obligation_id, message_id, actor_occurrence_id, population_phase, study_treatment, message_kind, measurement_status, body_digest, rendered_digest FROM event_study_transition WHERE event_id = $1",
+        "SELECT study_event_kind, primary_id, secondary_id, tertiary_id, study_episode_id, forum_id, thread_id, obligation_id, message_id, actor_occurrence_id, population_phase, study_treatment, message_kind, measurement_status, body_digest, rendered_digest, rendered_content_object_id FROM event_study_transition WHERE event_id = $1",
         [event_id],
-        |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,r.get(8)?,r.get(9)?,r.get(10)?,r.get(11)?,r.get(12)?,r.get(13)?,r.get(14)?,r.get(15)?)),
+        |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,r.get(8)?,r.get(9)?,r.get(10)?,r.get(11)?,r.get(12)?,r.get(13)?,r.get(14)?,r.get(15)?,r.get(16)?)),
     )?;
     let (first, through): (Option<i64>, Option<i64>) = connection.query_row(
         "SELECT first_ordinal, through_ordinal FROM event_study_transition WHERE event_id = $1",
@@ -3545,6 +3570,7 @@ pub(crate) fn decode_event_body(
             first_message_ordinal: first.ok_or(StoreError::InvalidStoredValue)?,
             through_message_ordinal: through.ok_or(StoreError::InvalidStoredValue)?,
             rendered_digest: stored_digest(row.15)?,
+            rendered_content_object_id: stored(row.16)?,
         }),
         StudyEventKind::DecisionRecorded => Ok(StudyEvent::DecisionRecorded {
             obligation_id: stored(row.7)?,

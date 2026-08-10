@@ -8,7 +8,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use society_kernel::postgres_compat::Connection;
+use society_kernel::postgres_db::Connection;
 use society_kernel::{
     AdmissionGeneration, AdversarialReviewId, ApplicationIdentity, ApplicationMissionInput,
     ApplicationName, ApplicationRevisionId, ApplicationRevisionOrdinal, Blake3Digest,
@@ -1732,64 +1732,6 @@ fn application_mission_alignment_is_founding_mission_bound_and_replay_verified()
     drop(connection);
     let tampered = KernelStore::connect_test_path(&path).unwrap();
     assert!(tampered.validate_replayed_materialized_state().is_err());
-    let _ = fs::remove_file(path);
-}
-
-#[test]
-fn current_schema_reopens_after_atomic_fresh_bootstrap() {
-    let path = std::env::temp_dir().join(format!(
-        "society-fresh-schema-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    let connection = Connection::connect_test_path(&path).unwrap();
-    connection.migrate().unwrap();
-    assert_eq!(
-        connection
-            .query_row(
-                "SELECT COUNT(*) FROM _sqlx_migrations",
-                society_kernel::test_params![],
-                |row| row.get::<_, i64>(0)
-            )
-            .unwrap(),
-        1
-    );
-    drop(connection);
-    drop(KernelStore::connect_test_path(&path).unwrap());
-    let reopened = Connection::connect_test_path(&path).unwrap();
-    assert_eq!(
-        reopened
-            .query_row(
-                "SELECT COUNT(*) FROM _sqlx_migrations",
-                society_kernel::test_params![],
-                |row| row.get::<_, i64>(0)
-            )
-            .unwrap(),
-        1
-    );
-    assert_eq!(reopened.query_row("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = 'commands'", society_kernel::test_params![], |row| row.get::<_, i64>(0)).unwrap(), 1);
-    drop(reopened);
-    let _ = fs::remove_file(path);
-}
-
-#[test]
-fn migration_is_idempotent_and_reopen_preserves_the_current_schema() {
-    let path = std::env::temp_dir().join(format!(
-        "society-current-schema-reopen-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    let first = Connection::connect_test_path(&path).unwrap();
-    first.migrate().unwrap();
-    drop(first);
-    let reopened = KernelStore::connect_test_path(&path).unwrap();
-    assert_eq!(reopened.command_count().unwrap(), 0);
     let _ = fs::remove_file(path);
 }
 

@@ -145,15 +145,17 @@ if (sessionIdentity.includes("owned-descendant-after-ready")) {
 	// PostgreSQL-backed admission is deliberately slower than the old
 	// in-process fixture. Keep the direct child alive long enough for the
 	// resident to persist AdapterReady before testing descendant custody.
-	setTimeout(() => process.exit(0), 100);
+	setTimeout(() => process.exit(0), 1000);
 }
 if (sessionIdentity.includes("malformed-after-ready")) {
 	process.stdout.write("{\n");
-	setTimeout(() => process.exit(0), 100);
+	setTimeout(() => process.exit(0), 1000);
 }
 // Leave a real observation window between AdapterReady and direct exit. The
 // resident persists native admission before it can poll this frame.
-if (sessionIdentity.includes("exit-after-ready")) setTimeout(() => process.exit(0), 100);
+// Keep the observation window generous enough for a loaded PostgreSQL-backed
+// test runner to persist AdapterReady before this race fixture exits.
+if (sessionIdentity.includes("exit-after-ready")) setTimeout(() => process.exit(0), 1000);
 
 let pending = "";
 process.stdin.setEncoding("utf8");

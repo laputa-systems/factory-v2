@@ -93,7 +93,7 @@ crates/societyd/           resident authority and native-child custody
 crates/societyctl/         public query and supervisor-stream client
 crates/society-product/    dormant guarded Git materialization mechanics;
                            outside the current research slice
-migrations/postgres/       one canonical fresh-schema bootstrap
+schema/postgres/           one canonical fresh-schema bootstrap
 packages/society-pi-host/  replaceable actor-runtime adapter
 tests/                     generic boundary, daemon, and supervision judges
 applications/              isolated experimental worlds and their semantics

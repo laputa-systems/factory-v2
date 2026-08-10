@@ -5,16 +5,17 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use society_kernel::postgres_compat::Connection;
+use society_kernel::postgres_db::Connection;
 use society_kernel::{
     ApplicationIdentity, ApplicationMissionInput, ApplicationName, ApplicationRevisionId,
     ApplicationRevisionOrdinal, Blake3Digest, Capability, CommandBody, CommandId, CommandRequest,
-    ExpectedGeneration, ForumMessageBody, ForumMessageKind, ForumPostBudget, ForumReadBudget,
-    ForumThreadTitle, KernelStore, MissionPrinciple, MissionPrincipleKind, MissionPrincipleText,
-    MissionPrinciples, MissionStatement, NorthStarBoundaryCommitmentQuestion,
-    NorthStarChangeQuestion, NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet,
-    NorthStarRevisitQuestion, PrincipalId, Rejection, StoreError, StudyBudgetUnits, StudyCommand,
-    StudyDecisionBody, StudyEpisodeId, StudyEvent, StudyGroundTruthReveal, StudyMeasurementSlot,
+    ContentIdentityState, ContentObjectId, ExpectedGeneration, ForumMessageBody, ForumMessageKind,
+    ForumPostBudget, ForumReadBudget, ForumThreadTitle, KernelStore, MissionPrinciple,
+    MissionPrincipleKind, MissionPrincipleText, MissionPrinciples, MissionStatement,
+    NorthStarBoundaryCommitmentQuestion, NorthStarChangeQuestion,
+    NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet, NorthStarRevisitQuestion,
+    PrincipalId, Rejection, StoreError, StudyBudgetUnits, StudyCommand, StudyDecisionBody,
+    StudyEpisodeId, StudyEvent, StudyGroundTruthReveal, StudyMeasurementSlot,
     StudyMeasurementStatus, StudyPopulationPhase, StudyRoleOrdinal, StudyTransitionDisposition,
     StudyTreatment, forum_f0_awareness_digest, forum_f0_tool_contract_digest,
 };
@@ -134,6 +135,42 @@ fn submit_study(store: &mut KernelStore, ordinal: &mut u16, command: StudyComman
         StudyTransitionDisposition::Rejected(rejection) => {
             panic!("study transition unexpectedly rejected: {rejection:?}")
         }
+    }
+}
+
+fn register_forum_rendering(
+    store: &mut KernelStore,
+    label: &str,
+    rendering: &[u8],
+) -> ContentObjectId {
+    let digest = Blake3Digest::of_bytes(rendering);
+    execute(
+        store,
+        &format!("{label}-seal"),
+        PrincipalId::KERNEL,
+        Capability::RecordContentSealReceipt,
+        CommandBody::RecordContentSealReceipt { digest },
+    );
+    let receipt_id = match store.content_identity_state(digest).unwrap() {
+        ContentIdentityState::SealReceiptOnly {
+            content_seal_receipt_id,
+        } => content_seal_receipt_id,
+        state => panic!("unexpected content identity after seal: {state:?}"),
+    };
+    execute(
+        store,
+        &format!("{label}-object"),
+        PrincipalId::KERNEL,
+        Capability::RegisterContentObject,
+        CommandBody::RegisterContentObject {
+            content_seal_receipt_id: receipt_id,
+        },
+    );
+    match store.content_identity_state(digest).unwrap() {
+        ContentIdentityState::Registered {
+            content_object_id, ..
+        } => content_object_id,
+        state => panic!("unexpected content identity after registration: {state:?}"),
     }
 }
 
@@ -774,6 +811,7 @@ fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
                 obligation_id: retained_successor,
                 first_message_ordinal: 1,
                 through_message_ordinal: 1,
+                rendered_content_object_id: ContentObjectId::new(1).unwrap(),
             },
         ),
         Rejection::InvalidLifecycleTransition
@@ -823,40 +861,47 @@ fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
                 obligation_id: reset_successor,
                 first_message_ordinal: 1,
                 through_message_ordinal: 1,
+                rendered_content_object_id: ContentObjectId::new(1).unwrap(),
             },
         ),
         Rejection::SubjectNotFound
     );
-    let retained_receipt = match submit_study(
+    let retained_rendering = store
+        .prepare_study_forum_read(retained_successor, 1, 2)
+        .unwrap();
+    let retained_content_object_id =
+        register_forum_rendering(&mut store, "study-retained-read", &retained_rendering);
+    let _retained_receipt = match submit_study(
         &mut store,
         &mut ordinal,
         StudyCommand::ReadForum {
             obligation_id: retained_successor,
             first_message_ordinal: 1,
             through_message_ordinal: 2,
+            rendered_content_object_id: retained_content_object_id,
         },
     ) {
         StudyEvent::ForumMessagesRead { receipt_id, .. } => receipt_id,
         unexpected => panic!("unexpected event: {unexpected:?}"),
     };
-    let reset_receipt = match submit_study(
+    let reset_rendering = store
+        .prepare_study_forum_read(reset_successor, 2, 2)
+        .unwrap();
+    let reset_content_object_id =
+        register_forum_rendering(&mut store, "study-reset-read", &reset_rendering);
+    let _reset_receipt = match submit_study(
         &mut store,
         &mut ordinal,
         StudyCommand::ReadForum {
             obligation_id: reset_successor,
             first_message_ordinal: 2,
             through_message_ordinal: 2,
+            rendered_content_object_id: reset_content_object_id,
         },
     ) {
         StudyEvent::ForumMessagesRead { receipt_id, .. } => receipt_id,
         unexpected => panic!("unexpected event: {unexpected:?}"),
     };
-    let retained_rendering = store
-        .forum_read_receipt_rendering_for_obligation(retained_receipt, retained_successor)
-        .unwrap();
-    let reset_rendering = store
-        .forum_read_receipt_rendering_for_obligation(reset_receipt, reset_successor)
-        .unwrap();
     assert!(
         retained_rendering
             .windows(false_claim.as_str().len())
@@ -875,7 +920,7 @@ fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
     );
     assert!(
         store
-            .forum_read_receipt_rendering_for_obligation(retained_receipt, reset_successor)
+            .prepare_study_forum_read(reset_successor, 1, 2)
             .is_err()
     );
     assert_eq!(

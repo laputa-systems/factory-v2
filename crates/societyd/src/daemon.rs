@@ -84,7 +84,6 @@ pub enum FaultInjection {
 pub struct DaemonConfig {
     runtime_root: PathBuf,
     database_url: Option<KernelDatabaseUrl>,
-    database_migration_url: Option<KernelDatabaseUrl>,
     database_schema: Option<String>,
     fault_injection: FaultInjection,
     supervisor_stream: Option<UnixStream>,
@@ -95,7 +94,6 @@ impl DaemonConfig {
         Self {
             runtime_root: runtime_root.as_ref().to_path_buf(),
             database_url: None,
-            database_migration_url: None,
             database_schema: None,
             fault_injection: FaultInjection::None,
             supervisor_stream: None,
@@ -104,17 +102,6 @@ impl DaemonConfig {
 
     pub fn with_database_url(mut self, database_url: KernelDatabaseUrl) -> Self {
         self.database_url = Some(database_url);
-        self
-    }
-
-    /// Selects the role allowed to apply PostgreSQL schema revisions. If it is
-    /// omitted, local development falls back to the runtime URL; production
-    /// should provide `SOCIETY_DATABASE_MIGRATION_URL` separately.
-    pub fn with_database_migration_url(
-        mut self,
-        database_migration_url: KernelDatabaseUrl,
-    ) -> Self {
-        self.database_migration_url = Some(database_migration_url);
         self
     }
 
@@ -453,18 +440,6 @@ impl Daemon {
             .clone()
             .map(Ok)
             .unwrap_or_else(|| KernelDatabaseUrl::from_env("SOCIETY_DATABASE_URL"))?;
-        let migration_url = match config.database_migration_url.clone() {
-            Some(url) => url,
-            None => match std::env::var("SOCIETY_DATABASE_MIGRATION_URL") {
-                Ok(value) => KernelDatabaseUrl::parse(&value)?,
-                Err(std::env::VarError::NotPresent) => database_url.clone(),
-                Err(std::env::VarError::NotUnicode(_)) => {
-                    return Err(DaemonError::DatabaseConfiguration(
-                        PostgresStoreError::InvalidDatabaseUrl,
-                    ));
-                }
-            },
-        };
         let database_schema = match config.database_schema.clone() {
             Some(schema) => Some(schema),
             None => match std::env::var("SOCIETY_DATABASE_SCHEMA") {
@@ -477,17 +452,9 @@ impl Daemon {
                 }
             },
         };
-        match database_schema.as_deref() {
-            Some(schema) => {
-                PostgresKernelStore::migrate_in_schema(&migration_url, schema)?;
-            }
-            None => {
-                PostgresKernelStore::connect(&migration_url)?.migrate()?;
-            }
-        }
         let store = match database_schema.as_deref() {
-            Some(schema) => KernelStore::connect_runtime_in_schema(&database_url, schema)?,
-            None => KernelStore::connect_runtime(&database_url)?,
+            Some(schema) => KernelStore::connect_in_schema(&database_url, schema)?,
+            None => KernelStore::connect(&database_url)?,
         };
         let database_lock = PostgresKernelStore::connect(&database_url)?
             .acquire_owned_advisory_lock(DATABASE_ADVISORY_LOCK_KEY)?;
@@ -784,15 +751,44 @@ impl Daemon {
             Ok(arguments) => arguments,
             Err(error) => return invalid(error.to_string()),
         };
-        let command = match arguments {
+        let (command, prepared_rendering) = match arguments {
             society_pi::ForumToolArguments::Read {
                 first_message_ordinal,
                 through_message_ordinal,
-            } => StudyCommand::ReadForum {
-                obligation_id,
-                first_message_ordinal,
-                through_message_ordinal,
-            },
+            } => {
+                if self.mode == StartupMode::RecoveryFenced {
+                    return Err(PiExecutionError::RecoveryFenced);
+                }
+                let rendering = self
+                    .store
+                    .prepare_study_forum_read(
+                        obligation_id,
+                        first_message_ordinal,
+                        through_message_ordinal,
+                    )
+                    .map_err(PiExecutionError::Kernel)?;
+                let digest = society_kernel::Blake3Digest::of_bytes(&rendering);
+                let operation = ContentSealOperationId::study_forum_read(
+                    obligation_id,
+                    first_message_ordinal,
+                    through_message_ordinal,
+                    digest,
+                )
+                .map_err(|_| PiExecutionError::IdentityConversion)?;
+                let registration = self
+                    .content_sealing
+                    .seal_and_register(&mut self.store, &operation, &rendering)
+                    .map_err(PiExecutionError::Content)?;
+                (
+                    StudyCommand::ReadForum {
+                        obligation_id,
+                        first_message_ordinal,
+                        through_message_ordinal,
+                        rendered_content_object_id: registration.content_object_id,
+                    },
+                    Some(rendering),
+                )
+            }
             society_pi::ForumToolArguments::Post {
                 message_kind,
                 body_utf8,
@@ -826,19 +822,24 @@ impl Daemon {
                     Ok(body) => body,
                     Err(error) => return invalid(error.to_string()),
                 };
-                StudyCommand::PublishForumMessage {
-                    obligation_id,
-                    kind: match message_kind {
-                        society_pi::ForumMessageKind::Finding => ForumMessageKind::Finding,
-                        society_pi::ForumMessageKind::Correction => ForumMessageKind::Correction,
-                        society_pi::ForumMessageKind::Question => ForumMessageKind::Question,
-                        society_pi::ForumMessageKind::Challenge => ForumMessageKind::Challenge,
-                        society_pi::ForumMessageKind::Synthesis => ForumMessageKind::Synthesis,
+                (
+                    StudyCommand::PublishForumMessage {
+                        obligation_id,
+                        kind: match message_kind {
+                            society_pi::ForumMessageKind::Finding => ForumMessageKind::Finding,
+                            society_pi::ForumMessageKind::Correction => {
+                                ForumMessageKind::Correction
+                            }
+                            society_pi::ForumMessageKind::Question => ForumMessageKind::Question,
+                            society_pi::ForumMessageKind::Challenge => ForumMessageKind::Challenge,
+                            society_pi::ForumMessageKind::Synthesis => ForumMessageKind::Synthesis,
+                        },
+                        body,
+                        in_reply_to_message_id,
+                        supersedes_message_id,
                     },
-                    body,
-                    in_reply_to_message_id,
-                    supersedes_message_id,
-                }
+                    None,
+                )
             }
         };
         let receipt = self
@@ -872,16 +873,14 @@ impl Daemon {
             )),
             StudyTransitionDisposition::Accepted(StudyEvent::ForumMessagesRead {
                 receipt_id,
-                obligation_id: receipt_obligation_id,
+                obligation_id: _,
                 first_message_ordinal,
                 through_message_ordinal,
                 rendered_digest,
                 ..
             }) => {
-                let rendering = self
-                    .store
-                    .forum_read_receipt_rendering_for_obligation(receipt_id, receipt_obligation_id)
-                    .map_err(PiExecutionError::Kernel)?;
+                let rendering = prepared_rendering
+                    .ok_or(PiExecutionError::Kernel(StoreError::InvalidStoredValue))?;
                 let rendering = String::from_utf8(rendering)
                     .map_err(|_| PiExecutionError::Kernel(StoreError::InvalidStoredValue))?;
                 Ok((

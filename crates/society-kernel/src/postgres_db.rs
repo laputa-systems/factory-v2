@@ -5,10 +5,12 @@
 
 use std::{
     cell::{Cell, RefCell},
+    collections::HashMap,
     fmt,
     hash::{Hash, Hasher},
     marker::PhantomData,
     sync::atomic::{AtomicU64, Ordering},
+    sync::{Mutex, OnceLock},
 };
 
 use sqlx::{
@@ -19,7 +21,13 @@ use sqlx::{
     query::Query,
 };
 
-use crate::postgres::PostgresKernelStore;
+use crate::postgres::{PostgresKernelStore, TEST_FIXTURE_ADVISORY_LOCK_KEY};
+
+// Identity columns are stable across every isolated test database because
+// they all come from the one checked-in schema. Cache the reflection result
+// once per process; querying information_schema before every INSERT is a
+// measurable part of founding-cycle test cost.
+static IDENTITY_COLUMNS: OnceLock<Mutex<HashMap<String, Option<String>>>> = OnceLock::new();
 
 #[derive(Debug)]
 pub enum DbError {
@@ -170,18 +178,18 @@ impl<T: ToSqlValue, const N: usize> IntoParams for [T; N] {
 }
 
 macro_rules! params {
-    () => { $crate::postgres_compat::Params::default() };
+    () => { $crate::postgres_db::Params::default() };
     ($($value:expr),+ $(,)?) => {
-        $crate::postgres_compat::Params(vec![$($crate::postgres_compat::ToSqlValue::to_sql_value($value)),+])
+        $crate::postgres_db::Params(vec![$($crate::postgres_db::ToSqlValue::to_sql_value($value)),+])
     };
 }
 pub(crate) use params;
 
 #[macro_export]
 macro_rules! test_params {
-    () => { $crate::postgres_compat::Params::default() };
+    () => { $crate::postgres_db::Params::default() };
     ($($value:expr),+ $(,)?) => {
-        $crate::postgres_compat::Params(vec![$($crate::postgres_compat::ToSqlValue::to_sql_value($value)),+])
+        $crate::postgres_db::Params(vec![$($crate::postgres_db::ToSqlValue::to_sql_value($value)),+])
     };
 }
 
@@ -392,21 +400,32 @@ impl<T> OptionalExtension<T> for Result<T, DbError> {
 pub struct Connection {
     backend: PostgresKernelStore,
     #[allow(dead_code)]
-    cleanup: Option<TestSchemaCleanup>,
+    cleanup: Option<TestCleanup>,
 }
 
-struct TestSchemaCleanup {
-    admin: PostgresKernelStore,
-    schema: String,
+enum TestCleanup {
+    Database {
+        admin: PostgresKernelStore,
+        database: String,
+    },
 }
 
-impl Drop for TestSchemaCleanup {
+impl Drop for TestCleanup {
     fn drop(&mut self) {
-        let _ = self.admin.drop_private_schema(&self.schema);
+        match self {
+            Self::Database { admin, database } => {
+                if let Ok(_lock) = admin.acquire_advisory_lock(TEST_FIXTURE_ADVISORY_LOCK_KEY) {
+                    let _ = admin.drop_database(database);
+                }
+            }
+        }
     }
 }
 
-static NEXT_TEST_SCHEMA: AtomicU64 = AtomicU64::new(1);
+const TEST_TEMPLATE_DATABASE: &str = "society_test_template";
+static NEXT_TEST_DATABASE: AtomicU64 = AtomicU64::new(1);
+static TEST_TEMPLATE_READY: OnceLock<()> = OnceLock::new();
+static TEST_TEMPLATE_INIT: OnceLock<Mutex<()>> = OnceLock::new();
 
 /// Derive the deterministic private schema used by path-oriented test
 /// fixtures. The path is only a stable fixture identity; no filesystem
@@ -417,8 +436,180 @@ pub fn test_schema_for_path(path: impl AsRef<std::path::Path>) -> String {
     format!("society_test_path_{:016x}", hasher.finish())
 }
 
+fn ensure_test_template(
+    url: &crate::postgres::KernelDatabaseUrl,
+) -> Result<crate::postgres::KernelDatabaseUrl, DbError> {
+    if TEST_TEMPLATE_READY.get().is_none() {
+        let initializer = TEST_TEMPLATE_INIT.get_or_init(|| Mutex::new(())).lock();
+        let _initializer = initializer.unwrap_or_else(|poisoned| poisoned.into_inner());
+        if TEST_TEMPLATE_READY.get().is_none() {
+            let source_database = url
+                .options()
+                .get_database()
+                .unwrap_or("postgres")
+                .to_owned();
+            let admin_url = url.with_database("template1");
+            let admin = PostgresKernelStore::connect(&admin_url)
+                .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(Box::new(error))))?;
+            let lock = admin
+                .acquire_advisory_lock(TEST_FIXTURE_ADVISORY_LOCK_KEY)
+                .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(Box::new(error))))?;
+            let exists = admin
+                .block_on(async {
+                    sqlx::query("SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1)")
+                        .bind(TEST_TEMPLATE_DATABASE)
+                        .fetch_one(admin.pool())
+                        .await
+                })
+                .map(|row| sqlx::Row::try_get::<bool, _>(&row, 0).unwrap_or(false))
+                .map_err(DbError::Sqlx)?;
+            if !exists {
+                admin
+                    .create_database_from_template(TEST_TEMPLATE_DATABASE, &source_database)
+                    .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(Box::new(error))))?;
+            }
+            drop(lock);
+            let _ = TEST_TEMPLATE_READY.set(());
+        }
+    }
+    Ok(url.with_database(TEST_TEMPLATE_DATABASE))
+}
+
+/// Materialize an empty test schema from the authoritative public schema.
+/// PostgreSQL's `LIKE INCLUDING ALL` is substantially cheaper than replaying
+/// the complete canonical DDL for every test case; foreign keys and triggers
+/// are installed afterward because `LIKE` does not copy them.
+fn clone_fresh_test_schema(admin: &PostgresKernelStore, schema: &str) -> Result<(), DbError> {
+    let mut lock = admin
+        .acquire_advisory_lock(TEST_FIXTURE_ADVISORY_LOCK_KEY)
+        .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(Box::new(error))))?;
+    let clone_sql = format!(
+        r#"
+DO $society_clone$
+DECLARE
+    target_schema text := {schema_literal};
+    table_row record;
+    identity_row record;
+    foreign_key_row record;
+    trigger_row record;
+    next_value bigint;
+BEGIN
+    FOR table_row IN
+        SELECT tablename
+        FROM pg_catalog.pg_tables
+        WHERE schemaname = 'public'
+        ORDER BY tablename
+    LOOP
+        EXECUTE format(
+            'CREATE TABLE %I.%I (LIKE public.%I INCLUDING ALL)',
+            target_schema, table_row.tablename, table_row.tablename
+        );
+        EXECUTE format(
+            'INSERT INTO %I.%I SELECT * FROM public.%I',
+            target_schema, table_row.tablename, table_row.tablename
+        );
+    END LOOP;
+
+    FOR identity_row IN
+        SELECT table_name, column_name
+        FROM information_schema.columns
+        WHERE table_schema = target_schema AND is_identity = 'YES'
+        ORDER BY table_name, column_name
+    LOOP
+        EXECUTE format(
+            'SELECT COALESCE(MAX(%I), 0) + 1 FROM %I.%I',
+            identity_row.column_name, target_schema, identity_row.table_name
+        ) INTO next_value;
+        EXECUTE format(
+            'ALTER TABLE %I.%I ALTER COLUMN %I RESTART WITH %s',
+            target_schema, identity_row.table_name, identity_row.column_name, next_value
+        );
+    END LOOP;
+
+    PERFORM set_config('search_path', format('%I, public', target_schema), true);
+
+    FOR foreign_key_row IN
+        SELECT child.relname AS table_name,
+               constraint_row.conname AS constraint_name,
+               pg_get_constraintdef(constraint_row.oid) AS definition
+        FROM pg_catalog.pg_constraint constraint_row
+        JOIN pg_catalog.pg_class child ON child.oid = constraint_row.conrelid
+        JOIN pg_catalog.pg_namespace child_schema ON child_schema.oid = child.relnamespace
+        WHERE constraint_row.contype = 'f' AND child_schema.nspname = 'public'
+        ORDER BY constraint_row.oid
+    LOOP
+        EXECUTE format(
+            'ALTER TABLE %I.%I ADD CONSTRAINT %I %s',
+            target_schema,
+            foreign_key_row.table_name,
+            foreign_key_row.constraint_name,
+            CASE
+                WHEN position('REFERENCES public.' IN foreign_key_row.definition) > 0 THEN
+                    replace(
+                        foreign_key_row.definition,
+                        'REFERENCES public.',
+                        format('REFERENCES %I.', target_schema)
+                    )
+                ELSE
+                    replace(
+                        foreign_key_row.definition,
+                        'REFERENCES ',
+                        format('REFERENCES %I.', target_schema)
+                    )
+            END
+        );
+    END LOOP;
+
+    FOR trigger_row IN
+        SELECT pg_get_triggerdef(trigger_catalog_row.oid) AS definition
+        FROM pg_catalog.pg_trigger trigger_catalog_row
+        JOIN pg_catalog.pg_class class_row ON class_row.oid = trigger_catalog_row.tgrelid
+        JOIN pg_catalog.pg_namespace namespace_row ON namespace_row.oid = class_row.relnamespace
+        WHERE NOT trigger_catalog_row.tgisinternal AND namespace_row.nspname = 'public'
+        ORDER BY trigger_catalog_row.oid
+    LOOP
+        EXECUTE replace(
+            trigger_row.definition,
+            ' ON public.',
+            format(' ON %I.', target_schema)
+        );
+    END LOOP;
+END
+$society_clone$;
+"#,
+        schema_literal = sql_literal(schema),
+    );
+    admin.block_on(async {
+        let connection = lock
+            .connection
+            .as_mut()
+            .expect("test schema clone lock owns its PostgreSQL connection");
+        sqlx::query(AssertSqlSafe(clone_sql.as_str()))
+            .execute(&mut **connection)
+            .await?;
+        Ok::<(), sqlx::Error>(())
+    })?;
+    Ok(())
+}
+
+fn private_schema_exists(admin: &PostgresKernelStore, schema: &str) -> Result<bool, DbError> {
+    admin
+        .block_on(async {
+            sqlx::query("SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = $1)")
+                .bind(schema)
+                .fetch_one(admin.pool())
+                .await
+        })
+        .map(|row| sqlx::Row::try_get::<bool, _>(&row, 0).unwrap_or(false))
+        .map_err(DbError::Sqlx)
+}
+
 fn quote_identifier(value: &str) -> String {
     format!("\"{}\"", value.replace('"', "\"\""))
+}
+
+fn sql_literal(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
 }
 
 fn insert_table_name(sql: &str) -> Option<String> {
@@ -434,25 +625,23 @@ fn insert_table_name(sql: &str) -> Option<String> {
     (!table.is_empty()).then(|| table.to_owned())
 }
 
-/// Clone a path-backed compatibility database into another private PostgreSQL
-/// schema. This is a test-only bridge while filesystem snapshots are moved to
-/// database-owned snapshots; it is not a production backup mechanism.
-pub fn clone_for_test(
+/// Clone one test schema into another private PostgreSQL schema.
+pub fn clone_test_schema(
     source_path: impl AsRef<std::path::Path>,
     destination_path: impl AsRef<std::path::Path>,
 ) -> Result<(), DbError> {
     let url = crate::postgres::KernelDatabaseUrl::from_env("SOCIETY_POSTGRES_TEST_URL")
-        .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(error.to_string().into())))?;
+        .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(Box::new(error))))?;
     let source_schema = test_schema_for_path(source_path);
     let destination_schema = test_schema_for_path(destination_path);
-    let admin = PostgresKernelStore::connect(&url)
-        .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(error.to_string().into())))?;
-    let source = PostgresKernelStore::connect_in_schema(&url, &source_schema)
-        .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(error.to_string().into())))?;
+    let admin = PostgresKernelStore::connect_for_test(&url)
+        .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(Box::new(error))))?;
+    let source = PostgresKernelStore::connect_in_schema_for_test(&url, &source_schema)
+        .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(Box::new(error))))?;
     let _ = admin.drop_private_schema(&destination_schema);
     admin
         .create_private_schema(&destination_schema)
-        .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(error.to_string().into())))?;
+        .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(Box::new(error))))?;
     let tables = source.block_on(async {
         sqlx::query(
             "SELECT tablename FROM pg_catalog.pg_tables
@@ -489,7 +678,7 @@ impl Connection {
         url: &crate::postgres::KernelDatabaseUrl,
     ) -> Result<Self, crate::postgres::PostgresStoreError> {
         Ok(Self {
-            backend: PostgresKernelStore::connect(url)?,
+            backend: PostgresKernelStore::connect_for_test(url)?,
             cleanup: None,
         })
     }
@@ -507,27 +696,26 @@ impl Connection {
     pub(crate) fn connect_test_with_url(
         url: &crate::postgres::KernelDatabaseUrl,
     ) -> Result<Self, DbError> {
-        let ordinal = NEXT_TEST_SCHEMA.fetch_add(1, Ordering::Relaxed);
-        let schema = format!("society_test_{}_{}", std::process::id(), ordinal);
-        let admin = PostgresKernelStore::connect(url)
-            .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(error.to_string().into())))?;
+        ensure_test_template(url)?;
+        let ordinal = NEXT_TEST_DATABASE.fetch_add(1, Ordering::Relaxed);
+        let database = format!("society_test_db_{}_{}", std::process::id(), ordinal);
+        let admin = PostgresKernelStore::connect_for_test(&url.with_database("template1"))
+            .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(Box::new(error))))?;
         admin
-            .create_private_schema(&schema)
-            .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(error.to_string().into())))?;
-        let scoped = PostgresKernelStore::connect_in_schema(url, &schema)
-            .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(error.to_string().into())))?;
-        scoped
-            .migrate()
-            .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(error.to_string().into())))?;
+            .create_database_from_template(&database, TEST_TEMPLATE_DATABASE)
+            .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(Box::new(error))))?;
+        let database_url = url.with_database(&database);
+        let scoped = PostgresKernelStore::connect_for_test(&database_url)
+            .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(Box::new(error))))?;
         Ok(Self {
             backend: scoped,
-            cleanup: Some(TestSchemaCleanup { admin, schema }),
+            cleanup: Some(TestCleanup::Database { admin, database }),
         })
     }
 
     pub fn connect_test() -> Result<Self, DbError> {
         let url = crate::postgres::KernelDatabaseUrl::from_env("SOCIETY_POSTGRES_TEST_URL")
-            .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(error.to_string().into())))?;
+            .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(Box::new(error))))?;
         Self::connect_test_with_url(&url)
     }
 
@@ -535,17 +723,18 @@ impl Connection {
         _path: impl AsRef<std::path::Path>,
         url: &crate::postgres::KernelDatabaseUrl,
     ) -> Result<Self, DbError> {
+        ensure_test_template(url)?;
         let schema = test_schema_for_path(_path);
-        let admin = PostgresKernelStore::connect(url)
-            .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(error.to_string().into())))?;
-        admin
-            .ensure_private_schema(&schema)
-            .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(error.to_string().into())))?;
-        let scoped = PostgresKernelStore::connect_in_schema(url, &schema)
-            .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(error.to_string().into())))?;
-        scoped
-            .migrate()
-            .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(error.to_string().into())))?;
+        let admin = PostgresKernelStore::connect_for_test(url)
+            .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(Box::new(error))))?;
+        if !private_schema_exists(&admin, &schema)? {
+            admin
+                .create_private_schema(&schema)
+                .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(Box::new(error))))?;
+            clone_fresh_test_schema(&admin, &schema)?;
+        }
+        let scoped = PostgresKernelStore::connect_in_schema_for_test(url, &schema)
+            .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(Box::new(error))))?;
         Ok(Self {
             backend: scoped,
             cleanup: None,
@@ -554,12 +743,8 @@ impl Connection {
 
     pub fn connect_test_path(_path: impl AsRef<std::path::Path>) -> Result<Self, DbError> {
         let url = crate::postgres::KernelDatabaseUrl::from_env("SOCIETY_POSTGRES_TEST_URL")
-            .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(error.to_string().into())))?;
+            .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(Box::new(error))))?;
         Self::connect_test_path_with_url(_path, &url)
-    }
-
-    pub fn migrate(&self) -> Result<(), crate::postgres::PostgresStoreError> {
-        self.backend.migrate()
     }
 
     pub fn query_row<P, F, T>(&self, sql: &str, params: P, mapper: F) -> Result<T, DbError>
@@ -692,17 +877,32 @@ impl Transaction<'_> {
             .block_on(async {
                 let insert_table = insert_table_name(sql);
                 let identity_column = if let Some(table) = insert_table.as_deref() {
-                    sqlx::query(
-                        "SELECT column_name FROM information_schema.columns
-                             WHERE table_schema = current_schema()
-                               AND table_name = $1 AND is_identity = 'YES'
-                             ORDER BY ordinal_position LIMIT 1",
-                    )
-                    .bind(table)
-                    .fetch_optional(&mut **connection)
-                    .await?
-                    .map(|row| row.try_get::<String, _>(0))
-                    .transpose()?
+                    let cache = IDENTITY_COLUMNS.get_or_init(|| Mutex::new(HashMap::new()));
+                    if let Some(cached) = cache
+                        .lock()
+                        .expect("identity-column cache lock poisoned")
+                        .get(table)
+                        .cloned()
+                    {
+                        cached
+                    } else {
+                        let discovered = sqlx::query(
+                            "SELECT column_name FROM information_schema.columns
+                                 WHERE table_schema = current_schema()
+                                   AND table_name = $1 AND is_identity = 'YES'
+                                 ORDER BY ordinal_position LIMIT 1",
+                        )
+                        .bind(table)
+                        .fetch_optional(&mut **connection)
+                        .await?
+                        .map(|row| row.try_get::<String, _>(0))
+                        .transpose()?;
+                        cache
+                            .lock()
+                            .expect("identity-column cache lock poisoned")
+                            .insert(table.to_owned(), discovered.clone());
+                        discovered
+                    }
                 } else {
                     None
                 };

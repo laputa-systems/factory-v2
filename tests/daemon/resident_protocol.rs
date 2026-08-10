@@ -105,11 +105,11 @@ fn test_database_url() -> society_kernel::KernelDatabaseUrl {
 }
 
 fn test_daemon_config(root: &Path) -> DaemonConfig {
+    let schema_path = root.join("society.pg-test-schema");
+    KernelStore::connect_test_path(&schema_path).unwrap();
     DaemonConfig::new(root)
         .with_database_url(test_database_url())
-        .with_database_schema(KernelStore::test_schema_for_path(
-            root.join("society.pg-test-schema"),
-        ))
+        .with_database_schema(KernelStore::test_schema_for_path(schema_path))
 }
 
 fn start(

@@ -1,14 +1,13 @@
 //! PostgreSQL configuration and the synchronous storage-boundary shell.
 //!
 //! The shell establishes the synchronous PostgreSQL execution shape: one
-//! owned current-thread runtime and one bounded `PgPool`, with no runtime
-//! construction per public method. Typed kernel transitions execute only
-//! through this boundary.
+//! bounded `PgPool` driven by the workspace's async-std executor, with no
+//! executor construction per public method. Typed kernel transitions execute
+//! only through this boundary.
 
 use std::{fmt, str::FromStr, time::Duration};
 
-use sqlx::{AssertSqlSafe, Row, SqlSafeStr, pool::PoolConnection};
-use sqlx_core::migrate::{Migration, MigrationType, Migrator};
+use sqlx::{AssertSqlSafe, Row, pool::PoolConnection};
 use sqlx_postgres::{PgConnectOptions, PgPool, PgPoolOptions, PgSslMode, Postgres};
 use thiserror::Error;
 
@@ -56,6 +55,13 @@ impl KernelDatabaseUrl {
     pub(crate) fn options(&self) -> PgConnectOptions {
         self.options.clone()
     }
+
+    pub(crate) fn with_database(&self, database: &str) -> Self {
+        Self {
+            raw: self.raw.clone(),
+            options: self.options.clone().database(database),
+        }
+    }
 }
 
 impl fmt::Debug for KernelDatabaseUrl {
@@ -91,12 +97,8 @@ pub enum PostgresStoreError {
     InsecureRemoteTls,
     #[error("required environment variable {0} is not set")]
     MissingEnvironment(String),
-    #[error("could not build the PostgreSQL runtime")]
-    Runtime(#[source] std::io::Error),
     #[error("PostgreSQL operation failed")]
     Database(#[source] sqlx::Error),
-    #[error("PostgreSQL migration failed")]
-    Migration(#[source] sqlx_core::migrate::MigrateError),
     #[error("PostgreSQL advisory lock is already held")]
     AdvisoryLockUnavailable,
 }
@@ -108,7 +110,6 @@ pub struct PostgresCatalogSnapshot {
     pub partial_index_count: i64,
     pub trigger_count: i64,
     pub check_constraint_count: i64,
-    pub migration_count: i64,
 }
 
 /// A database advisory lock held by one dedicated checked-out connection.
@@ -116,7 +117,7 @@ pub struct PostgresCatalogSnapshot {
 /// the guard's lifetime rather than a pooled one-shot query.
 pub struct PostgresAdvisoryLockGuard<'a> {
     store: &'a PostgresKernelStore,
-    connection: Option<PoolConnection<Postgres>>,
+    pub(crate) connection: Option<PoolConnection<Postgres>>,
     key: i64,
 }
 
@@ -129,11 +130,9 @@ pub struct PostgresAdvisoryLockLease {
     key: i64,
 }
 
-// PostgreSQL migrations may be requested concurrently by independent test
-// processes and by resident startup paths. Keep the single canonical
-// migration runner serialized without making ordinary ledger operations
-// share a process-local lock.
-const MIGRATION_ADVISORY_LOCK_KEY: i64 = 0x0053_4f43_4945_5459;
+// Test schema cloning and cleanup are serialized because each operation owns
+// the complete PostgreSQL catalog shape for one private schema.
+pub(crate) const TEST_FIXTURE_ADVISORY_LOCK_KEY: i64 = 0x0000_5343_4c4f_4e45;
 
 impl Drop for PostgresAdvisoryLockLease {
     fn drop(&mut self) {
@@ -165,44 +164,56 @@ impl Drop for PostgresAdvisoryLockGuard<'_> {
     }
 }
 
-/// The owned synchronous PostgreSQL boundary used by the migrated kernel.
+/// The owned synchronous PostgreSQL boundary for the authoritative schema.
 pub struct PostgresKernelStore {
-    runtime: tokio::runtime::Runtime,
     pool: PgPool,
 }
 
 impl PostgresKernelStore {
     pub fn connect(url: &KernelDatabaseUrl) -> Result<Self, PostgresStoreError> {
-        let store = Self::connect_with_options(url, None)?;
-        store.migrate()?;
-        Ok(store)
+        Self::connect_with_options(url, None, 8)
     }
 
     pub fn connect_in_schema(
         url: &KernelDatabaseUrl,
         schema: &str,
     ) -> Result<Self, PostgresStoreError> {
+        Self::connect_in_schema_with_max_connections(url, schema, 8)
+    }
+
+    pub(crate) fn connect_for_test(url: &KernelDatabaseUrl) -> Result<Self, PostgresStoreError> {
+        Self::connect_with_options(url, None, 2)
+    }
+
+    pub(crate) fn connect_in_schema_for_test(
+        url: &KernelDatabaseUrl,
+        schema: &str,
+    ) -> Result<Self, PostgresStoreError> {
+        Self::connect_in_schema_with_max_connections(url, schema, 2)
+    }
+
+    fn connect_in_schema_with_max_connections(
+        url: &KernelDatabaseUrl,
+        schema: &str,
+        max_connections: u32,
+    ) -> Result<Self, PostgresStoreError> {
         if !is_safe_schema_name(schema) {
             return Err(PostgresStoreError::InvalidDatabaseUrl);
         }
-        Self::connect_with_options(url, Some(schema))
+        Self::connect_with_options(url, Some(schema), max_connections)
     }
 
     fn connect_with_options(
         url: &KernelDatabaseUrl,
         schema: Option<&str>,
+        max_connections: u32,
     ) -> Result<Self, PostgresStoreError> {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_io()
-            .enable_time()
-            .build()
-            .map_err(PostgresStoreError::Runtime)?;
         let mut options = PgPoolOptions::new()
-            .max_connections(8)
+            .max_connections(max_connections)
             .min_connections(0)
             .acquire_timeout(Duration::from_secs(10));
         if let Some(schema) = schema {
-            let statement = format!("SET search_path TO {schema}");
+            let statement = format!("SET search_path TO \"{schema}\"");
             let after_connect_statement = statement.clone();
             options = options.after_connect(move |connection, _| {
                 let statement = after_connect_statement.clone();
@@ -223,44 +234,9 @@ impl PostgresKernelStore {
                 })
             });
         }
-        let pool = runtime
-            .block_on(options.connect_with(url.options()))
+        let pool = async_std::task::block_on(options.connect_with(url.options()))
             .map_err(PostgresStoreError::Database)?;
-        Ok(Self { runtime, pool })
-    }
-
-    pub fn migrate(&self) -> Result<(), PostgresStoreError> {
-        let lock = self.acquire_advisory_lock(MIGRATION_ADVISORY_LOCK_KEY)?;
-        let result = self
-            .runtime
-            .block_on(async {
-                let migration = Migration::new(
-                    1,
-                    "kernel".into(),
-                    MigrationType::Simple,
-                    include_str!("../../../migrations/postgres/0001_kernel.sql").into_sql_str(),
-                    false,
-                );
-                Migrator::with_migrations(vec![migration])
-                    .run(&self.pool)
-                    .await
-            })
-            .map_err(PostgresStoreError::Migration);
-        drop(lock);
-        result
-    }
-
-    /// Creates a private schema when necessary and applies the canonical
-    /// migration through this migration-capable connection. Runtime roles can
-    /// then connect to the already-migrated schema without DDL privileges.
-    pub fn migrate_in_schema(
-        url: &KernelDatabaseUrl,
-        schema: &str,
-    ) -> Result<(), PostgresStoreError> {
-        let admin = Self::connect(url)?;
-        admin.ensure_private_schema(schema)?;
-        let scoped = Self::connect_in_schema(url, schema)?;
-        scoped.migrate()
+        Ok(Self { pool })
     }
 
     pub fn pool_size(&self) -> u32 {
@@ -272,7 +248,7 @@ impl PostgresKernelStore {
             let row = sqlx::query(
                 "SELECT
                     (SELECT COUNT(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-                     WHERE n.nspname = current_schema() AND c.relkind = 'r' AND c.relname <> '_sqlx_migrations'),
+                     WHERE n.nspname = current_schema() AND c.relkind = 'r'),
                     (SELECT COUNT(*) FROM pg_constraint k JOIN pg_class c ON c.oid = k.conrelid JOIN pg_namespace n ON n.oid = c.relnamespace
                      WHERE n.nspname = current_schema() AND k.contype = 'f'),
                     (SELECT COUNT(*) FROM pg_index i JOIN pg_class c ON c.oid = i.indrelid JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -280,8 +256,7 @@ impl PostgresKernelStore {
                     (SELECT COUNT(*) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace
                      WHERE n.nspname = current_schema() AND NOT t.tgisinternal),
                     (SELECT COUNT(*) FROM pg_constraint k JOIN pg_class c ON c.oid = k.conrelid JOIN pg_namespace n ON n.oid = c.relnamespace
-                     WHERE n.nspname = current_schema() AND k.contype = 'c'),
-                    (SELECT COUNT(*) FROM _sqlx_migrations)",
+                     WHERE n.nspname = current_schema() AND k.contype = 'c')",
             )
             .fetch_one(&self.pool)
             .await
@@ -292,7 +267,6 @@ impl PostgresKernelStore {
                 partial_index_count: row.get(2),
                 trigger_count: row.get(3),
                 check_constraint_count: row.get(4),
-                migration_count: row.get(5),
             })
         })
     }
@@ -310,13 +284,13 @@ impl PostgresKernelStore {
         })
     }
 
-    pub(crate) fn ensure_private_schema(&self, schema: &str) -> Result<(), PostgresStoreError> {
+    pub fn drop_private_schema(&self, schema: &str) -> Result<(), PostgresStoreError> {
         if !is_safe_schema_name(schema) {
             return Err(PostgresStoreError::InvalidDatabaseUrl);
         }
         self.block_on(async {
             sqlx::query(AssertSqlSafe(
-                format!("CREATE SCHEMA IF NOT EXISTS {schema}").as_str(),
+                format!("DROP SCHEMA {schema} CASCADE").as_str(),
             ))
             .execute(&self.pool)
             .await
@@ -325,13 +299,32 @@ impl PostgresKernelStore {
         })
     }
 
-    pub fn drop_private_schema(&self, schema: &str) -> Result<(), PostgresStoreError> {
-        if !is_safe_schema_name(schema) {
+    pub(crate) fn create_database_from_template(
+        &self,
+        database: &str,
+        template: &str,
+    ) -> Result<(), PostgresStoreError> {
+        if !is_safe_schema_name(database) || !is_safe_schema_name(template) {
             return Err(PostgresStoreError::InvalidDatabaseUrl);
         }
         self.block_on(async {
             sqlx::query(AssertSqlSafe(
-                format!("DROP SCHEMA {schema} CASCADE").as_str(),
+                format!("CREATE DATABASE \"{database}\" TEMPLATE \"{template}\"").as_str(),
+            ))
+            .execute(&self.pool)
+            .await
+            .map(|_| ())
+            .map_err(PostgresStoreError::Database)
+        })
+    }
+
+    pub(crate) fn drop_database(&self, database: &str) -> Result<(), PostgresStoreError> {
+        if !is_safe_schema_name(database) {
+            return Err(PostgresStoreError::InvalidDatabaseUrl);
+        }
+        self.block_on(async {
+            sqlx::query(AssertSqlSafe(
+                format!("DROP DATABASE IF EXISTS \"{database}\"").as_str(),
             ))
             .execute(&self.pool)
             .await
@@ -422,7 +415,7 @@ impl PostgresKernelStore {
     where
         F: std::future::Future,
     {
-        self.runtime.block_on(future)
+        async_std::task::block_on(future)
     }
 }
 

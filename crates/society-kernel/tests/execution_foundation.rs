@@ -8,7 +8,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use society_kernel::postgres_compat::Connection;
+use society_kernel::postgres_db::Connection;
 use society_kernel::{
     ActorAttemptCancellationReason, ActorAttemptId, ActorAttemptTerminalKind,
     ActorConfigurationName, ActorConfigurationRevisionId, ActorInstanceId, ActorModelPolicy,
@@ -921,7 +921,7 @@ fn deterministic_evaluator_native_child_is_not_a_pi_child() {
     // directly, before a replay audit has a chance to discover it.
     drop(store);
     let runtime_tamper_path = path.with_extension("runtime-binding-tamper");
-    society_kernel::postgres_compat::clone_for_test(&path, &runtime_tamper_path).unwrap();
+    society_kernel::postgres_db::clone_test_schema(&path, &runtime_tamper_path).unwrap();
     let tampered = Connection::connect_test_path(&runtime_tamper_path).unwrap();
     tampered
         .execute(
@@ -1005,7 +1005,7 @@ fn deterministic_evaluator_native_child_is_not_a_pi_child() {
     // project-alignment boundary.
     drop(store);
     let nonzero_reap_path = path.with_extension("nonzero-evaluator-reap");
-    society_kernel::postgres_compat::clone_for_test(&path, &nonzero_reap_path).unwrap();
+    society_kernel::postgres_db::clone_test_schema(&path, &nonzero_reap_path).unwrap();
     let nonzero_reap = Connection::connect_test_path(&nonzero_reap_path).unwrap();
     nonzero_reap
         .execute(
@@ -1031,7 +1031,7 @@ fn deterministic_evaluator_native_child_is_not_a_pi_child() {
     let _ = fs::remove_file(nonzero_reap_path);
 
     let signaled_reap_path = path.with_extension("signaled-evaluator-reap");
-    society_kernel::postgres_compat::clone_for_test(&path, &signaled_reap_path).unwrap();
+    society_kernel::postgres_db::clone_test_schema(&path, &signaled_reap_path).unwrap();
     let signaled_reap = Connection::connect_test_path(&signaled_reap_path).unwrap();
     signaled_reap
         .execute(
@@ -1059,7 +1059,7 @@ fn deterministic_evaluator_native_child_is_not_a_pi_child() {
     let _ = fs::remove_file(signaled_reap_path);
 
     let alignment_mismatch_path = path.with_extension("evaluator-alignment-mismatch");
-    society_kernel::postgres_compat::clone_for_test(&path, &alignment_mismatch_path).unwrap();
+    society_kernel::postgres_db::clone_test_schema(&path, &alignment_mismatch_path).unwrap();
     let alignment_mismatch = Connection::connect_test_path(&alignment_mismatch_path).unwrap();
     alignment_mismatch
         .execute(
@@ -1347,7 +1347,8 @@ fn deterministic_evaluator_native_child_is_not_a_pi_child() {
             terminal_state: society_kernel::DeterministicExperimentState::Failed,
         } if deterministic_experiment_id == DeterministicExperimentId::new(3).unwrap()
     ));
-    assert!(store.validate_replayed_materialized_state().is_ok());
+    let replay = store.validate_replayed_materialized_state();
+    assert!(replay.is_ok(), "replay validation failed: {replay:?}");
     drop(store);
     let tampered = Connection::connect_test_path(&path).unwrap();
     tampered
@@ -3596,7 +3597,8 @@ fn cancellation_freezes_an_admitted_unspawned_child_until_a_typed_not_spawned_fa
             cancellation_propagation_id: CancellationPropagationId::new(1).unwrap(),
         },
     );
-    assert!(store.validate_replayed_materialized_state().is_ok());
+    let replay = store.validate_replayed_materialized_state();
+    assert!(replay.is_ok(), "replay validation failed: {replay:?}");
 }
 
 #[test]
@@ -3927,7 +3929,8 @@ fn buffered_pi_receipts_after_cancellation_are_attributed_without_reopening_work
         },
         Rejection::StaleAdmissionGeneration,
     );
-    assert!(store.validate_replayed_materialized_state().is_ok());
+    let replay = store.validate_replayed_materialized_state();
+    assert!(replay.is_ok(), "replay validation failed: {replay:?}");
 }
 
 #[test]
@@ -4007,7 +4010,8 @@ fn adapter_ready_race_after_cancellation_preserves_receipt_but_rejects_create() 
             Rejection::StaleAdmissionGeneration,
         );
     }
-    assert!(store.validate_replayed_materialized_state().is_ok());
+    let replay = store.validate_replayed_materialized_state();
+    assert!(replay.is_ok(), "replay validation failed: {replay:?}");
 }
 
 #[test]
@@ -4939,7 +4943,8 @@ fn reviewer_attempt_cannot_be_rebound_to_a_different_requested_review() {
         },
         Rejection::ReviewAssignmentEvidenceMissing,
     );
-    assert!(store.validate_replayed_materialized_state().is_ok());
+    let replay = store.validate_replayed_materialized_state();
+    assert!(replay.is_ok(), "replay validation failed: {replay:?}");
 }
 
 #[test]

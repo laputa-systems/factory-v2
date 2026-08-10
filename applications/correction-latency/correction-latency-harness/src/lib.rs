@@ -6,19 +6,25 @@
 //! deliberately disposable functions. Their only durable effects are bounded
 //! Forum tool transitions submitted through the generic service custody.
 
-use std::fmt;
+use std::{
+    fmt,
+    fs,
+    path::PathBuf,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 use correction_latency_world::{
     canonical_role_prompt_revision_digest, canonical_role_specifications,
     canonical_role_topology_digest, ActorPopulationPhase, BinaryOutcome, RoleMessageKind,
     WorldFixture,
 };
+use society_content::{ContentObjectStore, ContentSealLimit, ContentStoreRoot};
 use society_kernel::{
     ApplicationIdentity, ApplicationMissionInput, ApplicationName, ApplicationRevisionId,
     ApplicationRevisionOrdinal, Blake3Digest, Capability, CommandBody, CommandDisposition,
     CommandId, CommandRequest, ExpectedGeneration, ForumMessageBody, ForumMessageId,
     ForumMessageKind, ForumPostBudget, ForumReadBudget, ForumThreadId, ForumThreadTitle,
-    KernelStore,
+    ContentIdentityState, ContentObjectId, KernelStore,
     MissionPrinciple, MissionPrincipleKind, MissionPrincipleText, MissionPrinciples,
     MissionStatement, NorthStarBoundaryCommitmentQuestion, NorthStarChangeQuestion,
     NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet, NorthStarRevisitQuestion,
@@ -34,6 +40,7 @@ const ACTOR_BUDGET_UNITS: i64 = 2;
 const EPISODE_BUDGET_UNITS: i64 = (POPULATION_SIZE as i64) * ACTOR_BUDGET_UNITS * 2;
 const FORUM_READ_BUDGET: i64 = 4;
 const MEASUREMENTS_PER_ARM: i64 = 9;
+static NEXT_TEST_CONTENT_ROOT_ID: AtomicU64 = AtomicU64::new(1);
 
 /// A report value that preserves unavailable and invalidated outcomes instead
 /// of translating them into zero.
@@ -430,6 +437,119 @@ impl From<StoreError> for HarnessError {
     }
 }
 
+struct TestContentAuthority {
+    store: ContentObjectStore,
+    root: PathBuf,
+}
+
+impl TestContentAuthority {
+    fn new() -> Result<Self, HarnessError> {
+        let suffix = NEXT_TEST_CONTENT_ROOT_ID.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "society-cl001-content-{}-{suffix}",
+            std::process::id()
+        ));
+        let content_root = ContentStoreRoot::parse(root.clone())
+            .map_err(|_| HarnessError::UnexpectedEvent("content store root"))?;
+        let store = ContentObjectStore::open(content_root)
+            .map_err(|_| HarnessError::UnexpectedEvent("content store open"))?;
+        Ok(Self { store, root })
+    }
+
+    fn seal_and_register(
+        &self,
+        kernel: &mut KernelStore,
+        label: &str,
+        bytes: &[u8],
+    ) -> Result<ContentObjectId, HarnessError> {
+        let limit = ContentSealLimit::new(64 * 1024 * 1024)
+            .ok_or(HarnessError::UnexpectedEvent("content seal limit"))?;
+        let physical = self
+            .store
+            .seal_bytes(bytes, limit)
+            .map_err(|_| HarnessError::UnexpectedEvent("forum content seal"))?;
+        let digest = Blake3Digest::from_bytes(*physical.digest.as_bytes());
+        match kernel.content_identity_state(digest)? {
+            ContentIdentityState::Registered {
+                content_object_id, ..
+            } => return Ok(content_object_id),
+            ContentIdentityState::SealReceiptOnly {
+                content_seal_receipt_id,
+            } => {
+                execute_content_service_command(
+                    kernel,
+                    &format!("cl001-content-{label}-object"),
+                    Capability::RegisterContentObject,
+                    CommandBody::RegisterContentObject {
+                        content_seal_receipt_id,
+                    },
+                )?;
+            }
+            ContentIdentityState::Absent => {
+                execute_content_service_command(
+                    kernel,
+                    &format!("cl001-content-{label}-seal"),
+                    Capability::RecordContentSealReceipt,
+                    CommandBody::RecordContentSealReceipt { digest },
+                )?;
+                let content_seal_receipt_id = match kernel.content_identity_state(digest)? {
+                    ContentIdentityState::SealReceiptOnly {
+                        content_seal_receipt_id,
+                    } => content_seal_receipt_id,
+                    _ => return Err(HarnessError::UnexpectedEvent("content seal receipt")),
+                };
+                execute_content_service_command(
+                    kernel,
+                    &format!("cl001-content-{label}-object"),
+                    Capability::RegisterContentObject,
+                    CommandBody::RegisterContentObject {
+                        content_seal_receipt_id,
+                    },
+                )?;
+            }
+        }
+        match kernel.content_identity_state(digest)? {
+            ContentIdentityState::Registered {
+                content_object_id, ..
+            } => Ok(content_object_id),
+            _ => Err(HarnessError::UnexpectedEvent("registered forum content")),
+        }
+    }
+}
+
+impl Drop for TestContentAuthority {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+fn execute_content_service_command(
+    kernel: &mut KernelStore,
+    command_id: &str,
+    capability: Capability,
+    body: CommandBody,
+) -> Result<(), HarnessError> {
+    let capability_grant_id = kernel
+        .active_capability_grant(PrincipalId::KERNEL, capability)?
+        .ok_or(HarnessError::UnexpectedEvent("content service capability"))?;
+    let command_id = CommandId::parse(command_id)
+        .map_err(|_| HarnessError::UnexpectedEvent("content service command id"))?;
+    match kernel
+        .execute(CommandRequest {
+            command_id,
+            principal_id: PrincipalId::KERNEL,
+            capability_grant_id,
+            capability,
+            expected_generation: ExpectedGeneration::NotApplicable,
+            body,
+        })?
+        .disposition
+    {
+        CommandDisposition::Accepted(_) => Ok(()),
+        CommandDisposition::Rejected(rejection) => Err(HarnessError::Rejected(rejection)),
+    }
+}
+
 struct ArmRun {
     episode_id: StudyEpisodeId,
     forum_id: society_kernel::EpisodeForumId,
@@ -497,6 +617,7 @@ pub fn run_provider_free_pair() -> Result<PairedReport, HarnessError> {
             .map_err(|_| HarnessError::UnexpectedEvent("UTF-8 ground-truth fixture"))?,
     )
     .map_err(|_| HarnessError::UnexpectedEvent("ground-truth fixture"))?;
+    let content = TestContentAuthority::new()?;
     let mut store = KernelStore::connect_test()?;
     install_application_revision(&mut store)?;
     let mut sequence = 1_u32;
@@ -564,8 +685,8 @@ pub fn run_provider_free_pair() -> Result<PairedReport, HarnessError> {
         &fixture,
         forum_contract,
     )?;
-    run_source_population(&mut store, &mut sequence, &fixture, &mut retained)?;
-    run_source_population(&mut store, &mut sequence, &fixture, &mut reset)?;
+    run_source_population(&mut store, &mut sequence, &fixture, &mut retained, &content)?;
+    run_source_population(&mut store, &mut sequence, &fixture, &mut reset, &content)?;
     replace_population(&mut store, &mut sequence, protocol, &mut retained)?;
     replace_population(&mut store, &mut sequence, protocol, &mut reset)?;
 
@@ -607,6 +728,8 @@ pub fn run_provider_free_pair() -> Result<PairedReport, HarnessError> {
                 obligation_id: reset.successor_obligations[0],
                 first_message_ordinal: 1,
                 through_message_ordinal: reset.frozen_head,
+                rendered_content_object_id: ContentObjectId::new(1)
+                    .ok_or(HarnessError::UnexpectedEvent("mission content object"))?,
             },
         )?;
     let reset_history_read_rejected = matches!(
@@ -658,6 +781,7 @@ pub fn run_provider_free_pair() -> Result<PairedReport, HarnessError> {
         &fixture,
         &mut retained,
         StudyTreatment::Retained,
+        &content,
     )?;
     run_successor_population(
         &mut store,
@@ -665,6 +789,7 @@ pub fn run_provider_free_pair() -> Result<PairedReport, HarnessError> {
         &fixture,
         &mut reset,
         StudyTreatment::Reset,
+        &content,
     )?;
 
     let retained_report = close_and_measure(
@@ -1077,6 +1202,7 @@ fn run_source_population(
     sequence: &mut u32,
     fixture: &WorldFixture,
     arm: &mut ArmRun,
+    content: &TestContentAuthority,
 ) -> Result<(), HarnessError> {
     let mut false_claim = None;
     for (index, (specification, obligation_id)) in canonical_role_specifications()
@@ -1086,19 +1212,16 @@ fn run_source_population(
     {
         let role = index + 1;
         if role > 1 {
-            let read = accepted(
+            let (read, rendering) = accepted_forum_read(
                 store,
                 sequence,
-                StudyCommand::ReadForum {
-                    obligation_id,
-                    first_message_ordinal: 1,
-                    through_message_ordinal: i64::try_from(role - 1)
-                        .map_err(|_| HarnessError::UnexpectedEvent("source range"))?,
-                },
+                content,
+                obligation_id,
+                1,
+                i64::try_from(role - 1)
+                    .map_err(|_| HarnessError::UnexpectedEvent("source range"))?,
             )?;
-            if let StudyEvent::ForumMessagesRead { receipt_id, .. } = read {
-                let rendering = store
-                    .forum_read_receipt_rendering_for_obligation(receipt_id, obligation_id)?;
+            if let StudyEvent::ForumMessagesRead { .. } = read {
                 arm.source_forum_reads += 1;
                 arm.source_forum_read_bytes += i64::try_from(rendering.len())
                     .map_err(|_| HarnessError::UnexpectedEvent("source read rendering length"))?;
@@ -1272,6 +1395,7 @@ fn run_successor_population(
     fixture: &WorldFixture,
     arm: &mut ArmRun,
     treatment: StudyTreatment,
+    content: &TestContentAuthority,
 ) -> Result<(), HarnessError> {
     let correction_message_id = arm
         .correction_message_id
@@ -1286,24 +1410,20 @@ fn run_successor_population(
         .zip(arm.successor_obligations.iter().copied())
         .enumerate()
     {
-        let read = accepted(
+        let (read, rendering) = accepted_forum_read(
             store,
             sequence,
-            StudyCommand::ReadForum {
-                obligation_id,
-                first_message_ordinal: first,
-                through_message_ordinal: correction_ordinal,
-            },
+            content,
+            obligation_id,
+            first,
+            correction_ordinal,
         )?;
         if let StudyEvent::ForumMessagesRead {
-            receipt_id,
             through_message_ordinal,
             ..
         } = read
         {
             arm.successor_forum_reads += 1;
-            let rendering = store
-                .forum_read_receipt_rendering_for_obligation(receipt_id, obligation_id)?;
             arm.returned_forum_bytes += i64::try_from(rendering.len())
                 .map_err(|_| HarnessError::UnexpectedEvent("read rendering length"))?;
             if through_message_ordinal >= correction_ordinal
@@ -1648,6 +1768,40 @@ fn accepted(
         StudyTransitionDisposition::Accepted(event) => Ok(event),
         StudyTransitionDisposition::Rejected(rejection) => Err(HarnessError::Rejected(rejection)),
     }
+}
+
+fn accepted_forum_read(
+    store: &mut KernelStore,
+    sequence: &mut u32,
+    content: &TestContentAuthority,
+    obligation_id: StudyActorObligationId,
+    first_message_ordinal: i64,
+    through_message_ordinal: i64,
+) -> Result<(StudyEvent, Vec<u8>), HarnessError> {
+    let rendering = store.prepare_study_forum_read(
+        obligation_id,
+        first_message_ordinal,
+        through_message_ordinal,
+    )?;
+    let content_object_id = content.seal_and_register(
+        store,
+        &format!(
+            "read-{}-{first_message_ordinal}-{through_message_ordinal}",
+            obligation_id.value()
+        ),
+        &rendering,
+    )?;
+    let event = accepted(
+        store,
+        sequence,
+        StudyCommand::ReadForum {
+            obligation_id,
+            first_message_ordinal,
+            through_message_ordinal,
+            rendered_content_object_id: content_object_id,
+        },
+    )?;
+    Ok((event, rendering))
 }
 
 fn rejected(

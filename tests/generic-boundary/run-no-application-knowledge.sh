@@ -11,7 +11,7 @@ application_vocabulary='(^|[^[:alnum:]_])([Xx][Ss][Hh][Tt]?|[Vv][Ss][-_]?001)([^
 if rg -n --pcre2 "$application_vocabulary" \
     AGENTS.md ARCHITECTURE.md DEPENDENCIES.md FORUM.md GLOSSARY.md README.md \
     RESEARCH-PROGRAM.md VERTICAL-SLICE.md \
-    Cargo.toml crates migrations packages tests \
+    Cargo.toml crates schema packages tests \
     --glob '!generic-boundary/**' \
     --glob '!tests/generic-boundary/**'
 then
@@ -21,7 +21,7 @@ fi
 
 if rg -n \
     'FOUNDING_SOCIETY_HARD_CEILING|PI_SDK_QUALIFICATION_CEILING|PINNED_PI_SDK_CYCLE_CEILING' \
-    crates migrations packages tests \
+    crates schema packages tests \
     --glob '!generic-boundary/**' \
     --glob '!tests/generic-boundary/**'
 then
@@ -32,7 +32,7 @@ fi
 # These names belonged to a former synthetic catalog application.  Even a
 # provider-free example must not smuggle product/evaluator semantics back into
 # generic crate tests under the guise of proving genericity.
-if rg -n -i 'aurora-catalog|price_cents|verify-catalog' crates migrations packages tests \
+if rg -n -i 'aurora-catalog|price_cents|verify-catalog' crates schema packages tests \
     --glob '!generic-boundary/**' \
     --glob '!tests/generic-boundary/**'
 then
@@ -46,7 +46,7 @@ fi
 if rg -n -i 'grand[_ -]?architect|thegrandarchitect|universe[_ -]?seed' \
     AGENTS.md ARCHITECTURE.md DEPENDENCIES.md FORUM.md GLOSSARY.md README.md \
     RESEARCH-PROGRAM.md VERTICAL-SLICE.md \
-    Cargo.toml crates migrations packages tests \
+    Cargo.toml crates schema packages tests \
     --glob '!generic-boundary/**' \
     --glob '!tests/generic-boundary/**'
 then
@@ -58,7 +58,7 @@ fi
 # which selected the capability set, never to the Pi wire or resident kernel.
 if rg -n \
     'CuratorV1|ProductBuilderV1|TaskActorV1|ReadSourceV1|curator_v1|product_builder_v1|task_actor_v1|read_source_v1' \
-    crates migrations packages tests \
+    crates schema packages tests \
     --glob '!generic-boundary/**' \
     --glob '!tests/generic-boundary/**'
 then
@@ -72,7 +72,7 @@ then
     exit 1
 fi
 
-if rg -n 'applications/' crates migrations packages \
+if rg -n 'applications/' crates schema packages \
     --glob '!target/**' \
     --glob '!node_modules/**'
 then

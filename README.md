@@ -87,19 +87,13 @@ and provide the daemon role URL:
 export SOCIETY_DATABASE_URL='postgresql://society_runtime@localhost/society'
 ```
 
-Schema application should use a separate migration-capable role in production:
-
-```sh
-export SOCIETY_DATABASE_MIGRATION_URL='postgresql://society_migrator@localhost/society'
-```
-
 Set `SOCIETY_DATABASE_SCHEMA` when the ledger lives in a private PostgreSQL
 schema; otherwise the daemon uses the database's default schema.
 
-If the migration URL is omitted, local development deliberately uses the
-runtime URL for both roles. `societyd` applies the canonical
-`migrations/postgres/0001_kernel.sql`, validates ledger replay before binding
-its socket, and holds a dedicated PostgreSQL advisory lock for its lifetime.
+The schema is a single authoritative fresh bootstrap from
+`schema/postgres/kernel.sql`. `societyd` connects to that schema,
+validates ledger replay before binding its socket, and holds a dedicated
+PostgreSQL advisory lock for its lifetime.
 The filesystem `societyd.lock` remains responsible only for the runtime root.
 
 For health and ownership diagnostics, query the selected database and inspect

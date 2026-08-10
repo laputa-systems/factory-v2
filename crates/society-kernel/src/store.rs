@@ -1,7 +1,7 @@
 use thiserror::Error;
 
-use crate::postgres::{KernelDatabaseUrl, PostgresKernelStore, PostgresStoreError};
-use crate::postgres_compat::{
+use crate::postgres::{KernelDatabaseUrl, PostgresStoreError};
+use crate::postgres_db::{
     Connection, DbError, FromSql, OptionalExtension, Transaction, TransactionBehavior, ValueRef,
     params,
 };
@@ -375,8 +375,7 @@ const EVENT_BODY_TABLES: [&str; 95] = [
 const GRAPH_REVISION_BODY_TABLES: [&str; 2] = ["observation_revisions", "hypothesis_revisions"];
 
 /// The PostgreSQL implementation of trusted physics. `societyd` is its only
-/// production owner; this crate deliberately performs connection and migration
-/// setup through its constructors so the authoritative schema cannot be skipped.
+/// production owner; this crate only connects to the authoritative schema.
 pub struct KernelStore {
     connection: Connection,
     replay_url: Option<KernelDatabaseUrl>,
@@ -659,42 +658,13 @@ enum CapabilityGrantLookup {
 impl KernelStore {
     pub fn connect(url: &KernelDatabaseUrl) -> Result<Self, StoreError> {
         let connection = Connection::connect(url).map_err(StoreError::Postgres)?;
-        connection.migrate().map_err(StoreError::Postgres)?;
         Self::from_connection_with_replay(connection, Some(url.clone()))
     }
 
     pub fn connect_in_schema(url: &KernelDatabaseUrl, schema: &str) -> Result<Self, StoreError> {
-        let admin = PostgresKernelStore::connect(url).map_err(StoreError::Postgres)?;
-        admin
-            .ensure_private_schema(schema)
-            .map_err(StoreError::Postgres)?;
         let connection =
             Connection::connect_in_schema(url, schema).map_err(StoreError::Postgres)?;
-        connection.migrate().map_err(StoreError::Postgres)?;
         Self::from_connection_with_replay(connection, Some(url.clone()))
-    }
-
-    /// Opens an already-migrated database using only the runtime connection.
-    /// Schema revision application belongs to the separately configured
-    /// migration-capable role at the resident boundary.
-    pub fn connect_runtime(url: &KernelDatabaseUrl) -> Result<Self, StoreError> {
-        Self::from_connection_with_replay(
-            Connection::connect(url).map_err(StoreError::Postgres)?,
-            Some(url.clone()),
-        )
-    }
-
-    /// Opens an already-migrated private schema using only the runtime
-    /// connection. The schema must have been created and migrated by the
-    /// migration-capable role first.
-    pub fn connect_runtime_in_schema(
-        url: &KernelDatabaseUrl,
-        schema: &str,
-    ) -> Result<Self, StoreError> {
-        Self::from_connection_with_replay(
-            Connection::connect_in_schema(url, schema).map_err(StoreError::Postgres)?,
-            Some(url.clone()),
-        )
     }
 
     pub fn connect_test() -> Result<Self, StoreError> {
@@ -715,7 +685,7 @@ impl KernelStore {
     /// Returns the private schema identity used by a path-oriented test
     /// fixture. The path is not opened and no filesystem database is created.
     pub fn test_schema_for_path(path: impl AsRef<std::path::Path>) -> String {
-        crate::postgres_compat::test_schema_for_path(path)
+        crate::postgres_db::test_schema_for_path(path)
     }
 
     fn from_connection_with_replay(
@@ -798,17 +768,22 @@ impl KernelStore {
         })
     }
 
-    /// Returns the exact deterministic bytes delivered to one obligation by a
-    /// durable F0 read receipt.  The caller must name that same obligation;
-    /// this is not a transcript, search, alias, or foreign-receipt retrieval
-    /// API.  The bytes are preserved at delivery time and are never rebuilt
-    /// from mutable Message state.
-    pub fn forum_read_receipt_rendering_for_obligation(
+    /// Prepares the exact deterministic bytes which a read transition will
+    /// deliver. The caller must seal these bytes in the content store and pass
+    /// the resulting object identity into the subsequent `ReadForum` command.
+    /// PostgreSQL retains only that identity and the receipt metadata.
+    pub fn prepare_study_forum_read(
         &self,
-        receipt_id: crate::ForumReadReceiptId,
         obligation_id: crate::StudyActorObligationId,
+        first_message_ordinal: i64,
+        through_message_ordinal: i64,
     ) -> Result<Vec<u8>, StoreError> {
-        crate::study::rendering_for_read_receipt(&self.connection, receipt_id, obligation_id)
+        crate::study::prepare_forum_read(
+            &self.connection,
+            obligation_id,
+            first_message_ordinal,
+            through_message_ordinal,
+        )
     }
 
     pub fn deterministic_evaluator_native_child_admission(
@@ -17020,7 +16995,7 @@ fn replay_command_requests(
     Ok(commands)
 }
 
-const MATERIALIZED_TABLES: [&str; 120] = [
+const MATERIALIZED_TABLES: [&str; 119] = [
     "principals",
     "societies",
     "office_contracts",
@@ -17136,7 +17111,6 @@ const MATERIALIZED_TABLES: [&str; 120] = [
     "study_forum_exposures",
     "study_forum_messages",
     "study_forum_read_receipts",
-    "study_forum_read_receipt_renderings",
     "study_decisions",
     "study_ground_truth_reveals",
     "study_measurement_results",

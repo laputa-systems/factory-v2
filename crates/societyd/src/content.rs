@@ -16,7 +16,7 @@ use society_content::{
 use society_kernel::{
     Blake3Digest, Capability, ChildStreamKind, CommandBody, CommandDisposition, CommandId,
     CommandRequest, ContentIdentityState, ContentObjectId, KernelStore,
-    NativeChildSpawnAdmissionId, PrincipalId, StoreError,
+    NativeChildSpawnAdmissionId, PrincipalId, StoreError, StudyActorObligationId,
 };
 use thiserror::Error;
 
@@ -76,6 +76,21 @@ impl ContentSealOperationId {
             label.push(char::from(HEX[(byte & 0x0F) as usize]));
         }
         Self::parse(label, expected_digest)
+    }
+
+    pub(crate) fn study_forum_read(
+        obligation_id: StudyActorObligationId,
+        first_message_ordinal: i64,
+        through_message_ordinal: i64,
+        expected_digest: Blake3Digest,
+    ) -> Result<Self, ContentSealOperationIdError> {
+        Self::parse(
+            format!(
+                "study-forum-read-{}-{first_message_ordinal}-{through_message_ordinal}",
+                obligation_id.value()
+            ),
+            expected_digest,
+        )
     }
 
     /// Constructs the identity from its closed label and expected byte digest.
@@ -447,11 +462,11 @@ mod tests {
     }
 
     fn test_daemon_config(parent: &Path) -> crate::DaemonConfig {
+        let schema_path = parent.join("society.pg-test-schema");
+        KernelStore::connect_test_path(&schema_path).unwrap();
         crate::DaemonConfig::new(parent)
             .with_database_url(KernelDatabaseUrl::from_env("SOCIETY_POSTGRES_TEST_URL").unwrap())
-            .with_database_schema(KernelStore::test_schema_for_path(
-                parent.join("society.pg-test-schema"),
-            ))
+            .with_database_schema(KernelStore::test_schema_for_path(schema_path))
     }
 
     fn bind_after_parallel_exec_window(parent: &Path) -> crate::Daemon {

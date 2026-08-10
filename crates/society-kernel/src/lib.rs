@@ -7,7 +7,7 @@
 mod domain;
 mod postgres;
 #[doc(hidden)]
-pub mod postgres_compat;
+pub mod postgres_db;
 mod store;
 mod study;
 
