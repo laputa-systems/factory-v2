@@ -8646,6 +8646,25 @@ fn record_deterministic_evaluation_receipt(
                 "SELECT EXISTS(
                      SELECT 1
                        FROM deterministic_evaluator_forensic_manifest_bindings binding
+                       JOIN native_child_spawn_admissions admission
+                         ON admission.native_child_spawn_admission_id = binding.native_child_spawn_admission_id
+                        AND admission.deterministic_experiment_id = binding.deterministic_experiment_id
+                        AND admission.evaluator_revision_id = binding.evaluator_revision_id
+                        AND admission.input_manifest_id = binding.input_manifest_id
+                       JOIN native_children child
+                         ON child.native_child_id = binding.native_child_id
+                        AND child.native_child_spawn_admission_id = binding.native_child_spawn_admission_id
+                        AND child.lifecycle_state = ?6
+                       JOIN native_child_stream_seals stdout
+                         ON stdout.native_child_stream_seal_id = binding.native_child_stream_seal_id
+                        AND stdout.native_child_id = binding.native_child_id
+                        AND stdout.stream_kind = ?7
+                        AND stdout.completeness = ?8
+                        AND stdout.retained_content_object_id = binding.evaluator_output_content_object_id
+                       JOIN native_child_stream_seals stderr
+                         ON stderr.native_child_id = binding.native_child_id
+                        AND stderr.stream_kind = ?9
+                        AND stderr.completeness = ?8
                       WHERE binding.forensic_manifest_id = ?1
                         AND binding.deterministic_experiment_id = ?2
                         AND binding.evaluator_revision_id = ?3
@@ -8658,6 +8677,10 @@ fn record_deterministic_evaluation_receipt(
                     evaluator_revision_id.value(),
                     input_manifest_id.value(),
                     evaluator_output_content_object_id.value(),
+                    ChildProcessState::Finalized as i64,
+                    ChildStreamKind::Stdout as i64,
+                    ChildStreamSealCompleteness::Complete as i64,
+                    ChildStreamKind::Stderr as i64,
                 ],
                 |row| row.get::<_, i64>(0),
             )

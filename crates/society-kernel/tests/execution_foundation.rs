@@ -760,6 +760,42 @@ fn deterministic_evaluator_native_child_is_not_a_pi_child() {
             && native_child_stream_seal_id == society_kernel::NativeChildStreamSealId::new(1).unwrap()
             && evaluator_output_content_object_id == ContentObjectId::new(2).unwrap()
     ));
+    // The row still has valid foreign keys after substituting the complete
+    // stderr seal. The receipt-time predicate must reject that recombination
+    // directly, before a replay audit has a chance to discover it.
+    drop(store);
+    let runtime_tamper_path = path.with_extension("runtime-binding-tamper.sqlite");
+    fs::copy(&path, &runtime_tamper_path).unwrap();
+    let tampered = Connection::open(&runtime_tamper_path).unwrap();
+    tampered
+        .execute(
+            "UPDATE deterministic_evaluator_forensic_manifest_bindings
+                SET native_child_stream_seal_id = 2
+              WHERE forensic_manifest_id = 2",
+            [],
+        )
+        .unwrap();
+    drop(tampered);
+    let mut runtime_tampered_store = KernelStore::open(&runtime_tamper_path).unwrap();
+    rejected(
+        &mut runtime_tampered_store,
+        "evaluator-receipt-rejects-runtime-recombined-stream-binding",
+        PrincipalId::KERNEL,
+        Capability::RecordDeterministicEvaluationReceipt,
+        generation,
+        CommandBody::RecordDeterministicEvaluationReceipt {
+            operating_cycle_id: cycle,
+            deterministic_experiment_id: DeterministicExperimentId::new(1).unwrap(),
+            evaluator_revision_id: EvaluatorRevisionId::new(1).unwrap(),
+            input_manifest_id: InputManifestId::new(1).unwrap(),
+            forensic_manifest_id: ForensicManifestId::new(2).unwrap(),
+            evaluator_output_content_object_id: ContentObjectId::new(2).unwrap(),
+        },
+        Rejection::DeterministicEvaluationBindingMismatch,
+    );
+    drop(runtime_tampered_store);
+    fs::remove_file(runtime_tamper_path).unwrap();
+    let mut store = KernelStore::open(&path).unwrap();
     rejected(
         &mut store,
         "evaluator-receipt-rejects-pre-schedule-unbound-manifest",
