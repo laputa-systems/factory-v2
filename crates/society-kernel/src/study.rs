@@ -3,7 +3,7 @@
 //! This module intentionally knows nothing about a particular experimental
 //! world.  It names the durable control-plane distinctions CL-001 needs while
 //! leaving world semantics, actor roles, and measurement interpretation to an
-//! application.  The SQLite transitions live in `store.rs`; these values keep
+//! application.  The PostgreSQL transitions live in `store.rs`; these values keep
 //! that boundary closed and replayable.
 
 use thiserror::Error;
@@ -14,7 +14,7 @@ use crate::{
     NativeChildSpawnAdmissionId, Rejection, RootAuthorityOfficeSessionId, StoreError,
 };
 
-// The SQLite decoder deliberately keeps each exact row shape named.  These
+// The PostgreSQL decoder deliberately keeps each exact row shape named.  These
 // are fixed closed-table projections, not generic record payloads.
 type ForkSourceRow = (i64, i64, i64, i64, i64, Vec<u8>, i64);
 type StoredProtocolCommandRow = (
@@ -477,7 +477,7 @@ pub fn forum_f0_tool_contract_digest() -> Blake3Digest {
 }
 
 /// The sole new generic command family.  Its inner alternatives are closed,
-/// typed, normalized into named SQLite bodies, and replayed through the
+/// typed, normalized into named PostgreSQL bodies, and replayed through the
 /// existing command/event ledger.  This keeps the legacy ledger's one-command
 /// append discipline while avoiding an application-specific wire surface.
 #[derive(Clone, Debug, Eq, PartialEq)]

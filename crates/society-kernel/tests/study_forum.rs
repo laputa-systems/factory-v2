@@ -194,7 +194,7 @@ fn forum_body_limits_are_exact_and_no_nul_body_is_admissible() {
 #[test]
 fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
     let path = temporary_database_path();
-    let mut store = KernelStore::open(&path).unwrap();
+    let mut store = KernelStore::connect_test_path(&path).unwrap();
     install_application_revision(&mut store);
     let mut ordinal = 1_u16;
 
@@ -1037,7 +1037,7 @@ fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
     store.replay_ledger().unwrap();
     store.validate_replayed_materialized_state().unwrap();
     drop(store);
-    let connection = Connection::open(&path).unwrap();
+    let connection = Connection::connect_test_path(&path).unwrap();
     connection
         .execute(
             "UPDATE study_forum_exposures SET visible_from_message_ordinal = 1
@@ -1047,7 +1047,7 @@ fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
         .unwrap();
     drop(connection);
     assert!(
-        KernelStore::open(&path)
+        KernelStore::connect_test_path(&path)
             .unwrap()
             .validate_replayed_materialized_state()
             .is_err()

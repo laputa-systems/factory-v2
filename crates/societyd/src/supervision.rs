@@ -4,7 +4,7 @@
 //! workspace, verifies the qualified host artifacts, owns one process group,
 //! captures raw pipe directions in bounded transient buffers, and returns
 //! typed receipts. The returned facts
-//! are **inputs** to the later kernel transaction; this module makes no SQLite
+//! are **inputs** to the later kernel transaction; this module makes no PostgreSQL
 //! write, durable charge, admission decision, or successor admission.
 
 use std::{

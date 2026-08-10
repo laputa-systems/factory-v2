@@ -7,10 +7,10 @@ durable: names, types, schemas, interfaces, state transitions, permissions,
 tests, and explanations. Let implementation be a candidate. Let the contract
 and the evidence around it be what survives.
 
-- Prefer closed Rust enums, identifier newtypes, normalized SQLite tables, and
+- Prefer closed Rust enums, identifier newtypes, normalized PostgreSQL tables, and
   narrow protocols which make invalid state difficult to express.
 - JSON is permitted only at the Pi SDK-host boundary. The Rust control protocol
-  and SQLite schema must not gain generic payloads, metadata maps, EAV tables,
+  and PostgreSQL schema must not gain generic payloads, metadata maps, EAV tables,
   or stringly typed discriminants.
 - Test observable transitions and cross-boundary invariants. Favor integration,
   replay, fault-injection, process, and counterfactual experiment tests over
@@ -93,7 +93,7 @@ crates/societyd/           resident authority and native-child custody
 crates/societyctl/         public query and supervisor-stream client
 crates/society-product/    dormant guarded Git materialization mechanics;
                            outside the current research slice
-migrations/                one canonical fresh-schema bootstrap
+migrations/postgres/       one canonical fresh-schema bootstrap
 packages/society-pi-host/  replaceable actor-runtime adapter
 tests/                     generic boundary, daemon, and supervision judges
 applications/              isolated experimental worlds and their semantics

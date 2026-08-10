@@ -7,10 +7,10 @@ authority, process, content, experiment, and replay contracts.
 
 - Keep world ground truth, evidence-card semantics, actor-local obligations,
   fixtures, and measurement interpretation here.
-- Do not import or depend on `societyd`, `societyctl`, SQLite, process custody,
+- Do not import or depend on `societyd`, `societyctl`, PostgreSQL, process custody,
   or generic mutation authority.
 - An application crate may submit closed commands through a public generic
-  control boundary; it never opens SQLite, writes ledger rows directly, or
+  control boundary; it never opens PostgreSQL, writes ledger rows directly, or
   chooses native executable paths.
 - Ordinary tests are deterministic, provider-free, and network-free.
 - Test the null result and missing-data paths as carefully as a measured effect.

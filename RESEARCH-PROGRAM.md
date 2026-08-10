@@ -80,7 +80,7 @@ it. Actor replacement is an intervention, not a recovery accident.
 
 ### Trusted physics
 
-The slowly changing Rust, SQLite, content, and operating-system layer owns
+The slowly changing Rust, PostgreSQL, content, and operating-system layer owns
 identity, authority, budgets, byte custody, process custody, cancellation,
 append-only events, and integrity replay. It never decides whether an
 application claim is true.

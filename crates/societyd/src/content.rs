@@ -422,7 +422,8 @@ mod tests {
 
     use society_content::{ContentObjectStore, ContentSealLimit, ContentStoreRoot};
     use society_kernel::{
-        CapabilityGrantId, CommandId, ContentObjectId, ContentSealReceiptId, KernelStore,
+        CapabilityGrantId, CommandId, ContentObjectId, ContentSealReceiptId, KernelDatabaseUrl,
+        KernelStore,
     };
 
     use super::*;
@@ -445,6 +446,14 @@ mod tests {
         ContentSealLimit::new(1024 * 1024).unwrap()
     }
 
+    fn test_daemon_config(parent: &Path) -> crate::DaemonConfig {
+        crate::DaemonConfig::new(parent)
+            .with_database_url(KernelDatabaseUrl::from_env("SOCIETY_POSTGRES_TEST_URL").unwrap())
+            .with_database_schema(KernelStore::test_schema_for_path(
+                parent.join("society.pg-test-schema"),
+            ))
+    }
+
     fn bind_after_parallel_exec_window(parent: &Path) -> crate::Daemon {
         // Other native-supervision tests fork in this same test process. A
         // child between fork and exec briefly carries every close-on-exec
@@ -452,7 +461,7 @@ mod tests {
         // a real leaked lock still fails rather than weakening the ownership
         // assertion this recovery test relies on.
         for attempt in 0..100 {
-            match crate::Daemon::bind(crate::DaemonConfig::new(parent)) {
+            match crate::Daemon::bind(test_daemon_config(parent)) {
                 Ok(daemon) => return daemon,
                 Err(crate::DaemonError::AlreadyRunning) if attempt < 99 => {
                     thread::sleep(Duration::from_millis(1));
@@ -473,7 +482,7 @@ mod tests {
             seal_limit,
         )
         .unwrap();
-        let kernel = KernelStore::open(parent.join("society.sqlite3")).unwrap();
+        let kernel = KernelStore::connect_test_path(parent.join("society.pg-test-schema")).unwrap();
         (authority, kernel, parent)
     }
 
@@ -552,7 +561,7 @@ mod tests {
         let parent = temporary_parent("resident-owner");
         let bytes = b"resident daemon content writer";
         let operation = operation("resident-owner", bytes);
-        let mut daemon = crate::Daemon::bind(crate::DaemonConfig::new(&parent)).unwrap();
+        let mut daemon = crate::Daemon::bind(test_daemon_config(&parent)).unwrap();
 
         let first = daemon.seal_content_object(&operation, bytes).unwrap();
         let retry = daemon.seal_content_object(&operation, bytes).unwrap();
@@ -571,7 +580,7 @@ mod tests {
         let parent = temporary_parent("recovery-fenced");
         let first_bytes = b"first daemon lifetime";
         let first_operation = operation("recovery-first", first_bytes);
-        let mut first = crate::Daemon::bind(crate::DaemonConfig::new(&parent)).unwrap();
+        let mut first = crate::Daemon::bind(test_daemon_config(&parent)).unwrap();
         first
             .seal_content_object(&first_operation, first_bytes)
             .unwrap();
@@ -592,10 +601,10 @@ mod tests {
     #[test]
     fn second_daemon_cannot_acquire_the_resident_content_store_writer() {
         let parent = temporary_parent("resident-exclusive");
-        let daemon = crate::Daemon::bind(crate::DaemonConfig::new(&parent)).unwrap();
+        let daemon = crate::Daemon::bind(test_daemon_config(&parent)).unwrap();
 
         assert!(matches!(
-            crate::Daemon::bind(crate::DaemonConfig::new(&parent)),
+            crate::Daemon::bind(test_daemon_config(&parent)),
             Err(crate::DaemonError::AlreadyRunning)
         ));
         assert!(matches!(
@@ -615,7 +624,7 @@ mod tests {
         symlink(&target, parent.join("content")).unwrap();
 
         assert!(matches!(
-            crate::Daemon::bind(crate::DaemonConfig::new(&parent)),
+            crate::Daemon::bind(test_daemon_config(&parent)),
             Err(crate::DaemonError::ContentStore(
                 ContentStoreError::UnsafeStorageDirectory
             ))

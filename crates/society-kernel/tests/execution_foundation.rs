@@ -507,7 +507,7 @@ fn deterministic_evaluator_native_child_is_not_a_pi_child() {
         .unwrap()
         .as_nanos();
     let path = std::env::temp_dir().join(format!("society-evaluator-native-{nonce}"));
-    let mut store = KernelStore::open(&path).unwrap();
+    let mut store = KernelStore::connect_test_path(&path).unwrap();
     let (root_authority, cycle) = founded_cycle(
         &mut store,
         OperatingCycleTreatment::DeterministicEvaluatorFixtureV1,
@@ -922,7 +922,7 @@ fn deterministic_evaluator_native_child_is_not_a_pi_child() {
     drop(store);
     let runtime_tamper_path = path.with_extension("runtime-binding-tamper");
     society_kernel::postgres_compat::clone_for_test(&path, &runtime_tamper_path).unwrap();
-    let tampered = Connection::open(&runtime_tamper_path).unwrap();
+    let tampered = Connection::connect_test_path(&runtime_tamper_path).unwrap();
     tampered
         .execute(
             "UPDATE deterministic_evaluator_forensic_manifest_bindings
@@ -932,7 +932,7 @@ fn deterministic_evaluator_native_child_is_not_a_pi_child() {
         )
         .unwrap();
     drop(tampered);
-    let mut runtime_tampered_store = KernelStore::open(&runtime_tamper_path).unwrap();
+    let mut runtime_tampered_store = KernelStore::connect_test_path(&runtime_tamper_path).unwrap();
     rejected(
         &mut runtime_tampered_store,
         "evaluator-receipt-rejects-runtime-recombined-stream-binding",
@@ -951,7 +951,7 @@ fn deterministic_evaluator_native_child_is_not_a_pi_child() {
     );
     drop(runtime_tampered_store);
     let _ = fs::remove_file(runtime_tamper_path);
-    let mut store = KernelStore::open(&path).unwrap();
+    let mut store = KernelStore::connect_test_path(&path).unwrap();
     rejected(
         &mut store,
         "evaluator-receipt-rejects-pre-schedule-unbound-manifest",
@@ -1006,7 +1006,7 @@ fn deterministic_evaluator_native_child_is_not_a_pi_child() {
     drop(store);
     let nonzero_reap_path = path.with_extension("nonzero-evaluator-reap");
     society_kernel::postgres_compat::clone_for_test(&path, &nonzero_reap_path).unwrap();
-    let nonzero_reap = Connection::open(&nonzero_reap_path).unwrap();
+    let nonzero_reap = Connection::connect_test_path(&nonzero_reap_path).unwrap();
     nonzero_reap
         .execute(
             "UPDATE native_child_reap_receipts SET status_value = 1 WHERE native_child_id = 1",
@@ -1014,7 +1014,7 @@ fn deterministic_evaluator_native_child_is_not_a_pi_child() {
         )
         .unwrap();
     drop(nonzero_reap);
-    let mut nonzero_reap_store = KernelStore::open(&nonzero_reap_path).unwrap();
+    let mut nonzero_reap_store = KernelStore::connect_test_path(&nonzero_reap_path).unwrap();
     rejected(
         &mut nonzero_reap_store,
         "evaluator-evidence-rejects-nonzero-reap",
@@ -1032,7 +1032,7 @@ fn deterministic_evaluator_native_child_is_not_a_pi_child() {
 
     let signaled_reap_path = path.with_extension("signaled-evaluator-reap");
     society_kernel::postgres_compat::clone_for_test(&path, &signaled_reap_path).unwrap();
-    let signaled_reap = Connection::open(&signaled_reap_path).unwrap();
+    let signaled_reap = Connection::connect_test_path(&signaled_reap_path).unwrap();
     signaled_reap
         .execute(
             "UPDATE native_child_reap_receipts
@@ -1042,7 +1042,7 @@ fn deterministic_evaluator_native_child_is_not_a_pi_child() {
         )
         .unwrap();
     drop(signaled_reap);
-    let mut signaled_reap_store = KernelStore::open(&signaled_reap_path).unwrap();
+    let mut signaled_reap_store = KernelStore::connect_test_path(&signaled_reap_path).unwrap();
     rejected(
         &mut signaled_reap_store,
         "evaluator-evidence-rejects-signaled-reap",
@@ -1060,7 +1060,7 @@ fn deterministic_evaluator_native_child_is_not_a_pi_child() {
 
     let alignment_mismatch_path = path.with_extension("evaluator-alignment-mismatch");
     society_kernel::postgres_compat::clone_for_test(&path, &alignment_mismatch_path).unwrap();
-    let alignment_mismatch = Connection::open(&alignment_mismatch_path).unwrap();
+    let alignment_mismatch = Connection::connect_test_path(&alignment_mismatch_path).unwrap();
     alignment_mismatch
         .execute(
             "INSERT INTO application_revisions(
@@ -1083,7 +1083,8 @@ fn deterministic_evaluator_native_child_is_not_a_pi_child() {
         )
         .unwrap();
     drop(alignment_mismatch);
-    let mut alignment_mismatch_store = KernelStore::open(&alignment_mismatch_path).unwrap();
+    let mut alignment_mismatch_store =
+        KernelStore::connect_test_path(&alignment_mismatch_path).unwrap();
     rejected(
         &mut alignment_mismatch_store,
         "evaluator-evidence-rejects-project-application-revision-mismatch",
@@ -1099,7 +1100,7 @@ fn deterministic_evaluator_native_child_is_not_a_pi_child() {
     drop(alignment_mismatch_store);
     let _ = fs::remove_file(alignment_mismatch_path);
 
-    let mut store = KernelStore::open(&path).unwrap();
+    let mut store = KernelStore::connect_test_path(&path).unwrap();
     let evidence_receipt = accepted(
         &mut store,
         "evaluator-evidence-admits-exact-successful-receipt",
@@ -1348,7 +1349,7 @@ fn deterministic_evaluator_native_child_is_not_a_pi_child() {
     ));
     assert!(store.validate_replayed_materialized_state().is_ok());
     drop(store);
-    let tampered = Connection::open(&path).unwrap();
+    let tampered = Connection::connect_test_path(&path).unwrap();
     tampered
         .execute(
             "UPDATE deterministic_evaluator_forensic_manifest_bindings
@@ -1359,7 +1360,7 @@ fn deterministic_evaluator_native_child_is_not_a_pi_child() {
         .unwrap();
     drop(tampered);
     assert!(
-        KernelStore::open(&path)
+        KernelStore::connect_test_path(&path)
             .unwrap()
             .validate_replayed_materialized_state()
             .is_err()
@@ -1625,7 +1626,7 @@ fn ledger_event_reads_verified_pi_child_receipts_and_rejects_tampering() {
         .unwrap()
         .as_nanos();
     let path = std::env::temp_dir().join(format!("society-m5-ledger-event-{nonce}"));
-    let mut store = KernelStore::open(&path).unwrap();
+    let mut store = KernelStore::connect_test_path(&path).unwrap();
     let fixture = admitted_pi_office_fixture(&mut store, "m5-ledger-event");
     let generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
     let inert_receipt =
@@ -1665,7 +1666,7 @@ fn ledger_event_reads_verified_pi_child_receipts_and_rejects_tampering() {
     ));
 
     drop(store);
-    let inspect = Connection::open(&path).unwrap();
+    let inspect = Connection::connect_test_path(&path).unwrap();
     // The foreign key is valid, but this second named event body is not: a
     // trusted read must reject the one-to-one body cardinality violation.
     inspect
@@ -1677,7 +1678,7 @@ fn ledger_event_reads_verified_pi_child_receipts_and_rejects_tampering() {
         )
         .unwrap();
     drop(inspect);
-    let tampered = KernelStore::open(&path).unwrap();
+    let tampered = KernelStore::connect_test_path(&path).unwrap();
     assert!(matches!(
         tampered.ledger_event(inert_event_id),
         Err(StoreError::LedgerCorruption(_))
@@ -1693,7 +1694,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
         .unwrap()
         .as_nanos();
     let path = std::env::temp_dir().join(format!("society-execution-foundation-{nonce}"));
-    let mut store = KernelStore::open(&path).unwrap();
+    let mut store = KernelStore::connect_test_path(&path).unwrap();
     let (root_authority, cycle) = founded_cycle(
         &mut store,
         OperatingCycleTreatment::DeterministicPiHostFixtureV1,
@@ -2615,7 +2616,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
     }));
     drop(store);
 
-    let inspect = Connection::open(&path).unwrap();
+    let inspect = Connection::connect_test_path(&path).unwrap();
     let retry_link: Option<i64> = inspect
         .query_row(
             "SELECT retry_of_actor_attempt_id FROM attempts WHERE actor_attempt_id = 2",
@@ -2704,12 +2705,12 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
         .unwrap();
     drop(inspect);
     assert!(
-        KernelStore::open(&path)
+        KernelStore::connect_test_path(&path)
             .unwrap()
             .validate_replayed_materialized_state()
             .is_err()
     );
-    let repair_content = Connection::open(&path).unwrap();
+    let repair_content = Connection::connect_test_path(&path).unwrap();
     repair_content
         .execute(
             "UPDATE evidence_admissions SET evaluator_output_content_object_id = 4",
@@ -2717,12 +2718,17 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
         )
         .unwrap();
     drop(repair_content);
-    let inspect = Connection::open(&path).unwrap();
+    let inspect = Connection::connect_test_path(&path).unwrap();
     inspect.execute("UPDATE command_start_actor_attempt SET reservation_micros = 4999 WHERE command_row_id = (SELECT command_row_id FROM commands WHERE command_id = 'm3-attempt-start-retry')", society_kernel::test_params![]).unwrap();
     drop(inspect);
-    assert!(KernelStore::open(&path).unwrap().replay_ledger().is_err());
+    assert!(
+        KernelStore::connect_test_path(&path)
+            .unwrap()
+            .replay_ledger()
+            .is_err()
+    );
 
-    let repair = Connection::open(&path).unwrap();
+    let repair = Connection::connect_test_path(&path).unwrap();
     repair.execute("UPDATE command_start_actor_attempt SET reservation_micros = 5000 WHERE command_row_id = (SELECT command_row_id FROM commands WHERE command_id = 'm3-attempt-start-retry')", society_kernel::test_params![]).unwrap();
     repair
         .execute(
@@ -2732,7 +2738,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
         .unwrap();
     drop(repair);
     assert!(
-        KernelStore::open(&path)
+        KernelStore::connect_test_path(&path)
             .unwrap()
             .validate_replayed_materialized_state()
             .is_err()
@@ -2747,7 +2753,7 @@ fn pi_child_receipts_bind_epoch_treatment_cancellation_and_containment() {
         .unwrap()
         .as_nanos();
     let path = std::env::temp_dir().join(format!("society-m5-child-replay-{nonce}"));
-    let mut store = KernelStore::open(&path).unwrap();
+    let mut store = KernelStore::connect_test_path(&path).unwrap();
     let (root_authority, cycle) = founded_cycle(
         &mut store,
         OperatingCycleTreatment::DeterministicPiHostFixtureV1,
@@ -3158,7 +3164,7 @@ fn pi_child_receipts_bind_epoch_treatment_cancellation_and_containment() {
     // The same pre-spawn fence applies before live Create authorization: M5
     // must not turn the schema-seeded, still-unqualified native profile into
     // an admissible live child merely because an Office has a reservation.
-    let mut live = KernelStore::open_in_memory().unwrap();
+    let mut live = KernelStore::connect_test().unwrap();
     let (live_root_authority, live_cycle) =
         founded_cycle(&mut live, OperatingCycleTreatment::PinnedPiSdkLiveV1);
     let live_generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
@@ -3213,7 +3219,7 @@ fn pi_child_receipts_bind_epoch_treatment_cancellation_and_containment() {
     );
     drop(live);
     drop(store);
-    let inspect = Connection::open(&path).unwrap();
+    let inspect = Connection::connect_test_path(&path).unwrap();
     // PostgreSQL independently rejects a contradictory accepted signal receipt;
     // rejected typed commands above remain ledgered because their command body
     // table deliberately does not encode this transition predicate.
@@ -3232,7 +3238,7 @@ fn pi_child_receipts_bind_epoch_treatment_cancellation_and_containment() {
         .unwrap();
     drop(inspect);
     assert!(
-        KernelStore::open(&path)
+        KernelStore::connect_test_path(&path)
             .unwrap()
             .validate_replayed_materialized_state()
             .is_err()
@@ -3242,7 +3248,7 @@ fn pi_child_receipts_bind_epoch_treatment_cancellation_and_containment() {
 
 #[test]
 fn lingering_group_cleanup_requires_later_absence_before_finalization() {
-    let mut store = KernelStore::open_in_memory().unwrap();
+    let mut store = KernelStore::connect_test().unwrap();
     let (root_authority, cycle) = founded_cycle(
         &mut store,
         OperatingCycleTreatment::DeterministicPiHostFixtureV1,
@@ -3468,7 +3474,7 @@ fn lingering_group_cleanup_requires_later_absence_before_finalization() {
 
 #[test]
 fn cancellation_freezes_an_admitted_unspawned_child_until_a_typed_not_spawned_fact() {
-    let mut store = KernelStore::open_in_memory().unwrap();
+    let mut store = KernelStore::connect_test().unwrap();
     let (root_authority, cycle) = founded_cycle(
         &mut store,
         OperatingCycleTreatment::DeterministicPiHostFixtureV1,
@@ -3595,7 +3601,7 @@ fn cancellation_freezes_an_admitted_unspawned_child_until_a_typed_not_spawned_fa
 
 #[test]
 fn office_ready_requires_an_exact_supervised_pi_session_ready_fact() {
-    let mut store = KernelStore::open_in_memory().unwrap();
+    let mut store = KernelStore::connect_test().unwrap();
     let fixture = admitted_pi_office_fixture(&mut store, "m5-office-authority");
     let generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
 
@@ -3628,7 +3634,7 @@ fn office_ready_requires_an_exact_supervised_pi_session_ready_fact() {
 #[test]
 fn supervised_office_turns_recheck_the_exact_live_pi_child() {
     let zero = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
-    let mut store = KernelStore::open_in_memory().unwrap();
+    let mut store = KernelStore::connect_test().unwrap();
     let fixture = admitted_pi_office_fixture(&mut store, "m5-turn-reap-finalize");
     record_fixture_session_ready(&mut store, &fixture, "m5-turn-reap-finalize", zero, true);
     accepted(
@@ -3726,7 +3732,7 @@ fn supervised_office_turns_recheck_the_exact_live_pi_child() {
     );
     assert!(store.validate_replayed_materialized_state().is_ok());
 
-    let mut finalized_before_ready = KernelStore::open_in_memory().unwrap();
+    let mut finalized_before_ready = KernelStore::connect_test().unwrap();
     let before_ready_fixture = admitted_pi_office_fixture(
         &mut finalized_before_ready,
         "m5-turn-finalized-before-ready",
@@ -3772,7 +3778,7 @@ fn supervised_office_turns_recheck_the_exact_live_pi_child() {
             ProcessGroupLiveness::Inaccessible,
         ),
     ] {
-        let mut secondary = KernelStore::open_in_memory().unwrap();
+        let mut secondary = KernelStore::connect_test().unwrap();
         let secondary_fixture = admitted_pi_office_fixture(&mut secondary, label);
         record_fixture_session_ready(&mut secondary, &secondary_fixture, label, zero, true);
         accepted(
@@ -3805,7 +3811,7 @@ fn supervised_office_turns_recheck_the_exact_live_pi_child() {
 
 #[test]
 fn buffered_pi_receipts_after_cancellation_are_attributed_without_reopening_work() {
-    let mut store = KernelStore::open_in_memory().unwrap();
+    let mut store = KernelStore::connect_test().unwrap();
     let fixture = admitted_pi_office_fixture(&mut store, "m5-buffered-receipts");
     let zero = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
     let one = ExpectedGeneration::Exact(AdmissionGeneration::try_from(1).unwrap());
@@ -3926,7 +3932,7 @@ fn buffered_pi_receipts_after_cancellation_are_attributed_without_reopening_work
 
 #[test]
 fn adapter_ready_race_after_cancellation_preserves_receipt_but_rejects_create() {
-    let mut store = KernelStore::open_in_memory().unwrap();
+    let mut store = KernelStore::connect_test().unwrap();
     let fixture = admitted_pi_office_fixture(&mut store, "m5-adapter-race");
     let zero = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
     let one = ExpectedGeneration::Exact(AdmissionGeneration::try_from(1).unwrap());
@@ -4006,7 +4012,7 @@ fn adapter_ready_race_after_cancellation_preserves_receipt_but_rejects_create() 
 
 #[test]
 fn partial_abort_is_a_durable_attempt_and_allows_cancellation_escalation() {
-    let mut store = KernelStore::open_in_memory().unwrap();
+    let mut store = KernelStore::connect_test().unwrap();
     let fixture = admitted_pi_office_fixture(&mut store, "m5-partial-abort");
     let zero = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
     let one = ExpectedGeneration::Exact(AdmissionGeneration::try_from(1).unwrap());
@@ -4130,7 +4136,7 @@ fn partial_abort_is_a_durable_attempt_and_allows_cancellation_escalation() {
 
 #[test]
 fn recovery_containment_and_liveness_reuse_remain_durable_close_blockers() {
-    let mut store = KernelStore::open_in_memory().unwrap();
+    let mut store = KernelStore::connect_test().unwrap();
     let fixture = admitted_pi_office_fixture(&mut store, "m5-recovery-present");
     let zero = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
     let one = ExpectedGeneration::Exact(AdmissionGeneration::try_from(1).unwrap());
@@ -4230,7 +4236,7 @@ fn recovery_containment_and_liveness_reuse_remain_durable_close_blockers() {
         },
     );
 
-    let mut inaccessible = KernelStore::open_in_memory().unwrap();
+    let mut inaccessible = KernelStore::connect_test().unwrap();
     let inaccessible_fixture =
         admitted_pi_office_fixture(&mut inaccessible, "m5-recovery-inaccessible");
     record_fixture_inert_spawn(
@@ -4264,7 +4270,7 @@ fn recovery_containment_and_liveness_reuse_remain_durable_close_blockers() {
     );
     assert!(inaccessible.validate_replayed_materialized_state().is_ok());
 
-    let mut reappearance = KernelStore::open_in_memory().unwrap();
+    let mut reappearance = KernelStore::connect_test().unwrap();
     let reappearance_fixture = admitted_pi_office_fixture(&mut reappearance, "m5-reappearance");
     record_fixture_inert_spawn(
         &mut reappearance,
@@ -4311,7 +4317,7 @@ fn recovery_containment_and_liveness_reuse_remain_durable_close_blockers() {
 
 #[test]
 fn pre_spawn_failure_and_raced_spawn_are_accounted_before_cancellation_reconciliation() {
-    let mut ordinary = KernelStore::open_in_memory().unwrap();
+    let mut ordinary = KernelStore::connect_test().unwrap();
     let ordinary_fixture = admitted_pi_office_fixture(&mut ordinary, "m5-ordinary-no-spawn");
     let zero = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
     let body = CommandBody::RecordNativeChildNotSpawned {
@@ -4339,7 +4345,7 @@ fn pre_spawn_failure_and_raced_spawn_are_accounted_before_cancellation_reconcili
     assert_eq!(repeated.disposition, first.disposition);
     assert!(ordinary.validate_replayed_materialized_state().is_ok());
 
-    let mut raced = KernelStore::open_in_memory().unwrap();
+    let mut raced = KernelStore::connect_test().unwrap();
     let raced_fixture = admitted_pi_office_fixture(&mut raced, "m5-raced-spawn");
     accepted(
         &mut raced,
@@ -4402,7 +4408,7 @@ fn pre_spawn_failure_and_raced_spawn_are_accounted_before_cancellation_reconcili
 
 #[test]
 fn lease_expiry_requires_a_work_item_without_an_attempt() {
-    let mut store = KernelStore::open_in_memory().unwrap();
+    let mut store = KernelStore::connect_test().unwrap();
     let (root_authority, cycle) = founded_cycle(
         &mut store,
         OperatingCycleTreatment::DeterministicPiHostFixtureV1,
@@ -4598,7 +4604,7 @@ fn execution_profile_admission_is_closed_by_treatment_and_readiness() {
         OperatingCycleTreatment::PinnedPiSdkLiveV1,
     ];
     for (index, treatment) in deterministic_cases.into_iter().enumerate() {
-        let mut store = KernelStore::open_in_memory().unwrap();
+        let mut store = KernelStore::connect_test().unwrap();
         let (root_authority, cycle) = founded_cycle(&mut store, treatment);
         let generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
         if treatment != OperatingCycleTreatment::PiSdkQualificationV1 {
@@ -4645,7 +4651,7 @@ fn execution_profile_admission_is_closed_by_treatment_and_readiness() {
         OperatingCycleTreatment::DeterministicPiHostFixtureV1,
     ];
     for (index, treatment) in native_cases.into_iter().enumerate() {
-        let mut store = KernelStore::open_in_memory().unwrap();
+        let mut store = KernelStore::connect_test().unwrap();
         let (root_authority, cycle) = founded_cycle(&mut store, treatment);
         let generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
         if treatment != OperatingCycleTreatment::PiSdkQualificationV1 {
@@ -4690,7 +4696,7 @@ fn execution_profile_admission_is_closed_by_treatment_and_readiness() {
 
 #[test]
 fn paid_qualification_treatment_has_no_root_authority_work_surface() {
-    let mut store = KernelStore::open_in_memory().unwrap();
+    let mut store = KernelStore::connect_test().unwrap();
     let (root_authority, cycle) =
         founded_cycle(&mut store, OperatingCycleTreatment::PiSdkQualificationV1);
     let generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
@@ -4736,7 +4742,7 @@ fn paid_qualification_treatment_has_no_root_authority_work_surface() {
 
 #[test]
 fn reviewer_attempt_cannot_be_rebound_to_a_different_requested_review() {
-    let mut store = KernelStore::open_in_memory().unwrap();
+    let mut store = KernelStore::connect_test().unwrap();
     let (root_authority, cycle) = founded_cycle(
         &mut store,
         OperatingCycleTreatment::DeterministicPiHostFixtureV1,
@@ -4943,7 +4949,7 @@ fn compiled_capability_grants_have_closed_origin_and_exact_service_set() {
         .unwrap()
         .as_nanos();
     let path = std::env::temp_dir().join(format!("society-capability-origin-{nonce}"));
-    let mut store = KernelStore::open(&path).unwrap();
+    let mut store = KernelStore::connect_test_path(&path).unwrap();
     let (root_authority, _) = founded_cycle(
         &mut store,
         OperatingCycleTreatment::DeterministicPiHostFixtureV1,
@@ -4951,7 +4957,7 @@ fn compiled_capability_grants_have_closed_origin_and_exact_service_set() {
     assert!(store.validate_replayed_materialized_state().is_ok());
     drop(store);
 
-    let inspect = Connection::open(&path).unwrap();
+    let inspect = Connection::connect_test_path(&path).unwrap();
     let bootstrap_origins: Vec<(i64, Option<i64>)> = inspect
         .prepare(
             "SELECT DISTINCT grant_origin, granted_by_command_id
@@ -5009,7 +5015,7 @@ fn compiled_capability_grants_have_closed_origin_and_exact_service_set() {
     );
     drop(inspect);
     assert!(
-        KernelStore::open(&path)
+        KernelStore::connect_test_path(&path)
             .unwrap()
             .validate_replayed_materialized_state()
             .is_ok()

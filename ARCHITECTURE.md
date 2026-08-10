@@ -32,7 +32,7 @@ cross a typed durable boundary with provenance, scope, and challenge status.
 
 ### 1. Trusted physics
 
-The resident Rust authority owns the SQLite ledger, content-store writer,
+The resident Rust authority owns the PostgreSQL ledger, content-store writer,
 native process registry, capability checks, budgets, cancellation, and durable
 mutation protocol. Clients and actors cannot write SQL, manufacture lifecycle
 state, select executable paths, or supervise authority-bearing children.
@@ -47,7 +47,7 @@ authenticate principal and capability
 ```
 
 The local control protocol is binary, length-prefixed, and tag-discriminated.
-JSON exists only at the separately versioned Pi SDK-host boundary. SQLite has
+JSON exists only at the separately versioned Pi SDK-host boundary. PostgreSQL has
 no generic payload columns, metadata maps, or stringly discriminants.
 
 ### 2. Institutional substrate
@@ -102,7 +102,7 @@ ExperimentalFork
 These contracts are implemented as a narrow provider-free generic boundary:
 `StudyProtocolRevision`, `Episode`, `TreatmentAssignment`, population
 snapshots, F0 Forum state, measurements, and a linked `ExperimentalFork` have
-closed Rust/SQLite representations. They are not aliases for nearby legacy
+closed Rust/PostgreSQL representations. They are not aliases for nearby legacy
 types. A current deterministic evaluator occurrence is not an `Episode`, an
 Operating Cycle is not a `StudyProtocolRevision`, and ledger replay is not an
 experimental replay. The present `ExperimentalFork` records a new linked

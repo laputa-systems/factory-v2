@@ -77,6 +77,56 @@ that deterministic fixture. Live Pi Office usage already records exact
 provider-cost evidence in the trusted ledger, but a live end-of-cycle report
 remains a separately scoped runtime/reporting surface.
 
+## PostgreSQL operations
+
+PostgreSQL 18 is the local baseline. Start it with
+`brew services start postgresql@18`, create an administrator-approved database,
+and provide the daemon role URL:
+
+```sh
+export SOCIETY_DATABASE_URL='postgresql://society_runtime@localhost/society'
+```
+
+Schema application should use a separate migration-capable role in production:
+
+```sh
+export SOCIETY_DATABASE_MIGRATION_URL='postgresql://society_migrator@localhost/society'
+```
+
+Set `SOCIETY_DATABASE_SCHEMA` when the ledger lives in a private PostgreSQL
+schema; otherwise the daemon uses the database's default schema.
+
+If the migration URL is omitted, local development deliberately uses the
+runtime URL for both roles. `societyd` applies the canonical
+`migrations/postgres/0001_kernel.sql`, validates ledger replay before binding
+its socket, and holds a dedicated PostgreSQL advisory lock for its lifetime.
+The filesystem `societyd.lock` remains responsible only for the runtime root.
+
+For health and ownership diagnostics, query the selected database and inspect
+the daemon status socket:
+
+```sh
+psql "$SOCIETY_DATABASE_URL" -c \
+  "SELECT current_database(), current_schema(), pg_is_in_recovery();"
+psql "$SOCIETY_DATABASE_URL" -c \
+  "SELECT pid, classid, objid, granted FROM pg_locks WHERE locktype = 'advisory';"
+societyctl --socket <runtime-root>/societyd.sock status
+```
+
+Back up and restore the authoritative ledger with PostgreSQL tools. Restore
+into a blank database, point both URLs at the restored database, and start the
+daemon; bind-time replay validation must pass before any new command is
+accepted:
+
+```sh
+pg_dump --format=custom --file=society.dump "$SOCIETY_DATABASE_URL"
+createdb society_restore
+pg_restore --dbname=society_restore society.dump
+```
+
+If validation fails, the daemon reports the replay error and does not expose a
+serving socket. Do not copy runtime directories as a database backup.
+
 ## Documents
 
 - [`RESEARCH-PROGRAM.md`](RESEARCH-PROGRAM.md) — thesis and research sequence

@@ -1,6 +1,6 @@
 //! Resident, single-writer authority and native Pi process physics.
 //!
-//! The daemon owns the SQLite connection and accepts only the closed binary
+//! The daemon owns the PostgreSQL connection and accepts only the closed binary
 //! local protocol in [`protocol`]. [`supervision`] is deliberately narrower:
 //! it owns an inert Pi-host child/process group and returns transient typed
 //! receipts for the later kernel transaction. It does not itself persist

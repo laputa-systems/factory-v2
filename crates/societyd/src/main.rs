@@ -15,13 +15,15 @@ fn main() -> ExitCode {
     let _program = arguments.next();
     let (Some(flag), Some(runtime_root)) = (arguments.next(), arguments.next()) else {
         eprintln!(
-            "usage: societyd --runtime-root <path> [--supervisor-fd <inherited-unix-stream-fd>]"
+            "usage: societyd --runtime-root <path> [--supervisor-fd <inherited-unix-stream-fd>]\n\
+             requires SOCIETY_DATABASE_URL; optionally set SOCIETY_DATABASE_MIGRATION_URL and SOCIETY_DATABASE_SCHEMA"
         );
         return ExitCode::from(2);
     };
     if flag != "--runtime-root" {
         eprintln!(
-            "usage: societyd --runtime-root <path> [--supervisor-fd <inherited-unix-stream-fd>]"
+            "usage: societyd --runtime-root <path> [--supervisor-fd <inherited-unix-stream-fd>]\n\
+             requires SOCIETY_DATABASE_URL; optionally set SOCIETY_DATABASE_MIGRATION_URL and SOCIETY_DATABASE_SCHEMA"
         );
         return ExitCode::from(2);
     }
@@ -57,7 +59,8 @@ fn main() -> ExitCode {
         }
         _ => {
             eprintln!(
-                "usage: societyd --runtime-root <path> [--supervisor-fd <inherited-unix-stream-fd>]"
+                "usage: societyd --runtime-root <path> [--supervisor-fd <inherited-unix-stream-fd>]\n\
+                 requires SOCIETY_DATABASE_URL; optionally set SOCIETY_DATABASE_MIGRATION_URL and SOCIETY_DATABASE_SCHEMA"
             );
             return ExitCode::from(2);
         }

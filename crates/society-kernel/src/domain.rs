@@ -507,7 +507,7 @@ pub struct MissionPrinciple {
 }
 
 /// The founding boundary admits a compact, ordered constitution rather than
-/// an unbounded narrative list. SQLite stores its position explicitly and the
+/// an unbounded narrative list. PostgreSQL stores its position explicitly and the
 /// request fingerprint preserves the caller's ordering.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MissionPrinciples(Vec<MissionPrinciple>);
@@ -672,7 +672,7 @@ impl TryFrom<i64> for PiTokenCount {
 
 /// Exact raw IEEE-754 binary64 provider-cost evidence from the Pi boundary.
 ///
-/// SQLite stores these eight big-endian bytes alongside the independently
+/// PostgreSQL stores these eight big-endian bytes alongside the independently
 /// verified integer micro-USD ceiling. No Rust `f64` round trip may rewrite
 /// the observed provider value before replay or accounting compares it.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -3089,7 +3089,7 @@ pub struct CommandReceipt {
 
 /// The single authority for durable rejection wire values.  The daemon must
 /// eventually delegate its protocol conversion here rather than mirror a
-/// handwritten numeric match.  SQLite stores the `i64` value; the local
+/// handwritten numeric match.  PostgreSQL stores the `i64` value; the local
 /// control protocol uses `u8`, and neither conversion accepts gaps.
 macro_rules! closed_rejection_codes {
     ($($name:ident = $value:literal),+ $(,)?) => {

@@ -1463,7 +1463,9 @@ mod tests {
     fn materialization_releases_only_sealed_bytes_into_fixed_private_workspace_paths() {
         let parent = temporary_parent("materialize");
         let content_root = parent.join("content");
-        let mut kernel = society_kernel::KernelStore::open(parent.join("society.sqlite3")).unwrap();
+        let mut kernel =
+            society_kernel::KernelStore::connect_test_path(parent.join("society.pg-test-schema"))
+                .unwrap();
         let authority = ContentSealingAuthority::open(
             ContentStoreRoot::parse(content_root).unwrap(),
             ContentSealLimit::new(MAX_MATERIALIZED_EVALUATOR_ARTIFACT_BYTES).unwrap(),
@@ -1587,7 +1589,9 @@ mod tests {
     #[test]
     fn provider_free_coordinator_projects_later_owned_group_absence_before_sealing() {
         let parent = temporary_parent("coordinator");
-        let mut kernel = society_kernel::KernelStore::open(parent.join("society.sqlite3")).unwrap();
+        let mut kernel =
+            society_kernel::KernelStore::connect_test_path(parent.join("society.pg-test-schema"))
+                .unwrap();
         let authority = ContentSealingAuthority::open(
             ContentStoreRoot::parse(parent.join("content")).unwrap(),
             ContentSealLimit::new(MAX_MATERIALIZED_EVALUATOR_ARTIFACT_BYTES).unwrap(),

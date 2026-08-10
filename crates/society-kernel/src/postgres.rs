@@ -1,10 +1,9 @@
 //! PostgreSQL configuration and the synchronous storage-boundary shell.
 //!
-//! The shell is intentionally separate from the SQLite-backed `KernelStore`
-//! while the hard migration is staged. It establishes the final execution
-//! shape: one owned current-thread runtime and one bounded `PgPool`, with no
-//! runtime construction per public method. Phase 2 moves the existing typed
-//! transitions behind this boundary.
+//! The shell establishes the synchronous PostgreSQL execution shape: one
+//! owned current-thread runtime and one bounded `PgPool`, with no runtime
+//! construction per public method. Typed kernel transitions execute only
+//! through this boundary.
 
 use std::{fmt, str::FromStr, time::Duration};
 
@@ -121,6 +120,30 @@ pub struct PostgresAdvisoryLockGuard<'a> {
     key: i64,
 }
 
+/// An advisory lock lease that owns the PostgreSQL store backing its dedicated
+/// checked-out connection. This is the daemon-lifetime form; ownership avoids
+/// a self-referential daemon struct while preserving connection-scoped unlock.
+pub struct PostgresAdvisoryLockLease {
+    store: PostgresKernelStore,
+    connection: Option<PoolConnection<Postgres>>,
+    key: i64,
+}
+
+impl Drop for PostgresAdvisoryLockLease {
+    fn drop(&mut self) {
+        let Some(mut connection) = self.connection.take() else {
+            return;
+        };
+        let key = self.key;
+        let _ = self.store.block_on(async move {
+            sqlx::query("SELECT pg_advisory_unlock($1)")
+                .bind(key)
+                .execute(&mut *connection)
+                .await
+        });
+    }
+}
+
 impl Drop for PostgresAdvisoryLockGuard<'_> {
     fn drop(&mut self) {
         let Some(mut connection) = self.connection.take() else {
@@ -213,6 +236,19 @@ impl PostgresKernelStore {
                     .await
             })
             .map_err(PostgresStoreError::Migration)
+    }
+
+    /// Creates a private schema when necessary and applies the canonical
+    /// migration through this migration-capable connection. Runtime roles can
+    /// then connect to the already-migrated schema without DDL privileges.
+    pub fn migrate_in_schema(
+        url: &KernelDatabaseUrl,
+        schema: &str,
+    ) -> Result<(), PostgresStoreError> {
+        let admin = Self::connect(url)?;
+        admin.ensure_private_schema(schema)?;
+        let scoped = Self::connect_in_schema(url, schema)?;
+        scoped.migrate()
     }
 
     pub fn pool_size(&self) -> u32 {
@@ -312,6 +348,30 @@ impl PostgresKernelStore {
                 connection: Some(connection),
                 key,
             })
+        })
+    }
+
+    pub fn acquire_owned_advisory_lock(
+        self,
+        key: i64,
+    ) -> Result<PostgresAdvisoryLockLease, PostgresStoreError> {
+        let connection = self.block_on(async {
+            let mut connection = self
+                .pool
+                .acquire()
+                .await
+                .map_err(PostgresStoreError::Database)?;
+            sqlx::query("SELECT pg_advisory_lock($1)")
+                .bind(key)
+                .execute(&mut *connection)
+                .await
+                .map_err(PostgresStoreError::Database)?;
+            Ok(connection)
+        })?;
+        Ok(PostgresAdvisoryLockLease {
+            store: self,
+            connection: Some(connection),
+            key,
         })
     }
 

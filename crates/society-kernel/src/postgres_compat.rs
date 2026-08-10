@@ -151,13 +151,8 @@ impl<T: ToSqlValue> ToSqlValue for Option<T> {
     }
 }
 
+#[derive(Default)]
 pub struct Params(pub Vec<SqlValue>);
-
-impl Default for Params {
-    fn default() -> Self {
-        Self(Vec::new())
-    }
-}
 
 pub trait IntoParams {
     fn into_params(self) -> Params;
@@ -413,10 +408,13 @@ impl Drop for TestSchemaCleanup {
 
 static NEXT_TEST_SCHEMA: AtomicU64 = AtomicU64::new(1);
 
-fn legacy_schema_for_path(path: impl AsRef<std::path::Path>) -> String {
+/// Derive the deterministic private schema used by path-oriented test
+/// fixtures. The path is only a stable fixture identity; no filesystem
+/// database is opened.
+pub fn test_schema_for_path(path: impl AsRef<std::path::Path>) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     path.as_ref().to_string_lossy().hash(&mut hasher);
-    format!("society_legacy_path_{:016x}", hasher.finish())
+    format!("society_test_path_{:016x}", hasher.finish())
 }
 
 fn quote_identifier(value: &str) -> String {
@@ -445,8 +443,8 @@ pub fn clone_for_test(
 ) -> Result<(), DbError> {
     let url = crate::postgres::KernelDatabaseUrl::from_env("SOCIETY_POSTGRES_TEST_URL")
         .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(error.to_string().into())))?;
-    let source_schema = legacy_schema_for_path(source_path);
-    let destination_schema = legacy_schema_for_path(destination_path);
+    let source_schema = test_schema_for_path(source_path);
+    let destination_schema = test_schema_for_path(destination_path);
     let admin = PostgresKernelStore::connect(&url)
         .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(error.to_string().into())))?;
     let source = PostgresKernelStore::connect_in_schema(&url, &source_schema)
@@ -506,17 +504,17 @@ impl Connection {
         })
     }
 
-    pub fn open_in_memory() -> Result<Self, DbError> {
-        let url = crate::postgres::KernelDatabaseUrl::from_env("SOCIETY_POSTGRES_TEST_URL")
-            .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(error.to_string().into())))?;
+    pub(crate) fn connect_test_with_url(
+        url: &crate::postgres::KernelDatabaseUrl,
+    ) -> Result<Self, DbError> {
         let ordinal = NEXT_TEST_SCHEMA.fetch_add(1, Ordering::Relaxed);
-        let schema = format!("society_legacy_test_{}_{}", std::process::id(), ordinal);
-        let admin = PostgresKernelStore::connect(&url)
+        let schema = format!("society_test_{}_{}", std::process::id(), ordinal);
+        let admin = PostgresKernelStore::connect(url)
             .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(error.to_string().into())))?;
         admin
             .create_private_schema(&schema)
             .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(error.to_string().into())))?;
-        let scoped = PostgresKernelStore::connect_in_schema(&url, &schema)
+        let scoped = PostgresKernelStore::connect_in_schema(url, &schema)
             .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(error.to_string().into())))?;
         scoped
             .migrate()
@@ -527,16 +525,23 @@ impl Connection {
         })
     }
 
-    pub fn open(_path: impl AsRef<std::path::Path>) -> Result<Self, DbError> {
+    pub fn connect_test() -> Result<Self, DbError> {
         let url = crate::postgres::KernelDatabaseUrl::from_env("SOCIETY_POSTGRES_TEST_URL")
             .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(error.to_string().into())))?;
-        let schema = legacy_schema_for_path(_path);
-        let admin = PostgresKernelStore::connect(&url)
+        Self::connect_test_with_url(&url)
+    }
+
+    pub(crate) fn connect_test_path_with_url(
+        _path: impl AsRef<std::path::Path>,
+        url: &crate::postgres::KernelDatabaseUrl,
+    ) -> Result<Self, DbError> {
+        let schema = test_schema_for_path(_path);
+        let admin = PostgresKernelStore::connect(url)
             .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(error.to_string().into())))?;
         admin
             .ensure_private_schema(&schema)
             .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(error.to_string().into())))?;
-        let scoped = PostgresKernelStore::connect_in_schema(&url, &schema)
+        let scoped = PostgresKernelStore::connect_in_schema(url, &schema)
             .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(error.to_string().into())))?;
         scoped
             .migrate()
@@ -545,6 +550,12 @@ impl Connection {
             backend: scoped,
             cleanup: None,
         })
+    }
+
+    pub fn connect_test_path(_path: impl AsRef<std::path::Path>) -> Result<Self, DbError> {
+        let url = crate::postgres::KernelDatabaseUrl::from_env("SOCIETY_POSTGRES_TEST_URL")
+            .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(error.to_string().into())))?;
+        Self::connect_test_path_with_url(_path, &url)
     }
 
     pub fn migrate(&self) -> Result<(), crate::postgres::PostgresStoreError> {
@@ -583,15 +594,6 @@ impl Connection {
         for statement in sql.split(';').map(str::trim).filter(|s| !s.is_empty()) {
             self.execute(statement, Params::default())?;
         }
-        Ok(())
-    }
-
-    pub fn pragma_update(
-        &self,
-        _database: Option<&str>,
-        _pragma: &str,
-        _value: &str,
-    ) -> Result<(), DbError> {
         Ok(())
     }
 
@@ -764,15 +766,15 @@ impl Transaction<'_> {
 
 impl Drop for Transaction<'_> {
     fn drop(&mut self) {
-        if self.active.get() {
-            if let Some(connection) = self.connection.borrow_mut().take() {
-                let _ = self.backend.block_on(async move {
-                    let mut connection = connection;
-                    let result = sqlx::query("ROLLBACK").execute(&mut *connection).await;
-                    drop(connection);
-                    result
-                });
-            }
+        if self.active.get()
+            && let Some(connection) = self.connection.borrow_mut().take()
+        {
+            let _ = self.backend.block_on(async move {
+                let mut connection = connection;
+                let result = sqlx::query("ROLLBACK").execute(&mut *connection).await;
+                drop(connection);
+                result
+            });
         }
     }
 }
@@ -863,6 +865,7 @@ pub struct RawRows {
 }
 
 impl RawRows {
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Result<Option<Row>, DbError> {
         Ok(self.rows.next())
     }

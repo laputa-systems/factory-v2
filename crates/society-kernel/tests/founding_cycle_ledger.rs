@@ -281,7 +281,7 @@ fn found_cycle(store: &mut KernelStore) -> (PrincipalId, OperatingCycleId) {
 
 #[test]
 fn founding_mission_requires_a_registered_exact_source_object_and_preflight_is_side_effect_free() {
-    let mut store = KernelStore::open_in_memory().unwrap();
+    let mut store = KernelStore::connect_test().unwrap();
     let bootstrap = PrincipalId::BOOTSTRAP;
     accepted(
         &mut store,
@@ -414,7 +414,7 @@ fn replay_rejects_recombined_persisted_mission_source_objects() {
             .unwrap()
             .as_nanos()
     ));
-    let mut store = KernelStore::open(&path).unwrap();
+    let mut store = KernelStore::connect_test_path(&path).unwrap();
     let bootstrap = PrincipalId::BOOTSTRAP;
     accepted(
         &mut store,
@@ -477,7 +477,7 @@ fn replay_rejects_recombined_persisted_mission_source_objects() {
     );
     drop(store);
 
-    let tamper = Connection::open(&path).unwrap();
+    let tamper = Connection::connect_test_path(&path).unwrap();
     tamper
         .execute(
             "UPDATE application_revisions SET source_content_object_id = 2",
@@ -486,11 +486,13 @@ fn replay_rejects_recombined_persisted_mission_source_objects() {
         .unwrap();
     drop(tamper);
     assert!(matches!(
-        KernelStore::open(&path).unwrap().replay_ledger(),
+        KernelStore::connect_test_path(&path)
+            .unwrap()
+            .replay_ledger(),
         Err(StoreError::LedgerCorruption(_))
     ));
 
-    let repair = Connection::open(&path).unwrap();
+    let repair = Connection::connect_test_path(&path).unwrap();
     repair
         .execute(
             "UPDATE application_revisions SET source_content_object_id = 1",
@@ -505,7 +507,9 @@ fn replay_rejects_recombined_persisted_mission_source_objects() {
         .unwrap();
     drop(repair);
     assert!(matches!(
-        KernelStore::open(&path).unwrap().replay_ledger(),
+        KernelStore::connect_test_path(&path)
+            .unwrap()
+            .replay_ledger(),
         Err(StoreError::LedgerCorruption(_))
     ));
     let _ = fs::remove_file(path);
@@ -513,7 +517,7 @@ fn replay_rejects_recombined_persisted_mission_source_objects() {
 
 #[test]
 fn study_actor_runtime_binding_waits_for_native_child_finalization() {
-    let mut store = KernelStore::open_in_memory().unwrap();
+    let mut store = KernelStore::connect_test().unwrap();
     let (root_authority, cycle_id) = found_cycle(&mut store);
     let mut study_command_number = 1_u32;
     fn submit_study(
@@ -829,7 +833,7 @@ fn current_operating_cycle_generation_is_typed_and_distinguishes_absence_from_co
         .unwrap()
         .as_nanos();
     let path = std::env::temp_dir().join(format!("society-cycle-generation-read-{nonce}"));
-    let mut store = KernelStore::open(&path).unwrap();
+    let mut store = KernelStore::connect_test_path(&path).unwrap();
     let (root_authority, cycle_id) = found_cycle(&mut store);
     assert_eq!(
         store
@@ -863,7 +867,7 @@ fn current_operating_cycle_generation_is_typed_and_distinguishes_absence_from_co
     ));
 
     drop(store);
-    let inspect = Connection::open(&path).unwrap();
+    let inspect = Connection::connect_test_path(&path).unwrap();
     inspect
         .execute_batch(
             "ALTER TABLE operating_cycles
@@ -877,7 +881,7 @@ fn current_operating_cycle_generation_is_typed_and_distinguishes_absence_from_co
         )
         .unwrap();
     drop(inspect);
-    let corrupted = KernelStore::open(&path).unwrap();
+    let corrupted = KernelStore::connect_test_path(&path).unwrap();
     assert!(matches!(
         corrupted.current_operating_cycle_admission_generation(cycle_id),
         Err(StoreError::LedgerCorruption(
@@ -1090,7 +1094,7 @@ fn authorized_dispose_session(
 
 #[test]
 fn founding_cycle_is_idempotent_fenced_and_replayable() {
-    let mut store = KernelStore::open_in_memory().unwrap();
+    let mut store = KernelStore::connect_test().unwrap();
     let (root_authority, cycle_id) = found_cycle(&mut store);
 
     let first = submit(
@@ -1191,7 +1195,7 @@ fn project_charter_activation_and_close_blocker_are_typed_and_replayable() {
             .unwrap()
             .as_nanos()
     ));
-    let mut store = KernelStore::open(&path).unwrap();
+    let mut store = KernelStore::connect_test_path(&path).unwrap();
     let (root_authority, cycle_id) = found_cycle(&mut store);
     let generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
     accepted(
@@ -1513,7 +1517,7 @@ fn project_charter_activation_and_close_blocker_are_typed_and_replayable() {
 
     // A hostile direct writer can remove a schema trigger; fresh replay still
     // reconstructs the typed command body and catches a changed semantic body.
-    let connection = Connection::open(&path).unwrap();
+    let connection = Connection::connect_test_path(&path).unwrap();
     connection
         .execute_batch(
             "DROP TRIGGER observation_revision_cannot_update ON observation_revisions;
@@ -1524,7 +1528,7 @@ fn project_charter_activation_and_close_blocker_are_typed_and_replayable() {
         .unwrap();
     drop(connection);
     assert!(
-        KernelStore::open(&path)
+        KernelStore::connect_test_path(&path)
             .unwrap()
             .validate_replayed_materialized_state()
             .is_err()
@@ -1532,7 +1536,7 @@ fn project_charter_activation_and_close_blocker_are_typed_and_replayable() {
 
     // The nested typed command body participates in its parent command's
     // request fingerprint, so an in-place semantic edit is replay corruption.
-    let connection = Connection::open(&path).unwrap();
+    let connection = Connection::connect_test_path(&path).unwrap();
     connection
         .execute_batch(
             "UPDATE observation_revisions
@@ -1544,11 +1548,16 @@ fn project_charter_activation_and_close_blocker_are_typed_and_replayable() {
         )
         .unwrap();
     drop(connection);
-    assert!(KernelStore::open(&path).unwrap().replay_ledger().is_err());
+    assert!(
+        KernelStore::connect_test_path(&path)
+            .unwrap()
+            .replay_ledger()
+            .is_err()
+    );
 
     // Cardinality is independently checked: even after bypassing the schema
     // matching trigger, a second kind body makes ledger replay corrupt.
-    let connection = Connection::open(&path).unwrap();
+    let connection = Connection::connect_test_path(&path).unwrap();
     connection
         .execute_batch(
             "UPDATE command_add_observation_revision
@@ -1560,7 +1569,12 @@ fn project_charter_activation_and_close_blocker_are_typed_and_replayable() {
         )
         .unwrap();
     drop(connection);
-    assert!(KernelStore::open(&path).unwrap().replay_ledger().is_err());
+    assert!(
+        KernelStore::connect_test_path(&path)
+            .unwrap()
+            .replay_ledger()
+            .is_err()
+    );
     let _ = fs::remove_file(path);
 }
 
@@ -1574,7 +1588,7 @@ fn application_mission_alignment_is_founding_mission_bound_and_replay_verified()
             .unwrap()
             .as_nanos()
     ));
-    let mut store = KernelStore::open(&path).unwrap();
+    let mut store = KernelStore::connect_test_path(&path).unwrap();
     let (root_authority, cycle_id) = found_cycle(&mut store);
     let generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
     accepted(
@@ -1614,7 +1628,7 @@ fn application_mission_alignment_is_founding_mission_bound_and_replay_verified()
         },
     );
     drop(store);
-    let inspection = Connection::open(&path).unwrap();
+    let inspection = Connection::connect_test_path(&path).unwrap();
     let application_row: (String, String, i64, String, i64) = inspection
         .query_row(
             "SELECT a.application_identity, a.application_name, r.revision_ordinal,
@@ -1671,9 +1685,14 @@ fn application_mission_alignment_is_founding_mission_bound_and_replay_verified()
     );
     drop(inspection);
 
-    assert!(KernelStore::open(&path).unwrap().replay_ledger().is_ok());
+    assert!(
+        KernelStore::connect_test_path(&path)
+            .unwrap()
+            .replay_ledger()
+            .is_ok()
+    );
 
-    let connection = Connection::open(&path).unwrap();
+    let connection = Connection::connect_test_path(&path).unwrap();
     connection
         .execute(
             "UPDATE command_install_founding_mission_principles
@@ -1685,9 +1704,14 @@ fn application_mission_alignment_is_founding_mission_bound_and_replay_verified()
         )
         .unwrap();
     drop(connection);
-    assert!(KernelStore::open(&path).unwrap().replay_ledger().is_err());
+    assert!(
+        KernelStore::connect_test_path(&path)
+            .unwrap()
+            .replay_ledger()
+            .is_err()
+    );
 
-    let connection = Connection::open(&path).unwrap();
+    let connection = Connection::connect_test_path(&path).unwrap();
     connection
         .execute(
             "UPDATE command_install_founding_mission_principles
@@ -1706,7 +1730,7 @@ fn application_mission_alignment_is_founding_mission_bound_and_replay_verified()
         )
         .unwrap();
     drop(connection);
-    let tampered = KernelStore::open(&path).unwrap();
+    let tampered = KernelStore::connect_test_path(&path).unwrap();
     assert!(tampered.validate_replayed_materialized_state().is_err());
     let _ = fs::remove_file(path);
 }
@@ -1721,7 +1745,7 @@ fn current_schema_reopens_after_atomic_fresh_bootstrap() {
             .unwrap()
             .as_nanos()
     ));
-    let connection = Connection::open(&path).unwrap();
+    let connection = Connection::connect_test_path(&path).unwrap();
     connection.migrate().unwrap();
     assert_eq!(
         connection
@@ -1734,8 +1758,8 @@ fn current_schema_reopens_after_atomic_fresh_bootstrap() {
         1
     );
     drop(connection);
-    drop(KernelStore::open(&path).unwrap());
-    let reopened = Connection::open(&path).unwrap();
+    drop(KernelStore::connect_test_path(&path).unwrap());
+    let reopened = Connection::connect_test_path(&path).unwrap();
     assert_eq!(
         reopened
             .query_row(
@@ -1761,10 +1785,10 @@ fn migration_is_idempotent_and_reopen_preserves_the_current_schema() {
             .unwrap()
             .as_nanos()
     ));
-    let first = Connection::open(&path).unwrap();
+    let first = Connection::connect_test_path(&path).unwrap();
     first.migrate().unwrap();
     drop(first);
-    let reopened = KernelStore::open(&path).unwrap();
+    let reopened = KernelStore::connect_test_path(&path).unwrap();
     assert_eq!(reopened.command_count().unwrap(), 0);
     let _ = fs::remove_file(path);
 }
@@ -1807,7 +1831,7 @@ fn founding_budget_policy_is_explicit_per_closed_treatment() {
             .as_nanos();
         let path =
             std::env::temp_dir().join(format!("society-generic-budget-policy-{case}-{unique}"));
-        let mut store = KernelStore::open(&path).unwrap();
+        let mut store = KernelStore::connect_test_path(&path).unwrap();
         let bootstrap = PrincipalId::BOOTSTRAP;
         accepted(
             &mut store,
@@ -1923,7 +1947,7 @@ fn founding_budget_policy_is_explicit_per_closed_treatment() {
         assert!(store.validate_replayed_materialized_state().is_ok());
         drop(store);
 
-        let inspection = Connection::open(&path).unwrap();
+        let inspection = Connection::connect_test_path(&path).unwrap();
         let material: (i64, i64, i64) = inspection
             .query_row(
                 "SELECT c.treatment, c.budget_ceiling_micros, e.ceiling_micros
@@ -1973,11 +1997,13 @@ fn founding_budget_policy_is_explicit_per_closed_treatment() {
             .unwrap();
         drop(inspection);
         assert!(matches!(
-            KernelStore::open(&path).unwrap().replay_ledger(),
+            KernelStore::connect_test_path(&path)
+                .unwrap()
+                .replay_ledger(),
             Err(StoreError::LedgerCorruption(_))
         ));
 
-        let inspection = Connection::open(&path).unwrap();
+        let inspection = Connection::connect_test_path(&path).unwrap();
         inspection
             .execute(
                 "UPDATE command_propose_operating_cycle
@@ -1998,11 +2024,13 @@ fn founding_budget_policy_is_explicit_per_closed_treatment() {
             .unwrap();
         drop(inspection);
         assert!(matches!(
-            KernelStore::open(&path).unwrap().replay_ledger(),
+            KernelStore::connect_test_path(&path)
+                .unwrap()
+                .replay_ledger(),
             Err(StoreError::LedgerCorruption(_))
         ));
 
-        let inspection = Connection::open(&path).unwrap();
+        let inspection = Connection::connect_test_path(&path).unwrap();
         inspection
             .execute(
                 "UPDATE event_operating_cycle_proposed
@@ -2018,7 +2046,7 @@ fn founding_budget_policy_is_explicit_per_closed_treatment() {
             .unwrap();
         drop(inspection);
         assert!(matches!(
-            KernelStore::open(&path)
+            KernelStore::connect_test_path(&path)
                 .unwrap()
                 .validate_replayed_materialized_state(),
             Err(StoreError::LedgerCorruption(_))
@@ -2034,30 +2062,30 @@ fn actor_grant_must_match_the_cycle_pinned_office_occupancy() {
         .unwrap()
         .as_nanos();
     let path = std::env::temp_dir().join(format!("society-occupancy-scope-{unique}"));
-    let mut store = KernelStore::open(&path).unwrap();
+    let mut store = KernelStore::connect_test_path(&path).unwrap();
     let (_, cycle_id) = found_cycle(&mut store);
 
     // Succession is not a production command in this bounded slice. This
     // direct fixture creates a second, active office occupancy and its exact
     // grant, while the already proposed cycle remains pinned to occupancy 1.
-    let fixture = Connection::open(&path).unwrap();
+    let fixture = Connection::connect_test_path(&path).unwrap();
     fixture
         .execute(
-            "UPDATE office_occupancies SET active = 0 WHERE office_occupancy_id = 1",
+            "UPDATE office_occupancies SET active = FALSE WHERE office_occupancy_id = 1",
             society_kernel::test_params![],
         )
         .unwrap();
     fixture
         .execute(
             "INSERT INTO principals(principal_id, principal_kind, display_name, active)
-             VALUES (4, 3, 'successor fixture', 1)",
+             VALUES (4, 3, 'successor fixture', TRUE)",
             society_kernel::test_params![],
         )
         .unwrap();
     fixture
         .execute(
             "INSERT INTO office_occupancies(office_id, principal_id, active, appointed_by_command_id)
-             VALUES (1, 4, 1, 1)",
+             VALUES (1, 4, TRUE, 1)",
             society_kernel::test_params![],
         )
         .unwrap();
@@ -2092,13 +2120,13 @@ fn forged_grant_principal_cannot_borrow_an_active_occupancy() {
         .unwrap()
         .as_nanos();
     let path = std::env::temp_dir().join(format!("society-forged-grant-{unique}"));
-    let mut store = KernelStore::open(&path).unwrap();
+    let mut store = KernelStore::connect_test_path(&path).unwrap();
     let (_, cycle_id) = found_cycle(&mut store);
-    let fixture = Connection::open(&path).unwrap();
+    let fixture = Connection::connect_test_path(&path).unwrap();
     fixture
         .execute(
             "INSERT INTO principals(principal_id, principal_kind, display_name, active)
-             VALUES (4, 3, 'forged grant fixture', 1)",
+             VALUES (4, 3, 'forged grant fixture', TRUE)",
             society_kernel::test_params![],
         )
         .unwrap();
@@ -2147,7 +2175,7 @@ fn forged_grant_principal_cannot_borrow_an_active_occupancy() {
 
 #[test]
 fn office_turn_and_cross_cut_budget_freeze_unknown_cost() {
-    let mut store = KernelStore::open_in_memory().unwrap();
+    let mut store = KernelStore::connect_test().unwrap();
     let (root_authority, cycle_id) = found_cycle(&mut store);
     let zero = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
     let session_id = RootAuthorityOfficeSessionId::new(1).unwrap();
@@ -2305,7 +2333,7 @@ fn office_turn_and_cross_cut_budget_freeze_unknown_cost() {
 
 #[test]
 fn unavailable_cost_reason_survives_event_replay() {
-    let mut store = KernelStore::open_in_memory().unwrap();
+    let mut store = KernelStore::connect_test().unwrap();
     let (root_authority, cycle_id) = found_cycle(&mut store);
     let zero = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
 
@@ -2351,7 +2379,7 @@ fn unavailable_cost_reason_survives_event_replay() {
 
 #[test]
 fn quiesce_cancellation_must_reconcile_before_resuming_admission() {
-    let mut store = KernelStore::open_in_memory().unwrap();
+    let mut store = KernelStore::connect_test().unwrap();
     let (root_authority, cycle_id) = found_cycle(&mut store);
     let zero = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
     let one = ExpectedGeneration::Exact(AdmissionGeneration::try_from(1).unwrap());
@@ -2428,7 +2456,7 @@ fn quiesce_cancellation_must_reconcile_before_resuming_admission() {
 
 #[test]
 fn office_turn_purpose_and_session_fences_follow_cycle_state() {
-    let mut store = KernelStore::open_in_memory().unwrap();
+    let mut store = KernelStore::connect_test().unwrap();
     let (root_authority, cycle_id) = found_cycle(&mut store);
     let zero = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
     let one = ExpectedGeneration::Exact(AdmissionGeneration::try_from(1).unwrap());
@@ -2526,7 +2554,7 @@ fn office_turn_purpose_and_session_fences_follow_cycle_state() {
 
 #[test]
 fn terminal_session_fact_cannot_close_an_active_turn() {
-    let mut store = KernelStore::open_in_memory().unwrap();
+    let mut store = KernelStore::connect_test().unwrap();
     let (root_authority, cycle_id) = found_cycle(&mut store);
     let zero = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
     let one = ExpectedGeneration::Exact(AdmissionGeneration::try_from(1).unwrap());
@@ -2586,7 +2614,7 @@ fn terminal_session_fact_cannot_close_an_active_turn() {
 
 #[test]
 fn known_overrun_fences_admission_and_frozen_charge_blocks_cycle_close() {
-    let mut store = KernelStore::open_in_memory().unwrap();
+    let mut store = KernelStore::connect_test().unwrap();
     let (root_authority, cycle_id) = found_cycle(&mut store);
     let zero = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
     let one = ExpectedGeneration::Exact(AdmissionGeneration::try_from(1).unwrap());
@@ -2707,7 +2735,7 @@ fn known_overrun_fences_admission_and_frozen_charge_blocks_cycle_close() {
 
 #[test]
 fn cost_postmortem_is_the_only_conservative_frozen_cost_resolution() {
-    let mut store = KernelStore::open_in_memory().unwrap();
+    let mut store = KernelStore::connect_test().unwrap();
     let (root_authority, cycle_id) = found_cycle(&mut store);
     let zero = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
     let one = ExpectedGeneration::Exact(AdmissionGeneration::try_from(1).unwrap());
@@ -2832,7 +2860,7 @@ fn known_overrun_postmortem_records_actual_spend_even_above_admission_ceiling() 
         .unwrap()
         .as_nanos();
     let path = std::env::temp_dir().join(format!("society-known-overrun-{unique}"));
-    let mut store = KernelStore::open(&path).unwrap();
+    let mut store = KernelStore::connect_test_path(&path).unwrap();
     let (root_authority, cycle_id) = found_cycle(&mut store);
     let zero = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
     let one = ExpectedGeneration::Exact(AdmissionGeneration::try_from(1).unwrap());
@@ -2918,7 +2946,7 @@ fn known_overrun_postmortem_records_actual_spend_even_above_admission_ceiling() 
             resolution: CostPostmortemResolution::ChargeObservedOverrun,
         },
     );
-    let accounting = Connection::open(&path).unwrap();
+    let accounting = Connection::connect_test_path(&path).unwrap();
     let mut statement = accounting
         .prepare("SELECT reserved_micros, spent_micros FROM budget_envelopes ORDER BY budget_envelope_id")
         .unwrap();
@@ -2947,7 +2975,7 @@ fn known_overrun_postmortem_records_actual_spend_even_above_admission_ceiling() 
 
 #[test]
 fn changed_typed_body_reusing_a_command_id_is_an_idempotency_conflict() {
-    let mut store = KernelStore::open_in_memory().unwrap();
+    let mut store = KernelStore::connect_test().unwrap();
     let (root_authority, cycle_id) = found_cycle(&mut store);
     let command_id = CommandId::parse("same-command-id-different-body").unwrap();
     let quiesce_grant = store
@@ -2994,7 +3022,7 @@ fn pi_office_session_dispose_orders_peer_facts_and_reconciles_its_parent_budget(
         .unwrap()
         .as_nanos();
     let path = std::env::temp_dir().join(format!("society-m7-dispose-{unique}"));
-    let mut store = KernelStore::open(&path).unwrap();
+    let mut store = KernelStore::connect_test_path(&path).unwrap();
     let (root_authority, cycle_id) = found_cycle(&mut store);
     let initial = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
     let session_id = RootAuthorityOfficeSessionId::new(1).unwrap();
@@ -3408,7 +3436,7 @@ fn pi_office_session_dispose_orders_peer_facts_and_reconciles_its_parent_budget(
     );
     drop(store);
 
-    let connection = Connection::open(&path).unwrap();
+    let connection = Connection::connect_test_path(&path).unwrap();
     assert_eq!(
         connection
             .query_row(
@@ -3480,10 +3508,10 @@ fn pi_office_session_dispose_orders_peer_facts_and_reconciles_its_parent_budget(
     );
     drop(connection);
 
-    let replayed = KernelStore::open(&path).unwrap();
+    let replayed = KernelStore::connect_test_path(&path).unwrap();
     replayed.replay_ledger().unwrap();
     drop(replayed);
-    let tampering = Connection::open(&path).unwrap();
+    let tampering = Connection::connect_test_path(&path).unwrap();
     tampering
         .execute(
             "UPDATE command_record_pi_office_session_dispose_accepted
@@ -3496,7 +3524,7 @@ fn pi_office_session_dispose_orders_peer_facts_and_reconciles_its_parent_budget(
         )
         .unwrap();
     drop(tampering);
-    let tampered = KernelStore::open(&path).unwrap();
+    let tampered = KernelStore::connect_test_path(&path).unwrap();
     assert!(matches!(
         tampered.replay_ledger(),
         Err(StoreError::LedgerCorruption(
@@ -3509,7 +3537,7 @@ fn pi_office_session_dispose_orders_peer_facts_and_reconciles_its_parent_budget(
 
 #[test]
 fn pi_office_session_dispose_usage_failure_freezes_without_fabricating_terminal_closure() {
-    let mut store = KernelStore::open_in_memory().unwrap();
+    let mut store = KernelStore::connect_test().unwrap();
     let (_root_authority, _cycle_id, session_id, authorized_generation, correlation) =
         authorized_dispose_session(
             &mut store,
@@ -3592,7 +3620,7 @@ fn pi_office_session_dispose_accepts_a_materialized_no_prompt_transcript_with_ab
         .unwrap()
         .as_nanos();
     let path = std::env::temp_dir().join(format!("society-m7-materialized-no-prompt-{unique}"));
-    let mut store = KernelStore::open(&path).unwrap();
+    let mut store = KernelStore::connect_test_path(&path).unwrap();
     let (_root_authority, _cycle_id, session_id, authorized_generation, correlation) =
         authorized_dispose_session(
             &mut store,
@@ -3704,7 +3732,7 @@ fn pi_office_session_dispose_accepts_a_materialized_no_prompt_transcript_with_ab
     assert!(store.validate_replayed_materialized_state().is_ok());
     drop(store);
 
-    let tamper = Connection::open(&path).unwrap();
+    let tamper = Connection::connect_test_path(&path).unwrap();
     tamper
         .execute(
             "UPDATE pi_office_session_dispose_receipts
@@ -3714,7 +3742,7 @@ fn pi_office_session_dispose_accepts_a_materialized_no_prompt_transcript_with_ab
         )
         .unwrap();
     drop(tamper);
-    let reopened = KernelStore::open(&path).unwrap();
+    let reopened = KernelStore::connect_test_path(&path).unwrap();
     assert!(reopened.replay_ledger().is_ok());
     assert!(matches!(
         reopened.validate_replayed_materialized_state(),
@@ -3731,7 +3759,7 @@ fn pi_office_session_dispose_known_overrun_records_terminal_then_freezes_parent(
         .unwrap()
         .as_nanos();
     let path = std::env::temp_dir().join(format!("society-m7-dispose-overrun-{unique}"));
-    let mut store = KernelStore::open(&path).unwrap();
+    let mut store = KernelStore::connect_test_path(&path).unwrap();
     let (_root_authority, _cycle_id, session_id, authorized_generation, correlation) =
         authorized_dispose_session(
             &mut store,
@@ -3815,7 +3843,7 @@ fn pi_office_session_dispose_known_overrun_records_terminal_then_freezes_parent(
         }
     ));
     drop(store);
-    let inspection = Connection::open(&path).unwrap();
+    let inspection = Connection::connect_test_path(&path).unwrap();
     assert_eq!(
         inspection
             .query_row(
@@ -3837,7 +3865,7 @@ fn pi_office_session_dispose_known_overrun_records_terminal_then_freezes_parent(
         10
     );
     drop(inspection);
-    let replayed = KernelStore::open(&path).unwrap();
+    let replayed = KernelStore::connect_test_path(&path).unwrap();
     assert!(replayed.replay_ledger().is_ok());
     drop(replayed);
     let _ = fs::remove_file(path);
@@ -3845,7 +3873,7 @@ fn pi_office_session_dispose_known_overrun_records_terminal_then_freezes_parent(
 
 #[test]
 fn pi_office_session_dispose_late_peer_evidence_uses_frozen_authorization_generation() {
-    let mut store = KernelStore::open_in_memory().unwrap();
+    let mut store = KernelStore::connect_test().unwrap();
     let (root_authority, cycle_id, session_id, authorized_generation, correlation) =
         authorized_dispose_session(&mut store, "m7-dispose-late", UsdMicros::new(100).unwrap());
     accepted(
@@ -3930,7 +3958,7 @@ fn pi_office_turn_requires_authorized_delivered_peer_terminal_chain_and_debits_o
         .unwrap()
         .as_nanos();
     let path = std::env::temp_dir().join(format!("society-m6-office-turn-{unique}"));
-    let mut store = KernelStore::open(&path).unwrap();
+    let mut store = KernelStore::connect_test_path(&path).unwrap();
     let (root_authority, cycle_id) = found_cycle(&mut store);
     let zero = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
     let session_id = RootAuthorityOfficeSessionId::new(1).unwrap();
@@ -4514,7 +4542,7 @@ fn pi_office_turn_requires_authorized_delivered_peer_terminal_chain_and_debits_o
             ..
         } if office_turn_id == turn_three
     )));
-    let inspection = Connection::open(&path).unwrap();
+    let inspection = Connection::connect_test_path(&path).unwrap();
     let (coarse_unavailable_reason, frozen_remainder, charged, envelope_reserved, envelope_spent):
         (i64, i64, i64, i64, i64) = inspection
         .query_row(
@@ -4553,7 +4581,7 @@ fn pi_office_turn_requires_authorized_delivered_peer_terminal_chain_and_debits_o
         (91, 9, 91, 9)
     );
     drop(inspection);
-    let collision = Connection::open(&path).unwrap();
+    let collision = Connection::connect_test_path(&path).unwrap();
     assert!(
         collision
             .execute(
@@ -4570,7 +4598,7 @@ fn pi_office_turn_requires_authorized_delivered_peer_terminal_chain_and_debits_o
     );
     drop(collision);
     assert!(store.validate_replayed_materialized_state().is_ok());
-    let body_tamper = Connection::open(&path).unwrap();
+    let body_tamper = Connection::connect_test_path(&path).unwrap();
     body_tamper
         .execute(
             "UPDATE command_record_pi_office_turn_usage
@@ -4588,7 +4616,7 @@ fn pi_office_turn_requires_authorized_delivered_peer_terminal_chain_and_debits_o
         matches!(tampered_replay, Err(StoreError::LedgerCorruption(_))),
         "M6 usage command-body edit escaped its request commitment: {tampered_replay:?}"
     );
-    let body_restore = Connection::open(&path).unwrap();
+    let body_restore = Connection::connect_test_path(&path).unwrap();
     body_restore
         .execute(
             "UPDATE command_record_pi_office_turn_usage
@@ -4602,7 +4630,7 @@ fn pi_office_turn_requires_authorized_delivered_peer_terminal_chain_and_debits_o
         .unwrap();
     drop(body_restore);
     assert!(store.replay_ledger().is_ok());
-    let tamper = Connection::open(&path).unwrap();
+    let tamper = Connection::connect_test_path(&path).unwrap();
     tamper
         .execute(
             "UPDATE office_turn_budget_checkpoints
@@ -4621,7 +4649,7 @@ fn pi_office_turn_requires_authorized_delivered_peer_terminal_chain_and_debits_o
 
 #[test]
 fn pi_office_turn_late_receipts_after_cancellation_never_restore_office_authority() {
-    let mut store = KernelStore::open_in_memory().unwrap();
+    let mut store = KernelStore::connect_test().unwrap();
     let (root_authority, cycle_id) = found_cycle(&mut store);
     let zero = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
     let session_id = RootAuthorityOfficeSessionId::new(1).unwrap();
@@ -4802,7 +4830,7 @@ fn duplicate_cost_incident_cannot_open_another_postmortem_or_cancellation() {
         .unwrap()
         .as_nanos();
     let path = std::env::temp_dir().join(format!("society-duplicate-cost-incident-{unique}"));
-    let mut store = KernelStore::open(&path).unwrap();
+    let mut store = KernelStore::connect_test_path(&path).unwrap();
     let (root_authority, cycle_id) = found_cycle(&mut store);
     let zero = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
 
@@ -4862,7 +4890,7 @@ fn duplicate_cost_incident_cannot_open_another_postmortem_or_cancellation() {
         Rejection::ReservationNotActive,
     );
 
-    let inspection = Connection::open(&path).unwrap();
+    let inspection = Connection::connect_test_path(&path).unwrap();
     let postmortems: i64 = inspection
         .query_row(
             "SELECT COUNT(*) FROM cost_postmortems",
@@ -4890,7 +4918,7 @@ fn fresh_replay_detects_operating_cycle_budget_and_session_row_tampering() {
         .unwrap()
         .as_nanos();
     let path = std::env::temp_dir().join(format!("society-materialized-replay-{unique}"));
-    let mut store = KernelStore::open(&path).unwrap();
+    let mut store = KernelStore::connect_test_path(&path).unwrap();
     let (root_authority, cycle_id) = found_cycle(&mut store);
     accepted(
         &mut store,
@@ -4902,7 +4930,7 @@ fn fresh_replay_detects_operating_cycle_budget_and_session_row_tampering() {
     );
     assert!(store.validate_replayed_materialized_state().is_ok());
 
-    let tamper = Connection::open(&path).unwrap();
+    let tamper = Connection::connect_test_path(&path).unwrap();
     tamper
         .execute(
             "UPDATE operating_cycles SET lifecycle_state = $1 WHERE operating_cycle_id = 1",
@@ -4970,7 +4998,7 @@ fn on_disk_reopen_preserves_treatment_and_detects_materialized_tampering() {
         .as_nanos();
     let path = std::env::temp_dir().join(format!("society-reopen-material-replay-{unique}"));
     {
-        let mut store = KernelStore::open(&path).unwrap();
+        let mut store = KernelStore::connect_test_path(&path).unwrap();
         let (_, cycle_id) = found_cycle(&mut store);
         assert!(store.replay_ledger().unwrap().iter().any(|event| matches!(
             event.body,
@@ -4984,12 +5012,12 @@ fn on_disk_reopen_preserves_treatment_and_detects_materialized_tampering() {
     }
 
     {
-        let reopened = KernelStore::open(&path).unwrap();
+        let reopened = KernelStore::connect_test_path(&path).unwrap();
         assert!(reopened.replay_ledger().is_ok());
         assert!(reopened.validate_replayed_materialized_state().is_ok());
     }
 
-    let tamper = Connection::open(&path).unwrap();
+    let tamper = Connection::connect_test_path(&path).unwrap();
     let (treatment, material_ceiling, envelope_ceiling): (i64, i64, i64) = tamper
         .query_row(
             "SELECT c.treatment, c.budget_ceiling_micros, e.ceiling_micros
@@ -5018,7 +5046,7 @@ fn on_disk_reopen_preserves_treatment_and_detects_materialized_tampering() {
         .unwrap();
     drop(tamper);
 
-    let reopened_after_tamper = KernelStore::open(&path).unwrap();
+    let reopened_after_tamper = KernelStore::connect_test_path(&path).unwrap();
     assert!(reopened_after_tamper.replay_ledger().is_ok());
     assert!(matches!(
         reopened_after_tamper.validate_replayed_materialized_state(),
@@ -5035,7 +5063,7 @@ fn rejected_missing_subject_and_tampered_extra_body_are_detected() {
         .unwrap()
         .as_nanos();
     let path = std::env::temp_dir().join(format!("society-kernel-{unique}"));
-    let mut store = KernelStore::open(&path).unwrap();
+    let mut store = KernelStore::connect_test_path(&path).unwrap();
     let (root_authority, cycle_id) = found_cycle(&mut store);
     let invalid_grant_id = CommandId::parse("root-authority-invalid-capability-grant").unwrap();
     let invalid_grant = store
@@ -5083,7 +5111,7 @@ fn rejected_missing_subject_and_tampered_extra_body_are_detected() {
     assert!(CommandId::parse("contains a space").is_err());
     assert!(CommandId::parse("contains\na-newline").is_err());
 
-    let tamper = Connection::open(&path).unwrap();
+    let tamper = Connection::connect_test_path(&path).unwrap();
     let stored_grant: i64 = tamper
         .query_row(
             "SELECT capability_grant_id FROM commands WHERE command_id = $1",

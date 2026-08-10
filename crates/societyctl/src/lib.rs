@@ -1,7 +1,7 @@
 //! Typed local query client and supervisor-only command peer for `societyd`.
 //!
 //! This crate knows only the Unix-domain protocol. It deliberately has no
-//! SQLite dependency or database-path API, so it cannot bypass the daemon's
+//! PostgreSQL dependency or database-URL API, so it cannot bypass the daemon's
 //! single-writer boundary. The named socket client is query-only; only an
 //! inherited anonymous stream supplied by the trusted process supervisor can
 //! construct [`SupervisorClient`] and submit a kernel command.

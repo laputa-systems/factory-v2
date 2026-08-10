@@ -13,8 +13,8 @@ mod study;
 
 pub use domain::*;
 pub use postgres::{
-    KernelDatabaseUrl, PostgresAdvisoryLockGuard, PostgresCatalogSnapshot, PostgresKernelStore,
-    PostgresStoreError,
+    KernelDatabaseUrl, PostgresAdvisoryLockGuard, PostgresAdvisoryLockLease,
+    PostgresCatalogSnapshot, PostgresKernelStore, PostgresStoreError,
 };
 pub use store::{
     ContentIdentityState, DeterministicEvaluatorNativeChildAdmission,

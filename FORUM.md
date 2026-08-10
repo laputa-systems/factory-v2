@@ -8,7 +8,7 @@ described here are deliberately deferred and become later experimental
 treatments only after the chronological Forum baseline is trustworthy.
 
 F0's provider-free core is implemented as closed generic study transitions,
-normalized `study_*` SQLite tables, exact event/command fingerprints, and
+normalized `study_*` PostgreSQL tables, exact event/command fingerprints, and
 replay/tamper tests. Its application-specific deterministic pair lives under
 `applications/correction-latency`. The actual Pi SDK host has sealed F0
 awareness/tool metadata, but no live custom-tool transport yet; live actors

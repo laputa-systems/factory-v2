@@ -8,7 +8,7 @@ use std::{
         fd::{FromRawFd, IntoRawFd},
         unix::{fs::PermissionsExt, net::UnixStream},
     },
-    path::PathBuf,
+    path::{Path, PathBuf},
     thread::{self, JoinHandle},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -100,8 +100,20 @@ fn temporary_runtime_root(label: &str) -> PathBuf {
     PathBuf::from("/tmp").join(format!("xsd-{label}-{}-{unique}", std::process::id()))
 }
 
+fn test_database_url() -> society_kernel::KernelDatabaseUrl {
+    society_kernel::KernelDatabaseUrl::from_env("SOCIETY_POSTGRES_TEST_URL").unwrap()
+}
+
+fn test_daemon_config(root: &Path) -> DaemonConfig {
+    DaemonConfig::new(root)
+        .with_database_url(test_database_url())
+        .with_database_schema(KernelStore::test_schema_for_path(
+            root.join("society.pg-test-schema"),
+        ))
+}
+
 fn start(
-    root: &PathBuf,
+    root: &Path,
     fault: FaultInjection,
 ) -> (
     SocietyctlClient,
@@ -118,7 +130,7 @@ fn start(
 }
 
 fn start_with_supervisor_stream(
-    root: &PathBuf,
+    root: &Path,
     fault: FaultInjection,
 ) -> (
     SocietyctlClient,
@@ -130,7 +142,7 @@ fn start_with_supervisor_stream(
 ) {
     let (supervisor_stream, daemon_stream) = UnixStream::pair().unwrap();
     let daemon = Daemon::bind(
-        DaemonConfig::new(root)
+        test_daemon_config(root)
             .with_fault_injection(fault)
             .with_supervisor_stream(daemon_stream),
     )
@@ -409,7 +421,7 @@ fn owns_one_runtime_root_and_exposes_a_user_only_socket() {
     assert!(!root.join("bootstrap.admission").exists());
     assert!(!root.join("root-authority.admission").exists());
     assert!(matches!(
-        Daemon::bind(DaemonConfig::new(&root)),
+        Daemon::bind(test_daemon_config(&root)),
         Err(DaemonError::AlreadyRunning)
     ));
     stop(shutdown, join);
@@ -701,7 +713,7 @@ fn supervisor_authority_requires_connected_unix_stream_and_closes_on_exec() {
     // wrapper so `Daemon::bind` can prove that a non-socket is rejected.
     let regular_stream = unsafe { UnixStream::from_raw_fd(regular_fd) };
     assert!(matches!(
-        Daemon::bind(DaemonConfig::new(&regular_root).with_supervisor_stream(regular_stream)),
+        Daemon::bind(test_daemon_config(&regular_root).with_supervisor_stream(regular_stream)),
         Err(DaemonError::InvalidSupervisorStream)
     ));
     fs::remove_file(regular_path).unwrap();
@@ -721,7 +733,7 @@ fn supervisor_authority_requires_connected_unix_stream_and_closes_on_exec() {
     // SAFETY: descriptor one has no Rust owner and is no longer needed.
     assert_eq!(unsafe { libc::close(descriptors[1]) }, 0);
     assert!(matches!(
-        Daemon::bind(DaemonConfig::new(&datagram_root).with_supervisor_stream(datagram_as_stream)),
+        Daemon::bind(test_daemon_config(&datagram_root).with_supervisor_stream(datagram_as_stream),),
         Err(DaemonError::InvalidSupervisorStream)
     ));
     fs::remove_dir_all(datagram_root).unwrap();
@@ -729,7 +741,7 @@ fn supervisor_authority_requires_connected_unix_stream_and_closes_on_exec() {
     let contained_root = temporary_runtime_root("supervisor-cloexec");
     let (_supervisor, daemon_stream) = UnixStream::pair().unwrap();
     let daemon =
-        Daemon::bind(DaemonConfig::new(&contained_root).with_supervisor_stream(daemon_stream))
+        Daemon::bind(test_daemon_config(&contained_root).with_supervisor_stream(daemon_stream))
             .unwrap();
     assert_eq!(
         daemon.supervisor_authority_close_on_exec().unwrap(),
@@ -747,7 +759,7 @@ fn refuses_runtime_root_indirection_or_unsafe_modes() {
     let root_alias = temporary_runtime_root("root-alias");
     std::os::unix::fs::symlink(&root_target, &root_alias).unwrap();
     assert!(matches!(
-        Daemon::bind(DaemonConfig::new(&root_alias)),
+        Daemon::bind(test_daemon_config(&root_alias)),
         Err(DaemonError::UnsafeRuntimeRoot)
     ));
     fs::remove_file(root_alias).unwrap();
@@ -757,7 +769,7 @@ fn refuses_runtime_root_indirection_or_unsafe_modes() {
     fs::create_dir(&public_root).unwrap();
     fs::set_permissions(&public_root, fs::Permissions::from_mode(0o755)).unwrap();
     assert!(matches!(
-        Daemon::bind(DaemonConfig::new(&public_root)),
+        Daemon::bind(test_daemon_config(&public_root)),
         Err(DaemonError::UnsafeRuntimeRoot)
     ));
     fs::remove_dir_all(public_root).unwrap();
@@ -766,7 +778,7 @@ fn refuses_runtime_root_indirection_or_unsafe_modes() {
 #[test]
 fn sigint_and_sigterm_request_one_orderly_process_shutdown() {
     let root = temporary_runtime_root("signals");
-    let daemon = Daemon::bind(DaemonConfig::new(&root)).unwrap();
+    let daemon = Daemon::bind(test_daemon_config(&root)).unwrap();
     let shutdown = daemon.shutdown_handle().with_process_signals().unwrap();
     assert!(matches!(
         daemon.shutdown_handle().with_process_signals(),
@@ -997,7 +1009,8 @@ fn founding_mission_digest_mismatch_and_preflight_rejection_leave_no_content_sid
         ))
     ));
     stop(shutdown, join);
-    let kernel = KernelStore::open(mismatch_root.join("society.sqlite3")).unwrap();
+    let kernel =
+        KernelStore::connect_test_path(mismatch_root.join("society.pg-test-schema")).unwrap();
     assert_eq!(kernel.command_count().unwrap(), 1);
     assert!(
         kernel
@@ -1029,7 +1042,8 @@ fn founding_mission_digest_mismatch_and_preflight_rejection_leave_no_content_sid
     .unwrap();
     assert!(matches!(receipt, CommandReceiptView::Rejected { .. }));
     stop(shutdown, join);
-    let kernel = KernelStore::open(rejected_root.join("society.sqlite3")).unwrap();
+    let kernel =
+        KernelStore::connect_test_path(rejected_root.join("society.pg-test-schema")).unwrap();
     assert_eq!(kernel.command_count().unwrap(), 1);
     assert_eq!(
         kernel
@@ -1102,7 +1116,7 @@ fn founding_mission_exact_retry_and_conflict_are_decided_before_resealing() {
         ))
     ));
     stop(shutdown, join);
-    let kernel = KernelStore::open(root.join("society.sqlite3")).unwrap();
+    let kernel = KernelStore::connect_test_path(root.join("society.pg-test-schema")).unwrap();
     assert_eq!(kernel.command_count().unwrap(), 4);
     assert!(matches!(
         kernel
@@ -1197,7 +1211,7 @@ fn founding_mission_crash_boundaries_leave_a_recovery_fenced_successor() {
                 | Err(DaemonError::InjectedCrashAfterFoundingMissionReceipt)
                 | Err(DaemonError::InjectedCrashAfterFoundingMissionObjectRegistration)
         ));
-        let kernel = KernelStore::open(root.join("society.sqlite3")).unwrap();
+        let kernel = KernelStore::connect_test_path(root.join("society.pg-test-schema")).unwrap();
         assert_eq!(kernel.command_count().unwrap(), expected_command_count);
         assert_eq!(
             kernel

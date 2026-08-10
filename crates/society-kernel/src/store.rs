@@ -1,5 +1,6 @@
 use thiserror::Error;
 
+use crate::postgres::{KernelDatabaseUrl, PostgresKernelStore, PostgresStoreError};
 use crate::postgres_compat::{
     Connection, DbError, FromSql, OptionalExtension, Transaction, TransactionBehavior, ValueRef,
     params,
@@ -373,12 +374,12 @@ const EVENT_BODY_TABLES: [&str; 95] = [
 
 const GRAPH_REVISION_BODY_TABLES: [&str; 2] = ["observation_revisions", "hypothesis_revisions"];
 
-/// The SQLite implementation of trusted physics. `societyd` will be its only
-/// production owner; this crate deliberately accepts an already-opened local
-/// connection only through its own constructors so schema bootstrap and foreign-key
-/// enforcement cannot be skipped accidentally.
+/// The PostgreSQL implementation of trusted physics. `societyd` is its only
+/// production owner; this crate deliberately performs connection and migration
+/// setup through its constructors so the authoritative schema cannot be skipped.
 pub struct KernelStore {
     connection: Connection,
+    replay_url: Option<KernelDatabaseUrl>,
 }
 
 type DeterministicEvaluatorAdmissionSqlRow = (
@@ -605,6 +606,8 @@ pub enum InstallFoundingMissionPreflight {
 pub enum StoreError {
     #[error(transparent)]
     Database(#[from] DbError),
+    #[error("PostgreSQL setup failed: {0}")]
+    Postgres(#[source] PostgresStoreError),
     #[error("database has unsupported schema version {0}")]
     UnsupportedSchemaVersion(i64),
     #[error("command id was already used with a different typed request")]
@@ -654,19 +657,78 @@ enum CapabilityGrantLookup {
 }
 
 impl KernelStore {
-    pub fn open_in_memory() -> Result<Self, StoreError> {
-        Self::from_connection(Connection::open_in_memory()?)
+    pub fn connect(url: &KernelDatabaseUrl) -> Result<Self, StoreError> {
+        let connection = Connection::connect(url).map_err(StoreError::Postgres)?;
+        connection.migrate().map_err(StoreError::Postgres)?;
+        Self::from_connection_with_replay(connection, Some(url.clone()))
     }
 
-    pub fn open(path: impl AsRef<std::path::Path>) -> Result<Self, StoreError> {
-        Self::from_connection(Connection::open(path)?)
+    pub fn connect_in_schema(url: &KernelDatabaseUrl, schema: &str) -> Result<Self, StoreError> {
+        let admin = PostgresKernelStore::connect(url).map_err(StoreError::Postgres)?;
+        admin
+            .ensure_private_schema(schema)
+            .map_err(StoreError::Postgres)?;
+        let connection =
+            Connection::connect_in_schema(url, schema).map_err(StoreError::Postgres)?;
+        connection.migrate().map_err(StoreError::Postgres)?;
+        Self::from_connection_with_replay(connection, Some(url.clone()))
     }
 
-    fn from_connection(connection: Connection) -> Result<Self, StoreError> {
+    /// Opens an already-migrated database using only the runtime connection.
+    /// Schema revision application belongs to the separately configured
+    /// migration-capable role at the resident boundary.
+    pub fn connect_runtime(url: &KernelDatabaseUrl) -> Result<Self, StoreError> {
+        Self::from_connection_with_replay(
+            Connection::connect(url).map_err(StoreError::Postgres)?,
+            Some(url.clone()),
+        )
+    }
+
+    /// Opens an already-migrated private schema using only the runtime
+    /// connection. The schema must have been created and migrated by the
+    /// migration-capable role first.
+    pub fn connect_runtime_in_schema(
+        url: &KernelDatabaseUrl,
+        schema: &str,
+    ) -> Result<Self, StoreError> {
+        Self::from_connection_with_replay(
+            Connection::connect_in_schema(url, schema).map_err(StoreError::Postgres)?,
+            Some(url.clone()),
+        )
+    }
+
+    pub fn connect_test() -> Result<Self, StoreError> {
+        let url = KernelDatabaseUrl::from_env("SOCIETY_POSTGRES_TEST_URL")
+            .map_err(StoreError::Postgres)?;
+        Self::from_connection_with_replay(Connection::connect_test_with_url(&url)?, Some(url))
+    }
+
+    pub fn connect_test_path(path: impl AsRef<std::path::Path>) -> Result<Self, StoreError> {
+        let url = KernelDatabaseUrl::from_env("SOCIETY_POSTGRES_TEST_URL")
+            .map_err(StoreError::Postgres)?;
+        Self::from_connection_with_replay(
+            Connection::connect_test_path_with_url(path, &url)?,
+            Some(url),
+        )
+    }
+
+    /// Returns the private schema identity used by a path-oriented test
+    /// fixture. The path is not opened and no filesystem database is created.
+    pub fn test_schema_for_path(path: impl AsRef<std::path::Path>) -> String {
+        crate::postgres_compat::test_schema_for_path(path)
+    }
+
+    fn from_connection_with_replay(
+        connection: Connection,
+        replay_url: Option<KernelDatabaseUrl>,
+    ) -> Result<Self, StoreError> {
         connection.query_row("SELECT COUNT(*) FROM commands", params![], |row| {
             row.get::<_, i64>(0)
         })?;
-        Ok(Self { connection })
+        Ok(Self {
+            connection,
+            replay_url,
+        })
     }
 
     /// Resolves one active, exact capability grant for a principal. Callers
@@ -1324,7 +1386,13 @@ impl KernelStore {
     pub fn validate_replayed_materialized_state(&self) -> Result<Blake3Digest, StoreError> {
         let expected_events = self.replay_ledger()?;
         let commands = replay_command_requests(&self.connection)?;
-        let mut reconstructed = Self::open_in_memory()?;
+        let mut reconstructed = match &self.replay_url {
+            Some(url) => Self::from_connection_with_replay(
+                Connection::connect_test_with_url(url)?,
+                Some(url.clone()),
+            )?,
+            None => Self::connect_test()?,
+        };
         for (request, expected_disposition) in commands {
             let receipt = reconstructed.execute(request)?;
             if receipt.disposition != expected_disposition {
@@ -3246,7 +3314,7 @@ fn install_founding_mission(
             "INSERT INTO founding_missions(
                  society_id, application_revision_id, revision,
                  active, installed_by_command_id
-             ) VALUES ($1, $2, $3, 1, $4)",
+             ) VALUES ($1, $2, $3, TRUE, $4)",
             params![
                 society_id.value(),
                 application_revision_id.value(),
@@ -3269,13 +3337,13 @@ fn appoint_initial_root_authority(
     let office_id = root_authority_office_id(transaction)?;
     if exists(
         transaction,
-        "SELECT 1 FROM office_occupancies WHERE office_id = (SELECT office_id FROM office_contracts WHERE office_kind = 1) AND active = 1",
+        "SELECT 1 FROM office_occupancies WHERE office_id = (SELECT office_id FROM office_contracts WHERE office_kind = 1) AND active",
     )? {
         return Err(Rejection::FoundingInvariant);
     }
     transaction
         .execute(
-            "INSERT INTO principals(principal_kind, display_name, active) VALUES ($1, $2, 1)",
+            "INSERT INTO principals(principal_kind, display_name, active) VALUES ($1, $2, TRUE)",
             params![PrincipalKind::Actor as i64, actor_display_name],
         )
         .map_err(|_| Rejection::FoundingInvariant)?;
@@ -3283,7 +3351,7 @@ fn appoint_initial_root_authority(
     transaction
         .execute(
             "INSERT INTO office_occupancies(office_id, principal_id, active, appointed_by_command_id)
-             VALUES ($1, $2, 1, $3)",
+             VALUES ($1, $2, TRUE, $3)",
             params![office_id.value(), actor_principal.value(), command_row_id],
         )
         .map_err(|_| Rejection::ActiveOfficeOccupancyAlreadyExists)?;
@@ -6967,7 +7035,7 @@ fn assign_adversarial_reviewer(
     // only a prerequisite, never reviewer jurisdiction by itself.
     let eligible: bool = transaction
         .query_row(
-            "SELECT EXISTS(SELECT 1 FROM principals WHERE principal_id = $1 AND principal_kind = $2 AND active = 1)",
+            "SELECT EXISTS(SELECT 1 FROM principals WHERE principal_id = $1 AND principal_kind = $2 AND active)",
             params![reviewer_principal_id.value(), PrincipalKind::Actor as i64],
             |row| row.get::<_, i64>(0),
         )
@@ -7461,7 +7529,7 @@ fn admit_actor_instance(
     }
     transaction
         .execute(
-            "INSERT INTO principals(principal_kind, display_name, active) VALUES ($1, $2, 1)",
+            "INSERT INTO principals(principal_kind, display_name, active) VALUES ($1, $2, TRUE)",
             params![PrincipalKind::Actor as i64, actor_display_name],
         )
         .map_err(|_| Rejection::InvalidLifecycleTransition)?;
@@ -9907,7 +9975,7 @@ fn record_child_process_liveness(
     transaction.execute("INSERT INTO native_child_liveness_observations(native_child_id, liveness, observed_by_command_id) VALUES ($1, $2, $3)", params![child_id.value(), liveness as i64, command_row_id]).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
     // Preserve the receipt identity before a containment transition performs
     // any material-row update. The event must name the physical observation,
-    // never an incidental later SQLite row identity.
+    // never an incidental later PostgreSQL row identity.
     let observation_id =
         id_from_returned_identity::<NativeChildLivenessObservationId>(transaction)?;
     if liveness == ProcessGroupLiveness::Inaccessible || liveness_regressed {
@@ -10741,7 +10809,7 @@ fn grant_has_active_occupancy(
              SELECT 1 FROM capability_grants g
              JOIN office_occupancies o ON o.office_occupancy_id = g.office_occupancy_id
              WHERE g.capability_grant_id = $1
-               AND o.active = 1
+               AND o.active
                AND o.principal_id = g.principal_id
          )",
             [grant_id],
@@ -10763,7 +10831,7 @@ fn grant_has_active_actor_instance(
              JOIN principals p ON p.principal_id = a.principal_id
              WHERE g.capability_grant_id = $1
                AND a.lifecycle_state = 1
-               AND p.active = 1
+               AND p.active
                AND p.principal_id = g.principal_id
          )",
             [grant_id],
@@ -10959,7 +11027,7 @@ fn active_founding_mission_id(
 ) -> Result<FoundingMissionId, Rejection> {
     let value = transaction
         .query_row(
-            "SELECT founding_mission_id FROM founding_missions WHERE society_id = $1 AND active = 1",
+            "SELECT founding_mission_id FROM founding_missions WHERE society_id = $1 AND active",
             [society_id.value()],
             |row| row.get::<_, i64>(0),
         )
@@ -10976,7 +11044,7 @@ fn active_root_authority_occupancy_id(
         .query_row(
             "SELECT o.office_occupancy_id FROM office_occupancies o
          JOIN office_contracts c ON c.office_id = o.office_id
-         WHERE c.office_kind = 1 AND o.active = 1",
+         WHERE c.office_kind = 1 AND o.active",
             params![],
             |row| row.get::<_, i64>(0),
         )

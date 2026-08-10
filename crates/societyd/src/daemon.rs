@@ -23,7 +23,8 @@ use society_content::{
 use society_kernel::{
     Capability, CommandBody, CommandDisposition, CommandId, CommandRequest, ExpectedGeneration,
     ForumMessageBody, ForumMessageId, ForumMessageKind, InstallFoundingMissionPreflight,
-    KernelStore, PrincipalId, StoreError, StudyActorObligationId, StudyCommand, StudyEvent,
+    KernelDatabaseUrl, KernelStore, PostgresAdvisoryLockLease, PostgresKernelStore,
+    PostgresStoreError, PrincipalId, StoreError, StudyActorObligationId, StudyCommand, StudyEvent,
     StudyTransitionDisposition, StudyTransitionReceipt,
 };
 use thiserror::Error;
@@ -43,9 +44,9 @@ use crate::protocol::{
     PublicRequest, Response, SupervisorRequest, WireError,
 };
 
-const DATABASE_FILE_NAME: &str = "society.sqlite3";
 const SOCKET_FILE_NAME: &str = "societyd.sock";
 const LOCK_FILE_NAME: &str = "societyd.lock";
+const DATABASE_ADVISORY_LOCK_KEY: i64 = 0x0053_4f43_4945_5459;
 const CONTENT_STORE_DIRECTORY_NAME: &str = "content";
 const DAEMON_CONTENT_SEAL_LIMIT_BYTES: u64 = 64 * 1024 * 1024;
 const SOCKET_READ_TIMEOUT: Duration = Duration::from_secs(2);
@@ -82,6 +83,9 @@ pub enum FaultInjection {
 
 pub struct DaemonConfig {
     runtime_root: PathBuf,
+    database_url: Option<KernelDatabaseUrl>,
+    database_migration_url: Option<KernelDatabaseUrl>,
+    database_schema: Option<String>,
     fault_injection: FaultInjection,
     supervisor_stream: Option<UnixStream>,
 }
@@ -90,9 +94,36 @@ impl DaemonConfig {
     pub fn new(runtime_root: impl AsRef<Path>) -> Self {
         Self {
             runtime_root: runtime_root.as_ref().to_path_buf(),
+            database_url: None,
+            database_migration_url: None,
+            database_schema: None,
             fault_injection: FaultInjection::None,
             supervisor_stream: None,
         }
+    }
+
+    pub fn with_database_url(mut self, database_url: KernelDatabaseUrl) -> Self {
+        self.database_url = Some(database_url);
+        self
+    }
+
+    /// Selects the role allowed to apply PostgreSQL schema revisions. If it is
+    /// omitted, local development falls back to the runtime URL; production
+    /// should provide `SOCIETY_DATABASE_MIGRATION_URL` separately.
+    pub fn with_database_migration_url(
+        mut self,
+        database_migration_url: KernelDatabaseUrl,
+    ) -> Self {
+        self.database_migration_url = Some(database_migration_url);
+        self
+    }
+
+    /// Selects a private PostgreSQL schema, primarily for isolated test and
+    /// operator profiles. Production normally uses the database's configured
+    /// default schema.
+    pub fn with_database_schema(mut self, database_schema: impl Into<String>) -> Self {
+        self.database_schema = Some(database_schema.into());
+        self
     }
 
     pub fn with_fault_injection(mut self, fault_injection: FaultInjection) -> Self {
@@ -120,6 +151,8 @@ pub enum DaemonError {
     Io(#[from] io::Error),
     #[error("kernel operation failed: {0}")]
     Kernel(#[from] StoreError),
+    #[error("database configuration failed: {0}")]
+    DatabaseConfiguration(#[from] PostgresStoreError),
     #[error("local protocol failed: {0}")]
     Wire(#[from] WireError),
     #[error("another societyd instance owns this runtime root")]
@@ -161,6 +194,9 @@ pub enum DaemonError {
 pub struct Daemon {
     config: DaemonConfig,
     store: KernelStore,
+    /// The daemon-lifetime PostgreSQL advisory lock owns a dedicated store and
+    /// checked-out connection; it is separate from the runtime-root lock.
+    _database_lock: PostgresAdvisoryLockLease,
     /// The resident daemon exclusively owns this physical content-store writer.
     /// Its only mutation method is crate-private and has no local-wire form.
     content_sealing: ContentSealingAuthority,
@@ -412,11 +448,49 @@ impl Daemon {
         let socket_path = config.runtime_root.join(SOCKET_FILE_NAME);
         remove_stale_socket(&socket_path)?;
 
-        let database_path = config.runtime_root.join(DATABASE_FILE_NAME);
-        validate_runtime_file_if_present(&database_path)?;
-        let store = KernelStore::open(&database_path)?;
-        set_mode(&database_path, 0o600)?;
-        validate_runtime_file_metadata(&fs::symlink_metadata(&database_path)?)?;
+        let database_url = config
+            .database_url
+            .clone()
+            .map(Ok)
+            .unwrap_or_else(|| KernelDatabaseUrl::from_env("SOCIETY_DATABASE_URL"))?;
+        let migration_url = match config.database_migration_url.clone() {
+            Some(url) => url,
+            None => match std::env::var("SOCIETY_DATABASE_MIGRATION_URL") {
+                Ok(value) => KernelDatabaseUrl::parse(&value)?,
+                Err(std::env::VarError::NotPresent) => database_url.clone(),
+                Err(std::env::VarError::NotUnicode(_)) => {
+                    return Err(DaemonError::DatabaseConfiguration(
+                        PostgresStoreError::InvalidDatabaseUrl,
+                    ));
+                }
+            },
+        };
+        let database_schema = match config.database_schema.clone() {
+            Some(schema) => Some(schema),
+            None => match std::env::var("SOCIETY_DATABASE_SCHEMA") {
+                Ok(schema) => Some(schema),
+                Err(std::env::VarError::NotPresent) => None,
+                Err(std::env::VarError::NotUnicode(_)) => {
+                    return Err(DaemonError::DatabaseConfiguration(
+                        PostgresStoreError::InvalidDatabaseUrl,
+                    ));
+                }
+            },
+        };
+        match database_schema.as_deref() {
+            Some(schema) => {
+                PostgresKernelStore::migrate_in_schema(&migration_url, schema)?;
+            }
+            None => {
+                PostgresKernelStore::connect(&migration_url)?.migrate()?;
+            }
+        }
+        let store = match database_schema.as_deref() {
+            Some(schema) => KernelStore::connect_runtime_in_schema(&database_url, schema)?,
+            None => KernelStore::connect_runtime(&database_url)?,
+        };
+        let database_lock = PostgresKernelStore::connect(&database_url)?
+            .acquire_owned_advisory_lock(DATABASE_ADVISORY_LOCK_KEY)?;
         let command_count = store.command_count()?;
         store.validate_replayed_materialized_state()?;
         let mode = if command_count == 0 {
@@ -445,6 +519,7 @@ impl Daemon {
         Ok(Self {
             config,
             store,
+            _database_lock: database_lock,
             content_sealing,
             content_seal_limit: content_limit,
             pi_execution: PiExecutionDriver::new(),

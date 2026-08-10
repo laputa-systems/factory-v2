@@ -1,7 +1,7 @@
 //! Provider-free, deterministic CL-001 matched-pair execution.
 //!
 //! This crate owns the experimental choreography and interpretation.  It
-//! speaks only the public closed kernel API: no SQLite, daemon, provider, or
+//! speaks only the public closed kernel API: no PostgreSQL, daemon, provider, or
 //! native-process surface is imported here.  The deterministic actors are
 //! deliberately disposable functions. Their only durable effects are bounded
 //! Forum tool transitions submitted through the generic service custody.
@@ -497,7 +497,7 @@ pub fn run_provider_free_pair() -> Result<PairedReport, HarnessError> {
             .map_err(|_| HarnessError::UnexpectedEvent("UTF-8 ground-truth fixture"))?,
     )
     .map_err(|_| HarnessError::UnexpectedEvent("ground-truth fixture"))?;
-    let mut store = KernelStore::open_in_memory()?;
+    let mut store = KernelStore::connect_test()?;
     install_application_revision(&mut store)?;
     let mut sequence = 1_u32;
     let forum_contract = exact_forum_contract()?;

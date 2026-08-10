@@ -14,22 +14,20 @@ the resolved transitive graph is committed in `Cargo.lock`.
 
 | Crate | Exact version | Allowed responsibility |
 | --- | ---: | --- |
-| `rusqlite` | 0.40.2 | Sole SQLite binding in `society-kernel`; the canonical fresh schema is embedded SQL executed by the kernel rather than an ORM or migration framework. |
-| `sqlx` | 0.9.0 | PostgreSQL-only storage binding in `society-kernel`; exact features are `postgres`, `runtime-tokio`, and `tls-rustls-ring-webpki`, with defaults disabled. Macros, SQLite, `any`, JSON, and alternate runtimes remain disabled. |
-| `sqlx-core` | 0.9.0 | The direct SQLx migration API used to run the PostgreSQL-only canonical migration without activating SQLx's SQLite backend or compile-time query macros. |
-| `sqlx-postgres` | 0.9.0 | PostgreSQL driver migration implementation; its `migrate` feature is enabled directly because SQLx's umbrella crate otherwise activates backend migration features together with the legacy SQLite binding during the staged cutover. |
+| `sqlx` | 0.9.0 | PostgreSQL-only storage binding in `society-kernel`; exact features are `postgres`, `runtime-tokio`, and `tls-rustls-ring-webpki`, with defaults disabled. Macros, alternate backends, `any`, JSON, and alternate runtimes remain disabled. |
+| `sqlx-core` | 0.9.0 | The direct SQLx migration API used to run the PostgreSQL-only canonical migration without activating alternate backends or compile-time query macros. |
+| `sqlx-postgres` | 0.9.0 | PostgreSQL driver and migration implementation; its `migrate` feature is enabled directly alongside the PostgreSQL-only SQLx surface. |
 | `thiserror` | 2.0.20 | Closed, inspectable error enums at trusted boundaries. |
 | `blake3` | 1.8.5 | Canonical 32-byte BLAKE3 identities for immutable content, command bodies, revisions, trees, execution artifacts, and the resident physical content store. Git object IDs remain governed by each repository's own object format. |
 | `tracing` | 0.1.44 | Typed spans and lifecycle events in `societyd`. |
 | `tracing-subscriber` | 0.3.23 | Mandatory monitor and bounded diagnostic rendering; only `fmt`, `registry`, and `std` features are enabled. |
-| `miniserde` | 0.1.46 | Provider-free JSONL and closed submission parsing only in `society-pi`, at the closed Pi SDK-host protocol boundary; SQLite and the local daemon protocol remain non-JSON. |
+| `miniserde` | 0.1.46 | Provider-free JSONL and closed submission parsing only in `society-pi`, at the closed Pi SDK-host protocol boundary; PostgreSQL and the local daemon protocol remain non-JSON. |
 | `libc` | 0.2.189 | Narrow Unix process-group, signal, peer-credential, ownership, and content-store file-lock calls, plus Tokio's PostgreSQL socket runtime. The stable 0.2 line is used instead of the 1.0 prerelease. |
 | `tokio` | 1.53.1 | One owned current-thread runtime inside the synchronous PostgreSQL kernel boundary; only the runtime, networking, synchronization, and timer primitives required by SQLx are enabled. |
 
-`rusqlite` disables its default feature set and enables `bundled`. This pins the
-SQLite implementation through `libsqlite3-sys`, avoids dependence on the host's
-SQLite feature/version drift, and does not enable Rusqlite's JSON support. Rust
-crate sources are registry-resolved and lockfile-pinned, not copied into this
+The PostgreSQL surface disables SQLx defaults and enables only the explicitly
+listed PostgreSQL, Tokio runtime, migration, and Rustls features. Rust crate
+sources are registry-resolved and lockfile-pinned, not copied into this
 repository.
 
 `society-content` and `society-product` are root-workspace members.
@@ -73,7 +71,7 @@ supervisor rejects any other executable before a paid session is constructed.
 The host imports the SDK directly and calls `createAgentSession()`. It does not
 shell out to the Pi CLI. It may serialize JSON only across its versioned,
 closed stdin/stdout boundary and Pi's canonical session files. It receives no
-SQLite, capability, budget, experiment assignment, institutional-memory,
+database, capability, budget, experiment assignment, institutional-memory,
 scheduling, or cancellation-policy authority. Pi is one replaceable actor
 runtime; the institutional model is not encoded in the SDK adapter.
 

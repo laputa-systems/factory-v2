@@ -142,13 +142,18 @@ if (sessionIdentity.includes("owned-descendant-after-ready")) {
 	spawn(process.execPath, ["-e", "setInterval(() => {}, 60_000)"], {
 		stdio: ["ignore", "inherit", "inherit"],
 	});
-	setImmediate(() => process.exit(0));
+	// PostgreSQL-backed admission is deliberately slower than the old
+	// in-process fixture. Keep the direct child alive long enough for the
+	// resident to persist AdapterReady before testing descendant custody.
+	setTimeout(() => process.exit(0), 100);
 }
 if (sessionIdentity.includes("malformed-after-ready")) {
 	process.stdout.write("{\n");
 	setTimeout(() => process.exit(0), 100);
 }
-if (sessionIdentity.includes("exit-after-ready")) setTimeout(() => process.exit(0), 25);
+// Leave a real observation window between AdapterReady and direct exit. The
+// resident persists native admission before it can poll this frame.
+if (sessionIdentity.includes("exit-after-ready")) setTimeout(() => process.exit(0), 100);
 
 let pending = "";
 process.stdin.setEncoding("utf8");
@@ -233,7 +238,9 @@ function accept(frame) {
 				// before the separate Office-ready liveness probe. Leave enough
 				// time for a loaded provider-free test process to observe and
 				// commit SessionReady before the deterministic pause begins.
-				setTimeout(() => process.exit(0), 100);
+				// Allow the PostgreSQL-backed Rust bridge to persist SessionReady
+				// before the separate liveness seam deliberately pauses it.
+				setTimeout(() => process.exit(0), 500);
 			}
 			return;
 		}
