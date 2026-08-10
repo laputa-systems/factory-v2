@@ -129,6 +129,12 @@ pub struct PostgresAdvisoryLockLease {
     key: i64,
 }
 
+// PostgreSQL migrations may be requested concurrently by independent test
+// processes and by resident startup paths. Keep the single canonical
+// migration runner serialized without making ordinary ledger operations
+// share a process-local lock.
+const MIGRATION_ADVISORY_LOCK_KEY: i64 = 0x0053_4f43_4945_5459;
+
 impl Drop for PostgresAdvisoryLockLease {
     fn drop(&mut self) {
         let Some(mut connection) = self.connection.take() else {
@@ -167,7 +173,9 @@ pub struct PostgresKernelStore {
 
 impl PostgresKernelStore {
     pub fn connect(url: &KernelDatabaseUrl) -> Result<Self, PostgresStoreError> {
-        Self::connect_with_options(url, None)
+        let store = Self::connect_with_options(url, None)?;
+        store.migrate()?;
+        Ok(store)
     }
 
     pub fn connect_in_schema(
@@ -222,7 +230,9 @@ impl PostgresKernelStore {
     }
 
     pub fn migrate(&self) -> Result<(), PostgresStoreError> {
-        self.runtime
+        let lock = self.acquire_advisory_lock(MIGRATION_ADVISORY_LOCK_KEY)?;
+        let result = self
+            .runtime
             .block_on(async {
                 let migration = Migration::new(
                     1,
@@ -235,7 +245,9 @@ impl PostgresKernelStore {
                     .run(&self.pool)
                     .await
             })
-            .map_err(PostgresStoreError::Migration)
+            .map_err(PostgresStoreError::Migration);
+        drop(lock);
+        result
     }
 
     /// Creates a private schema when necessary and applies the canonical
