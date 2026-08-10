@@ -28,6 +28,21 @@ cargo clippy -p society-xsh-circuit --all-targets -- -D warnings
 The application-owned evaluator invocation and its provider-free contracts are
 documented in `circuits/vs-001-spawn-stderr/README.md`.
 
+`society-xsh-circuit` also prepares the closed VS-001 evaluator-port
+construction: a checked-in entrypoint and canonical input bytes with declared
+BLAKE3 identities, one named judge invocation, one opaque application profile,
+and one closed output contract. It does not execute or seal a judge. Its
+entrypoint identity is not yet a complete evaluator-package identity: fixtures,
+transitive scripts, and assigned XSH/Xsht binaries still need a later closed
+application package manifest. The current generic native evaluator fixture
+accepts only a direct executable and therefore cannot run the checked-in
+POSIX-shell judges. A future XSH-owned direct evaluator adapter may carry that
+source semantics, but the generic ABI will not gain an interpreter profile or
+shell `-c` execution.
+
+The generic direct-executable custody driver is daemon-private and currently
+unscheduled, so this application construction cannot enter it yet.
+
 Application ownership is recorded in [`AGENTS.md`](AGENTS.md). The preserved
 application architecture, canonical vocabulary, executable VS-001 contract,
 and dependency boundary are [`ARCHITECTURE.md`](ARCHITECTURE.md),

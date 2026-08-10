@@ -9,8 +9,10 @@
 use society_content::ContentDigest;
 use thiserror::Error;
 
+mod evaluator_port;
 mod vs001;
 
+pub use evaluator_port::*;
 pub use vs001::*;
 
 const MAX_BEHAVIOR_OBSERVATION_BYTES: usize = 64 * 1024;

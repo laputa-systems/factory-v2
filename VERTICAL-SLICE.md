@@ -114,6 +114,16 @@ The materializer's caller-supplied
 `ProductChangeAuthorizationInput` and local receipt are likewise not a durable
 kernel-issued `AuthorizedProductChange`.
 
+The current process foundation also has one generic `NativeChild` custody
+nucleus for PID/PGID ownership, liveness, signalling, direct wait, and bounded
+streams. Pi is a strict optional session/protocol sidecar over that base. A
+daemon-private deterministic-evaluator pre-bridge accepts only a verified
+direct executable, a verified input manifest, fixed argv, and an empty
+environment, with sealing allowed only after reap and group absence. It has no
+resident scheduler or public execution command and does not yet run an
+application evaluator, project output into semantic evidence, or complete this
+slice.
+
 The fresh bootstrap names its single generic root-governance relation
 `FoundingMission`, `RootAuthorityOffice`, and `RootAuthorityOfficeSession`.
 Those names preserve the existing single-root-office state and numeric

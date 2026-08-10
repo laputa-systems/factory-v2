@@ -16,55 +16,56 @@ use crate::{
     CancellationPropagationId, CancellationPropagationState,
     CancellationPropagationTargetDisposition, CancellationRequestId, CancellationState,
     CanonicalPiSessionTranscriptPath, CanonicalWorkspacePath, Capability, CausalEpisodeId,
-    ChildProcessId, ChildProcessLivenessObservationId, ChildProcessReapReceiptId,
-    ChildProcessRecoveryReceiptId, ChildProcessState, ChildRecoveryObservation, ChildStreamKind,
-    ChildStreamSealCompleteness, ChildStreamSealId, ChildTerminalDisposition, CommandBody,
-    CommandDisposition, CommandId, CommandKind, CommandReceipt, CommandRequest,
-    ContentMediaSchemaContract, ContentObjectId, ContentSealReceiptId, ContextPackId,
-    ContextPackPurpose, CostObservation, CostPostmortemCause, CostPostmortemId,
-    CostPostmortemResolution, CostPostmortemState, CostUnavailableReason, CostUnknownReason,
-    DeterministicEvaluationReceiptId, DeterministicExperimentId, DeterministicExperimentState,
-    DevelopmentalAttractor, DirectChildWaitStatus, EpisodeState, EvaluatorRevisionId, EventBody,
-    EventId, EventKind, EvidenceAdmissionId, EvidenceLimitationText, EvidenceSemanticRole,
-    ExecutionProfileId, ExecutionProfileKind, ExecutionProfileReadiness, ExpectedGeneration,
-    ForensicManifestCapturePolicy, ForensicManifestId, FoundingMissionId, GraphEdgeId,
-    GraphEdgeKind, GraphObjectId, GraphObjectKind, GraphRevisionBody, GraphRevisionId,
-    GraphRevisionState, HypothesisRevisionText, InputManifestId, LedgerEvent, MissionPrinciple,
-    MissionPrincipleKind, MissionPrincipleText, MissionPrinciples, MissionStatement,
-    NativeChildPid, NativeWorkspaceId, NorthStarBoundaryCommitmentQuestion,
-    NorthStarChangeQuestion, NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet,
-    NorthStarRevisitQuestion, ObservationRevisionText, OfficeId, OfficeKind, OfficeOccupancyId,
-    OfficeSessionState, OfficeSessionTerminalState, OfficeTurnId, OfficeTurnPurpose,
-    OfficeTurnState, OperatingCycleId, OperatingCycleState, OperatingCycleTreatment,
-    OutcomeObligationDisposition, OutcomeObligationId, OutcomeObligationState, OwnedProcessGroupId,
-    PiAbortControlReceiptId, PiAbortControlWriteOutcome, PiBoundarySessionIdentity,
-    PiChildNotSpawnedReason, PiChildOwner, PiChildSessionState, PiChildSpawnAdmissionId,
-    PiChildSpawnAdmissionState, PiCorrelationIdentity, PiCumulativeUsage,
-    PiOfficeSessionDisposeBudgetDisposition, PiOfficeSessionDisposeReceiptId,
-    PiOfficeSessionFirstUserPromptReceipt, PiOfficeSessionTranscriptReceipt,
-    PiOfficeTurnAssistantOutcome, PiOfficeTurnDisposition, PiOfficeTurnPromptAuthorizationId,
-    PiOfficeTurnTerminalEvidence, PiOfficeTurnTerminalReceiptId, PiOfficeTurnTranscriptDisposition,
-    PiOfficeTurnUsageFailure, PiOfficeTurnUsageFailureId, PiOfficeTurnUsageReceiptId,
-    PiOfficeTurnUsageUnavailableReason, PiOfficeTurnUsageUnknownReason, PiProtocolSequence,
-    PiSessionId, PiTokenCount, PostmortemActionKind, PostmortemActionProposalId,
-    PostmortemCausalClaimId, PostmortemCausalClaimKind, PostmortemId, PostmortemState, PrincipalId,
-    PrincipalKind, ProcessExitCode, ProcessGroupLiveness, ProcessSignalAction, ProcessSignalCause,
-    ProcessSignalDelivery, ProcessSignalNumber, ProcessSignalReceiptId, ProjectId,
-    ProjectMilestoneId, ProjectMilestoneState, ProjectNorthStarAlignment,
-    ProjectNorthStarBoundaryCommitmentAnswer, ProjectNorthStarChangeAnswer,
-    ProjectNorthStarImprovementEvidenceAnswer, ProjectNorthStarRevisitAnswer, ProjectState,
-    ProviderCostBinary64, Rejection, RetentionAccessClass, ReviewChallengeId,
-    ReviewChallengeResponseState, ReviewChallengeSeverity, ReviewDispositionKind,
-    ReviewResolutionKind, RootAuthorityOfficeSessionId, SocietyId, SocietyName, SpawnNonce,
-    SupervisedChildIdentity, SupervisorEpochId, SupervisorEpochIdentity, TicketId, TicketState,
-    UsdMicros, WorkItemId, WorkItemKind, WorkItemState, WorkLeaseId, WorkLeaseState,
+    ChildProcessState, ChildRecoveryObservation, ChildStreamKind, ChildStreamSealCompleteness,
+    ChildTerminalDisposition, CommandBody, CommandDisposition, CommandId, CommandKind,
+    CommandReceipt, CommandRequest, ContentMediaSchemaContract, ContentObjectId,
+    ContentSealReceiptId, ContextPackId, ContextPackPurpose, CostObservation, CostPostmortemCause,
+    CostPostmortemId, CostPostmortemResolution, CostPostmortemState, CostUnavailableReason,
+    CostUnknownReason, DeterministicEvaluationReceiptId, DeterministicExperimentId,
+    DeterministicExperimentState, DevelopmentalAttractor, DirectChildWaitStatus, EpisodeState,
+    EvaluatorRevisionId, EventBody, EventId, EventKind, EvidenceAdmissionId,
+    EvidenceLimitationText, EvidenceSemanticRole, ExecutionProfileId, ExecutionProfileKind,
+    ExecutionProfileReadiness, ExpectedGeneration, ForensicManifestCapturePolicy,
+    ForensicManifestId, FoundingMissionId, GraphEdgeId, GraphEdgeKind, GraphObjectId,
+    GraphObjectKind, GraphRevisionBody, GraphRevisionId, GraphRevisionState,
+    HypothesisRevisionText, InputManifestId, LedgerEvent, MissionPrinciple, MissionPrincipleKind,
+    MissionPrincipleText, MissionPrinciples, MissionStatement, NativeChildId,
+    NativeChildLivenessObservationId, NativeChildNotSpawnedReason, NativeChildOwner,
+    NativeChildPid, NativeChildReapReceiptId, NativeChildRecoveryReceiptId,
+    NativeChildSpawnAdmissionId, NativeChildSpawnAdmissionState, NativeChildStreamSealId,
+    NativeWorkspaceId, NorthStarBoundaryCommitmentQuestion, NorthStarChangeQuestion,
+    NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet, NorthStarRevisitQuestion,
+    ObservationRevisionText, OfficeId, OfficeKind, OfficeOccupancyId, OfficeSessionState,
+    OfficeSessionTerminalState, OfficeTurnId, OfficeTurnPurpose, OfficeTurnState, OperatingCycleId,
+    OperatingCycleState, OperatingCycleTreatment, OutcomeObligationDisposition,
+    OutcomeObligationId, OutcomeObligationState, OwnedProcessGroupId, PiAbortControlReceiptId,
+    PiAbortControlWriteOutcome, PiBoundarySessionIdentity, PiChildOwner, PiChildSessionState,
+    PiCorrelationIdentity, PiCumulativeUsage, PiOfficeSessionDisposeBudgetDisposition,
+    PiOfficeSessionDisposeReceiptId, PiOfficeSessionFirstUserPromptReceipt,
+    PiOfficeSessionTranscriptReceipt, PiOfficeTurnAssistantOutcome, PiOfficeTurnDisposition,
+    PiOfficeTurnPromptAuthorizationId, PiOfficeTurnTerminalEvidence, PiOfficeTurnTerminalReceiptId,
+    PiOfficeTurnTranscriptDisposition, PiOfficeTurnUsageFailure, PiOfficeTurnUsageFailureId,
+    PiOfficeTurnUsageReceiptId, PiOfficeTurnUsageUnavailableReason, PiOfficeTurnUsageUnknownReason,
+    PiProtocolSequence, PiSessionId, PiTokenCount, PostmortemActionKind,
+    PostmortemActionProposalId, PostmortemCausalClaimId, PostmortemCausalClaimKind, PostmortemId,
+    PostmortemState, PrincipalId, PrincipalKind, ProcessExitCode, ProcessGroupLiveness,
+    ProcessSignalAction, ProcessSignalCause, ProcessSignalDelivery, ProcessSignalNumber,
+    ProcessSignalReceiptId, ProjectId, ProjectMilestoneId, ProjectMilestoneState,
+    ProjectNorthStarAlignment, ProjectNorthStarBoundaryCommitmentAnswer,
+    ProjectNorthStarChangeAnswer, ProjectNorthStarImprovementEvidenceAnswer,
+    ProjectNorthStarRevisitAnswer, ProjectState, ProviderCostBinary64, Rejection,
+    RetentionAccessClass, ReviewChallengeId, ReviewChallengeResponseState, ReviewChallengeSeverity,
+    ReviewDispositionKind, ReviewResolutionKind, RootAuthorityOfficeSessionId, SocietyId,
+    SocietyName, SpawnNonce, SupervisedChildIdentity, SupervisorEpochId, SupervisorEpochIdentity,
+    TicketId, TicketState, UsdMicros, WorkItemId, WorkItemKind, WorkItemState, WorkLeaseId,
+    WorkLeaseState,
 };
 
 const CURRENT_SCHEMA: &str = include_str!("../../../migrations/0001_kernel.sql");
-// Historical prototype schemas used versions one through ten. The collapsed
+// Historical prototype schemas used versions one through thirteen. The collapsed
 // fresh schema deliberately occupies a noncolliding identity, so an old
 // ledger cannot be mistaken for current trusted physics.
-const CURRENT_SCHEMA_VERSION: i64 = 13;
+const CURRENT_SCHEMA_VERSION: i64 = 14;
 
 struct PiChildSpawnAdmissionInput<'a> {
     operating_cycle_id: OperatingCycleId,
@@ -80,7 +81,7 @@ struct PiChildSpawnAdmissionInput<'a> {
 }
 
 struct ChildStreamSealInput {
-    child_id: ChildProcessId,
+    child_id: NativeChildId,
     stream: ChildStreamKind,
     full_digest: Blake3Digest,
     retained: ContentObjectId,
@@ -88,7 +89,7 @@ struct ChildStreamSealInput {
 }
 
 struct ProcessSignalReceiptInput {
-    child_id: ChildProcessId,
+    child_id: NativeChildId,
     action: ProcessSignalAction,
     delivery: ProcessSignalDelivery,
     liveness: ProcessGroupLiveness,
@@ -96,7 +97,7 @@ struct ProcessSignalReceiptInput {
 }
 
 struct PiAbortControlDeliveryInput<'a> {
-    child_id: ChildProcessId,
+    child_id: NativeChildId,
     propagation_id: CancellationPropagationId,
     correlation: &'a PiCorrelationIdentity,
     abort_digest: Blake3Digest,
@@ -176,7 +177,7 @@ type PiOfficeSessionDisposedCommandSqlRow = (
     Option<Vec<u8>>,
 );
 
-const COMMAND_BODY_TABLES: [&str; 97] = [
+const COMMAND_BODY_TABLES: [&str; 99] = [
     "command_create_society_identity",
     "command_install_root_authority_office",
     "command_install_founding_mission",
@@ -244,7 +245,7 @@ const COMMAND_BODY_TABLES: [&str; 97] = [
     "command_register_deterministic_experiment",
     "command_record_deterministic_evaluation_receipt",
     "command_admit_deterministic_evidence",
-    "command_close_deterministic_experiment",
+    "command_finalize_deterministic_experiment",
     "command_admit_pi_child_spawn",
     "command_record_inert_pi_child_spawn",
     "command_record_pi_adapter_ready",
@@ -261,7 +262,7 @@ const COMMAND_BODY_TABLES: [&str; 97] = [
     "command_reconcile_cancellation_propagation",
     "command_open_supervisor_epoch",
     "command_record_pi_abort_control_delivery",
-    "command_record_pi_child_not_spawned",
+    "command_record_native_child_not_spawned",
     "command_authorize_pi_office_turn_prompt",
     "command_record_pi_office_turn_prompt_delivery",
     "command_record_pi_office_turn_prompt_accepted",
@@ -274,9 +275,11 @@ const COMMAND_BODY_TABLES: [&str; 97] = [
     "command_record_pi_office_session_dispose_usage",
     "command_record_pi_office_session_dispose_usage_failure",
     "command_record_pi_office_session_disposed",
+    "command_admit_deterministic_evaluator_native_child",
+    "command_record_deterministic_evaluator_native_child_spawn",
 ];
 
-const EVENT_BODY_TABLES: [&str; 91] = [
+const EVENT_BODY_TABLES: [&str; 93] = [
     "event_society_identity_created",
     "event_root_authority_office_installed",
     "event_founding_mission_installed",
@@ -337,7 +340,7 @@ const EVENT_BODY_TABLES: [&str; 91] = [
     "event_deterministic_experiment_registered",
     "event_deterministic_evaluation_receipt_recorded",
     "event_deterministic_evidence_admitted",
-    "event_deterministic_experiment_closed",
+    "event_deterministic_experiment_finalized",
     "event_pi_child_spawn_admitted",
     "event_inert_pi_child_spawn_recorded",
     "event_pi_adapter_ready_recorded",
@@ -355,7 +358,7 @@ const EVENT_BODY_TABLES: [&str; 91] = [
     "event_supervisor_epoch_opened",
     "event_cancellation_propagation_containment_failed",
     "event_pi_abort_control_delivery_recorded",
-    "event_pi_child_spawn_invalidated",
+    "event_native_child_spawn_invalidated",
     "event_pi_office_turn_prompt_authorized",
     "event_pi_office_turn_prompt_delivered",
     "event_pi_office_turn_prompt_accepted",
@@ -368,6 +371,8 @@ const EVENT_BODY_TABLES: [&str; 91] = [
     "event_pi_office_session_dispose_usage_recorded",
     "event_pi_office_session_dispose_usage_frozen",
     "event_pi_office_session_disposed",
+    "event_deterministic_evaluator_native_child_admitted",
+    "event_deterministic_evaluator_native_child_spawn_recorded",
 ];
 
 const GRAPH_REVISION_BODY_TABLES: [&str; 2] = ["observation_revisions", "hypothesis_revisions"];
@@ -378,6 +383,93 @@ const GRAPH_REVISION_BODY_TABLES: [&str; 2] = ["observation_revisions", "hypothe
 /// enforcement cannot be skipped accidentally.
 pub struct KernelStore {
     connection: Connection,
+}
+
+type DeterministicEvaluatorAdmissionSqlRow = (
+    i64,
+    i64,
+    i64,
+    i64,
+    i64,
+    String,
+    String,
+    i64,
+    String,
+    i64,
+    Vec<u8>,
+    Vec<u8>,
+);
+
+type DeterministicEvaluatorSpawnAdmissionSqlRow = (
+    i64,
+    i64,
+    Option<i64>,
+    Option<i64>,
+    Option<i64>,
+    Option<i64>,
+    Option<i64>,
+);
+
+/// Exact daemon-private execution binding for an admitted deterministic
+/// evaluator child. The digests are resolved from sealed content identities,
+/// so callers do not re-supply mutable evaluator/input tuples.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeterministicEvaluatorNativeChildAdmission {
+    native_child_spawn_admission_id: NativeChildSpawnAdmissionId,
+    operating_cycle_id: OperatingCycleId,
+    deterministic_experiment_id: DeterministicExperimentId,
+    evaluator_revision_id: EvaluatorRevisionId,
+    input_manifest_id: InputManifestId,
+    execution_profile_id: ExecutionProfileId,
+    native_workspace_id: NativeWorkspaceId,
+    canonical_workspace_path: CanonicalWorkspacePath,
+    supervisor_epoch_id: SupervisorEpochId,
+    supervisor_epoch_identity: SupervisorEpochIdentity,
+    admission_generation: AdmissionGeneration,
+    evaluator_digest: Blake3Digest,
+    input_manifest_digest: Blake3Digest,
+}
+
+impl DeterministicEvaluatorNativeChildAdmission {
+    pub const fn native_child_spawn_admission_id(&self) -> NativeChildSpawnAdmissionId {
+        self.native_child_spawn_admission_id
+    }
+    pub const fn operating_cycle_id(&self) -> OperatingCycleId {
+        self.operating_cycle_id
+    }
+    pub const fn deterministic_experiment_id(&self) -> DeterministicExperimentId {
+        self.deterministic_experiment_id
+    }
+    pub const fn evaluator_revision_id(&self) -> EvaluatorRevisionId {
+        self.evaluator_revision_id
+    }
+    pub const fn input_manifest_id(&self) -> InputManifestId {
+        self.input_manifest_id
+    }
+    pub const fn execution_profile_id(&self) -> ExecutionProfileId {
+        self.execution_profile_id
+    }
+    pub fn native_workspace_id(&self) -> &NativeWorkspaceId {
+        &self.native_workspace_id
+    }
+    pub fn canonical_workspace_path(&self) -> &CanonicalWorkspacePath {
+        &self.canonical_workspace_path
+    }
+    pub const fn supervisor_epoch_id(&self) -> SupervisorEpochId {
+        self.supervisor_epoch_id
+    }
+    pub fn supervisor_epoch_identity(&self) -> &SupervisorEpochIdentity {
+        &self.supervisor_epoch_identity
+    }
+    pub const fn admission_generation(&self) -> AdmissionGeneration {
+        self.admission_generation
+    }
+    pub const fn evaluator_digest(&self) -> Blake3Digest {
+        self.evaluator_digest
+    }
+    pub const fn input_manifest_digest(&self) -> Blake3Digest {
+        self.input_manifest_digest
+    }
 }
 
 /// The only durable recovery states for one physical BLAKE3 identity.
@@ -515,6 +607,115 @@ impl KernelStore {
             .map(crate::CapabilityGrantId::try_from)
             .transpose()
             .map_err(|_| StoreError::InvalidStoredValue)
+    }
+
+    pub fn deterministic_evaluator_native_child_admission(
+        &self,
+        native_child_spawn_admission_id: NativeChildSpawnAdmissionId,
+    ) -> Result<Option<DeterministicEvaluatorNativeChildAdmission>, StoreError> {
+        let exists: bool = self.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM native_child_spawn_admissions WHERE native_child_spawn_admission_id = ?1)",
+            [native_child_spawn_admission_id.value()],
+            |row| row.get::<_, i64>(0),
+        )? != 0;
+        if !exists {
+            return Ok(None);
+        }
+        let row: Option<DeterministicEvaluatorAdmissionSqlRow> = self.connection.query_row(
+            "SELECT admission.operating_cycle_id, admission.deterministic_experiment_id,
+                    admission.evaluator_revision_id, admission.input_manifest_id,
+                    admission.execution_profile_id, workspace.native_workspace_id,
+                    workspace.canonical_workspace_path, admission.supervisor_epoch_id,
+                    epoch.supervisor_epoch_identity, admission.admission_generation,
+                    evaluator_seal.digest, input_seal.digest
+               FROM native_child_spawn_admissions admission
+               JOIN workspaces workspace ON workspace.workspace_id = admission.workspace_id
+               JOIN supervisor_epochs epoch ON epoch.supervisor_epoch_id = admission.supervisor_epoch_id
+               JOIN operating_cycles cycle ON cycle.operating_cycle_id = admission.operating_cycle_id
+               JOIN execution_profiles profile ON profile.execution_profile_id = admission.execution_profile_id
+               JOIN evaluator_revisions evaluator ON evaluator.evaluator_revision_id = admission.evaluator_revision_id
+               JOIN content_objects evaluator_object ON evaluator_object.content_object_id = evaluator.content_object_id
+               JOIN content_seal_receipts evaluator_seal ON evaluator_seal.content_seal_receipt_id = evaluator_object.content_seal_receipt_id
+               JOIN input_manifests input ON input.input_manifest_id = admission.input_manifest_id
+               JOIN content_objects input_object ON input_object.content_object_id = input.content_object_id
+               JOIN content_seal_receipts input_seal ON input_seal.content_seal_receipt_id = input_object.content_seal_receipt_id
+              WHERE admission.native_child_spawn_admission_id = ?1
+                AND admission.actor_attempt_id IS NULL AND admission.root_authority_office_session_id IS NULL
+                AND admission.deterministic_experiment_id IS NOT NULL
+                AND admission.evaluator_revision_id IS NOT NULL AND admission.input_manifest_id IS NOT NULL
+                AND admission.budget_reservation_id IS NULL
+                AND admission.lifecycle_state = 1
+                AND cycle.treatment = 4 AND cycle.lifecycle_state = 3
+                AND cycle.admission_generation = admission.admission_generation
+                AND profile.profile_kind = 3 AND profile.readiness = 1
+                AND NOT EXISTS(SELECT 1 FROM pi_child_spawn_sidecars sidecar WHERE sidecar.native_child_spawn_admission_id = admission.native_child_spawn_admission_id)
+                AND EXISTS(SELECT 1 FROM deterministic_experiments experiment
+                            WHERE experiment.deterministic_experiment_id = admission.deterministic_experiment_id
+                              AND experiment.operating_cycle_id = admission.operating_cycle_id
+                              AND experiment.evaluator_revision_id = admission.evaluator_revision_id
+                              AND experiment.input_manifest_id = admission.input_manifest_id
+                              AND experiment.lifecycle_state = 1)",
+            [native_child_spawn_admission_id.value()],
+            |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,r.get(8)?,r.get(9)?,r.get(10)?,r.get(11)?)),
+        ).optional()?;
+        let Some(row) = row else {
+            // A structurally exact evaluator admission can legitimately stop
+            // being spawn-authoritative after spawn, invalidation, a cycle
+            // generation advance, or experiment finalization. That is not
+            // ledger corruption; callers must simply not execute from it.
+            let unavailable: bool = self.connection.query_row(
+                "SELECT EXISTS(
+                     SELECT 1 FROM native_child_spawn_admissions admission
+                     JOIN deterministic_experiments experiment
+                       ON experiment.deterministic_experiment_id = admission.deterministic_experiment_id
+                      AND experiment.operating_cycle_id = admission.operating_cycle_id
+                      AND experiment.evaluator_revision_id = admission.evaluator_revision_id
+                      AND experiment.input_manifest_id = admission.input_manifest_id
+                     WHERE admission.native_child_spawn_admission_id = ?1
+                       AND admission.actor_attempt_id IS NULL
+                       AND admission.root_authority_office_session_id IS NULL
+                       AND admission.deterministic_experiment_id IS NOT NULL
+                       AND admission.evaluator_revision_id IS NOT NULL
+                       AND admission.input_manifest_id IS NOT NULL
+                       AND admission.budget_reservation_id IS NULL
+                       AND NOT EXISTS(SELECT 1 FROM pi_child_spawn_sidecars sidecar
+                                      WHERE sidecar.native_child_spawn_admission_id = admission.native_child_spawn_admission_id)
+                 )",
+                [native_child_spawn_admission_id.value()],
+                |row| row.get::<_, i64>(0),
+            )? != 0;
+            if unavailable {
+                return Ok(None);
+            }
+            return Err(StoreError::LedgerCorruption(
+                "evaluator native-child admission violates its exact execution binding",
+            ));
+        };
+        Ok(Some(DeterministicEvaluatorNativeChildAdmission {
+            native_child_spawn_admission_id,
+            operating_cycle_id: OperatingCycleId::try_from(row.0)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+            deterministic_experiment_id: DeterministicExperimentId::try_from(row.1)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+            evaluator_revision_id: EvaluatorRevisionId::try_from(row.2)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+            input_manifest_id: InputManifestId::try_from(row.3)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+            execution_profile_id: ExecutionProfileId::try_from(row.4)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+            native_workspace_id: NativeWorkspaceId::parse(row.5)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+            canonical_workspace_path: CanonicalWorkspacePath::parse(row.6)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+            supervisor_epoch_id: SupervisorEpochId::try_from(row.7)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+            supervisor_epoch_identity: SupervisorEpochIdentity::parse(row.8)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+            admission_generation: AdmissionGeneration::try_from(row.9)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+            evaluator_digest: digest_from_stored_bytes(&row.10)?,
+            input_manifest_digest: digest_from_stored_bytes(&row.11)?,
+        }))
     }
 
     /// Accepts a closed command exactly once. An equal duplicate returns its
@@ -1213,7 +1414,10 @@ fn command_operating_cycle_for_treatment(
         | CommandBody::AdmitDeterministicEvidence {
             operating_cycle_id, ..
         }
-        | CommandBody::CloseDeterministicExperiment {
+        | CommandBody::FinalizeDeterministicExperiment {
+            operating_cycle_id, ..
+        }
+        | CommandBody::AdmitDeterministicEvaluatorNativeChild {
             operating_cycle_id, ..
         } => Some(*operating_cycle_id),
         _ => None,
@@ -1367,7 +1571,7 @@ fn apply_command(
             | CommandBody::RegisterDeterministicExperiment { .. }
             | CommandBody::RecordDeterministicEvaluationReceipt { .. }
             | CommandBody::AdmitDeterministicEvidence { .. }
-            | CommandBody::CloseDeterministicExperiment { .. }
+            | CommandBody::FinalizeDeterministicExperiment { .. }
             | CommandBody::AdmitPiChildSpawn { .. }
             | CommandBody::RecordInertChildSpawn { .. }
             | CommandBody::RecordPiAdapterReady { .. }
@@ -1383,7 +1587,9 @@ fn apply_command(
             | CommandBody::FinalizeChildProcess { .. }
             | CommandBody::BeginCancellationPropagation { .. }
             | CommandBody::ReconcileCancellationPropagation { .. }
-            | CommandBody::RecordPiChildNotSpawned { .. }
+            | CommandBody::RecordNativeChildNotSpawned { .. }
+            | CommandBody::AdmitDeterministicEvaluatorNativeChild { .. }
+            | CommandBody::RecordDeterministicEvaluatorNativeChildSpawn { .. }
             | CommandBody::AuthorizePiOfficeTurnPrompt { .. }
             | CommandBody::RecordPiOfficeTurnPromptDelivery { .. }
             | CommandBody::RecordPiOfficeTurnPromptAccepted { .. }
@@ -2103,15 +2309,53 @@ fn apply_command(
             *applicability,
             limitation,
         ),
-        CommandBody::CloseDeterministicExperiment {
+        CommandBody::FinalizeDeterministicExperiment {
             operating_cycle_id,
             deterministic_experiment_id,
-        } => close_deterministic_experiment(
+        } => finalize_deterministic_experiment(
             transaction,
             command_row_id,
             request.expected_generation,
             *operating_cycle_id,
             *deterministic_experiment_id,
+        ),
+        CommandBody::AdmitDeterministicEvaluatorNativeChild {
+            operating_cycle_id,
+            deterministic_experiment_id,
+            evaluator_revision_id,
+            input_manifest_id,
+            execution_profile_id,
+            native_workspace_id,
+            canonical_workspace_path,
+            supervisor_epoch_id,
+            supervisor_epoch_identity,
+        } => admit_deterministic_evaluator_native_child(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *operating_cycle_id,
+            *deterministic_experiment_id,
+            *evaluator_revision_id,
+            *input_manifest_id,
+            *execution_profile_id,
+            native_workspace_id,
+            canonical_workspace_path,
+            *supervisor_epoch_id,
+            supervisor_epoch_identity,
+        ),
+        CommandBody::RecordDeterministicEvaluatorNativeChildSpawn {
+            native_child_spawn_admission_id,
+            child_identity,
+            direct_child_pid,
+            process_group_id,
+        } => record_deterministic_evaluator_native_child_spawn(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *native_child_spawn_admission_id,
+            child_identity,
+            *direct_child_pid,
+            *process_group_id,
         ),
         CommandBody::OpenSupervisorEpoch {
             supervisor_epoch_id,
@@ -2151,7 +2395,7 @@ fn apply_command(
             },
         ),
         CommandBody::RecordInertChildSpawn {
-            pi_child_spawn_admission_id,
+            native_child_spawn_admission_id,
             child_identity,
             direct_child_pid,
             process_group_id,
@@ -2159,59 +2403,59 @@ fn apply_command(
             transaction,
             command_row_id,
             request.expected_generation,
-            *pi_child_spawn_admission_id,
+            *native_child_spawn_admission_id,
             child_identity,
             *direct_child_pid,
             *process_group_id,
         ),
         CommandBody::RecordPiAdapterReady {
-            child_process_id,
+            native_child_id,
             pi_session_identity,
             spawn_nonce,
         } => record_pi_adapter_ready(
             transaction,
             command_row_id,
             request.expected_generation,
-            *child_process_id,
+            *native_child_id,
             pi_session_identity,
             spawn_nonce,
         ),
         CommandBody::AuthorizePiCreateSession {
-            child_process_id,
+            native_child_id,
             correlation_identity,
             create_request_digest,
         } => authorize_pi_create_session(
             transaction,
             command_row_id,
             request.expected_generation,
-            *child_process_id,
+            *native_child_id,
             correlation_identity,
             *create_request_digest,
         ),
         CommandBody::RecordPiCreateSessionDelivery {
-            child_process_id,
+            native_child_id,
             correlation_identity,
             create_request_digest,
         } => record_pi_create_session_delivery(
             transaction,
             command_row_id,
             request.expected_generation,
-            *child_process_id,
+            *native_child_id,
             correlation_identity,
             *create_request_digest,
         ),
         CommandBody::RecordPiSessionReady {
-            child_process_id,
+            native_child_id,
             pi_session_identity,
         } => record_pi_session_ready(
             transaction,
             command_row_id,
             request.expected_generation,
-            *child_process_id,
+            *native_child_id,
             pi_session_identity,
         ),
         CommandBody::RecordPiAbortControlDelivery {
-            child_process_id,
+            native_child_id,
             cancellation_propagation_id,
             correlation_identity,
             abort_command_digest,
@@ -2221,7 +2465,7 @@ fn apply_command(
             command_row_id,
             request.expected_generation,
             PiAbortControlDeliveryInput {
-                child_id: *child_process_id,
+                child_id: *native_child_id,
                 propagation_id: *cancellation_propagation_id,
                 correlation: correlation_identity,
                 abort_digest: *abort_command_digest,
@@ -2229,7 +2473,7 @@ fn apply_command(
             },
         ),
         CommandBody::RecordChildStreamSeal {
-            child_process_id,
+            native_child_id,
             stream_kind,
             full_observed_digest,
             retained_content_object_id,
@@ -2239,7 +2483,7 @@ fn apply_command(
             command_row_id,
             request.expected_generation,
             ChildStreamSealInput {
-                child_id: *child_process_id,
+                child_id: *native_child_id,
                 stream: *stream_kind,
                 full_digest: *full_observed_digest,
                 retained: *retained_content_object_id,
@@ -2247,17 +2491,17 @@ fn apply_command(
             },
         ),
         CommandBody::RecordChildProcessLiveness {
-            child_process_id,
+            native_child_id,
             liveness,
         } => record_child_process_liveness(
             transaction,
             command_row_id,
             request.expected_generation,
-            *child_process_id,
+            *native_child_id,
             *liveness,
         ),
         CommandBody::RecordProcessSignalReceipt {
-            child_process_id,
+            native_child_id,
             action,
             delivery,
             observed_liveness,
@@ -2267,7 +2511,7 @@ fn apply_command(
             command_row_id,
             request.expected_generation,
             ProcessSignalReceiptInput {
-                child_id: *child_process_id,
+                child_id: *native_child_id,
                 action: *action,
                 delivery: *delivery,
                 liveness: *observed_liveness,
@@ -2275,7 +2519,7 @@ fn apply_command(
             },
         ),
         CommandBody::RecordDirectChildReap {
-            child_process_id,
+            native_child_id,
             wait_status,
             group_liveness_before_cleanup,
             group_liveness_after_cleanup,
@@ -2283,28 +2527,28 @@ fn apply_command(
             transaction,
             command_row_id,
             request.expected_generation,
-            *child_process_id,
+            *native_child_id,
             *wait_status,
             *group_liveness_before_cleanup,
             *group_liveness_after_cleanup,
         ),
         CommandBody::RecordChildRecovery {
-            child_process_id,
+            native_child_id,
             observation,
             group_liveness_after_restart,
         } => record_child_recovery(
             transaction,
             command_row_id,
             request.expected_generation,
-            *child_process_id,
+            *native_child_id,
             *observation,
             *group_liveness_after_restart,
         ),
-        CommandBody::FinalizeChildProcess { child_process_id } => finalize_child_process(
+        CommandBody::FinalizeChildProcess { native_child_id } => finalize_child_process(
             transaction,
             command_row_id,
             request.expected_generation,
-            *child_process_id,
+            *native_child_id,
         ),
         CommandBody::BeginCancellationPropagation {
             cancellation_request_id,
@@ -2322,14 +2566,14 @@ fn apply_command(
             request.expected_generation,
             *cancellation_propagation_id,
         ),
-        CommandBody::RecordPiChildNotSpawned {
-            pi_child_spawn_admission_id,
+        CommandBody::RecordNativeChildNotSpawned {
+            native_child_spawn_admission_id,
             reason,
-        } => record_pi_child_not_spawned(
+        } => record_native_child_not_spawned(
             transaction,
             command_row_id,
             request.expected_generation,
-            *pi_child_spawn_admission_id,
+            *native_child_spawn_admission_id,
             *reason,
         ),
         CommandBody::AuthorizePiOfficeTurnPrompt {
@@ -2856,7 +3100,7 @@ fn record_office_session_ready(
     // session can authorize ordinary Office turns.
     let supervised_admission: Option<i64> = transaction
         .query_row(
-            "SELECT pi_child_spawn_admission_id FROM pi_child_spawn_admissions
+            "SELECT native_child_spawn_admission_id FROM native_child_spawn_admissions
           WHERE root_authority_office_session_id = ?1",
             [session_id.value()],
             |row| row.get(0),
@@ -2869,9 +3113,9 @@ fn record_office_session_ready(
     let session_ready: bool = transaction
         .query_row(
             "SELECT EXISTS(
-               SELECT 1 FROM pi_child_processes c
-               JOIN pi_child_session_protocols p ON p.child_process_id = c.child_process_id
-              WHERE c.pi_child_spawn_admission_id = ?1
+               SELECT 1 FROM native_children c
+               JOIN pi_child_session_protocols p ON p.native_child_id = c.native_child_id
+              WHERE c.native_child_spawn_admission_id = ?1
                 AND c.lifecycle_state = ?2
                 AND p.lifecycle_state = ?3)",
             params![
@@ -2917,7 +3161,7 @@ fn record_office_session_terminal(
     // Office terminal fact manufacture a semantic Pi/Office settlement for a
     // supervised session; a later normalized receipt owns that transition.
     let has_pi_child: bool = transaction.query_row(
-        "SELECT EXISTS(SELECT 1 FROM pi_child_spawn_admissions WHERE root_authority_office_session_id = ?1)",
+        "SELECT EXISTS(SELECT 1 FROM native_child_spawn_admissions WHERE root_authority_office_session_id = ?1)",
         [session_id.value()], |row| row.get::<_, i64>(0),
     ).map_err(|_| Rejection::ChildLifecycleReceiptMissing)? != 0;
     if has_pi_child {
@@ -2982,7 +3226,7 @@ fn open_office_turn(
     // normalized semantic Office settlement and therefore admits no new work.
     let supervised_admission: Option<i64> = transaction
         .query_row(
-            "SELECT pi_child_spawn_admission_id FROM pi_child_spawn_admissions
+            "SELECT native_child_spawn_admission_id FROM native_child_spawn_admissions
               WHERE root_authority_office_session_id = ?1",
             [session_id.value()],
             |row| row.get(0),
@@ -2995,9 +3239,9 @@ fn open_office_turn(
     let child_is_operational: bool = transaction
         .query_row(
             "SELECT EXISTS(
-               SELECT 1 FROM pi_child_processes c
-               JOIN pi_child_session_protocols p ON p.child_process_id = c.child_process_id
-              WHERE c.pi_child_spawn_admission_id = ?1
+               SELECT 1 FROM native_children c
+               JOIN pi_child_session_protocols p ON p.native_child_id = c.native_child_id
+              WHERE c.native_child_spawn_admission_id = ?1
                 AND c.lifecycle_state = ?2
                 AND p.lifecycle_state = ?3)",
             params![
@@ -3064,16 +3308,18 @@ fn authorize_pi_office_turn_prompt(
         .query_row(
             "SELECT t.lifecycle_state, t.purpose, t.root_authority_office_session_id,
                     s.lifecycle_state, s.operating_cycle_id, c.treatment,
-                    a.budget_reservation_id, a.pi_session_id, a.execution_profile_id,
-                    p.child_process_id, p.lifecycle_state, proto.lifecycle_state
+                    a.budget_reservation_id, sidecar.pi_session_id, a.execution_profile_id,
+                    p.native_child_id, p.lifecycle_state, proto.lifecycle_state
              FROM office_turns t
              JOIN root_authority_office_sessions s
                ON s.root_authority_office_session_id = t.root_authority_office_session_id
              JOIN operating_cycles c ON c.operating_cycle_id = s.operating_cycle_id
-             JOIN pi_child_spawn_admissions a
+             JOIN native_child_spawn_admissions a
                ON a.root_authority_office_session_id = s.root_authority_office_session_id
-             JOIN pi_child_processes p ON p.pi_child_spawn_admission_id = a.pi_child_spawn_admission_id
-             JOIN pi_child_session_protocols proto ON proto.child_process_id = p.child_process_id
+             JOIN pi_child_spawn_sidecars sidecar
+               ON sidecar.native_child_spawn_admission_id = a.native_child_spawn_admission_id
+             JOIN native_children p ON p.native_child_spawn_admission_id = a.native_child_spawn_admission_id
+             JOIN pi_child_session_protocols proto ON proto.native_child_id = p.native_child_id
              WHERE t.office_turn_id = ?1",
             [office_turn_id.value()],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?, r.get(9)?, r.get(10)?, r.get(11)?)),
@@ -3173,14 +3419,14 @@ fn authorize_pi_office_turn_prompt(
         params![office_turn_id.value(), session_id.value(), reservation_id.value(), charged, command_row_id],
     ).map_err(|_| Rejection::PiOfficeTurnAuthorityMissing)?;
     transaction.execute(
-        "INSERT INTO pi_office_turn_prompt_authorizations(office_turn_id, child_process_id, pi_session_id, budget_reservation_id, correlation_identity, prompt_content_object_id, prompt_digest, frontier_event_id, admission_generation, office_turn_purpose, authorized_by_command_id)
+        "INSERT INTO pi_office_turn_prompt_authorizations(office_turn_id, native_child_id, pi_session_id, budget_reservation_id, correlation_identity, prompt_content_object_id, prompt_digest, frontier_event_id, admission_generation, office_turn_purpose, authorized_by_command_id)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         params![office_turn_id.value(), row.9, row.7, reservation_id.value(), correlation_identity.as_str(), prompt_content_object_id.value(), prompt_digest.as_bytes().as_slice(), frontier_event_id.value(), cycle.generation.value(), row.1, command_row_id],
     ).map_err(|_| Rejection::PiOfficeTurnAuthorityMissing)?;
     Ok(EventBody::PiOfficeTurnPromptAuthorized {
         pi_office_turn_prompt_authorization_id: id_from_last_insert(transaction)?,
         office_turn_id,
-        child_process_id: ChildProcessId::try_from(row.9)
+        native_child_id: NativeChildId::try_from(row.9)
             .map_err(|_| Rejection::PiOfficeTurnAuthorityMissing)?,
         correlation_identity: correlation_identity.clone(),
         budget_reservation_id: reservation_id,
@@ -3440,17 +3686,19 @@ fn pi_office_session_dispose_binding(
     transaction
         .query_row(
             "SELECT s.lifecycle_state, s.operating_cycle_id, parent.budget_reservation_id,
-                    child.child_process_id, admission.pi_session_id,
+                    child.native_child_id, sidecar.pi_session_id,
                     child.lifecycle_state, protocol.lifecycle_state
              FROM root_authority_office_sessions s
              JOIN office_session_budget_reservations parent
                ON parent.root_authority_office_session_id = s.root_authority_office_session_id
-             JOIN pi_child_spawn_admissions admission
+             JOIN native_child_spawn_admissions admission
                ON admission.root_authority_office_session_id = s.root_authority_office_session_id
-             JOIN pi_child_processes child
-               ON child.pi_child_spawn_admission_id = admission.pi_child_spawn_admission_id
+             JOIN pi_child_spawn_sidecars sidecar
+               ON sidecar.native_child_spawn_admission_id = admission.native_child_spawn_admission_id
+             JOIN native_children child
+               ON child.native_child_spawn_admission_id = admission.native_child_spawn_admission_id
              JOIN pi_child_session_protocols protocol
-               ON protocol.child_process_id = child.child_process_id
+               ON protocol.native_child_id = child.native_child_id
              WHERE s.root_authority_office_session_id = ?1",
             [session_id.value()],
             |row| {
@@ -3593,7 +3841,7 @@ fn authorize_pi_office_session_dispose(
     transaction
         .execute(
             "INSERT INTO pi_office_session_dispose_authorizations(
-             root_authority_office_session_id, child_process_id, pi_session_id,
+             root_authority_office_session_id, native_child_id, pi_session_id,
              correlation_identity, authorized_generation, authorized_by_command_id
          ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
@@ -3608,7 +3856,7 @@ fn authorize_pi_office_session_dispose(
         .map_err(|_| Rejection::PiOfficeSessionDisposeBindingMismatch)?;
     Ok(EventBody::PiOfficeSessionDisposeAuthorized {
         session_id,
-        child_process_id: ChildProcessId::try_from(child)
+        native_child_id: NativeChildId::try_from(child)
             .map_err(|_| Rejection::PiOfficeSessionDisposeBindingMismatch)?,
         correlation_identity: correlation_identity.clone(),
         authorized_generation: cycle.generation,
@@ -3628,7 +3876,7 @@ fn record_pi_office_session_dispose_delivery(
         session_id,
     )?;
     let authorization: Option<(i64, i64, String, i64)> = transaction.query_row(
-        "SELECT authorization.child_process_id, authorization.pi_session_id,
+        "SELECT authorization.native_child_id, authorization.pi_session_id,
                 authorization.correlation_identity, session.lifecycle_state
          FROM pi_office_session_dispose_authorizations authorization
          JOIN root_authority_office_sessions session
@@ -3648,7 +3896,7 @@ fn record_pi_office_session_dispose_delivery(
     transaction
         .execute(
             "INSERT INTO pi_office_session_dispose_deliveries(
-             root_authority_office_session_id, child_process_id, pi_session_id,
+             root_authority_office_session_id, native_child_id, pi_session_id,
              correlation_identity, delivered_by_command_id
          ) VALUES (?1, ?2, ?3, ?4, ?5)",
             params![
@@ -3662,7 +3910,7 @@ fn record_pi_office_session_dispose_delivery(
         .map_err(|_| Rejection::PiOfficeSessionDisposeBindingMismatch)?;
     Ok(EventBody::PiOfficeSessionDisposeDelivered {
         session_id,
-        child_process_id: ChildProcessId::try_from(child)
+        native_child_id: NativeChildId::try_from(child)
             .map_err(|_| Rejection::PiOfficeSessionDisposeBindingMismatch)?,
         correlation_identity: correlation_identity.clone(),
     })
@@ -4003,7 +4251,7 @@ fn record_pi_office_session_disposed(
     )?;
     let row: Option<PiOfficeSessionDisposeTerminalSqlRow> = transaction
         .query_row(
-            "SELECT d.child_process_id, d.pi_session_id, d.correlation_identity,
+            "SELECT d.native_child_id, d.pi_session_id, d.correlation_identity,
                 accepted.command_result_sequence, usage.protocol_sequence,
                 usage.input_tokens, usage.output_tokens, usage.cache_read_tokens,
                 usage.cache_write_tokens, usage.total_tokens, usage.provider_cost_binary64,
@@ -4205,7 +4453,7 @@ fn record_pi_office_session_disposed(
     transaction
         .execute(
             "INSERT INTO pi_office_session_dispose_receipts(
-             root_authority_office_session_id, child_process_id, pi_session_id,
+             root_authority_office_session_id, native_child_id, pi_session_id,
              correlation_identity, disposed_sequence, transcript_kind, session_file,
              session_file_digest, transcript_content_object_id, first_user_prompt_kind,
              first_user_prompt_digest, budget_disposition_kind, cancellation_request_id,
@@ -4450,7 +4698,7 @@ fn record_pi_office_turn_terminal(
         return Err(Rejection::PiOfficeTurnTerminalEvidenceMissing);
     }
     let row: Option<(i64, i64, i64, i64, i64)> = transaction.query_row(
-        "SELECT a.pi_office_turn_prompt_authorization_id, a.child_process_id, a.pi_session_id,
+        "SELECT a.pi_office_turn_prompt_authorization_id, a.native_child_id, a.pi_session_id,
                 s.operating_cycle_id, accepted.command_result_sequence
          FROM pi_office_turn_prompt_authorizations a
          JOIN office_turns t ON t.office_turn_id = a.office_turn_id
@@ -4543,7 +4791,7 @@ fn record_pi_office_turn_terminal(
     let (evidence_kind, agent_settled_sequence) =
         sql_pi_office_turn_terminal_evidence(terminal_evidence);
     transaction.execute(
-        "INSERT INTO pi_office_turn_terminal_receipts(office_turn_id, pi_office_turn_prompt_authorization_id, child_process_id, pi_session_id, correlation_identity, terminal_evidence_kind, agent_settled_sequence, final_accounting_sequence, settled_sequence, final_usage_receipt_id, final_usage_failure_id, disposition, assistant_outcome, transcript_disposition, recorded_by_command_id)
+        "INSERT INTO pi_office_turn_terminal_receipts(office_turn_id, pi_office_turn_prompt_authorization_id, native_child_id, pi_session_id, correlation_identity, terminal_evidence_kind, agent_settled_sequence, final_accounting_sequence, settled_sequence, final_usage_receipt_id, final_usage_failure_id, disposition, assistant_outcome, transcript_disposition, recorded_by_command_id)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
         params![office_turn_id.value(), authorization, child, session, correlation_identity.as_str(), evidence_kind, agent_settled_sequence, final_accounting_sequence.value(), settled_sequence.value(), usage_id.map(PiOfficeTurnUsageReceiptId::value), failure_id.map(PiOfficeTurnUsageFailureId::value), disposition as i64, assistant_outcome as i64, transcript_disposition as i64, command_row_id],
     ).map_err(|_| Rejection::PiOfficeTurnTerminalEvidenceMissing)?;
@@ -4563,7 +4811,7 @@ fn settle_office_turn(
 ) -> Result<EventBody, Rejection> {
     let row: Option<PiOfficeTurnSettlementSqlRow> = transaction.query_row(
         "SELECT t.lifecycle_state, t.root_authority_office_session_id,
-                terminal.disposition, terminal.assistant_outcome, terminal.child_process_id,
+                terminal.disposition, terminal.assistant_outcome, terminal.native_child_id,
                 terminal.pi_session_id, terminal.final_usage_receipt_id,
                 checkpoint.budget_reservation_id, usage.cumulative_ceiling_micros,
                 checkpoint.baseline_cumulative_micros
@@ -4606,9 +4854,9 @@ fn settle_office_turn(
         return Err(Rejection::PiOfficeTurnNotReconciled);
     }
     let child_is_still_live: i64 = transaction.query_row(
-        "SELECT EXISTS(SELECT 1 FROM pi_child_processes child
-          JOIN pi_child_session_protocols protocol ON protocol.child_process_id = child.child_process_id
-          WHERE child.child_process_id = ?1 AND child.lifecycle_state = ?2 AND protocol.lifecycle_state = ?3)",
+        "SELECT EXISTS(SELECT 1 FROM native_children child
+          JOIN pi_child_session_protocols protocol ON protocol.native_child_id = child.native_child_id
+          WHERE child.native_child_id = ?1 AND child.lifecycle_state = ?2 AND protocol.lifecycle_state = ?3)",
         params![row.4, ChildProcessState::Running as i64, PiChildSessionState::SessionReady as i64],
         |r| r.get(0),
     ).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
@@ -4735,7 +4983,7 @@ fn record_cycle_drained(
         || active_office_turn_count(transaction, cycle_id)? != 0
         || live_actor_attempt_count(transaction, cycle_id)? != 0
         || active_work_lease_count(transaction, cycle_id)? != 0
-        || live_pi_child_count(transaction, cycle_id)? != 0
+        || live_native_child_count(transaction, cycle_id)? != 0
     {
         return Err(Rejection::InvalidLifecycleTransition);
     }
@@ -4780,7 +5028,7 @@ fn resume_cycle(
         || active_cancellation_count(transaction, cycle_id)? != 0
         || live_actor_attempt_count(transaction, cycle_id)? != 0
         || active_work_lease_count(transaction, cycle_id)? != 0
-        || live_pi_child_count(transaction, cycle_id)? != 0
+        || live_native_child_count(transaction, cycle_id)? != 0
         // M5 has no durable workspace-disposal receipt. A physically exited
         // child therefore does not make a cycle close-eligible yet; a later
         // disposal tranche must release this intentionally conservative fence.
@@ -4845,7 +5093,7 @@ fn close_cycle(
         || active_cancellation_count(transaction, cycle_id)? != 0
         || live_actor_attempt_count(transaction, cycle_id)? != 0
         || active_work_lease_count(transaction, cycle_id)? != 0
-        || live_pi_child_count(transaction, cycle_id)? != 0
+        || live_native_child_count(transaction, cycle_id)? != 0
     {
         return Err(Rejection::IncompleteCycleReconciliation);
     }
@@ -5226,7 +5474,7 @@ fn reconcile_cancellation(
         return Err(Rejection::IncompleteCycleReconciliation);
     }
     let has_pi_child: bool = transaction.query_row(
-        "SELECT EXISTS(SELECT 1 FROM pi_child_processes p JOIN pi_child_spawn_admissions a ON a.pi_child_spawn_admission_id = p.pi_child_spawn_admission_id WHERE a.operating_cycle_id = ?1)",
+        "SELECT EXISTS(SELECT 1 FROM native_children p JOIN native_child_spawn_admissions a ON a.native_child_spawn_admission_id = p.native_child_spawn_admission_id WHERE a.operating_cycle_id = ?1)",
         [cycle_id.value()], |row| row.get::<_, i64>(0),
     ).map_err(|_| Rejection::ChildLifecycleReceiptMissing)? != 0;
     if has_pi_child {
@@ -5483,7 +5731,7 @@ fn create_project(
     project_name: &str,
     north_star_alignment: &ProjectNorthStarAlignment,
 ) -> Result<EventBody, Rejection> {
-    let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
+    let cycle = cycle_for_generation(transaction, operating_cycle_id, expected_generation)?;
     let founding_mission_application_revision_id: i64 = transaction
         .query_row(
             "SELECT application_revision_id FROM founding_missions WHERE founding_mission_id = ?1",
@@ -5631,8 +5879,8 @@ fn project_close_blocked(
         [project_id.value()], |row| row.get(0),
     ).map_err(|_| Rejection::SubjectNotFound)?;
     let live_pi_children: i64 = transaction.query_row(
-        "SELECT COUNT(*) FROM pi_child_processes p
-         JOIN pi_child_spawn_admissions s ON s.pi_child_spawn_admission_id = p.pi_child_spawn_admission_id
+        "SELECT COUNT(*) FROM native_children p
+         JOIN native_child_spawn_admissions s ON s.native_child_spawn_admission_id = p.native_child_spawn_admission_id
          JOIN attempt_budget_reservations r ON r.actor_attempt_id = s.actor_attempt_id
          WHERE r.project_id = ?1 AND p.lifecycle_state != ?2",
         params![project_id.value(), ChildProcessState::Finalized as i64], |row| row.get(0),
@@ -5642,7 +5890,7 @@ fn project_close_blocked(
     // reaps so a later receipt cannot be silently skipped.
     let undisposed_pi_workspaces: i64 = transaction
         .query_row(
-            "SELECT COUNT(*) FROM pi_child_spawn_admissions s
+            "SELECT COUNT(*) FROM native_child_spawn_admissions s
          JOIN attempt_budget_reservations r ON r.actor_attempt_id = s.actor_attempt_id
          WHERE r.project_id = ?1",
             [project_id.value()],
@@ -7226,7 +7474,7 @@ fn attest_actor_attempt_terminal(
     // invents a model outcome.
     let has_supervised_child: bool = transaction
         .query_row(
-            "SELECT EXISTS(SELECT 1 FROM pi_child_spawn_admissions WHERE actor_attempt_id = ?1)",
+            "SELECT EXISTS(SELECT 1 FROM native_child_spawn_admissions WHERE actor_attempt_id = ?1)",
             [actor_attempt_id.value()],
             |row| row.get::<_, i64>(0),
         )
@@ -7943,20 +8191,92 @@ fn admit_deterministic_evidence(
     })
 }
 
-fn close_deterministic_experiment(
+fn finalize_deterministic_experiment(
     transaction: &Transaction<'_>,
     command_row_id: i64,
     expected_generation: ExpectedGeneration,
     operating_cycle_id: OperatingCycleId,
     deterministic_experiment_id: DeterministicExperimentId,
 ) -> Result<EventBody, Rejection> {
-    let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
+    let cycle = cycle_for_generation(transaction, operating_cycle_id, expected_generation)?;
     let row: Option<(i64, i64)> = transaction.query_row("SELECT project_id, lifecycle_state FROM deterministic_experiments WHERE deterministic_experiment_id = ?1 AND operating_cycle_id = ?2", params![deterministic_experiment_id.value(), operating_cycle_id.value()], |row| Ok((row.get(0)?, row.get(1)?))).optional().map_err(|_| Rejection::SubjectNotFound)?;
     let (project, state) = row.ok_or(Rejection::SubjectNotFound)?;
-    if state != DeterministicExperimentState::EvidenceAdmitted as i64 {
+    let terminal_state = if state == DeterministicExperimentState::EvidenceAdmitted as i64 {
+        DeterministicExperimentState::Closed
+    } else if state == DeterministicExperimentState::Registered as i64 {
+        let finalized: bool = transaction.query_row(
+            "SELECT EXISTS(
+                 SELECT 1 FROM native_children child
+                 JOIN native_child_spawn_admissions admission
+                   ON admission.native_child_spawn_admission_id = child.native_child_spawn_admission_id
+                 WHERE admission.deterministic_experiment_id = ?1
+                   AND child.lifecycle_state = ?2
+             )",
+            params![deterministic_experiment_id.value(), ChildProcessState::Finalized as i64],
+            |row| row.get::<_, i64>(0),
+        ).map_err(|_| Rejection::ChildLifecycleReceiptMissing)? != 0;
+        let invalidated: bool = transaction.query_row(
+            "SELECT EXISTS(
+                 SELECT 1 FROM native_child_spawn_admissions admission
+                 JOIN native_child_spawn_invalidations invalidation
+                   ON invalidation.native_child_spawn_admission_id = admission.native_child_spawn_admission_id
+                 WHERE admission.deterministic_experiment_id = ?1
+                   AND admission.lifecycle_state = ?2
+             )",
+            params![
+                deterministic_experiment_id.value(),
+                NativeChildSpawnAdmissionState::Invalidated as i64,
+            ],
+            |row| row.get::<_, i64>(0),
+        ).map_err(|_| Rejection::ChildLifecycleReceiptMissing)? != 0;
+        if !finalized && !invalidated {
+            return Err(Rejection::EvidenceAdmissionRequired);
+        }
+        let cancelled: bool = transaction
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM cancellation_propagation_targets
+              WHERE deterministic_experiment_id = ?1 AND target_disposition IN (4, 5))
+                 OR EXISTS(
+                     SELECT 1 FROM native_child_spawn_admissions admission
+                     JOIN native_child_spawn_invalidations invalidation
+                       ON invalidation.native_child_spawn_admission_id = admission.native_child_spawn_admission_id
+                     WHERE admission.deterministic_experiment_id = ?1
+                       AND invalidation.reason = 1
+                 )",
+                [deterministic_experiment_id.value()],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(|_| Rejection::ChildLifecycleReceiptMissing)?
+            != 0;
+        if cancelled {
+            DeterministicExperimentState::Cancelled
+        } else {
+            DeterministicExperimentState::Failed
+        }
+    } else {
         return Err(Rejection::EvidenceAdmissionRequired);
+    };
+    let terminal_cycle_allowed = match terminal_state {
+        DeterministicExperimentState::Closed => cycle.state == OperatingCycleState::Running,
+        DeterministicExperimentState::Failed => matches!(
+            cycle.state,
+            OperatingCycleState::Running
+                | OperatingCycleState::Cancelling
+                | OperatingCycleState::Reaping
+        ),
+        DeterministicExperimentState::Cancelled => {
+            matches!(
+                cycle.state,
+                OperatingCycleState::Cancelling | OperatingCycleState::Reaping
+            )
+        }
+        DeterministicExperimentState::Registered
+        | DeterministicExperimentState::EvidenceAdmitted => false,
+    };
+    if !terminal_cycle_allowed {
+        return Err(Rejection::InvalidLifecycleTransition);
     }
-    transaction.execute("UPDATE deterministic_experiments SET lifecycle_state = 3, last_transition_command_id = ?1 WHERE deterministic_experiment_id = ?2", params![command_row_id, deterministic_experiment_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
+    transaction.execute("UPDATE deterministic_experiments SET lifecycle_state = ?1, last_transition_command_id = ?2 WHERE deterministic_experiment_id = ?3", params![terminal_state as i64, command_row_id, deterministic_experiment_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
     record_coordination_provenance(
         transaction,
         command_row_id,
@@ -7964,8 +8284,185 @@ fn close_deterministic_experiment(
         operating_cycle_id,
         Some(ProjectId::try_from(project).map_err(|_| Rejection::SubjectNotFound)?),
     )?;
-    Ok(EventBody::DeterministicExperimentClosed {
+    Ok(EventBody::DeterministicExperimentFinalized {
         deterministic_experiment_id,
+        terminal_state,
+    })
+}
+
+#[allow(clippy::too_many_arguments)] // mirrors the closed command body exactly at the trusted boundary.
+fn admit_deterministic_evaluator_native_child(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    operating_cycle_id: OperatingCycleId,
+    deterministic_experiment_id: DeterministicExperimentId,
+    evaluator_revision_id: EvaluatorRevisionId,
+    input_manifest_id: InputManifestId,
+    execution_profile_id: ExecutionProfileId,
+    native_workspace_id: &NativeWorkspaceId,
+    canonical_workspace_path: &CanonicalWorkspacePath,
+    supervisor_epoch_id: SupervisorEpochId,
+    supervisor_epoch_identity: &SupervisorEpochIdentity,
+) -> Result<EventBody, Rejection> {
+    let cycle = cycle_for_generation(transaction, operating_cycle_id, expected_generation)?;
+    if cycle.state != OperatingCycleState::Running
+        || cycle._treatment != OperatingCycleTreatment::DeterministicEvaluatorFixtureV1
+    {
+        return Err(Rejection::ExecutionProfileIneligible);
+    }
+    let binding: Option<(i64, i64, i64)> = transaction.query_row(
+        "SELECT evaluator_revision_id, input_manifest_id, lifecycle_state FROM deterministic_experiments
+         WHERE deterministic_experiment_id = ?1 AND operating_cycle_id = ?2",
+        params![deterministic_experiment_id.value(), operating_cycle_id.value()],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    ).optional().map_err(|_| Rejection::DeterministicExperimentBindingMismatch)?;
+    if binding
+        != Some((
+            evaluator_revision_id.value(),
+            input_manifest_id.value(),
+            DeterministicExperimentState::Registered as i64,
+        ))
+    {
+        return Err(Rejection::DeterministicExperimentBindingMismatch);
+    }
+    let profile: Option<(i64, i64)> = transaction.query_row(
+        "SELECT profile_kind, readiness FROM execution_profiles WHERE execution_profile_id = ?1",
+        [execution_profile_id.value()], |row| Ok((row.get(0)?, row.get(1)?)),
+    ).optional().map_err(|_| Rejection::ExecutionProfileIneligible)?;
+    if profile
+        != Some((
+            ExecutionProfileKind::DeterministicEvaluatorProcessFixtureV1 as i64,
+            ExecutionProfileReadiness::DeterministicFixtureOnly as i64,
+        ))
+    {
+        return Err(Rejection::ExecutionProfileIneligible);
+    }
+    let epoch_matches: bool = transaction.query_row(
+        "SELECT EXISTS(SELECT 1 FROM supervisor_epochs WHERE supervisor_epoch_id = ?1 AND supervisor_epoch_identity = ?2)",
+        params![supervisor_epoch_id.value(), supervisor_epoch_identity.as_str()], |row| row.get::<_, i64>(0),
+    ).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)? != 0;
+    if !epoch_matches {
+        return Err(Rejection::ChildSpawnAdmissionInvalid);
+    }
+    transaction.execute(
+        "INSERT OR IGNORE INTO workspaces(native_workspace_id, canonical_workspace_path, registered_by_command_id) VALUES (?1, ?2, ?3)",
+        params![native_workspace_id.as_str(), canonical_workspace_path.as_str(), command_row_id],
+    ).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
+    let workspace_id: i64 = transaction.query_row(
+        "SELECT workspace_id FROM workspaces WHERE native_workspace_id = ?1 AND canonical_workspace_path = ?2",
+        params![native_workspace_id.as_str(), canonical_workspace_path.as_str()], |row| row.get(0),
+    ).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
+    transaction.execute(
+        "INSERT INTO native_child_spawn_admissions(operating_cycle_id, actor_attempt_id, root_authority_office_session_id, deterministic_experiment_id, evaluator_revision_id, input_manifest_id, budget_reservation_id, execution_profile_id, workspace_id, supervisor_epoch_id, admission_generation, lifecycle_state, admitted_by_command_id, spawned_by_command_id)
+         VALUES (?1, NULL, NULL, ?2, ?3, ?4, NULL, ?5, ?6, ?7, ?8, 1, ?9, NULL)",
+        params![operating_cycle_id.value(), deterministic_experiment_id.value(), evaluator_revision_id.value(), input_manifest_id.value(), execution_profile_id.value(), workspace_id, supervisor_epoch_id.value(), cycle.generation.value(), command_row_id],
+    ).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
+    let admission_id = id_from_last_insert::<NativeChildSpawnAdmissionId>(transaction)?;
+    Ok(EventBody::DeterministicEvaluatorNativeChildAdmitted {
+        native_child_spawn_admission_id: admission_id,
+        owner: NativeChildOwner::DeterministicEvaluator {
+            deterministic_experiment_id,
+            evaluator_revision_id,
+            input_manifest_id,
+        },
+    })
+}
+
+fn record_deterministic_evaluator_native_child_spawn(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    _expected_generation: ExpectedGeneration,
+    admission_id: NativeChildSpawnAdmissionId,
+    child_identity: &SupervisedChildIdentity,
+    direct_child_pid: NativeChildPid,
+    process_group_id: OwnedProcessGroupId,
+) -> Result<EventBody, Rejection> {
+    // Spawn is a post-exec custody receipt. As with an inert Pi child, it
+    // remains recordable after a generation advance so a raced child cannot
+    // be orphaned; later evaluator work remains generation-fenced.
+    if direct_child_pid.value() != process_group_id.value() {
+        return Err(Rejection::ChildSpawnAdmissionInvalid);
+    }
+    let row: Option<DeterministicEvaluatorSpawnAdmissionSqlRow> = transaction
+        .query_row(
+            "SELECT admission.operating_cycle_id, admission.lifecycle_state,
+                admission.deterministic_experiment_id, admission.evaluator_revision_id,
+                admission.input_manifest_id, admission.budget_reservation_id,
+                sidecar.pi_session_id
+           FROM native_child_spawn_admissions admission
+      LEFT JOIN pi_child_spawn_sidecars sidecar
+             ON sidecar.native_child_spawn_admission_id = admission.native_child_spawn_admission_id
+          WHERE admission.native_child_spawn_admission_id = ?1",
+            [admission_id.value()],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
+    let Some((cycle, state, Some(experiment), Some(evaluator), Some(input), None, None)) = row
+    else {
+        return Err(Rejection::ChildSpawnAdmissionInvalid);
+    };
+    let _ = cycle_row(
+        transaction,
+        OperatingCycleId::try_from(cycle).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?,
+    )?;
+    if state != NativeChildSpawnAdmissionState::Admitted as i64 {
+        return Err(Rejection::InvalidLifecycleTransition);
+    }
+    let binding_matches: bool = transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM deterministic_experiments
+          WHERE deterministic_experiment_id = ?1 AND operating_cycle_id = ?2
+            AND evaluator_revision_id = ?3 AND input_manifest_id = ?4 AND lifecycle_state = 1)",
+            params![experiment, cycle, evaluator, input],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?
+        != 0;
+    if !binding_matches {
+        return Err(Rejection::ChildSpawnAdmissionInvalid);
+    }
+    transaction.execute(
+        "INSERT INTO native_children(native_child_spawn_admission_id, child_identity, direct_child_pid, process_group_id, lifecycle_state, terminal_disposition, spawned_by_command_id, last_transition_command_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?6)",
+        params![admission_id.value(), child_identity.as_str(), direct_child_pid.value(), process_group_id.value(), ChildProcessState::Spawned as i64, command_row_id],
+    ).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
+    let native_child_id = id_from_last_insert::<NativeChildId>(transaction)?;
+    transaction.execute(
+        "UPDATE native_child_spawn_admissions SET lifecycle_state = 2, spawned_by_command_id = ?1 WHERE native_child_spawn_admission_id = ?2",
+        params![command_row_id, admission_id.value()],
+    ).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
+    // A cancellation snapshot may precede the physical spawn. Attach this
+    // raced evaluator child to the exact frozen experiment target rather than
+    // pretending it belonged to an Actor or Office.
+    transaction.execute(
+        "UPDATE cancellation_propagation_targets
+            SET native_child_id = ?1, target_disposition = ?2
+          WHERE native_child_id IS NULL
+            AND deterministic_experiment_id = (SELECT deterministic_experiment_id FROM native_child_spawn_admissions WHERE native_child_spawn_admission_id = ?3)
+            AND cancellation_propagation_id IN (SELECT cancellation_propagation_id FROM cancellation_propagations WHERE lifecycle_state = 1)",
+        params![native_child_id.value(), CancellationPropagationTargetDisposition::AwaitingChildReceipt as i64, admission_id.value()],
+    ).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    transaction.execute(
+        "INSERT OR IGNORE INTO cancellation_propagation_children(cancellation_propagation_id, native_child_id)
+         SELECT cancellation_propagation_id, native_child_id FROM cancellation_propagation_targets
+          WHERE native_child_id = ?1 AND target_disposition = ?2",
+        params![native_child_id.value(), CancellationPropagationTargetDisposition::AwaitingChildReceipt as i64],
+    ).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    Ok(EventBody::DeterministicEvaluatorNativeChildSpawnRecorded {
+        native_child_id,
+        native_child_spawn_admission_id: admission_id,
     })
 }
 
@@ -8122,12 +8619,17 @@ fn admit_pi_child_spawn(
     transaction.execute("INSERT INTO pi_child_sessions(pi_session_identity, spawn_nonce, created_by_command_id, ready_by_command_id) VALUES (?1, ?2, ?3, NULL)", params![pi_session_identity.as_str(), spawn_nonce.as_str(), command_row_id]).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
     let pi_session_id = id_from_last_insert::<PiSessionId>(transaction)?;
     transaction.execute(
-        "INSERT INTO pi_child_spawn_admissions(operating_cycle_id, actor_attempt_id, root_authority_office_session_id, budget_reservation_id, execution_profile_id, workspace_id, supervisor_epoch_id, pi_session_id, admission_generation, lifecycle_state, admitted_by_command_id, spawned_by_command_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1, ?10, NULL)",
-        params![operating_cycle_id.value(), attempt.map(ActorAttemptId::value), office_session.map(RootAuthorityOfficeSessionId::value), budget_reservation_id.value(), execution_profile_id.value(), workspace_id, supervisor_epoch_id.value(), pi_session_id.value(), cycle.generation.value(), command_row_id],
+        "INSERT INTO native_child_spawn_admissions(operating_cycle_id, actor_attempt_id, root_authority_office_session_id, deterministic_experiment_id, evaluator_revision_id, input_manifest_id, budget_reservation_id, execution_profile_id, workspace_id, supervisor_epoch_id, admission_generation, lifecycle_state, admitted_by_command_id, spawned_by_command_id)
+         VALUES (?1, ?2, ?3, NULL, NULL, NULL, ?4, ?5, ?6, ?7, ?8, 1, ?9, NULL)",
+        params![operating_cycle_id.value(), attempt.map(ActorAttemptId::value), office_session.map(RootAuthorityOfficeSessionId::value), budget_reservation_id.value(), execution_profile_id.value(), workspace_id, supervisor_epoch_id.value(), cycle.generation.value(), command_row_id],
+    ).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
+    let admission_id = id_from_last_insert::<NativeChildSpawnAdmissionId>(transaction)?;
+    transaction.execute(
+        "INSERT INTO pi_child_spawn_sidecars(native_child_spawn_admission_id, pi_session_id) VALUES (?1, ?2)",
+        params![admission_id.value(), pi_session_id.value()],
     ).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
     Ok(EventBody::PiChildSpawnAdmitted {
-        pi_child_spawn_admission_id: id_from_last_insert::<PiChildSpawnAdmissionId>(transaction)?,
+        native_child_spawn_admission_id: admission_id,
         owner,
         budget_reservation_id,
     })
@@ -8135,10 +8637,10 @@ fn admit_pi_child_spawn(
 
 fn admission_cycle_for_generation(
     transaction: &Transaction<'_>,
-    admission_id: PiChildSpawnAdmissionId,
+    admission_id: NativeChildSpawnAdmissionId,
     _expected: ExpectedGeneration,
-) -> Result<(OperatingCycleId, PiChildSpawnAdmissionState), Rejection> {
-    let row: Option<(i64, i64)> = transaction.query_row("SELECT operating_cycle_id, lifecycle_state FROM pi_child_spawn_admissions WHERE pi_child_spawn_admission_id = ?1", [admission_id.value()], |r| Ok((r.get(0)?, r.get(1)?))).optional().map_err(|_| Rejection::SubjectNotFound)?;
+) -> Result<(OperatingCycleId, NativeChildSpawnAdmissionState), Rejection> {
+    let row: Option<(i64, i64)> = transaction.query_row("SELECT operating_cycle_id, lifecycle_state FROM native_child_spawn_admissions WHERE native_child_spawn_admission_id = ?1", [admission_id.value()], |r| Ok((r.get(0)?, r.get(1)?))).optional().map_err(|_| Rejection::SubjectNotFound)?;
     let Some((cycle, state)) = row else {
         return Err(Rejection::SubjectNotFound);
     };
@@ -8148,23 +8650,61 @@ fn admission_cycle_for_generation(
     // orphaned. Create authorization performs the strict generation fence.
     let _ = cycle_row(transaction, cycle_id)?;
     let state = match state {
-        1 => PiChildSpawnAdmissionState::Admitted,
-        2 => PiChildSpawnAdmissionState::Spawned,
-        3 => PiChildSpawnAdmissionState::Invalidated,
+        1 => NativeChildSpawnAdmissionState::Admitted,
+        2 => NativeChildSpawnAdmissionState::Spawned,
+        3 => NativeChildSpawnAdmissionState::Invalidated,
         _ => return Err(Rejection::SubjectNotFound),
     };
     Ok((cycle_id, state))
 }
 
+fn native_child_cycle_for_generation(
+    transaction: &Transaction<'_>,
+    native_child_id: NativeChildId,
+    _expected: ExpectedGeneration,
+) -> Result<(OperatingCycleId, ChildProcessState), Rejection> {
+    let row: Option<(i64, i64)> = transaction
+        .query_row(
+            "SELECT admission.operating_cycle_id, child.lifecycle_state
+         FROM native_children child
+         JOIN native_child_spawn_admissions admission
+           ON admission.native_child_spawn_admission_id = child.native_child_spawn_admission_id
+         WHERE child.native_child_id = ?1",
+            [native_child_id.value()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(|_| Rejection::SubjectNotFound)?;
+    let Some((cycle, state)) = row else {
+        return Err(Rejection::SubjectNotFound);
+    };
+    let cycle_id = OperatingCycleId::try_from(cycle).map_err(|_| Rejection::SubjectNotFound)?;
+    let _ = cycle_row(transaction, cycle_id)?;
+    Ok((
+        cycle_id,
+        child_process_state_from_i64(state).map_err(|_| Rejection::SubjectNotFound)?,
+    ))
+}
+
 fn child_cycle_for_generation(
     transaction: &Transaction<'_>,
-    child_process_id: ChildProcessId,
+    native_child_id: NativeChildId,
     _expected: ExpectedGeneration,
 ) -> Result<(OperatingCycleId, ChildProcessState, PiSessionId), Rejection> {
-    let row: Option<(i64, i64, i64)> = transaction.query_row(
-        "SELECT a.operating_cycle_id, c.lifecycle_state, a.pi_session_id FROM pi_child_processes c JOIN pi_child_spawn_admissions a ON a.pi_child_spawn_admission_id = c.pi_child_spawn_admission_id WHERE c.child_process_id = ?1",
-        [child_process_id.value()], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-    ).optional().map_err(|_| Rejection::SubjectNotFound)?;
+    let row: Option<(i64, i64, i64)> = transaction
+        .query_row(
+            "SELECT a.operating_cycle_id, c.lifecycle_state, sidecar.pi_session_id
+         FROM native_children c
+         JOIN native_child_spawn_admissions a
+           ON a.native_child_spawn_admission_id = c.native_child_spawn_admission_id
+         JOIN pi_child_spawn_sidecars sidecar
+           ON sidecar.native_child_spawn_admission_id = a.native_child_spawn_admission_id
+         WHERE c.native_child_id = ?1",
+            [native_child_id.value()],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .optional()
+        .map_err(|_| Rejection::SubjectNotFound)?;
     let Some((cycle, state, pi_session)) = row else {
         return Err(Rejection::SubjectNotFound);
     };
@@ -8182,14 +8722,30 @@ fn record_inert_child_spawn(
     transaction: &Transaction<'_>,
     command_row_id: i64,
     expected: ExpectedGeneration,
-    admission_id: PiChildSpawnAdmissionId,
+    admission_id: NativeChildSpawnAdmissionId,
     child_identity: &SupervisedChildIdentity,
     direct_child_pid: NativeChildPid,
     process_group_id: OwnedProcessGroupId,
 ) -> Result<EventBody, Rejection> {
     let (_, state) = admission_cycle_for_generation(transaction, admission_id, expected)?;
-    if state != PiChildSpawnAdmissionState::Admitted {
+    if state != NativeChildSpawnAdmissionState::Admitted {
         return Err(Rejection::InvalidLifecycleTransition);
+    }
+    let pi_owner: bool = transaction.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM native_child_spawn_admissions admission
+             JOIN pi_child_spawn_sidecars sidecar
+               ON sidecar.native_child_spawn_admission_id = admission.native_child_spawn_admission_id
+             WHERE admission.native_child_spawn_admission_id = ?1
+               AND admission.deterministic_experiment_id IS NULL
+               AND admission.budget_reservation_id IS NOT NULL
+               AND ((admission.actor_attempt_id IS NOT NULL AND admission.root_authority_office_session_id IS NULL)
+                 OR (admission.actor_attempt_id IS NULL AND admission.root_authority_office_session_id IS NOT NULL))
+         )",
+        [admission_id.value()], |row| row.get::<_, i64>(0),
+    ).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)? != 0;
+    if !pi_owner {
+        return Err(Rejection::ChildSpawnAdmissionInvalid);
     }
     if direct_child_pid.value() != process_group_id.value() {
         return Err(Rejection::ChildSpawnAdmissionInvalid);
@@ -8197,7 +8753,7 @@ fn record_inert_child_spawn(
     let identity_in_use: bool = transaction
         .query_row(
             "SELECT EXISTS(
-           SELECT 1 FROM pi_child_processes
+           SELECT 1 FROM native_children
             WHERE lifecycle_state != ?1
               AND (direct_child_pid = ?2 OR process_group_id = ?3))",
             params![
@@ -8212,59 +8768,79 @@ fn record_inert_child_spawn(
     if identity_in_use {
         return Err(Rejection::ChildSpawnAdmissionInvalid);
     }
-    transaction.execute("INSERT INTO pi_child_processes(pi_child_spawn_admission_id, child_identity, direct_child_pid, process_group_id, lifecycle_state, terminal_disposition, spawned_by_command_id, last_transition_command_id) VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?6)", params![admission_id.value(), child_identity.as_str(), direct_child_pid.value(), process_group_id.value(), ChildProcessState::Spawned as i64, command_row_id]).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
-    let child_process_id = id_from_last_insert::<ChildProcessId>(transaction)?;
-    transaction.execute("INSERT INTO pi_child_session_protocols(child_process_id, lifecycle_state, create_correlation_identity, create_request_digest) VALUES (?1, 1, NULL, NULL)", [child_process_id.value()]).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
-    transaction.execute("UPDATE pi_child_spawn_admissions SET lifecycle_state = 2, spawned_by_command_id = ?1 WHERE pi_child_spawn_admission_id = ?2", params![command_row_id, admission_id.value()]).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
+    transaction.execute("INSERT INTO native_children(native_child_spawn_admission_id, child_identity, direct_child_pid, process_group_id, lifecycle_state, terminal_disposition, spawned_by_command_id, last_transition_command_id) VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?6)", params![admission_id.value(), child_identity.as_str(), direct_child_pid.value(), process_group_id.value(), ChildProcessState::Spawned as i64, command_row_id]).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
+    let native_child_id = id_from_last_insert::<NativeChildId>(transaction)?;
+    transaction.execute("INSERT INTO pi_child_session_protocols(native_child_id, lifecycle_state, create_correlation_identity, create_request_digest) VALUES (?1, 1, NULL, NULL)", [native_child_id.value()]).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
+    transaction.execute("UPDATE native_child_spawn_admissions SET lifecycle_state = 2, spawned_by_command_id = ?1 WHERE native_child_spawn_admission_id = ?2", params![command_row_id, admission_id.value()]).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
     // A cancellation snapshot may have observed this owner before the OS
     // child raced into existence. Attach that raced child to the already
     // frozen owner target rather than omitting it from propagation.
     transaction.execute(
         "UPDATE cancellation_propagation_targets
-            SET child_process_id = ?1, target_disposition = ?2
-          WHERE child_process_id IS NULL
+            SET native_child_id = ?1, target_disposition = ?2
+          WHERE native_child_id IS NULL
             AND cancellation_propagation_id IN (
                 SELECT p.cancellation_propagation_id
                   FROM cancellation_propagations p
-                  JOIN pi_child_spawn_admissions a
-                    ON a.pi_child_spawn_admission_id = ?3
+                  JOIN native_child_spawn_admissions a
+                    ON a.native_child_spawn_admission_id = ?3
                  WHERE p.operating_cycle_id = a.operating_cycle_id
                    AND p.lifecycle_state = 1)
-            AND (actor_attempt_id = (SELECT actor_attempt_id FROM pi_child_spawn_admissions WHERE pi_child_spawn_admission_id = ?3)
-              OR root_authority_office_session_id = (SELECT root_authority_office_session_id FROM pi_child_spawn_admissions WHERE pi_child_spawn_admission_id = ?3))",
+            AND (actor_attempt_id = (SELECT actor_attempt_id FROM native_child_spawn_admissions WHERE native_child_spawn_admission_id = ?3)
+              OR root_authority_office_session_id = (SELECT root_authority_office_session_id FROM native_child_spawn_admissions WHERE native_child_spawn_admission_id = ?3))",
         params![
-            child_process_id.value(),
+            native_child_id.value(),
             CancellationPropagationTargetDisposition::AwaitingChildReceipt as i64,
             admission_id.value(),
         ],
     ).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
     transaction.execute(
-        "INSERT OR IGNORE INTO cancellation_propagation_children(cancellation_propagation_id, child_process_id)
+        "INSERT OR IGNORE INTO cancellation_propagation_children(cancellation_propagation_id, native_child_id)
          SELECT cancellation_propagation_id, ?1
            FROM cancellation_propagation_targets
-          WHERE child_process_id = ?1
+          WHERE native_child_id = ?1
             AND target_disposition = ?2",
         params![
-            child_process_id.value(),
+            native_child_id.value(),
             CancellationPropagationTargetDisposition::AwaitingChildReceipt as i64,
         ],
     ).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
     Ok(EventBody::InertPiChildSpawnRecorded {
-        child_process_id,
-        pi_child_spawn_admission_id: admission_id,
+        native_child_id,
+        native_child_spawn_admission_id: admission_id,
     })
 }
 
-fn record_pi_child_not_spawned(
+fn record_native_child_not_spawned(
     transaction: &Transaction<'_>,
     command_row_id: i64,
     expected: ExpectedGeneration,
-    admission_id: PiChildSpawnAdmissionId,
-    reason: PiChildNotSpawnedReason,
+    admission_id: NativeChildSpawnAdmissionId,
+    reason: NativeChildNotSpawnedReason,
 ) -> Result<EventBody, Rejection> {
+    let native_owner: bool = transaction.query_row(
+        "SELECT EXISTS(SELECT 1 FROM native_child_spawn_admissions admission
+          WHERE admission.native_child_spawn_admission_id = ?1
+            AND ((admission.deterministic_experiment_id IS NULL
+                  AND admission.evaluator_revision_id IS NULL
+                  AND admission.input_manifest_id IS NULL
+                  AND admission.budget_reservation_id IS NOT NULL
+                  AND EXISTS(SELECT 1 FROM pi_child_spawn_sidecars sidecar
+                               WHERE sidecar.native_child_spawn_admission_id = admission.native_child_spawn_admission_id))
+              OR (admission.deterministic_experiment_id IS NOT NULL
+                  AND admission.evaluator_revision_id IS NOT NULL
+                  AND admission.input_manifest_id IS NOT NULL
+                  AND admission.budget_reservation_id IS NULL
+                  AND NOT EXISTS(SELECT 1 FROM pi_child_spawn_sidecars sidecar
+                                  WHERE sidecar.native_child_spawn_admission_id = admission.native_child_spawn_admission_id))))",
+        [admission_id.value()], |row| row.get::<_, i64>(0),
+    ).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)? != 0;
+    if !native_owner {
+        return Err(Rejection::ChildSpawnAdmissionInvalid);
+    }
     let (cycle_id, state) = admission_cycle_for_generation(transaction, admission_id, expected)?;
     let _ = cycle_for_generation(transaction, cycle_id, expected)?;
-    if state != PiChildSpawnAdmissionState::Admitted {
+    if state != NativeChildSpawnAdmissionState::Admitted {
         return Err(Rejection::InvalidLifecycleTransition);
     }
     // A pre-spawn failure is meaningful even before cancellation. If an
@@ -8277,10 +8853,11 @@ fn record_pi_child_not_spawned(
           WHERE cancellation_propagation_id IN (
                 SELECT cancellation_propagation_id FROM cancellation_propagations
                  WHERE operating_cycle_id = ?2 AND lifecycle_state = 1)
-            AND child_process_id IS NULL
+            AND native_child_id IS NULL
             AND target_disposition = ?3
-            AND (actor_attempt_id = (SELECT actor_attempt_id FROM pi_child_spawn_admissions WHERE pi_child_spawn_admission_id = ?4)
-              OR root_authority_office_session_id = (SELECT root_authority_office_session_id FROM pi_child_spawn_admissions WHERE pi_child_spawn_admission_id = ?4))",
+            AND (actor_attempt_id = (SELECT actor_attempt_id FROM native_child_spawn_admissions WHERE native_child_spawn_admission_id = ?4)
+              OR root_authority_office_session_id = (SELECT root_authority_office_session_id FROM native_child_spawn_admissions WHERE native_child_spawn_admission_id = ?4)
+              OR deterministic_experiment_id = (SELECT deterministic_experiment_id FROM native_child_spawn_admissions WHERE native_child_spawn_admission_id = ?4))",
         params![
             CancellationPropagationTargetDisposition::NotRunning as i64,
             cycle_id.value(),
@@ -8291,24 +8868,27 @@ fn record_pi_child_not_spawned(
     if targets > 1 {
         return Err(Rejection::CancellationPropagationIncomplete);
     }
+    if reason == NativeChildNotSpawnedReason::CancelledBeforeSpawn && targets != 1 {
+        return Err(Rejection::InvalidLifecycleTransition);
+    }
     transaction
         .execute(
-            "UPDATE pi_child_spawn_admissions
+            "UPDATE native_child_spawn_admissions
             SET lifecycle_state = ?1
-          WHERE pi_child_spawn_admission_id = ?2",
+          WHERE native_child_spawn_admission_id = ?2",
             params![
-                PiChildSpawnAdmissionState::Invalidated as i64,
+                NativeChildSpawnAdmissionState::Invalidated as i64,
                 admission_id.value()
             ],
         )
         .map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
     transaction.execute(
-        "INSERT INTO pi_child_spawn_invalidations(pi_child_spawn_admission_id, reason, invalidated_by_command_id)
+        "INSERT INTO native_child_spawn_invalidations(native_child_spawn_admission_id, reason, invalidated_by_command_id)
          VALUES (?1, ?2, ?3)",
         params![admission_id.value(), reason as i64, command_row_id],
     ).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
-    Ok(EventBody::PiChildSpawnInvalidated {
-        pi_child_spawn_admission_id: admission_id,
+    Ok(EventBody::NativeChildSpawnInvalidated {
+        native_child_spawn_admission_id: admission_id,
         reason,
     })
 }
@@ -8317,7 +8897,7 @@ fn record_pi_adapter_ready(
     transaction: &Transaction<'_>,
     _command_row_id: i64,
     expected: ExpectedGeneration,
-    child_id: ChildProcessId,
+    child_id: NativeChildId,
     identity: &PiBoundarySessionIdentity,
     nonce: &SpawnNonce,
 ) -> Result<EventBody, Rejection> {
@@ -8335,7 +8915,7 @@ fn record_pi_adapter_ready(
     }
     set_pi_protocol_state(transaction, child_id, PiChildSessionState::AdapterReady)?;
     Ok(EventBody::PiAdapterReadyRecorded {
-        child_process_id: child_id,
+        native_child_id: child_id,
         pi_session_id,
     })
 }
@@ -8344,7 +8924,7 @@ fn authorize_pi_create_session(
     transaction: &Transaction<'_>,
     _command_row_id: i64,
     expected: ExpectedGeneration,
-    child_id: ChildProcessId,
+    child_id: NativeChildId,
     correlation: &PiCorrelationIdentity,
     create_request_digest: Blake3Digest,
 ) -> Result<EventBody, Rejection> {
@@ -8352,9 +8932,9 @@ fn authorize_pi_create_session(
     let cycle = cycle_for_generation(transaction, cycle_id, expected)?;
     let admission: (i64, i64, i64, Option<i64>, Option<i64>, i64, i64) = transaction.query_row(
         "SELECT a.admission_generation, a.budget_reservation_id, a.execution_profile_id, a.actor_attempt_id, a.root_authority_office_session_id, p.profile_kind, p.readiness
-           FROM pi_child_processes c JOIN pi_child_spawn_admissions a ON a.pi_child_spawn_admission_id = c.pi_child_spawn_admission_id
+           FROM native_children c JOIN native_child_spawn_admissions a ON a.native_child_spawn_admission_id = c.native_child_spawn_admission_id
            JOIN execution_profiles p ON p.execution_profile_id = a.execution_profile_id
-          WHERE c.child_process_id = ?1",
+          WHERE c.native_child_id = ?1",
         [child_id.value()], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?)),
     ).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
     if state != ChildProcessState::Spawned
@@ -8386,9 +8966,9 @@ fn authorize_pi_create_session(
     if !profile_allowed {
         return Err(Rejection::ExecutionProfileIneligible);
     }
-    transaction.execute("UPDATE pi_child_session_protocols SET lifecycle_state = ?1, create_correlation_identity = ?2, create_request_digest = ?3 WHERE child_process_id = ?4", params![PiChildSessionState::CreateAuthorized as i64, correlation.as_str(), create_request_digest.as_bytes().as_slice(), child_id.value()]).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    transaction.execute("UPDATE pi_child_session_protocols SET lifecycle_state = ?1, create_correlation_identity = ?2, create_request_digest = ?3 WHERE native_child_id = ?4", params![PiChildSessionState::CreateAuthorized as i64, correlation.as_str(), create_request_digest.as_bytes().as_slice(), child_id.value()]).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
     Ok(EventBody::PiCreateSessionAuthorized {
-        child_process_id: child_id,
+        native_child_id: child_id,
     })
 }
 
@@ -8396,12 +8976,12 @@ fn record_pi_create_session_delivery(
     transaction: &Transaction<'_>,
     _command_row_id: i64,
     expected: ExpectedGeneration,
-    child_id: ChildProcessId,
+    child_id: NativeChildId,
     correlation: &PiCorrelationIdentity,
     create_request_digest: Blake3Digest,
 ) -> Result<EventBody, Rejection> {
     let (_, state, _) = child_cycle_for_generation(transaction, child_id, expected)?;
-    let matches: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM pi_child_session_protocols WHERE child_process_id = ?1 AND lifecycle_state = ?2 AND create_correlation_identity = ?3 AND create_request_digest = ?4)", params![child_id.value(), PiChildSessionState::CreateAuthorized as i64, correlation.as_str(), create_request_digest.as_bytes().as_slice()], |r| r.get::<_, i64>(0)).map_err(|_| Rejection::ChildLifecycleReceiptMissing)? != 0;
+    let matches: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM pi_child_session_protocols WHERE native_child_id = ?1 AND lifecycle_state = ?2 AND create_correlation_identity = ?3 AND create_request_digest = ?4)", params![child_id.value(), PiChildSessionState::CreateAuthorized as i64, correlation.as_str(), create_request_digest.as_bytes().as_slice()], |r| r.get::<_, i64>(0)).map_err(|_| Rejection::ChildLifecycleReceiptMissing)? != 0;
     if !matches!(
         state,
         ChildProcessState::Spawned | ChildProcessState::CancellationRequested
@@ -8411,7 +8991,7 @@ fn record_pi_create_session_delivery(
     }
     set_pi_protocol_state(transaction, child_id, PiChildSessionState::CreateDelivered)?;
     Ok(EventBody::PiCreateSessionDeliveryRecorded {
-        child_process_id: child_id,
+        native_child_id: child_id,
     })
 }
 
@@ -8419,7 +8999,7 @@ fn record_pi_session_ready(
     transaction: &Transaction<'_>,
     command_row_id: i64,
     expected: ExpectedGeneration,
-    child_id: ChildProcessId,
+    child_id: NativeChildId,
     identity: &PiBoundarySessionIdentity,
 ) -> Result<EventBody, Rejection> {
     let (_, state, pi_session_id) = child_cycle_for_generation(transaction, child_id, expected)?;
@@ -8450,7 +9030,7 @@ fn record_pi_session_ready(
         )?;
     }
     Ok(EventBody::PiSessionReadyRecorded {
-        child_process_id: child_id,
+        native_child_id: child_id,
         pi_session_id,
     })
 }
@@ -8482,7 +9062,7 @@ fn record_pi_abort_control_delivery(
            SELECT 1 FROM cancellation_propagation_targets t
            JOIN cancellation_propagations p ON p.cancellation_propagation_id = t.cancellation_propagation_id
           WHERE t.cancellation_propagation_id = ?1
-            AND t.child_process_id = ?2
+            AND t.native_child_id = ?2
             AND t.target_disposition = ?3
             AND p.lifecycle_state = 1)",
         params![propagation_id.value(), child_id.value(), CancellationPropagationTargetDisposition::AwaitingChildReceipt as i64],
@@ -8492,13 +9072,13 @@ fn record_pi_abort_control_delivery(
         return Err(Rejection::CancellationPropagationIncomplete);
     }
     transaction.execute(
-        "INSERT INTO pi_abort_control_receipts(child_process_id, cancellation_propagation_id, correlation_identity, abort_command_digest, physical_write_outcome, recorded_by_command_id)
+        "INSERT INTO pi_abort_control_receipts(native_child_id, cancellation_propagation_id, correlation_identity, abort_command_digest, physical_write_outcome, recorded_by_command_id)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         params![child_id.value(), propagation_id.value(), correlation.as_str(), abort_digest.as_bytes().as_slice(), outcome as i64, command_row_id],
     ).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
     Ok(EventBody::PiAbortControlDeliveryRecorded {
         pi_abort_control_receipt_id: id_from_last_insert::<PiAbortControlReceiptId>(transaction)?,
-        child_process_id: child_id,
+        native_child_id: child_id,
         cancellation_propagation_id: propagation_id,
         correlation_identity: correlation.clone(),
         abort_command_digest: abort_digest,
@@ -8519,13 +9099,35 @@ fn record_child_stream_seal(
         retained,
         completeness,
     } = input;
-    let (_, state, _) = child_cycle_for_generation(transaction, child_id, expected)?;
+    let (_, state) = native_child_cycle_for_generation(transaction, child_id, expected)?;
     if matches!(
         state,
         ChildProcessState::Finalized
             | ChildProcessState::RecoveryContainmentRequired
             | ChildProcessState::LostParentage
     ) {
+        return Err(Rejection::InvalidLifecycleTransition);
+    }
+    let evaluator_owned: bool = transaction.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM native_children child
+             JOIN native_child_spawn_admissions admission
+               ON admission.native_child_spawn_admission_id = child.native_child_spawn_admission_id
+             WHERE child.native_child_id = ?1
+               AND admission.deterministic_experiment_id IS NOT NULL
+               AND admission.evaluator_revision_id IS NOT NULL
+               AND admission.input_manifest_id IS NOT NULL
+               AND admission.budget_reservation_id IS NULL
+               AND NOT EXISTS(SELECT 1 FROM pi_child_spawn_sidecars sidecar
+                              WHERE sidecar.native_child_spawn_admission_id = admission.native_child_spawn_admission_id)
+         )",
+        [child_id.value()],
+        |row| row.get::<_, i64>(0),
+    ).map_err(|_| Rejection::ChildLifecycleReceiptMissing)? != 0;
+    if evaluator_owned
+        && (state != ChildProcessState::DirectChildReaped
+            || !matches!(stream, ChildStreamKind::Stdout | ChildStreamKind::Stderr))
+    {
         return Err(Rejection::InvalidLifecycleTransition);
     }
     let retained_digest: Option<Vec<u8>> = transaction.query_row("SELECT r.digest FROM content_objects o JOIN content_seal_receipts r ON r.content_seal_receipt_id = o.content_seal_receipt_id WHERE o.content_object_id = ?1", [retained.value()], |r| r.get(0)).optional().map_err(|_| Rejection::ContentObjectNotSealed)?;
@@ -8537,14 +9139,14 @@ fn record_child_stream_seal(
     {
         return Err(Rejection::ChildStreamSealBindingMismatch);
     }
-    transaction.execute("INSERT INTO child_stream_seals(child_process_id, stream_kind, full_observed_digest, retained_content_object_id, completeness, sealed_by_command_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![child_id.value(), stream as i64, full_digest.as_bytes().as_slice(), retained.value(), completeness as i64, command_row_id]).map_err(|_| Rejection::ChildStreamSealBindingMismatch)?;
-    let seal_id = id_from_last_insert::<ChildStreamSealId>(transaction)?;
+    transaction.execute("INSERT INTO native_child_stream_seals(native_child_id, stream_kind, full_observed_digest, retained_content_object_id, completeness, sealed_by_command_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![child_id.value(), stream as i64, full_digest.as_bytes().as_slice(), retained.value(), completeness as i64, command_row_id]).map_err(|_| Rejection::ChildStreamSealBindingMismatch)?;
+    let seal_id = id_from_last_insert::<NativeChildStreamSealId>(transaction)?;
     if completeness == ChildStreamSealCompleteness::CountOverflow {
         mark_child_containment_failed(transaction, child_id, command_row_id)?;
     }
     Ok(EventBody::ChildStreamSealed {
-        child_stream_seal_id: seal_id,
-        child_process_id: child_id,
+        native_child_stream_seal_id: seal_id,
+        native_child_id: child_id,
         stream_kind: stream,
         completeness,
     })
@@ -8554,10 +9156,10 @@ fn record_child_process_liveness(
     transaction: &Transaction<'_>,
     command_row_id: i64,
     expected: ExpectedGeneration,
-    child_id: ChildProcessId,
+    child_id: NativeChildId,
     liveness: ProcessGroupLiveness,
 ) -> Result<EventBody, Rejection> {
-    let (_, state, _) = child_cycle_for_generation(transaction, child_id, expected)?;
+    let (_, state) = native_child_cycle_for_generation(transaction, child_id, expected)?;
     if state.is_terminal() {
         return Err(Rejection::InvalidLifecycleTransition);
     }
@@ -8567,11 +9169,11 @@ fn record_child_process_liveness(
         return Err(Rejection::InvalidLifecycleTransition);
     }
     let liveness_regressed = liveness_is_reuse_conflict(transaction, child_id, liveness)?;
-    transaction.execute("INSERT INTO child_process_liveness_observations(child_process_id, liveness, observed_by_command_id) VALUES (?1, ?2, ?3)", params![child_id.value(), liveness as i64, command_row_id]).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    transaction.execute("INSERT INTO native_child_liveness_observations(native_child_id, liveness, observed_by_command_id) VALUES (?1, ?2, ?3)", params![child_id.value(), liveness as i64, command_row_id]).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
     // Preserve the receipt identity before a containment transition performs
     // any material-row update. The event must name the physical observation,
     // never an incidental later SQLite row identity.
-    let observation_id = id_from_last_insert::<ChildProcessLivenessObservationId>(transaction)?;
+    let observation_id = id_from_last_insert::<NativeChildLivenessObservationId>(transaction)?;
     if liveness == ProcessGroupLiveness::Inaccessible || liveness_regressed {
         mark_child_containment_failed(transaction, child_id, command_row_id)?;
     } else if state == ChildProcessState::RecoveryContainmentRequired
@@ -8579,10 +9181,10 @@ fn record_child_process_liveness(
     {
         transaction
             .execute(
-                "UPDATE pi_child_processes
+                "UPDATE native_children
                 SET lifecycle_state = ?1, terminal_disposition = ?2,
                     last_transition_command_id = ?3
-              WHERE child_process_id = ?4 AND lifecycle_state = ?5",
+              WHERE native_child_id = ?4 AND lifecycle_state = ?5",
                 params![
                     ChildProcessState::LostParentage as i64,
                     ChildTerminalDisposition::SupervisionLost as i64,
@@ -8594,8 +9196,8 @@ fn record_child_process_liveness(
             .map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
     }
     Ok(EventBody::ChildProcessLivenessObserved {
-        child_process_liveness_observation_id: observation_id,
-        child_process_id: child_id,
+        native_child_liveness_observation_id: observation_id,
+        native_child_id: child_id,
         liveness,
     })
 }
@@ -8631,11 +9233,13 @@ fn record_process_signal_receipt(
     ) {
         return Err(Rejection::ChildLifecycleReceiptMissing);
     }
-    let (_, state, _) = child_cycle_for_generation(transaction, child_id, expected)?;
+    let (_, state) = native_child_cycle_for_generation(transaction, child_id, expected)?;
     if state.is_terminal() {
         return Err(Rejection::InvalidLifecycleTransition);
     }
-    let protocol_state = pi_protocol_state(transaction, child_id)?;
+    // Native custody is shared.  Only a Pi-sidecar child owes an Abort write
+    // before TERM; a deterministic evaluator has no fabricated Pi identity.
+    let protocol_state = pi_protocol_state(transaction, child_id).ok();
     let (cause_kind, propagation_id) = match cause {
         ProcessSignalCause::CancellationPropagation(propagation_id) => {
             // A cancellation signal is legal only after the durable target
@@ -8649,7 +9253,7 @@ fn record_process_signal_receipt(
                    JOIN cancellation_propagations p
                      ON p.cancellation_propagation_id = t.cancellation_propagation_id
                   WHERE t.cancellation_propagation_id = ?1
-                    AND t.child_process_id = ?2
+                    AND t.native_child_id = ?2
                     AND t.target_disposition = ?3
                     AND p.lifecycle_state = 1)",
                     params![
@@ -8672,7 +9276,7 @@ fn record_process_signal_receipt(
                     // attempt, never an OS-signal lookalike. The nonblocking
                     // host may have discarded a partial/failed write; that
                     // still authorizes containment escalation, not success.
-                    if protocol_state == PiChildSessionState::SessionReady
+                    if protocol_state == Some(PiChildSessionState::SessionReady)
                         && !prior_pi_abort_control_attempt(transaction, child_id, propagation_id)?
                     {
                         return Err(Rejection::CancellationPropagationIncomplete);
@@ -8730,7 +9334,7 @@ fn record_process_signal_receipt(
         }
     };
     let liveness_regressed = liveness_is_reuse_conflict(transaction, child_id, liveness)?;
-    transaction.execute("INSERT INTO process_signal_receipts(child_process_id, signal_action, delivery, observed_liveness, cause_kind, cancellation_propagation_id, recorded_by_command_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)", params![child_id.value(), action as i64, delivery as i64, liveness as i64, cause_kind, propagation_id, command_row_id]).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    transaction.execute("INSERT INTO process_signal_receipts(native_child_id, signal_action, delivery, observed_liveness, cause_kind, cancellation_propagation_id, recorded_by_command_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)", params![child_id.value(), action as i64, delivery as i64, liveness as i64, cause_kind, propagation_id, command_row_id]).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
     if delivery == ProcessSignalDelivery::Delivered
         && matches!(
             state,
@@ -8757,10 +9361,10 @@ fn record_process_signal_receipt(
         // parentage no longer leaves a live process group to contain.
         transaction
             .execute(
-                "UPDATE pi_child_processes
+                "UPDATE native_children
                     SET lifecycle_state = ?1, terminal_disposition = ?2,
                         last_transition_command_id = ?3
-                  WHERE child_process_id = ?4 AND lifecycle_state = ?5",
+                  WHERE native_child_id = ?4 AND lifecycle_state = ?5",
                 params![
                     ChildProcessState::LostParentage as i64,
                     ChildTerminalDisposition::SupervisionLost as i64,
@@ -8773,7 +9377,7 @@ fn record_process_signal_receipt(
     }
     Ok(EventBody::ProcessSignalReceiptRecorded {
         process_signal_receipt_id: id_from_last_insert::<ProcessSignalReceiptId>(transaction)?,
-        child_process_id: child_id,
+        native_child_id: child_id,
         action,
         delivery,
         observed_liveness: liveness,
@@ -8783,7 +9387,7 @@ fn record_process_signal_receipt(
 
 fn prior_signal_attempt(
     transaction: &Transaction<'_>,
-    child_id: ChildProcessId,
+    child_id: NativeChildId,
     action: ProcessSignalAction,
     cause_kind: i64,
     propagation_id: Option<CancellationPropagationId>,
@@ -8792,7 +9396,7 @@ fn prior_signal_attempt(
         .query_row(
             "SELECT EXISTS(
            SELECT 1 FROM process_signal_receipts
-            WHERE child_process_id = ?1
+            WHERE native_child_id = ?1
               AND signal_action = ?2
               AND cause_kind = ?3
               AND cancellation_propagation_id IS ?4)",
@@ -8810,14 +9414,14 @@ fn prior_signal_attempt(
 
 fn prior_pi_abort_control_attempt(
     transaction: &Transaction<'_>,
-    child_id: ChildProcessId,
+    child_id: NativeChildId,
     propagation_id: CancellationPropagationId,
 ) -> Result<bool, Rejection> {
     transaction
         .query_row(
             "SELECT EXISTS(
                SELECT 1 FROM pi_abort_control_receipts
-                WHERE child_process_id = ?1
+                WHERE native_child_id = ?1
                   AND cancellation_propagation_id = ?2
                  )",
             params![child_id.value(), propagation_id.value(),],
@@ -8832,7 +9436,7 @@ fn prior_pi_abort_control_attempt(
 /// not an invalid caller request that may simply disappear from the ledger.
 fn liveness_is_reuse_conflict(
     transaction: &Transaction<'_>,
-    child_id: ChildProcessId,
+    child_id: NativeChildId,
     liveness: ProcessGroupLiveness,
 ) -> Result<bool, Rejection> {
     if liveness == ProcessGroupLiveness::Absent {
@@ -8840,9 +9444,9 @@ fn liveness_is_reuse_conflict(
     }
     transaction.query_row(
         "SELECT EXISTS(
-            SELECT 1 FROM child_process_liveness_observations WHERE child_process_id = ?1 AND liveness = 2
-            UNION ALL SELECT 1 FROM process_signal_receipts WHERE child_process_id = ?1 AND observed_liveness = 2
-            UNION ALL SELECT 1 FROM child_process_reap_receipts WHERE child_process_id = ?1 AND (group_liveness_before_cleanup = 2 OR group_liveness_after_cleanup = 2)
+            SELECT 1 FROM native_child_liveness_observations WHERE native_child_id = ?1 AND liveness = 2
+            UNION ALL SELECT 1 FROM process_signal_receipts WHERE native_child_id = ?1 AND observed_liveness = 2
+            UNION ALL SELECT 1 FROM native_child_reap_receipts WHERE native_child_id = ?1 AND (group_liveness_before_cleanup = 2 OR group_liveness_after_cleanup = 2)
         )",
         [child_id.value()],
         |row| row.get::<_, i64>(0),
@@ -8851,14 +9455,14 @@ fn liveness_is_reuse_conflict(
 
 fn lingering_group_cleanup_is_due(
     transaction: &Transaction<'_>,
-    child_id: ChildProcessId,
+    child_id: NativeChildId,
 ) -> Result<bool, Rejection> {
     transaction
         .query_row(
             "SELECT EXISTS(
-           SELECT 1 FROM pi_child_processes c
-           JOIN child_process_reap_receipts r ON r.child_process_id = c.child_process_id
-          WHERE c.child_process_id = ?1
+           SELECT 1 FROM native_children c
+           JOIN native_child_reap_receipts r ON r.native_child_id = c.native_child_id
+          WHERE c.native_child_id = ?1
             AND c.lifecycle_state = ?2
             AND r.group_liveness_after_cleanup = ?3)",
             params![
@@ -8876,12 +9480,12 @@ fn record_direct_child_reap(
     transaction: &Transaction<'_>,
     command_row_id: i64,
     expected: ExpectedGeneration,
-    child_id: ChildProcessId,
+    child_id: NativeChildId,
     status: DirectChildWaitStatus,
     before: ProcessGroupLiveness,
     after: ProcessGroupLiveness,
 ) -> Result<EventBody, Rejection> {
-    let (_, state, _) = child_cycle_for_generation(transaction, child_id, expected)?;
+    let (_, state) = native_child_cycle_for_generation(transaction, child_id, expected)?;
     if matches!(
         state,
         ChildProcessState::Finalized
@@ -8900,7 +9504,7 @@ fn record_direct_child_reap(
         }
         DirectChildWaitStatus::Unknown => (3, None),
     };
-    transaction.execute("INSERT INTO child_process_reap_receipts(child_process_id, wait_status_kind, status_value, group_liveness_before_cleanup, group_liveness_after_cleanup, reaped_by_command_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![child_id.value(), kind, value, before as i64, after as i64, command_row_id]).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    transaction.execute("INSERT INTO native_child_reap_receipts(native_child_id, wait_status_kind, status_value, group_liveness_before_cleanup, group_liveness_after_cleanup, reaped_by_command_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![child_id.value(), kind, value, before as i64, after as i64, command_row_id]).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
     // A wait(2) only proves the direct child. Descendants which remain present
     // or inaccessible after cleanup are a durable containment failure, not a
     // close-eligible finalization. We preserve the wait receipt for audit.
@@ -8915,10 +9519,8 @@ fn record_direct_child_reap(
         )?;
     }
     Ok(EventBody::DirectChildReaped {
-        child_process_reap_receipt_id: id_from_last_insert::<ChildProcessReapReceiptId>(
-            transaction,
-        )?,
-        child_process_id: child_id,
+        native_child_reap_receipt_id: id_from_last_insert::<NativeChildReapReceiptId>(transaction)?,
+        native_child_id: child_id,
         wait_status: status,
         group_liveness_before_cleanup: before,
         group_liveness_after_cleanup: after,
@@ -8929,11 +9531,11 @@ fn record_child_recovery(
     transaction: &Transaction<'_>,
     command_row_id: i64,
     expected: ExpectedGeneration,
-    child_id: ChildProcessId,
+    child_id: NativeChildId,
     observation: ChildRecoveryObservation,
     group_liveness_after_restart: ProcessGroupLiveness,
 ) -> Result<EventBody, Rejection> {
-    let (_, state, _) = child_cycle_for_generation(transaction, child_id, expected)?;
+    let (_, state) = native_child_cycle_for_generation(transaction, child_id, expected)?;
     // Containment failure is an immutable close blocker in M5. A later
     // restart observation cannot down-classify a known descendant/liveness
     // failure into merely lost parentage.
@@ -8949,15 +9551,15 @@ fn record_child_recovery(
     }
     let liveness_regressed =
         liveness_is_reuse_conflict(transaction, child_id, group_liveness_after_restart)?;
-    transaction.execute("INSERT INTO child_process_recovery_receipts(child_process_id, observation, group_liveness_after_restart, recorded_by_command_id) VALUES (?1, ?2, ?3, ?4)", params![child_id.value(), observation as i64, group_liveness_after_restart as i64, command_row_id]).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    transaction.execute("INSERT INTO native_child_recovery_receipts(native_child_id, observation, group_liveness_after_restart, recorded_by_command_id) VALUES (?1, ?2, ?3, ?4)", params![child_id.value(), observation as i64, group_liveness_after_restart as i64, command_row_id]).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
     match group_liveness_after_restart {
         ProcessGroupLiveness::Absent => {
             transaction
                 .execute(
-                    "UPDATE pi_child_processes
+                    "UPDATE native_children
             SET lifecycle_state = ?1, terminal_disposition = ?2,
                 last_transition_command_id = ?3
-          WHERE child_process_id = ?4",
+          WHERE native_child_id = ?4",
                     params![
                         ChildProcessState::LostParentage as i64,
                         ChildTerminalDisposition::SupervisionLost as i64,
@@ -8982,10 +9584,10 @@ fn record_child_recovery(
         ProcessGroupLiveness::Present => {
             transaction
                 .execute(
-                    "UPDATE pi_child_processes
+                    "UPDATE native_children
                     SET lifecycle_state = ?1, terminal_disposition = NULL,
                         last_transition_command_id = ?2
-                  WHERE child_process_id = ?3",
+                  WHERE native_child_id = ?3",
                     params![
                         ChildProcessState::RecoveryContainmentRequired as i64,
                         command_row_id,
@@ -8996,10 +9598,10 @@ fn record_child_recovery(
         }
     };
     Ok(EventBody::ChildRecoveryObserved {
-        child_process_recovery_receipt_id: id_from_last_insert::<ChildProcessRecoveryReceiptId>(
+        native_child_recovery_receipt_id: id_from_last_insert::<NativeChildRecoveryReceiptId>(
             transaction,
         )?,
-        child_process_id: child_id,
+        native_child_id: child_id,
         observation,
         group_liveness_after_restart,
     })
@@ -9009,18 +9611,18 @@ fn finalize_child_process(
     transaction: &Transaction<'_>,
     command_row_id: i64,
     expected: ExpectedGeneration,
-    child_id: ChildProcessId,
+    child_id: NativeChildId,
 ) -> Result<EventBody, Rejection> {
-    let (_, state, _) = child_cycle_for_generation(transaction, child_id, expected)?;
+    let (_, state) = native_child_cycle_for_generation(transaction, child_id, expected)?;
     let disposition = if state == ChildProcessState::DirectChildReaped {
-        let (kind, value, after, reap_command): (i64, Option<i64>, i64, i64) = transaction.query_row("SELECT wait_status_kind, status_value, group_liveness_after_cleanup, reaped_by_command_id FROM child_process_reap_receipts WHERE child_process_id = ?1", [child_id.value()], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+        let (kind, value, after, reap_command): (i64, Option<i64>, i64, i64) = transaction.query_row("SELECT wait_status_kind, status_value, group_liveness_after_cleanup, reaped_by_command_id FROM native_child_reap_receipts WHERE native_child_id = ?1", [child_id.value()], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
         let group_absent_after_reap = after == ProcessGroupLiveness::Absent as i64 || transaction.query_row(
             "SELECT EXISTS(
-                SELECT 1 FROM child_process_liveness_observations
-                 WHERE child_process_id = ?1 AND liveness = 2 AND observed_by_command_id > ?2
+                SELECT 1 FROM native_child_liveness_observations
+                 WHERE native_child_id = ?1 AND liveness = 2 AND observed_by_command_id > ?2
                 UNION ALL
                 SELECT 1 FROM process_signal_receipts
-                 WHERE child_process_id = ?1 AND observed_liveness = 2 AND recorded_by_command_id > ?2
+                 WHERE native_child_id = ?1 AND observed_liveness = 2 AND recorded_by_command_id > ?2
             )",
             params![child_id.value(), reap_command],
             |row| row.get::<_, i64>(0),
@@ -9028,8 +9630,36 @@ fn finalize_child_process(
         if !group_absent_after_reap {
             return Err(Rejection::ProcessContainmentFailed);
         }
-        let retained_seals: i64 = transaction.query_row("SELECT COUNT(*) FROM child_stream_seals WHERE child_process_id = ?1 AND completeness IN (1, 2)", [child_id.value()], |r| r.get(0)).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
-        if retained_seals != 4 {
+        let required_streams: i64 = transaction.query_row(
+            "SELECT CASE WHEN EXISTS(
+                 SELECT 1 FROM native_children child
+                 JOIN native_child_spawn_admissions admission
+                   ON admission.native_child_spawn_admission_id = child.native_child_spawn_admission_id
+                 JOIN pi_child_spawn_sidecars sidecar
+                   ON sidecar.native_child_spawn_admission_id = admission.native_child_spawn_admission_id
+                 WHERE child.native_child_id = ?1
+             ) THEN 4 ELSE 2 END",
+            [child_id.value()], |r| r.get(0),
+        ).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+        let retained_seals: i64 = transaction
+            .query_row(
+                "SELECT COUNT(*) FROM native_child_stream_seals
+              WHERE native_child_id = ?1 AND completeness IN (1, 2)",
+                [child_id.value()],
+                |r| r.get(0),
+            )
+            .map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+        let required_evaluator_output: i64 = transaction
+            .query_row(
+                "SELECT COUNT(*) FROM native_child_stream_seals
+              WHERE native_child_id = ?1 AND stream_kind IN (3, 4) AND completeness IN (1, 2)",
+                [child_id.value()],
+                |r| r.get(0),
+            )
+            .map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+        if retained_seals != required_streams
+            || (required_streams == 2 && required_evaluator_output != 2)
+        {
             return Err(Rejection::ChildLifecycleReceiptMissing);
         }
         match (kind, value) {
@@ -9053,13 +9683,13 @@ fn finalize_child_process(
     } else {
         return Err(Rejection::ChildLifecycleReceiptMissing);
     };
-    transaction.execute("UPDATE pi_child_processes SET lifecycle_state = ?1, terminal_disposition = ?2, last_transition_command_id = ?3 WHERE child_process_id = ?4", params![ChildProcessState::Finalized as i64, disposition as i64, command_row_id, child_id.value()]).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    transaction.execute("UPDATE native_children SET lifecycle_state = ?1, terminal_disposition = ?2, last_transition_command_id = ?3 WHERE native_child_id = ?4", params![ChildProcessState::Finalized as i64, disposition as i64, command_row_id, child_id.value()]).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
     // A physical exit is not a Pi/model outcome, submission, validation, or
     // budget reconciliation. M5 therefore ends only the child receipt chain;
     // later normalized supervisor/Pi receipts own semantic Attempt or Office
     // settlement. This intentionally keeps those higher-level close fences.
     Ok(EventBody::ChildProcessFinalized {
-        child_process_id: child_id,
+        native_child_id: child_id,
         disposition,
     })
 }
@@ -9087,11 +9717,11 @@ fn begin_cancellation_propagation(
     // AwaitingChildReceipt until a typed invalidation or raced spawn resolves
     // it; a target with no admission is the explicit `not_running` fact.
     transaction.execute(
-        "INSERT INTO cancellation_propagation_targets(cancellation_propagation_id, actor_attempt_id, root_authority_office_session_id, child_process_id, target_disposition)
-         SELECT ?1, a.actor_attempt_id, NULL, p.child_process_id,
+        "INSERT INTO cancellation_propagation_targets(cancellation_propagation_id, actor_attempt_id, root_authority_office_session_id, native_child_id, target_disposition)
+         SELECT ?1, a.actor_attempt_id, NULL, p.native_child_id,
                 CASE
-                  WHEN p.child_process_id IS NULL AND s.pi_child_spawn_admission_id IS NOT NULL AND s.lifecycle_state = 1 THEN 2
-                  WHEN p.child_process_id IS NULL THEN 1
+                  WHEN p.native_child_id IS NULL AND s.native_child_spawn_admission_id IS NOT NULL AND s.lifecycle_state = 1 THEN 2
+                  WHEN p.native_child_id IS NULL THEN 1
                   WHEN p.lifecycle_state = 8 AND p.terminal_disposition = 1 THEN 3
                   WHEN p.lifecycle_state = 8 AND p.terminal_disposition = 4 THEN 4
                   WHEN p.lifecycle_state = 8 AND p.terminal_disposition = 5 THEN 5
@@ -9101,17 +9731,38 @@ fn begin_cancellation_propagation(
                   ELSE 2
                 END
            FROM attempts a
-      LEFT JOIN pi_child_spawn_admissions s ON s.actor_attempt_id = a.actor_attempt_id
-      LEFT JOIN pi_child_processes p ON p.pi_child_spawn_admission_id = s.pi_child_spawn_admission_id
+      LEFT JOIN native_child_spawn_admissions s ON s.actor_attempt_id = a.actor_attempt_id
+      LEFT JOIN native_children p ON p.native_child_spawn_admission_id = s.native_child_spawn_admission_id
           WHERE a.operating_cycle_id = ?2 AND a.lifecycle_state IN (1, 2)",
         params![id.value(), cycle_id.value()],
     ).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
     transaction.execute(
-        "INSERT INTO cancellation_propagation_targets(cancellation_propagation_id, actor_attempt_id, root_authority_office_session_id, child_process_id, target_disposition)
-         SELECT ?1, NULL, o.root_authority_office_session_id, p.child_process_id,
+        "INSERT INTO cancellation_propagation_targets(cancellation_propagation_id, actor_attempt_id, root_authority_office_session_id, deterministic_experiment_id, native_child_id, target_disposition)
+         SELECT ?1, NULL, NULL, experiment.deterministic_experiment_id, child.native_child_id,
                 CASE
-                  WHEN p.child_process_id IS NULL AND s.pi_child_spawn_admission_id IS NOT NULL AND s.lifecycle_state = 1 THEN 2
-                  WHEN p.child_process_id IS NULL THEN 1
+                  WHEN child.native_child_id IS NULL AND admission.native_child_spawn_admission_id IS NOT NULL AND admission.lifecycle_state = 1 THEN 2
+                  WHEN child.native_child_id IS NULL THEN 1
+                  WHEN child.lifecycle_state = 8 AND child.terminal_disposition = 1 THEN 3
+                  WHEN child.lifecycle_state = 8 AND child.terminal_disposition = 4 THEN 4
+                  WHEN child.lifecycle_state = 8 AND child.terminal_disposition = 5 THEN 5
+                  WHEN child.lifecycle_state = 7 THEN 6
+                  WHEN child.lifecycle_state = 6 AND child.terminal_disposition = 6 THEN 7
+                  ELSE 2
+                END
+           FROM deterministic_experiments experiment
+      LEFT JOIN native_child_spawn_admissions admission
+             ON admission.deterministic_experiment_id = experiment.deterministic_experiment_id
+      LEFT JOIN native_children child
+             ON child.native_child_spawn_admission_id = admission.native_child_spawn_admission_id
+          WHERE experiment.operating_cycle_id = ?2 AND experiment.lifecycle_state = 1",
+        params![id.value(), cycle_id.value()],
+    ).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    transaction.execute(
+        "INSERT INTO cancellation_propagation_targets(cancellation_propagation_id, actor_attempt_id, root_authority_office_session_id, native_child_id, target_disposition)
+         SELECT ?1, NULL, o.root_authority_office_session_id, p.native_child_id,
+                CASE
+                  WHEN p.native_child_id IS NULL AND s.native_child_spawn_admission_id IS NOT NULL AND s.lifecycle_state = 1 THEN 2
+                  WHEN p.native_child_id IS NULL THEN 1
                   WHEN p.lifecycle_state = 8 AND p.terminal_disposition = 1 THEN 3
                   WHEN p.lifecycle_state = 8 AND p.terminal_disposition = 4 THEN 4
                   WHEN p.lifecycle_state = 8 AND p.terminal_disposition = 5 THEN 5
@@ -9121,12 +9772,12 @@ fn begin_cancellation_propagation(
                   ELSE 2
                 END
            FROM root_authority_office_sessions o
-      LEFT JOIN pi_child_spawn_admissions s ON s.root_authority_office_session_id = o.root_authority_office_session_id
-      LEFT JOIN pi_child_processes p ON p.pi_child_spawn_admission_id = s.pi_child_spawn_admission_id
+      LEFT JOIN native_child_spawn_admissions s ON s.root_authority_office_session_id = o.root_authority_office_session_id
+      LEFT JOIN native_children p ON p.native_child_spawn_admission_id = s.native_child_spawn_admission_id
           WHERE o.operating_cycle_id = ?2 AND o.lifecycle_state NOT IN (8, 10, 11)",
         params![id.value(), cycle_id.value()],
     ).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
-    transaction.execute("INSERT INTO cancellation_propagation_children(cancellation_propagation_id, child_process_id) SELECT ?1, child_process_id FROM cancellation_propagation_targets WHERE cancellation_propagation_id = ?1 AND child_process_id IS NOT NULL AND target_disposition = 2", [id.value()]).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    transaction.execute("INSERT INTO cancellation_propagation_children(cancellation_propagation_id, native_child_id) SELECT ?1, native_child_id FROM cancellation_propagation_targets WHERE cancellation_propagation_id = ?1 AND native_child_id IS NOT NULL AND target_disposition = 2", [id.value()]).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
     transaction.execute("UPDATE cancellation_requests SET lifecycle_state = ?1 WHERE cancellation_request_id = ?2", params![CancellationState::Propagating as i64, cancellation_request_id.value()]).map_err(|_| Rejection::SubjectNotFound)?;
     Ok(EventBody::CancellationPropagationBegun {
         cancellation_propagation_id: id,
@@ -9160,9 +9811,9 @@ fn reconcile_cancellation_propagation(
                  WHEN p.lifecycle_state = 6 AND p.terminal_disposition = 6 THEN 7
                  ELSE target_disposition
                END
-           FROM pi_child_processes p
+           FROM native_children p
           WHERE cancellation_propagation_targets.cancellation_propagation_id = ?1
-            AND cancellation_propagation_targets.child_process_id = p.child_process_id",
+            AND cancellation_propagation_targets.native_child_id = p.native_child_id",
             [propagation_id.value()],
         )
         .map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
@@ -9185,25 +9836,25 @@ fn reconcile_cancellation_propagation(
 
 fn set_child_state(
     transaction: &Transaction<'_>,
-    child_id: ChildProcessId,
+    child_id: NativeChildId,
     state: ChildProcessState,
     command_row_id: i64,
 ) -> Result<(), Rejection> {
-    transaction.execute("UPDATE pi_child_processes SET lifecycle_state = ?1, last_transition_command_id = ?2 WHERE child_process_id = ?3", params![state as i64, command_row_id, child_id.value()]).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    transaction.execute("UPDATE native_children SET lifecycle_state = ?1, last_transition_command_id = ?2 WHERE native_child_id = ?3", params![state as i64, command_row_id, child_id.value()]).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
     Ok(())
 }
 
 fn mark_child_containment_failed(
     transaction: &Transaction<'_>,
-    child_id: ChildProcessId,
+    child_id: NativeChildId,
     command_row_id: i64,
 ) -> Result<(), Rejection> {
     transaction
         .execute(
-            "UPDATE pi_child_processes
+            "UPDATE native_children
             SET lifecycle_state = ?1, terminal_disposition = ?2,
                 last_transition_command_id = ?3
-          WHERE child_process_id = ?4",
+          WHERE native_child_id = ?4",
             params![
                 ChildProcessState::ContainmentFailed as i64,
                 ChildTerminalDisposition::ContainmentFailed as i64,
@@ -9217,11 +9868,11 @@ fn mark_child_containment_failed(
 
 fn pi_protocol_state(
     transaction: &Transaction<'_>,
-    child_id: ChildProcessId,
+    child_id: NativeChildId,
 ) -> Result<PiChildSessionState, Rejection> {
     let value: i64 = transaction
         .query_row(
-            "SELECT lifecycle_state FROM pi_child_session_protocols WHERE child_process_id = ?1",
+            "SELECT lifecycle_state FROM pi_child_session_protocols WHERE native_child_id = ?1",
             [child_id.value()],
             |r| r.get(0),
         )
@@ -9240,16 +9891,21 @@ fn pi_protocol_state(
 
 fn set_pi_protocol_state(
     transaction: &Transaction<'_>,
-    child_id: ChildProcessId,
+    child_id: NativeChildId,
     state: PiChildSessionState,
 ) -> Result<(), Rejection> {
-    transaction.execute("UPDATE pi_child_session_protocols SET lifecycle_state = ?1 WHERE child_process_id = ?2", params![state as i64, child_id.value()]).map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    transaction
+        .execute(
+            "UPDATE pi_child_session_protocols SET lifecycle_state = ?1 WHERE native_child_id = ?2",
+            params![state as i64, child_id.value()],
+        )
+        .map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
     Ok(())
 }
 
 fn signal_terminal_disposition(
     transaction: &Transaction<'_>,
-    child_id: ChildProcessId,
+    child_id: NativeChildId,
     signal_number: ProcessSignalNumber,
 ) -> Result<ChildTerminalDisposition, Rejection> {
     // A delivered supervisory action is not itself proof of the process's
@@ -9265,7 +9921,7 @@ fn signal_terminal_disposition(
         .query_row(
             "SELECT EXISTS(
            SELECT 1 FROM process_signal_receipts
-            WHERE child_process_id = ?1
+            WHERE native_child_id = ?1
               AND signal_action IN (?2, ?3)
               AND delivery = ?4)",
             params![
@@ -9522,7 +10178,7 @@ fn command_target_occupancy(
         | CommandBody::RegisterDeterministicExperiment {
             operating_cycle_id, ..
         }
-        | CommandBody::CloseDeterministicExperiment {
+        | CommandBody::FinalizeDeterministicExperiment {
             operating_cycle_id, ..
         } => Ok(Some(
             cycle_row(transaction, *operating_cycle_id)?.occupancy_id,
@@ -9888,16 +10544,16 @@ fn live_actor_attempt_count(
         .map_err(|_| Rejection::SubjectNotFound)
 }
 
-/// Physical Pi children are an independent close fence. Their terminal
+/// Physical native children are an independent close fence. Their terminal
 /// disposition is intentionally not an Attempt/Office semantic settlement,
 /// but a cycle cannot disappear while any process remains live or indeterminate.
-fn live_pi_child_count(
+fn live_native_child_count(
     transaction: &Transaction<'_>,
     cycle_id: OperatingCycleId,
 ) -> Result<i64, Rejection> {
     transaction.query_row(
-        "SELECT COUNT(*) FROM pi_child_processes p
-         JOIN pi_child_spawn_admissions a ON a.pi_child_spawn_admission_id = p.pi_child_spawn_admission_id
+        "SELECT COUNT(*) FROM native_children p
+         JOIN native_child_spawn_admissions a ON a.native_child_spawn_admission_id = p.native_child_spawn_admission_id
          WHERE a.operating_cycle_id = ?1 AND p.lifecycle_state != ?2",
         params![cycle_id.value(), ChildProcessState::Finalized as i64],
         |row| row.get(0),
@@ -9910,8 +10566,10 @@ fn undisposed_pi_workspace_count(
 ) -> Result<i64, Rejection> {
     transaction
         .query_row(
-            "SELECT COUNT(*) FROM pi_child_spawn_admissions
-          WHERE operating_cycle_id = ?1",
+            "SELECT COUNT(*) FROM native_child_spawn_admissions admission
+             JOIN pi_child_spawn_sidecars sidecar
+               ON sidecar.native_child_spawn_admission_id = admission.native_child_spawn_admission_id
+             WHERE admission.operating_cycle_id = ?1",
             [cycle_id.value()],
             |row| row.get(0),
         )
@@ -10381,12 +11039,44 @@ fn request_fingerprint(request: &CommandRequest) -> Blake3Digest {
             put_i64(&mut bytes, *applicability as i64);
             put_bytes(&mut bytes, limitation.as_str().as_bytes());
         }
-        CommandBody::CloseDeterministicExperiment {
+        CommandBody::FinalizeDeterministicExperiment {
             operating_cycle_id,
             deterministic_experiment_id,
         } => {
             put_i64(&mut bytes, operating_cycle_id.value());
             put_i64(&mut bytes, deterministic_experiment_id.value());
+        }
+        CommandBody::AdmitDeterministicEvaluatorNativeChild {
+            operating_cycle_id,
+            deterministic_experiment_id,
+            evaluator_revision_id,
+            input_manifest_id,
+            execution_profile_id,
+            native_workspace_id,
+            canonical_workspace_path,
+            supervisor_epoch_id,
+            supervisor_epoch_identity,
+        } => {
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, deterministic_experiment_id.value());
+            put_i64(&mut bytes, evaluator_revision_id.value());
+            put_i64(&mut bytes, input_manifest_id.value());
+            put_i64(&mut bytes, execution_profile_id.value());
+            put_bytes(&mut bytes, native_workspace_id.as_str().as_bytes());
+            put_bytes(&mut bytes, canonical_workspace_path.as_str().as_bytes());
+            put_i64(&mut bytes, supervisor_epoch_id.value());
+            put_bytes(&mut bytes, supervisor_epoch_identity.as_str().as_bytes());
+        }
+        CommandBody::RecordDeterministicEvaluatorNativeChildSpawn {
+            native_child_spawn_admission_id,
+            child_identity,
+            direct_child_pid,
+            process_group_id,
+        } => {
+            put_i64(&mut bytes, native_child_spawn_admission_id.value());
+            put_bytes(&mut bytes, child_identity.as_str().as_bytes());
+            put_i64(&mut bytes, i64::from(direct_child_pid.value()));
+            put_i64(&mut bytes, i64::from(process_group_id.value()));
         }
         CommandBody::ResolveAdversarialReview {
             operating_cycle_id,
@@ -10597,114 +11287,114 @@ fn request_fingerprint(request: &CommandRequest) -> Blake3Digest {
             put_bytes(&mut bytes, spawn_nonce.as_str().as_bytes());
         }
         CommandBody::RecordInertChildSpawn {
-            pi_child_spawn_admission_id,
+            native_child_spawn_admission_id,
             child_identity,
             direct_child_pid,
             process_group_id,
         } => {
-            put_i64(&mut bytes, pi_child_spawn_admission_id.value());
+            put_i64(&mut bytes, native_child_spawn_admission_id.value());
             put_bytes(&mut bytes, child_identity.as_str().as_bytes());
             put_i64(&mut bytes, i64::from(direct_child_pid.value()));
             put_i64(&mut bytes, i64::from(process_group_id.value()));
         }
         CommandBody::RecordPiAdapterReady {
-            child_process_id,
+            native_child_id,
             pi_session_identity,
             spawn_nonce,
         } => {
-            put_i64(&mut bytes, child_process_id.value());
+            put_i64(&mut bytes, native_child_id.value());
             put_bytes(&mut bytes, pi_session_identity.as_str().as_bytes());
             put_bytes(&mut bytes, spawn_nonce.as_str().as_bytes());
         }
         CommandBody::AuthorizePiCreateSession {
-            child_process_id,
+            native_child_id,
             correlation_identity,
             create_request_digest,
         }
         | CommandBody::RecordPiCreateSessionDelivery {
-            child_process_id,
+            native_child_id,
             correlation_identity,
             create_request_digest,
         } => {
-            put_i64(&mut bytes, child_process_id.value());
+            put_i64(&mut bytes, native_child_id.value());
             put_bytes(&mut bytes, correlation_identity.as_str().as_bytes());
             put_bytes(&mut bytes, &create_request_digest.as_bytes());
         }
         CommandBody::RecordPiSessionReady {
-            child_process_id,
+            native_child_id,
             pi_session_identity,
         } => {
-            put_i64(&mut bytes, child_process_id.value());
+            put_i64(&mut bytes, native_child_id.value());
             put_bytes(&mut bytes, pi_session_identity.as_str().as_bytes());
         }
         CommandBody::RecordPiAbortControlDelivery {
-            child_process_id,
+            native_child_id,
             cancellation_propagation_id,
             correlation_identity,
             abort_command_digest,
             outcome,
         } => {
-            put_i64(&mut bytes, child_process_id.value());
+            put_i64(&mut bytes, native_child_id.value());
             put_i64(&mut bytes, cancellation_propagation_id.value());
             put_bytes(&mut bytes, correlation_identity.as_str().as_bytes());
             put_bytes(&mut bytes, &abort_command_digest.as_bytes());
             put_i64(&mut bytes, *outcome as i64);
         }
         CommandBody::RecordChildStreamSeal {
-            child_process_id,
+            native_child_id,
             stream_kind,
             full_observed_digest,
             retained_content_object_id,
             completeness,
         } => {
-            put_i64(&mut bytes, child_process_id.value());
+            put_i64(&mut bytes, native_child_id.value());
             put_i64(&mut bytes, *stream_kind as i64);
             put_bytes(&mut bytes, &full_observed_digest.as_bytes());
             put_i64(&mut bytes, retained_content_object_id.value());
             put_i64(&mut bytes, *completeness as i64);
         }
         CommandBody::RecordChildProcessLiveness {
-            child_process_id,
+            native_child_id,
             liveness,
         } => {
-            put_i64(&mut bytes, child_process_id.value());
+            put_i64(&mut bytes, native_child_id.value());
             put_i64(&mut bytes, *liveness as i64);
         }
         CommandBody::RecordProcessSignalReceipt {
-            child_process_id,
+            native_child_id,
             action,
             delivery,
             observed_liveness,
             cause,
         } => {
-            put_i64(&mut bytes, child_process_id.value());
+            put_i64(&mut bytes, native_child_id.value());
             put_i64(&mut bytes, *action as i64);
             put_i64(&mut bytes, *delivery as i64);
             put_i64(&mut bytes, *observed_liveness as i64);
             put_process_signal_cause(&mut bytes, *cause);
         }
         CommandBody::RecordDirectChildReap {
-            child_process_id,
+            native_child_id,
             wait_status,
             group_liveness_before_cleanup,
             group_liveness_after_cleanup,
         } => {
-            put_i64(&mut bytes, child_process_id.value());
+            put_i64(&mut bytes, native_child_id.value());
             put_direct_wait_status(&mut bytes, *wait_status);
             put_i64(&mut bytes, *group_liveness_before_cleanup as i64);
             put_i64(&mut bytes, *group_liveness_after_cleanup as i64);
         }
         CommandBody::RecordChildRecovery {
-            child_process_id,
+            native_child_id,
             observation,
             group_liveness_after_restart,
         } => {
-            put_i64(&mut bytes, child_process_id.value());
+            put_i64(&mut bytes, native_child_id.value());
             put_i64(&mut bytes, *observation as i64);
             put_i64(&mut bytes, *group_liveness_after_restart as i64);
         }
-        CommandBody::FinalizeChildProcess { child_process_id } => {
-            put_i64(&mut bytes, child_process_id.value())
+        CommandBody::FinalizeChildProcess { native_child_id } => {
+            put_i64(&mut bytes, native_child_id.value())
         }
         CommandBody::BeginCancellationPropagation {
             cancellation_request_id,
@@ -10712,11 +11402,11 @@ fn request_fingerprint(request: &CommandRequest) -> Blake3Digest {
         CommandBody::ReconcileCancellationPropagation {
             cancellation_propagation_id,
         } => put_i64(&mut bytes, cancellation_propagation_id.value()),
-        CommandBody::RecordPiChildNotSpawned {
-            pi_child_spawn_admission_id,
+        CommandBody::RecordNativeChildNotSpawned {
+            native_child_spawn_admission_id,
             reason,
         } => {
-            put_i64(&mut bytes, pi_child_spawn_admission_id.value());
+            put_i64(&mut bytes, native_child_spawn_admission_id.value());
             put_i64(&mut bytes, *reason as i64);
         }
         CommandBody::AuthorizePiOfficeTurnPrompt {
@@ -11262,15 +11952,47 @@ fn event_fingerprint(event_id: EventId, command_id: &CommandId, body: &EventBody
             put_i64(&mut bytes, *semantic_role as i64);
             put_i64(&mut bytes, *applicability as i64);
         }
-        EventBody::DeterministicExperimentClosed {
+        EventBody::DeterministicExperimentFinalized {
             deterministic_experiment_id,
-        } => put_i64(&mut bytes, deterministic_experiment_id.value()),
+            terminal_state,
+        } => {
+            put_i64(&mut bytes, deterministic_experiment_id.value());
+            put_i64(&mut bytes, *terminal_state as i64);
+        }
+        EventBody::DeterministicEvaluatorNativeChildAdmitted {
+            native_child_spawn_admission_id,
+            owner,
+        } => {
+            put_i64(&mut bytes, native_child_spawn_admission_id.value());
+            match owner {
+                NativeChildOwner::DeterministicEvaluator {
+                    deterministic_experiment_id,
+                    evaluator_revision_id,
+                    input_manifest_id,
+                } => {
+                    put_i64(&mut bytes, 2);
+                    put_i64(&mut bytes, deterministic_experiment_id.value());
+                    put_i64(&mut bytes, evaluator_revision_id.value());
+                    put_i64(&mut bytes, input_manifest_id.value());
+                }
+                NativeChildOwner::Pi(_) => {
+                    unreachable!("evaluator admission cannot carry Pi owner")
+                }
+            }
+        }
+        EventBody::DeterministicEvaluatorNativeChildSpawnRecorded {
+            native_child_id,
+            native_child_spawn_admission_id,
+        } => {
+            put_i64(&mut bytes, native_child_id.value());
+            put_i64(&mut bytes, native_child_spawn_admission_id.value());
+        }
         EventBody::PiChildSpawnAdmitted {
-            pi_child_spawn_admission_id,
+            native_child_spawn_admission_id,
             owner,
             budget_reservation_id,
         } => {
-            put_i64(&mut bytes, pi_child_spawn_admission_id.value());
+            put_i64(&mut bytes, native_child_spawn_admission_id.value());
             match owner {
                 PiChildOwner::ActorAttempt(id) => {
                     put_i64(&mut bytes, 1);
@@ -11284,106 +12006,106 @@ fn event_fingerprint(event_id: EventId, command_id: &CommandId, body: &EventBody
             put_i64(&mut bytes, budget_reservation_id.value());
         }
         EventBody::InertPiChildSpawnRecorded {
-            child_process_id,
-            pi_child_spawn_admission_id,
+            native_child_id,
+            native_child_spawn_admission_id,
         } => {
-            put_i64(&mut bytes, child_process_id.value());
-            put_i64(&mut bytes, pi_child_spawn_admission_id.value());
+            put_i64(&mut bytes, native_child_id.value());
+            put_i64(&mut bytes, native_child_spawn_admission_id.value());
         }
         EventBody::PiAdapterReadyRecorded {
-            child_process_id,
+            native_child_id,
             pi_session_id,
         }
         | EventBody::PiSessionReadyRecorded {
-            child_process_id,
+            native_child_id,
             pi_session_id,
         } => {
-            put_i64(&mut bytes, child_process_id.value());
+            put_i64(&mut bytes, native_child_id.value());
             put_i64(&mut bytes, pi_session_id.value());
         }
         EventBody::PiAbortControlDeliveryRecorded {
             pi_abort_control_receipt_id,
-            child_process_id,
+            native_child_id,
             cancellation_propagation_id,
             correlation_identity,
             abort_command_digest,
             outcome,
         } => {
             put_i64(&mut bytes, pi_abort_control_receipt_id.value());
-            put_i64(&mut bytes, child_process_id.value());
+            put_i64(&mut bytes, native_child_id.value());
             put_i64(&mut bytes, cancellation_propagation_id.value());
             put_bytes(&mut bytes, correlation_identity.as_str().as_bytes());
             put_bytes(&mut bytes, &abort_command_digest.as_bytes());
             put_i64(&mut bytes, *outcome as i64);
         }
-        EventBody::PiCreateSessionAuthorized { child_process_id }
-        | EventBody::PiCreateSessionDeliveryRecorded { child_process_id } => {
-            put_i64(&mut bytes, child_process_id.value())
+        EventBody::PiCreateSessionAuthorized { native_child_id }
+        | EventBody::PiCreateSessionDeliveryRecorded { native_child_id } => {
+            put_i64(&mut bytes, native_child_id.value())
         }
         EventBody::ChildStreamSealed {
-            child_stream_seal_id,
-            child_process_id,
+            native_child_stream_seal_id,
+            native_child_id,
             stream_kind,
             completeness,
         } => {
-            put_i64(&mut bytes, child_stream_seal_id.value());
-            put_i64(&mut bytes, child_process_id.value());
+            put_i64(&mut bytes, native_child_stream_seal_id.value());
+            put_i64(&mut bytes, native_child_id.value());
             put_i64(&mut bytes, *stream_kind as i64);
             put_i64(&mut bytes, *completeness as i64);
         }
         EventBody::ChildProcessLivenessObserved {
-            child_process_liveness_observation_id,
-            child_process_id,
+            native_child_liveness_observation_id,
+            native_child_id,
             liveness,
         } => {
-            put_i64(&mut bytes, child_process_liveness_observation_id.value());
-            put_i64(&mut bytes, child_process_id.value());
+            put_i64(&mut bytes, native_child_liveness_observation_id.value());
+            put_i64(&mut bytes, native_child_id.value());
             put_i64(&mut bytes, *liveness as i64);
         }
         EventBody::ProcessSignalReceiptRecorded {
             process_signal_receipt_id,
-            child_process_id,
+            native_child_id,
             action,
             delivery,
             observed_liveness,
             cause,
         } => {
             put_i64(&mut bytes, process_signal_receipt_id.value());
-            put_i64(&mut bytes, child_process_id.value());
+            put_i64(&mut bytes, native_child_id.value());
             put_i64(&mut bytes, *action as i64);
             put_i64(&mut bytes, *delivery as i64);
             put_i64(&mut bytes, *observed_liveness as i64);
             put_process_signal_cause(&mut bytes, *cause);
         }
         EventBody::DirectChildReaped {
-            child_process_reap_receipt_id,
-            child_process_id,
+            native_child_reap_receipt_id,
+            native_child_id,
             wait_status,
             group_liveness_before_cleanup,
             group_liveness_after_cleanup,
         } => {
-            put_i64(&mut bytes, child_process_reap_receipt_id.value());
-            put_i64(&mut bytes, child_process_id.value());
+            put_i64(&mut bytes, native_child_reap_receipt_id.value());
+            put_i64(&mut bytes, native_child_id.value());
             put_direct_wait_status(&mut bytes, *wait_status);
             put_i64(&mut bytes, *group_liveness_before_cleanup as i64);
             put_i64(&mut bytes, *group_liveness_after_cleanup as i64);
         }
         EventBody::ChildRecoveryObserved {
-            child_process_recovery_receipt_id,
-            child_process_id,
+            native_child_recovery_receipt_id,
+            native_child_id,
             observation,
             group_liveness_after_restart,
         } => {
-            put_i64(&mut bytes, child_process_recovery_receipt_id.value());
-            put_i64(&mut bytes, child_process_id.value());
+            put_i64(&mut bytes, native_child_recovery_receipt_id.value());
+            put_i64(&mut bytes, native_child_id.value());
             put_i64(&mut bytes, *observation as i64);
             put_i64(&mut bytes, *group_liveness_after_restart as i64);
         }
         EventBody::ChildProcessFinalized {
-            child_process_id,
+            native_child_id,
             disposition,
         } => {
-            put_i64(&mut bytes, child_process_id.value());
+            put_i64(&mut bytes, native_child_id.value());
             put_i64(&mut bytes, *disposition as i64);
         }
         EventBody::CancellationPropagationBegun {
@@ -11402,23 +12124,23 @@ fn event_fingerprint(event_id: EventId, command_id: &CommandId, body: &EventBody
         EventBody::CancellationPropagationContainmentFailed {
             cancellation_propagation_id,
         } => put_i64(&mut bytes, cancellation_propagation_id.value()),
-        EventBody::PiChildSpawnInvalidated {
-            pi_child_spawn_admission_id,
+        EventBody::NativeChildSpawnInvalidated {
+            native_child_spawn_admission_id,
             reason,
         } => {
-            put_i64(&mut bytes, pi_child_spawn_admission_id.value());
+            put_i64(&mut bytes, native_child_spawn_admission_id.value());
             put_i64(&mut bytes, *reason as i64);
         }
         EventBody::PiOfficeTurnPromptAuthorized {
             pi_office_turn_prompt_authorization_id,
             office_turn_id,
-            child_process_id,
+            native_child_id,
             correlation_identity,
             budget_reservation_id,
         } => {
             put_i64(&mut bytes, pi_office_turn_prompt_authorization_id.value());
             put_i64(&mut bytes, office_turn_id.value());
-            put_i64(&mut bytes, child_process_id.value());
+            put_i64(&mut bytes, native_child_id.value());
             put_bytes(&mut bytes, correlation_identity.as_str().as_bytes());
             put_i64(&mut bytes, budget_reservation_id.value());
         }
@@ -11475,22 +12197,22 @@ fn event_fingerprint(event_id: EventId, command_id: &CommandId, body: &EventBody
         }
         EventBody::PiOfficeSessionDisposeAuthorized {
             session_id,
-            child_process_id,
+            native_child_id,
             correlation_identity,
             authorized_generation,
         } => {
             put_i64(&mut bytes, session_id.value());
-            put_i64(&mut bytes, child_process_id.value());
+            put_i64(&mut bytes, native_child_id.value());
             put_bytes(&mut bytes, correlation_identity.as_str().as_bytes());
             put_i64(&mut bytes, authorized_generation.value());
         }
         EventBody::PiOfficeSessionDisposeDelivered {
             session_id,
-            child_process_id,
+            native_child_id,
             correlation_identity,
         } => {
             put_i64(&mut bytes, session_id.value());
-            put_i64(&mut bytes, child_process_id.value());
+            put_i64(&mut bytes, native_child_id.value());
             put_bytes(&mut bytes, correlation_identity.as_str().as_bytes());
         }
         EventBody::PiOfficeSessionDisposeAccepted {
@@ -11719,7 +12441,7 @@ fn insert_command_body(
             )?;
         }
         CommandBody::RecordPiAbortControlDelivery {
-            child_process_id,
+            native_child_id,
             cancellation_propagation_id,
             correlation_identity,
             abort_command_digest,
@@ -11727,7 +12449,7 @@ fn insert_command_body(
         } => {
             transaction.execute(
                 "INSERT INTO command_record_pi_abort_control_delivery VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![command_row_id, child_process_id.value(), cancellation_propagation_id.value(), correlation_identity.as_str(), abort_command_digest.as_bytes().as_slice(), *outcome as i64],
+                params![command_row_id, native_child_id.value(), cancellation_propagation_id.value(), correlation_identity.as_str(), abort_command_digest.as_bytes().as_slice(), *outcome as i64],
             )?;
         }
         CommandBody::InstallRootAuthorityOffice => {
@@ -12109,17 +12831,44 @@ fn insert_command_body(
         } => {
             transaction.execute("INSERT INTO command_admit_deterministic_evidence VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)", params![command_row_id, operating_cycle_id.value(), deterministic_evaluation_receipt_id.value(), deterministic_experiment_id.value(), evaluator_revision_id.value(), input_manifest_id.value(), evaluator_output_content_object_id.value(), related_graph_revision_id.value(), *semantic_role as i64, *applicability as i64, limitation.as_str()])?;
         }
-        CommandBody::CloseDeterministicExperiment {
+        CommandBody::FinalizeDeterministicExperiment {
             operating_cycle_id,
             deterministic_experiment_id,
         } => {
             transaction.execute(
-                "INSERT INTO command_close_deterministic_experiment VALUES (?1, ?2, ?3)",
+                "INSERT INTO command_finalize_deterministic_experiment VALUES (?1, ?2, ?3)",
                 params![
                     command_row_id,
                     operating_cycle_id.value(),
                     deterministic_experiment_id.value()
                 ],
+            )?;
+        }
+        CommandBody::AdmitDeterministicEvaluatorNativeChild {
+            operating_cycle_id,
+            deterministic_experiment_id,
+            evaluator_revision_id,
+            input_manifest_id,
+            execution_profile_id,
+            native_workspace_id,
+            canonical_workspace_path,
+            supervisor_epoch_id,
+            supervisor_epoch_identity,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_admit_deterministic_evaluator_native_child VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![command_row_id, operating_cycle_id.value(), deterministic_experiment_id.value(), evaluator_revision_id.value(), input_manifest_id.value(), execution_profile_id.value(), native_workspace_id.as_str(), canonical_workspace_path.as_str(), supervisor_epoch_id.value(), supervisor_epoch_identity.as_str()],
+            )?;
+        }
+        CommandBody::RecordDeterministicEvaluatorNativeChildSpawn {
+            native_child_spawn_admission_id,
+            child_identity,
+            direct_child_pid,
+            process_group_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_record_deterministic_evaluator_native_child_spawn VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![command_row_id, native_child_spawn_admission_id.value(), child_identity.as_str(), direct_child_pid.value(), process_group_id.value()],
             )?;
         }
         CommandBody::RegisterActorConfiguration {
@@ -12723,7 +13472,7 @@ fn insert_command_body(
             transaction.execute("INSERT INTO command_admit_pi_child_spawn VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)", params![command_row_id, operating_cycle_id.value(), attempt, office, budget_reservation_id.value(), execution_profile_id.value(), native_workspace_id.as_str(), canonical_workspace_path.as_str(), supervisor_epoch_id.value(), supervisor_epoch_identity.as_str(), pi_session_identity.as_str(), spawn_nonce.as_str()])?;
         }
         CommandBody::RecordInertChildSpawn {
-            pi_child_spawn_admission_id,
+            native_child_spawn_admission_id,
             child_identity,
             direct_child_pid,
             process_group_id,
@@ -12732,7 +13481,7 @@ fn insert_command_body(
                 "INSERT INTO command_record_inert_pi_child_spawn VALUES (?1, ?2, ?3, ?4, ?5)",
                 params![
                     command_row_id,
-                    pi_child_spawn_admission_id.value(),
+                    native_child_spawn_admission_id.value(),
                     child_identity.as_str(),
                     direct_child_pid.value(),
                     process_group_id.value()
@@ -12740,7 +13489,7 @@ fn insert_command_body(
             )?;
         }
         CommandBody::RecordPiAdapterReady {
-            child_process_id,
+            native_child_id,
             pi_session_identity,
             spawn_nonce,
         } => {
@@ -12748,14 +13497,14 @@ fn insert_command_body(
                 "INSERT INTO command_record_pi_adapter_ready VALUES (?1, ?2, ?3, ?4)",
                 params![
                     command_row_id,
-                    child_process_id.value(),
+                    native_child_id.value(),
                     pi_session_identity.as_str(),
                     spawn_nonce.as_str()
                 ],
             )?;
         }
         CommandBody::AuthorizePiCreateSession {
-            child_process_id,
+            native_child_id,
             correlation_identity,
             create_request_digest,
         } => {
@@ -12763,14 +13512,14 @@ fn insert_command_body(
                 "INSERT INTO command_authorize_pi_create_session VALUES (?1, ?2, ?3, ?4)",
                 params![
                     command_row_id,
-                    child_process_id.value(),
+                    native_child_id.value(),
                     correlation_identity.as_str(),
                     create_request_digest.as_bytes().as_slice()
                 ],
             )?;
         }
         CommandBody::RecordPiCreateSessionDelivery {
-            child_process_id,
+            native_child_id,
             correlation_identity,
             create_request_digest,
         } => {
@@ -12778,27 +13527,27 @@ fn insert_command_body(
                 "INSERT INTO command_record_pi_create_session_delivery VALUES (?1, ?2, ?3, ?4)",
                 params![
                     command_row_id,
-                    child_process_id.value(),
+                    native_child_id.value(),
                     correlation_identity.as_str(),
                     create_request_digest.as_bytes().as_slice()
                 ],
             )?;
         }
         CommandBody::RecordPiSessionReady {
-            child_process_id,
+            native_child_id,
             pi_session_identity,
         } => {
             transaction.execute(
                 "INSERT INTO command_record_pi_session_ready VALUES (?1, ?2, ?3)",
                 params![
                     command_row_id,
-                    child_process_id.value(),
+                    native_child_id.value(),
                     pi_session_identity.as_str()
                 ],
             )?;
         }
         CommandBody::RecordChildStreamSeal {
-            child_process_id,
+            native_child_id,
             stream_kind,
             full_observed_digest,
             retained_content_object_id,
@@ -12808,7 +13557,7 @@ fn insert_command_body(
                 "INSERT INTO command_record_child_stream_seal VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 params![
                     command_row_id,
-                    child_process_id.value(),
+                    native_child_id.value(),
                     *stream_kind as i64,
                     full_observed_digest.as_bytes().as_slice(),
                     retained_content_object_id.value(),
@@ -12817,26 +13566,26 @@ fn insert_command_body(
             )?;
         }
         CommandBody::RecordChildProcessLiveness {
-            child_process_id,
+            native_child_id,
             liveness,
         } => {
             transaction.execute(
                 "INSERT INTO command_record_child_process_liveness VALUES (?1, ?2, ?3)",
-                params![command_row_id, child_process_id.value(), *liveness as i64],
+                params![command_row_id, native_child_id.value(), *liveness as i64],
             )?;
         }
         CommandBody::RecordProcessSignalReceipt {
-            child_process_id,
+            native_child_id,
             action,
             delivery,
             observed_liveness,
             cause,
         } => {
             let (cause_kind, propagation_id) = signal_cause_parts(*cause);
-            transaction.execute("INSERT INTO command_record_process_signal_receipt VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)", params![command_row_id, child_process_id.value(), *action as i64, *delivery as i64, *observed_liveness as i64, cause_kind, propagation_id])?;
+            transaction.execute("INSERT INTO command_record_process_signal_receipt VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)", params![command_row_id, native_child_id.value(), *action as i64, *delivery as i64, *observed_liveness as i64, cause_kind, propagation_id])?;
         }
         CommandBody::RecordDirectChildReap {
-            child_process_id,
+            native_child_id,
             wait_status,
             group_liveness_before_cleanup,
             group_liveness_after_cleanup,
@@ -12854,7 +13603,7 @@ fn insert_command_body(
                 "INSERT INTO command_record_direct_child_reap VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 params![
                     command_row_id,
-                    child_process_id.value(),
+                    native_child_id.value(),
                     kind,
                     value,
                     *group_liveness_before_cleanup as i64,
@@ -12863,7 +13612,7 @@ fn insert_command_body(
             )?;
         }
         CommandBody::RecordChildRecovery {
-            child_process_id,
+            native_child_id,
             observation,
             group_liveness_after_restart,
         } => {
@@ -12871,16 +13620,16 @@ fn insert_command_body(
                 "INSERT INTO command_record_child_recovery VALUES (?1, ?2, ?3, ?4)",
                 params![
                     command_row_id,
-                    child_process_id.value(),
+                    native_child_id.value(),
                     *observation as i64,
                     *group_liveness_after_restart as i64
                 ],
             )?;
         }
-        CommandBody::FinalizeChildProcess { child_process_id } => {
+        CommandBody::FinalizeChildProcess { native_child_id } => {
             transaction.execute(
                 "INSERT INTO command_finalize_child_process VALUES (?1, ?2)",
-                params![command_row_id, child_process_id.value()],
+                params![command_row_id, native_child_id.value()],
             )?;
         }
         CommandBody::BeginCancellationPropagation {
@@ -12899,15 +13648,15 @@ fn insert_command_body(
                 params![command_row_id, cancellation_propagation_id.value()],
             )?;
         }
-        CommandBody::RecordPiChildNotSpawned {
-            pi_child_spawn_admission_id,
+        CommandBody::RecordNativeChildNotSpawned {
+            native_child_spawn_admission_id,
             reason,
         } => {
             transaction.execute(
-                "INSERT INTO command_record_pi_child_not_spawned VALUES (?1, ?2, ?3)",
+                "INSERT INTO command_record_native_child_not_spawned VALUES (?1, ?2, ?3)",
                 params![
                     command_row_id,
-                    pi_child_spawn_admission_id.value(),
+                    native_child_spawn_admission_id.value(),
                     *reason as i64
                 ],
             )?;
@@ -12958,13 +13707,13 @@ fn insert_event_body(
     match body {
         EventBody::PiOfficeSessionDisposeAuthorized {
             session_id,
-            child_process_id,
+            native_child_id,
             correlation_identity,
             authorized_generation,
         } => {
             transaction.execute(
                 "INSERT INTO event_pi_office_session_dispose_authorized VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![event_id.value(), session_id.value(), child_process_id.value(), correlation_identity.as_str(), authorized_generation.value()],
+                params![event_id.value(), session_id.value(), native_child_id.value(), correlation_identity.as_str(), authorized_generation.value()],
             )?;
         }
         EventBody::SocietyIdentityCreated { society_id } => {
@@ -13560,16 +14309,52 @@ fn insert_event_body(
                 ],
             )?;
         }
-        EventBody::DeterministicExperimentClosed {
+        EventBody::DeterministicExperimentFinalized {
             deterministic_experiment_id,
+            terminal_state,
         } => {
             transaction.execute(
-                "INSERT INTO event_deterministic_experiment_closed VALUES (?1, ?2)",
-                params![event_id.value(), deterministic_experiment_id.value()],
+                "INSERT INTO event_deterministic_experiment_finalized VALUES (?1, ?2, ?3)",
+                params![
+                    event_id.value(),
+                    deterministic_experiment_id.value(),
+                    *terminal_state as i64
+                ],
+            )?;
+        }
+        EventBody::DeterministicEvaluatorNativeChildAdmitted {
+            native_child_spawn_admission_id,
+            owner:
+                NativeChildOwner::DeterministicEvaluator {
+                    deterministic_experiment_id,
+                    evaluator_revision_id,
+                    input_manifest_id,
+                },
+        } => {
+            transaction.execute(
+                "INSERT INTO event_deterministic_evaluator_native_child_admitted VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![event_id.value(), native_child_spawn_admission_id.value(), deterministic_experiment_id.value(), evaluator_revision_id.value(), input_manifest_id.value()],
+            )?;
+        }
+        EventBody::DeterministicEvaluatorNativeChildAdmitted {
+            owner: NativeChildOwner::Pi(_),
+            ..
+        } => {
+            return Err(StoreError::LedgerCorruption(
+                "evaluator-native child event has Pi owner",
+            ));
+        }
+        EventBody::DeterministicEvaluatorNativeChildSpawnRecorded {
+            native_child_id,
+            native_child_spawn_admission_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_deterministic_evaluator_native_child_spawn_recorded VALUES (?1, ?2, ?3)",
+                params![event_id.value(), native_child_id.value(), native_child_spawn_admission_id.value()],
             )?;
         }
         EventBody::PiChildSpawnAdmitted {
-            pi_child_spawn_admission_id,
+            native_child_spawn_admission_id,
             owner,
             budget_reservation_id,
         } => {
@@ -13581,7 +14366,7 @@ fn insert_event_body(
                 "INSERT INTO event_pi_child_spawn_admitted VALUES (?1, ?2, ?3, ?4, ?5)",
                 params![
                     event_id.value(),
-                    pi_child_spawn_admission_id.value(),
+                    native_child_spawn_admission_id.value(),
                     attempt,
                     office,
                     budget_reservation_id.value()
@@ -13589,59 +14374,59 @@ fn insert_event_body(
             )?;
         }
         EventBody::InertPiChildSpawnRecorded {
-            child_process_id,
-            pi_child_spawn_admission_id,
+            native_child_id,
+            native_child_spawn_admission_id,
         } => {
             transaction.execute(
                 "INSERT INTO event_inert_pi_child_spawn_recorded VALUES (?1, ?2, ?3)",
                 params![
                     event_id.value(),
-                    child_process_id.value(),
-                    pi_child_spawn_admission_id.value()
+                    native_child_id.value(),
+                    native_child_spawn_admission_id.value()
                 ],
             )?;
         }
         EventBody::PiAdapterReadyRecorded {
-            child_process_id,
+            native_child_id,
             pi_session_id,
         } => {
             transaction.execute(
                 "INSERT INTO event_pi_adapter_ready_recorded VALUES (?1, ?2, ?3)",
                 params![
                     event_id.value(),
-                    child_process_id.value(),
+                    native_child_id.value(),
                     pi_session_id.value()
                 ],
             )?;
         }
-        EventBody::PiCreateSessionAuthorized { child_process_id } => {
+        EventBody::PiCreateSessionAuthorized { native_child_id } => {
             transaction.execute(
                 "INSERT INTO event_pi_create_session_authorized VALUES (?1, ?2)",
-                params![event_id.value(), child_process_id.value()],
+                params![event_id.value(), native_child_id.value()],
             )?;
         }
-        EventBody::PiCreateSessionDeliveryRecorded { child_process_id } => {
+        EventBody::PiCreateSessionDeliveryRecorded { native_child_id } => {
             transaction.execute(
                 "INSERT INTO event_pi_create_session_delivery_recorded VALUES (?1, ?2)",
-                params![event_id.value(), child_process_id.value()],
+                params![event_id.value(), native_child_id.value()],
             )?;
         }
         EventBody::PiSessionReadyRecorded {
-            child_process_id,
+            native_child_id,
             pi_session_id,
         } => {
             transaction.execute(
                 "INSERT INTO event_pi_session_ready_recorded VALUES (?1, ?2, ?3)",
                 params![
                     event_id.value(),
-                    child_process_id.value(),
+                    native_child_id.value(),
                     pi_session_id.value()
                 ],
             )?;
         }
         EventBody::PiAbortControlDeliveryRecorded {
             pi_abort_control_receipt_id,
-            child_process_id,
+            native_child_id,
             cancellation_propagation_id,
             correlation_identity,
             abort_command_digest,
@@ -13649,12 +14434,12 @@ fn insert_event_body(
         } => {
             transaction.execute(
                 "INSERT INTO event_pi_abort_control_delivery_recorded VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                params![event_id.value(), pi_abort_control_receipt_id.value(), child_process_id.value(), cancellation_propagation_id.value(), correlation_identity.as_str(), abort_command_digest.as_bytes().as_slice(), *outcome as i64],
+                params![event_id.value(), pi_abort_control_receipt_id.value(), native_child_id.value(), cancellation_propagation_id.value(), correlation_identity.as_str(), abort_command_digest.as_bytes().as_slice(), *outcome as i64],
             )?;
         }
         EventBody::ChildStreamSealed {
-            child_stream_seal_id,
-            child_process_id,
+            native_child_stream_seal_id,
+            native_child_id,
             stream_kind,
             completeness,
         } => {
@@ -13662,42 +14447,42 @@ fn insert_event_body(
                 "INSERT INTO event_child_stream_sealed VALUES (?1, ?2, ?3, ?4, ?5)",
                 params![
                     event_id.value(),
-                    child_stream_seal_id.value(),
-                    child_process_id.value(),
+                    native_child_stream_seal_id.value(),
+                    native_child_id.value(),
                     *stream_kind as i64,
                     *completeness as i64
                 ],
             )?;
         }
         EventBody::ChildProcessLivenessObserved {
-            child_process_liveness_observation_id,
-            child_process_id,
+            native_child_liveness_observation_id,
+            native_child_id,
             liveness,
         } => {
             transaction.execute(
                 "INSERT INTO event_child_process_liveness_observed VALUES (?1, ?2, ?3, ?4)",
                 params![
                     event_id.value(),
-                    child_process_liveness_observation_id.value(),
-                    child_process_id.value(),
+                    native_child_liveness_observation_id.value(),
+                    native_child_id.value(),
                     *liveness as i64
                 ],
             )?;
         }
         EventBody::ProcessSignalReceiptRecorded {
             process_signal_receipt_id,
-            child_process_id,
+            native_child_id,
             action,
             delivery,
             observed_liveness,
             cause,
         } => {
             let (cause_kind, propagation_id) = signal_cause_parts(*cause);
-            transaction.execute("INSERT INTO event_process_signal_receipt_recorded VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)", params![event_id.value(), process_signal_receipt_id.value(), child_process_id.value(), *action as i64, *delivery as i64, *observed_liveness as i64, cause_kind, propagation_id])?;
+            transaction.execute("INSERT INTO event_process_signal_receipt_recorded VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)", params![event_id.value(), process_signal_receipt_id.value(), native_child_id.value(), *action as i64, *delivery as i64, *observed_liveness as i64, cause_kind, propagation_id])?;
         }
         EventBody::DirectChildReaped {
-            child_process_reap_receipt_id,
-            child_process_id,
+            native_child_reap_receipt_id,
+            native_child_id,
             wait_status,
             group_liveness_before_cleanup,
             group_liveness_after_cleanup,
@@ -13715,8 +14500,8 @@ fn insert_event_body(
                 "INSERT INTO event_direct_child_reaped VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 params![
                     event_id.value(),
-                    child_process_reap_receipt_id.value(),
-                    child_process_id.value(),
+                    native_child_reap_receipt_id.value(),
+                    native_child_id.value(),
                     kind,
                     value,
                     *group_liveness_before_cleanup as i64,
@@ -13725,8 +14510,8 @@ fn insert_event_body(
             )?;
         }
         EventBody::ChildRecoveryObserved {
-            child_process_recovery_receipt_id,
-            child_process_id,
+            native_child_recovery_receipt_id,
+            native_child_id,
             observation,
             group_liveness_after_restart,
         } => {
@@ -13734,22 +14519,22 @@ fn insert_event_body(
                 "INSERT INTO event_child_recovery_observed VALUES (?1, ?2, ?3, ?4, ?5)",
                 params![
                     event_id.value(),
-                    child_process_recovery_receipt_id.value(),
-                    child_process_id.value(),
+                    native_child_recovery_receipt_id.value(),
+                    native_child_id.value(),
                     *observation as i64,
                     *group_liveness_after_restart as i64
                 ],
             )?;
         }
         EventBody::ChildProcessFinalized {
-            child_process_id,
+            native_child_id,
             disposition,
         } => {
             transaction.execute(
                 "INSERT INTO event_child_process_finalized VALUES (?1, ?2, ?3)",
                 params![
                     event_id.value(),
-                    child_process_id.value(),
+                    native_child_id.value(),
                     *disposition as i64
                 ],
             )?;
@@ -13791,15 +14576,15 @@ fn insert_event_body(
                 params![event_id.value(), cancellation_propagation_id.value()],
             )?;
         }
-        EventBody::PiChildSpawnInvalidated {
-            pi_child_spawn_admission_id,
+        EventBody::NativeChildSpawnInvalidated {
+            native_child_spawn_admission_id,
             reason,
         } => {
             transaction.execute(
-                "INSERT INTO event_pi_child_spawn_invalidated VALUES (?1, ?2, ?3)",
+                "INSERT INTO event_native_child_spawn_invalidated VALUES (?1, ?2, ?3)",
                 params![
                     event_id.value(),
-                    pi_child_spawn_admission_id.value(),
+                    native_child_spawn_admission_id.value(),
                     *reason as i64
                 ],
             )?;
@@ -13807,11 +14592,11 @@ fn insert_event_body(
         EventBody::PiOfficeTurnPromptAuthorized {
             pi_office_turn_prompt_authorization_id,
             office_turn_id,
-            child_process_id,
+            native_child_id,
             correlation_identity,
             budget_reservation_id,
         } => {
-            transaction.execute("INSERT INTO event_pi_office_turn_prompt_authorized VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![event_id.value(), pi_office_turn_prompt_authorization_id.value(), office_turn_id.value(), child_process_id.value(), correlation_identity.as_str(), budget_reservation_id.value()])?;
+            transaction.execute("INSERT INTO event_pi_office_turn_prompt_authorized VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![event_id.value(), pi_office_turn_prompt_authorization_id.value(), office_turn_id.value(), native_child_id.value(), correlation_identity.as_str(), budget_reservation_id.value()])?;
         }
         EventBody::PiOfficeTurnPromptDelivered {
             office_turn_id,
@@ -13887,7 +14672,7 @@ fn insert_event_body(
         }
         EventBody::PiOfficeSessionDisposeDelivered {
             session_id,
-            child_process_id,
+            native_child_id,
             correlation_identity,
         } => {
             transaction.execute(
@@ -13895,7 +14680,7 @@ fn insert_event_body(
                 params![
                     event_id.value(),
                     session_id.value(),
-                    child_process_id.value(),
+                    native_child_id.value(),
                     correlation_identity.as_str()
                 ],
             )?;
@@ -14576,19 +15361,53 @@ fn decode_event_body(
                 applicability: evidence_applicability_from_i64(applicability)?,
             }
         }
-        EventKind::DeterministicExperimentClosed => EventBody::DeterministicExperimentClosed {
-            deterministic_experiment_id: query_event_id(
-                connection,
-                "event_deterministic_experiment_closed",
-                "deterministic_experiment_id",
-                event_id_typed,
-            )?,
-        },
+        EventKind::DeterministicExperimentFinalized => {
+            let (experiment, terminal_state): (i64, i64) = connection.query_row(
+                "SELECT deterministic_experiment_id, terminal_state FROM event_deterministic_experiment_finalized WHERE event_id = ?1",
+                [event_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            ).optional()?.ok_or(StoreError::LedgerCorruption("missing deterministic experiment finalized event body"))?;
+            EventBody::DeterministicExperimentFinalized {
+                deterministic_experiment_id: DeterministicExperimentId::try_from(experiment)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                terminal_state: deterministic_experiment_state_from_i64(terminal_state)?,
+            }
+        }
+        EventKind::DeterministicEvaluatorNativeChildAdmitted => {
+            let row: (i64,i64,i64,i64) = connection.query_row(
+                "SELECT native_child_spawn_admission_id, deterministic_experiment_id, evaluator_revision_id, input_manifest_id FROM event_deterministic_evaluator_native_child_admitted WHERE event_id = ?1",
+                [event_id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)),
+            ).optional()?.ok_or(StoreError::LedgerCorruption("missing evaluator native-child admission event body"))?;
+            EventBody::DeterministicEvaluatorNativeChildAdmitted {
+                native_child_spawn_admission_id: NativeChildSpawnAdmissionId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                owner: NativeChildOwner::DeterministicEvaluator {
+                    deterministic_experiment_id: DeterministicExperimentId::try_from(row.1)
+                        .map_err(|_| StoreError::InvalidStoredValue)?,
+                    evaluator_revision_id: EvaluatorRevisionId::try_from(row.2)
+                        .map_err(|_| StoreError::InvalidStoredValue)?,
+                    input_manifest_id: InputManifestId::try_from(row.3)
+                        .map_err(|_| StoreError::InvalidStoredValue)?,
+                },
+            }
+        }
+        EventKind::DeterministicEvaluatorNativeChildSpawnRecorded => {
+            let row: (i64,i64) = connection.query_row(
+                "SELECT native_child_id, native_child_spawn_admission_id FROM event_deterministic_evaluator_native_child_spawn_recorded WHERE event_id = ?1",
+                [event_id], |r| Ok((r.get(0)?,r.get(1)?)),
+            ).optional()?.ok_or(StoreError::LedgerCorruption("missing evaluator native-child spawn event body"))?;
+            EventBody::DeterministicEvaluatorNativeChildSpawnRecorded {
+                native_child_id: NativeChildId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                native_child_spawn_admission_id: NativeChildSpawnAdmissionId::try_from(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
         EventKind::PiChildSpawnAdmitted => {
-            let row: (i64, Option<i64>, Option<i64>, i64) = connection.query_row("SELECT pi_child_spawn_admission_id, actor_attempt_id, root_authority_office_session_id, budget_reservation_id FROM event_pi_child_spawn_admitted WHERE event_id = ?1", [event_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi child admission event body"))?;
+            let row: (i64, Option<i64>, Option<i64>, i64) = connection.query_row("SELECT native_child_spawn_admission_id, actor_attempt_id, root_authority_office_session_id, budget_reservation_id FROM event_pi_child_spawn_admitted WHERE event_id = ?1", [event_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi child admission event body"))?;
             let owner = decode_child_owner(row.1, row.2)?;
             EventBody::PiChildSpawnAdmitted {
-                pi_child_spawn_admission_id: PiChildSpawnAdmissionId::try_from(row.0)
+                native_child_spawn_admission_id: NativeChildSpawnAdmissionId::try_from(row.0)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
                 owner,
                 budget_reservation_id: BudgetReservationId::try_from(row.3)
@@ -14599,9 +15418,9 @@ fn decode_event_body(
             let (child, admission) =
                 query_event_pair(connection, "event_inert_pi_child_spawn_recorded", event_id)?;
             EventBody::InertPiChildSpawnRecorded {
-                child_process_id: ChildProcessId::try_from(child)
+                native_child_id: NativeChildId::try_from(child)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
-                pi_child_spawn_admission_id: PiChildSpawnAdmissionId::try_from(admission)
+                native_child_spawn_admission_id: NativeChildSpawnAdmissionId::try_from(admission)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
             }
         }
@@ -14609,25 +15428,25 @@ fn decode_event_body(
             let (child, session) =
                 query_event_pair(connection, "event_pi_adapter_ready_recorded", event_id)?;
             EventBody::PiAdapterReadyRecorded {
-                child_process_id: ChildProcessId::try_from(child)
+                native_child_id: NativeChildId::try_from(child)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
                 pi_session_id: PiSessionId::try_from(session)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
             }
         }
         EventKind::PiCreateSessionAuthorized => EventBody::PiCreateSessionAuthorized {
-            child_process_id: query_event_id(
+            native_child_id: query_event_id(
                 connection,
                 "event_pi_create_session_authorized",
-                "child_process_id",
+                "native_child_id",
                 event_id_typed,
             )?,
         },
         EventKind::PiCreateSessionDeliveryRecorded => EventBody::PiCreateSessionDeliveryRecorded {
-            child_process_id: query_event_id(
+            native_child_id: query_event_id(
                 connection,
                 "event_pi_create_session_delivery_recorded",
-                "child_process_id",
+                "native_child_id",
                 event_id_typed,
             )?,
         },
@@ -14635,7 +15454,7 @@ fn decode_event_body(
             let (child, session) =
                 query_event_pair(connection, "event_pi_session_ready_recorded", event_id)?;
             EventBody::PiSessionReadyRecorded {
-                child_process_id: ChildProcessId::try_from(child)
+                native_child_id: NativeChildId::try_from(child)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
                 pi_session_id: PiSessionId::try_from(session)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -14643,14 +15462,14 @@ fn decode_event_body(
         }
         EventKind::PiAbortControlDeliveryRecorded => {
             let row: (i64, i64, i64, String, Vec<u8>, i64) = connection.query_row(
-                "SELECT pi_abort_control_receipt_id, child_process_id, cancellation_propagation_id, correlation_identity, abort_command_digest, physical_write_outcome FROM event_pi_abort_control_delivery_recorded WHERE event_id = ?1",
+                "SELECT pi_abort_control_receipt_id, native_child_id, cancellation_propagation_id, correlation_identity, abort_command_digest, physical_write_outcome FROM event_pi_abort_control_delivery_recorded WHERE event_id = ?1",
                 [event_id],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
             ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Abort event body"))?;
             EventBody::PiAbortControlDeliveryRecorded {
                 pi_abort_control_receipt_id: PiAbortControlReceiptId::try_from(row.0)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
-                child_process_id: ChildProcessId::try_from(row.1)
+                native_child_id: NativeChildId::try_from(row.1)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
                 cancellation_propagation_id: CancellationPropagationId::try_from(row.2)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -14661,34 +15480,34 @@ fn decode_event_body(
             }
         }
         EventKind::ChildStreamSealed => {
-            let row: (i64,i64,i64,i64) = connection.query_row("SELECT child_stream_seal_id, child_process_id, stream_kind, completeness FROM event_child_stream_sealed WHERE event_id = ?1", [event_id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing child stream event body"))?;
+            let row: (i64,i64,i64,i64) = connection.query_row("SELECT native_child_stream_seal_id, native_child_id, stream_kind, completeness FROM event_child_stream_sealed WHERE event_id = ?1", [event_id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing child stream event body"))?;
             EventBody::ChildStreamSealed {
-                child_stream_seal_id: ChildStreamSealId::try_from(row.0)
+                native_child_stream_seal_id: NativeChildStreamSealId::try_from(row.0)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
-                child_process_id: ChildProcessId::try_from(row.1)
+                native_child_id: NativeChildId::try_from(row.1)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
                 stream_kind: child_stream_kind_from_i64(row.2)?,
                 completeness: child_stream_completeness_from_i64(row.3)?,
             }
         }
         EventKind::ChildProcessLivenessObserved => {
-            let row:(i64,i64,i64)=connection.query_row("SELECT child_process_liveness_observation_id, child_process_id, liveness FROM event_child_process_liveness_observed WHERE event_id = ?1",[event_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing liveness event body"))?;
+            let row:(i64,i64,i64)=connection.query_row("SELECT native_child_liveness_observation_id, native_child_id, liveness FROM event_child_process_liveness_observed WHERE event_id = ?1",[event_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing liveness event body"))?;
             EventBody::ChildProcessLivenessObserved {
-                child_process_liveness_observation_id: ChildProcessLivenessObservationId::try_from(
+                native_child_liveness_observation_id: NativeChildLivenessObservationId::try_from(
                     row.0,
                 )
                 .map_err(|_| StoreError::InvalidStoredValue)?,
-                child_process_id: ChildProcessId::try_from(row.1)
+                native_child_id: NativeChildId::try_from(row.1)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
                 liveness: process_group_liveness_from_i64(row.2)?,
             }
         }
         EventKind::ProcessSignalReceiptRecorded => {
-            let row:(i64,i64,i64,i64,i64,i64,Option<i64>)=connection.query_row("SELECT process_signal_receipt_id, child_process_id, signal_action, delivery, observed_liveness, cause_kind, cancellation_propagation_id FROM event_process_signal_receipt_recorded WHERE event_id = ?1",[event_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing signal event body"))?;
+            let row:(i64,i64,i64,i64,i64,i64,Option<i64>)=connection.query_row("SELECT process_signal_receipt_id, native_child_id, signal_action, delivery, observed_liveness, cause_kind, cancellation_propagation_id FROM event_process_signal_receipt_recorded WHERE event_id = ?1",[event_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing signal event body"))?;
             EventBody::ProcessSignalReceiptRecorded {
                 process_signal_receipt_id: ProcessSignalReceiptId::try_from(row.0)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
-                child_process_id: ChildProcessId::try_from(row.1)
+                native_child_id: NativeChildId::try_from(row.1)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
                 action: process_signal_action_from_i64(row.2)?,
                 delivery: process_signal_delivery_from_i64(row.3)?,
@@ -14697,11 +15516,11 @@ fn decode_event_body(
             }
         }
         EventKind::DirectChildReaped => {
-            let row:(i64,i64,i64,Option<i64>,i64,i64)=connection.query_row("SELECT child_process_reap_receipt_id, child_process_id, wait_status_kind, status_value, group_liveness_before_cleanup, group_liveness_after_cleanup FROM event_direct_child_reaped WHERE event_id = ?1",[event_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing reap event body"))?;
+            let row:(i64,i64,i64,Option<i64>,i64,i64)=connection.query_row("SELECT native_child_reap_receipt_id, native_child_id, wait_status_kind, status_value, group_liveness_before_cleanup, group_liveness_after_cleanup FROM event_direct_child_reaped WHERE event_id = ?1",[event_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing reap event body"))?;
             EventBody::DirectChildReaped {
-                child_process_reap_receipt_id: ChildProcessReapReceiptId::try_from(row.0)
+                native_child_reap_receipt_id: NativeChildReapReceiptId::try_from(row.0)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
-                child_process_id: ChildProcessId::try_from(row.1)
+                native_child_id: NativeChildId::try_from(row.1)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
                 wait_status: direct_wait_status_from_sql(row.2, row.3)?,
                 group_liveness_before_cleanup: process_group_liveness_from_i64(row.4)?,
@@ -14709,11 +15528,11 @@ fn decode_event_body(
             }
         }
         EventKind::ChildRecoveryObserved => {
-            let row:(i64,i64,i64,i64)=connection.query_row("SELECT child_process_recovery_receipt_id, child_process_id, observation, group_liveness_after_restart FROM event_child_recovery_observed WHERE event_id = ?1",[event_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing recovery event body"))?;
+            let row:(i64,i64,i64,i64)=connection.query_row("SELECT native_child_recovery_receipt_id, native_child_id, observation, group_liveness_after_restart FROM event_child_recovery_observed WHERE event_id = ?1",[event_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing recovery event body"))?;
             EventBody::ChildRecoveryObserved {
-                child_process_recovery_receipt_id: ChildProcessRecoveryReceiptId::try_from(row.0)
+                native_child_recovery_receipt_id: NativeChildRecoveryReceiptId::try_from(row.0)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
-                child_process_id: ChildProcessId::try_from(row.1)
+                native_child_id: NativeChildId::try_from(row.1)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
                 observation: child_recovery_observation_from_i64(row.2)?,
                 group_liveness_after_restart: process_group_liveness_from_i64(row.3)?,
@@ -14723,7 +15542,7 @@ fn decode_event_body(
             let (child, disposition) =
                 query_event_pair(connection, "event_child_process_finalized", event_id)?;
             EventBody::ChildProcessFinalized {
-                child_process_id: ChildProcessId::try_from(child)
+                native_child_id: NativeChildId::try_from(child)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
                 disposition: child_terminal_disposition_from_i64(disposition)?,
             }
@@ -14766,21 +15585,21 @@ fn decode_event_body(
                 )?,
             }
         }
-        EventKind::PiChildSpawnInvalidated => {
+        EventKind::NativeChildSpawnInvalidated => {
             let (admission, reason): (i64, i64) = connection.query_row(
-                "SELECT pi_child_spawn_admission_id, reason FROM event_pi_child_spawn_invalidated WHERE event_id = ?1",
+                "SELECT native_child_spawn_admission_id, reason FROM event_native_child_spawn_invalidated WHERE event_id = ?1",
                 [event_id],
                 |r| Ok((r.get(0)?, r.get(1)?)),
-            ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi child invalidation event body"))?;
-            EventBody::PiChildSpawnInvalidated {
-                pi_child_spawn_admission_id: PiChildSpawnAdmissionId::try_from(admission)
+            ).optional()?.ok_or(StoreError::LedgerCorruption("missing native-child invalidation event body"))?;
+            EventBody::NativeChildSpawnInvalidated {
+                native_child_spawn_admission_id: NativeChildSpawnAdmissionId::try_from(admission)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
-                reason: pi_child_not_spawned_reason_from_i64(reason)?,
+                reason: native_child_not_spawned_reason_from_i64(reason)?,
             }
         }
         EventKind::PiOfficeTurnPromptAuthorized => {
             let row: (i64, i64, i64, String, i64) = connection.query_row(
-                "SELECT pi_office_turn_prompt_authorization_id, office_turn_id, child_process_id, correlation_identity, budget_reservation_id FROM event_pi_office_turn_prompt_authorized WHERE event_id = ?1",
+                "SELECT pi_office_turn_prompt_authorization_id, office_turn_id, native_child_id, correlation_identity, budget_reservation_id FROM event_pi_office_turn_prompt_authorized WHERE event_id = ?1",
                 [event_id],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
             ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Office Prompt authorization event body"))?;
@@ -14790,7 +15609,7 @@ fn decode_event_body(
                         .map_err(|_| StoreError::InvalidStoredValue)?,
                 office_turn_id: OfficeTurnId::try_from(row.1)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
-                child_process_id: ChildProcessId::try_from(row.2)
+                native_child_id: NativeChildId::try_from(row.2)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
                 correlation_identity: PiCorrelationIdentity::parse(row.3)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -14874,7 +15693,7 @@ fn decode_event_body(
         EventKind::PiOfficeSessionDisposeAuthorized => {
             let row: (i64, i64, String, i64) = connection
                 .query_row(
-                    "SELECT root_authority_office_session_id, child_process_id,
+                    "SELECT root_authority_office_session_id, native_child_id,
                         correlation_identity, authorized_generation
                  FROM event_pi_office_session_dispose_authorized WHERE event_id = ?1",
                     [event_id],
@@ -14887,7 +15706,7 @@ fn decode_event_body(
             EventBody::PiOfficeSessionDisposeAuthorized {
                 session_id: RootAuthorityOfficeSessionId::try_from(row.0)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
-                child_process_id: ChildProcessId::try_from(row.1)
+                native_child_id: NativeChildId::try_from(row.1)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
                 correlation_identity: PiCorrelationIdentity::parse(row.2)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -14896,16 +15715,21 @@ fn decode_event_body(
             }
         }
         EventKind::PiOfficeSessionDisposeDelivered => {
-            let row: (i64, i64, String) = connection.query_row(
-                "SELECT root_authority_office_session_id, child_process_id, correlation_identity
+            let row: (i64, i64, String) = connection
+                .query_row(
+                    "SELECT root_authority_office_session_id, native_child_id, correlation_identity
                  FROM event_pi_office_session_dispose_delivered WHERE event_id = ?1",
-                [event_id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Office Dispose delivery event body"))?;
+                    [event_id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .optional()?
+                .ok_or(StoreError::LedgerCorruption(
+                    "missing Pi Office Dispose delivery event body",
+                ))?;
             EventBody::PiOfficeSessionDisposeDelivered {
                 session_id: RootAuthorityOfficeSessionId::try_from(row.0)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
-                child_process_id: ChildProcessId::try_from(row.1)
+                native_child_id: NativeChildId::try_from(row.1)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
                 correlation_identity: PiCorrelationIdentity::parse(row.2)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -15288,7 +16112,7 @@ fn replay_command_requests(
     Ok(commands)
 }
 
-const MATERIALIZED_TABLES: [&str; 95] = [
+const MATERIALIZED_TABLES: [&str; 96] = [
     "principals",
     "societies",
     "office_contracts",
@@ -15357,17 +16181,18 @@ const MATERIALIZED_TABLES: [&str; 95] = [
     "supervisor_epochs",
     "workspaces",
     "pi_child_sessions",
-    "pi_child_spawn_admissions",
-    "pi_child_spawn_invalidations",
+    "native_child_spawn_admissions",
+    "pi_child_spawn_sidecars",
+    "native_child_spawn_invalidations",
     "office_session_budget_reservations",
-    "pi_child_processes",
+    "native_children",
     "pi_child_session_protocols",
-    "child_process_liveness_observations",
+    "native_child_liveness_observations",
     "process_signal_receipts",
-    "child_process_reap_receipts",
-    "child_process_recovery_receipts",
+    "native_child_reap_receipts",
+    "native_child_recovery_receipts",
     "pi_abort_control_receipts",
-    "child_stream_seals",
+    "native_child_stream_seals",
     "cancellation_propagations",
     "cancellation_propagation_children",
     "cancellation_propagation_targets",
@@ -16291,16 +17116,58 @@ fn decode_command_body(
                     .map_err(|_| StoreError::InvalidStoredValue)?,
             }
         }
-        CommandKind::CloseDeterministicExperiment => {
+        CommandKind::FinalizeDeterministicExperiment => {
             let (cycle, experiment) = query_command_pair(
                 connection,
-                "command_close_deterministic_experiment",
+                "command_finalize_deterministic_experiment",
                 command_row_id,
             )?;
-            CommandBody::CloseDeterministicExperiment {
+            CommandBody::FinalizeDeterministicExperiment {
                 operating_cycle_id: OperatingCycleId::try_from(cycle)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
                 deterministic_experiment_id: DeterministicExperimentId::try_from(experiment)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::AdmitDeterministicEvaluatorNativeChild => {
+            let row: (i64,i64,i64,i64,i64,String,String,i64,String) = connection.query_row(
+                "SELECT operating_cycle_id, deterministic_experiment_id, evaluator_revision_id, input_manifest_id, execution_profile_id, native_workspace_id, canonical_workspace_path, supervisor_epoch_id, supervisor_epoch_identity FROM command_admit_deterministic_evaluator_native_child WHERE command_row_id = ?1",
+                [command_row_id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,r.get(8)?)),
+            ).optional()?.ok_or(StoreError::LedgerCorruption("missing evaluator native-child admission command body"))?;
+            CommandBody::AdmitDeterministicEvaluatorNativeChild {
+                operating_cycle_id: OperatingCycleId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                deterministic_experiment_id: DeterministicExperimentId::try_from(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                evaluator_revision_id: EvaluatorRevisionId::try_from(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                input_manifest_id: InputManifestId::try_from(row.3)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                execution_profile_id: ExecutionProfileId::try_from(row.4)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                native_workspace_id: NativeWorkspaceId::parse(row.5)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                canonical_workspace_path: CanonicalWorkspacePath::parse(row.6)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                supervisor_epoch_id: SupervisorEpochId::try_from(row.7)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                supervisor_epoch_identity: SupervisorEpochIdentity::parse(row.8)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::RecordDeterministicEvaluatorNativeChildSpawn => {
+            let row: (i64,String,i32,i32) = connection.query_row(
+                "SELECT native_child_spawn_admission_id, child_identity, direct_child_pid, process_group_id FROM command_record_deterministic_evaluator_native_child_spawn WHERE command_row_id = ?1",
+                [command_row_id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)),
+            ).optional()?.ok_or(StoreError::LedgerCorruption("missing evaluator native-child spawn command body"))?;
+            CommandBody::RecordDeterministicEvaluatorNativeChildSpawn {
+                native_child_spawn_admission_id: NativeChildSpawnAdmissionId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                child_identity: SupervisedChildIdentity::parse(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                direct_child_pid: NativeChildPid::try_from(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                process_group_id: OwnedProcessGroupId::try_from(row.3)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
             }
         }
@@ -16338,9 +17205,9 @@ fn decode_command_body(
             }
         }
         CommandKind::RecordInertChildSpawn => {
-            let row:(i64,String,i64,i64)=connection.query_row("SELECT pi_child_spawn_admission_id, child_identity, direct_child_pid, process_group_id FROM command_record_inert_pi_child_spawn WHERE command_row_id = ?1",[command_row_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing inert Pi child command body"))?;
+            let row:(i64,String,i64,i64)=connection.query_row("SELECT native_child_spawn_admission_id, child_identity, direct_child_pid, process_group_id FROM command_record_inert_pi_child_spawn WHERE command_row_id = ?1",[command_row_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing inert Pi child command body"))?;
             CommandBody::RecordInertChildSpawn {
-                pi_child_spawn_admission_id: PiChildSpawnAdmissionId::try_from(row.0)
+                native_child_spawn_admission_id: NativeChildSpawnAdmissionId::try_from(row.0)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
                 child_identity: SupervisedChildIdentity::parse(row.1)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -16355,9 +17222,9 @@ fn decode_command_body(
             }
         }
         CommandKind::RecordPiAdapterReady => {
-            let row:(i64,String,String)=connection.query_row("SELECT child_process_id, pi_session_identity, spawn_nonce FROM command_record_pi_adapter_ready WHERE command_row_id = ?1",[command_row_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing adapter ready command body"))?;
+            let row:(i64,String,String)=connection.query_row("SELECT native_child_id, pi_session_identity, spawn_nonce FROM command_record_pi_adapter_ready WHERE command_row_id = ?1",[command_row_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing adapter ready command body"))?;
             CommandBody::RecordPiAdapterReady {
-                child_process_id: ChildProcessId::try_from(row.0)
+                native_child_id: NativeChildId::try_from(row.0)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
                 pi_session_identity: PiBoundarySessionIdentity::parse(row.1)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -16366,30 +17233,30 @@ fn decode_command_body(
             }
         }
         CommandKind::AuthorizePiCreateSession | CommandKind::RecordPiCreateSessionDelivery => {
-            let row:(i64,String,Vec<u8>)=connection.query_row(if kind == CommandKind::AuthorizePiCreateSession { "SELECT child_process_id, correlation_identity, create_request_digest FROM command_authorize_pi_create_session WHERE command_row_id = ?1" } else { "SELECT child_process_id, correlation_identity, create_request_digest FROM command_record_pi_create_session_delivery WHERE command_row_id = ?1" },[command_row_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Create command body"))?;
-            let child_process_id =
-                ChildProcessId::try_from(row.0).map_err(|_| StoreError::InvalidStoredValue)?;
+            let row:(i64,String,Vec<u8>)=connection.query_row(if kind == CommandKind::AuthorizePiCreateSession { "SELECT native_child_id, correlation_identity, create_request_digest FROM command_authorize_pi_create_session WHERE command_row_id = ?1" } else { "SELECT native_child_id, correlation_identity, create_request_digest FROM command_record_pi_create_session_delivery WHERE command_row_id = ?1" },[command_row_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Create command body"))?;
+            let native_child_id =
+                NativeChildId::try_from(row.0).map_err(|_| StoreError::InvalidStoredValue)?;
             let correlation_identity =
                 PiCorrelationIdentity::parse(row.1).map_err(|_| StoreError::InvalidStoredValue)?;
             let create_request_digest = digest_from_stored_bytes(&row.2)?;
             if kind == CommandKind::AuthorizePiCreateSession {
                 CommandBody::AuthorizePiCreateSession {
-                    child_process_id,
+                    native_child_id,
                     correlation_identity,
                     create_request_digest,
                 }
             } else {
                 CommandBody::RecordPiCreateSessionDelivery {
-                    child_process_id,
+                    native_child_id,
                     correlation_identity,
                     create_request_digest,
                 }
             }
         }
         CommandKind::RecordPiSessionReady => {
-            let row:(i64,String)=connection.query_row("SELECT child_process_id, pi_session_identity FROM command_record_pi_session_ready WHERE command_row_id = ?1",[command_row_id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi ready command body"))?;
+            let row:(i64,String)=connection.query_row("SELECT native_child_id, pi_session_identity FROM command_record_pi_session_ready WHERE command_row_id = ?1",[command_row_id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi ready command body"))?;
             CommandBody::RecordPiSessionReady {
-                child_process_id: ChildProcessId::try_from(row.0)
+                native_child_id: NativeChildId::try_from(row.0)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
                 pi_session_identity: PiBoundarySessionIdentity::parse(row.1)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -16397,12 +17264,12 @@ fn decode_command_body(
         }
         CommandKind::RecordPiAbortControlDelivery => {
             let row: (i64, i64, String, Vec<u8>, i64) = connection.query_row(
-                "SELECT child_process_id, cancellation_propagation_id, correlation_identity, abort_command_digest, physical_write_outcome FROM command_record_pi_abort_control_delivery WHERE command_row_id = ?1",
+                "SELECT native_child_id, cancellation_propagation_id, correlation_identity, abort_command_digest, physical_write_outcome FROM command_record_pi_abort_control_delivery WHERE command_row_id = ?1",
                 [command_row_id],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
             ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi Abort command body"))?;
             CommandBody::RecordPiAbortControlDelivery {
-                child_process_id: ChildProcessId::try_from(row.0)
+                native_child_id: NativeChildId::try_from(row.0)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
                 cancellation_propagation_id: CancellationPropagationId::try_from(row.1)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -16413,9 +17280,9 @@ fn decode_command_body(
             }
         }
         CommandKind::RecordChildStreamSeal => {
-            let row:(i64,i64,Vec<u8>,i64,i64)=connection.query_row("SELECT child_process_id, stream_kind, full_observed_digest, retained_content_object_id, completeness FROM command_record_child_stream_seal WHERE command_row_id = ?1",[command_row_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing stream seal command body"))?;
+            let row:(i64,i64,Vec<u8>,i64,i64)=connection.query_row("SELECT native_child_id, stream_kind, full_observed_digest, retained_content_object_id, completeness FROM command_record_child_stream_seal WHERE command_row_id = ?1",[command_row_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing stream seal command body"))?;
             CommandBody::RecordChildStreamSeal {
-                child_process_id: ChildProcessId::try_from(row.0)
+                native_child_id: NativeChildId::try_from(row.0)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
                 stream_kind: child_stream_kind_from_i64(row.1)?,
                 full_observed_digest: digest_from_stored_bytes(&row.2)?,
@@ -16431,15 +17298,15 @@ fn decode_command_body(
                 command_row_id,
             )?;
             CommandBody::RecordChildProcessLiveness {
-                child_process_id: ChildProcessId::try_from(child)
+                native_child_id: NativeChildId::try_from(child)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
                 liveness: process_group_liveness_from_i64(liveness)?,
             }
         }
         CommandKind::RecordProcessSignalReceipt => {
-            let row:(i64,i64,i64,i64,i64,Option<i64>)=connection.query_row("SELECT child_process_id, signal_action, delivery, observed_liveness, cause_kind, cancellation_propagation_id FROM command_record_process_signal_receipt WHERE command_row_id = ?1",[command_row_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing signal command body"))?;
+            let row:(i64,i64,i64,i64,i64,Option<i64>)=connection.query_row("SELECT native_child_id, signal_action, delivery, observed_liveness, cause_kind, cancellation_propagation_id FROM command_record_process_signal_receipt WHERE command_row_id = ?1",[command_row_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing signal command body"))?;
             CommandBody::RecordProcessSignalReceipt {
-                child_process_id: ChildProcessId::try_from(row.0)
+                native_child_id: NativeChildId::try_from(row.0)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
                 action: process_signal_action_from_i64(row.1)?,
                 delivery: process_signal_delivery_from_i64(row.2)?,
@@ -16448,9 +17315,9 @@ fn decode_command_body(
             }
         }
         CommandKind::RecordDirectChildReap => {
-            let row:(i64,i64,Option<i64>,i64,i64)=connection.query_row("SELECT child_process_id, wait_status_kind, status_value, group_liveness_before_cleanup, group_liveness_after_cleanup FROM command_record_direct_child_reap WHERE command_row_id = ?1",[command_row_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing reap command body"))?;
+            let row:(i64,i64,Option<i64>,i64,i64)=connection.query_row("SELECT native_child_id, wait_status_kind, status_value, group_liveness_before_cleanup, group_liveness_after_cleanup FROM command_record_direct_child_reap WHERE command_row_id = ?1",[command_row_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing reap command body"))?;
             CommandBody::RecordDirectChildReap {
-                child_process_id: ChildProcessId::try_from(row.0)
+                native_child_id: NativeChildId::try_from(row.0)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
                 wait_status: direct_wait_status_from_sql(row.1, row.2)?,
                 group_liveness_before_cleanup: process_group_liveness_from_i64(row.3)?,
@@ -16458,19 +17325,19 @@ fn decode_command_body(
             }
         }
         CommandKind::RecordChildRecovery => {
-            let (child, obs, liveness):(i64,i64,i64) = connection.query_row("SELECT child_process_id, observation, group_liveness_after_restart FROM command_record_child_recovery WHERE command_row_id = ?1", [command_row_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing recovery command body"))?;
+            let (child, obs, liveness):(i64,i64,i64) = connection.query_row("SELECT native_child_id, observation, group_liveness_after_restart FROM command_record_child_recovery WHERE command_row_id = ?1", [command_row_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing recovery command body"))?;
             CommandBody::RecordChildRecovery {
-                child_process_id: ChildProcessId::try_from(child)
+                native_child_id: NativeChildId::try_from(child)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
                 observation: child_recovery_observation_from_i64(obs)?,
                 group_liveness_after_restart: process_group_liveness_from_i64(liveness)?,
             }
         }
         CommandKind::FinalizeChildProcess => CommandBody::FinalizeChildProcess {
-            child_process_id: query_command_id(
+            native_child_id: query_command_id(
                 connection,
                 "command_finalize_child_process",
-                "child_process_id",
+                "native_child_id",
                 command_row_id,
             )?,
         },
@@ -16492,16 +17359,16 @@ fn decode_command_body(
                 )?,
             }
         }
-        CommandKind::RecordPiChildNotSpawned => {
+        CommandKind::RecordNativeChildNotSpawned => {
             let (admission, reason): (i64, i64) = connection.query_row(
-                "SELECT pi_child_spawn_admission_id, reason FROM command_record_pi_child_not_spawned WHERE command_row_id = ?1",
+                "SELECT native_child_spawn_admission_id, reason FROM command_record_native_child_not_spawned WHERE command_row_id = ?1",
                 [command_row_id],
                 |r| Ok((r.get(0)?, r.get(1)?)),
-            ).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi child invalidation command body"))?;
-            CommandBody::RecordPiChildNotSpawned {
-                pi_child_spawn_admission_id: PiChildSpawnAdmissionId::try_from(admission)
+            ).optional()?.ok_or(StoreError::LedgerCorruption("missing native-child invalidation command body"))?;
+            CommandBody::RecordNativeChildNotSpawned {
+                native_child_spawn_admission_id: NativeChildSpawnAdmissionId::try_from(admission)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
-                reason: pi_child_not_spawned_reason_from_i64(reason)?,
+                reason: native_child_not_spawned_reason_from_i64(reason)?,
             }
         }
         CommandKind::AuthorizePiOfficeTurnPrompt => {
@@ -17184,7 +18051,7 @@ fn command_kind_from_i64(value: i64) -> Result<CommandKind, StoreError> {
         65 => Ok(CommandKind::RegisterDeterministicExperiment),
         66 => Ok(CommandKind::RecordDeterministicEvaluationReceipt),
         67 => Ok(CommandKind::AdmitDeterministicEvidence),
-        68 => Ok(CommandKind::CloseDeterministicExperiment),
+        68 => Ok(CommandKind::FinalizeDeterministicExperiment),
         69 => Ok(CommandKind::AdmitPiChildSpawn),
         70 => Ok(CommandKind::RecordInertChildSpawn),
         71 => Ok(CommandKind::RecordPiAdapterReady),
@@ -17201,7 +18068,7 @@ fn command_kind_from_i64(value: i64) -> Result<CommandKind, StoreError> {
         82 => Ok(CommandKind::ReconcileCancellationPropagation),
         83 => Ok(CommandKind::OpenSupervisorEpoch),
         84 => Ok(CommandKind::RecordPiAbortControlDelivery),
-        85 => Ok(CommandKind::RecordPiChildNotSpawned),
+        85 => Ok(CommandKind::RecordNativeChildNotSpawned),
         86 => Ok(CommandKind::AuthorizePiOfficeTurnPrompt),
         87 => Ok(CommandKind::RecordPiOfficeTurnPromptDelivery),
         88 => Ok(CommandKind::RecordPiOfficeTurnPromptAccepted),
@@ -17214,6 +18081,8 @@ fn command_kind_from_i64(value: i64) -> Result<CommandKind, StoreError> {
         95 => Ok(CommandKind::RecordPiOfficeSessionDisposeUsage),
         96 => Ok(CommandKind::RecordPiOfficeSessionDisposeUsageFailure),
         97 => Ok(CommandKind::RecordPiOfficeSessionDisposed),
+        98 => Ok(CommandKind::AdmitDeterministicEvaluatorNativeChild),
+        99 => Ok(CommandKind::RecordDeterministicEvaluatorNativeChildSpawn),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }
@@ -17287,7 +18156,7 @@ fn capability_from_i64(value: i64) -> Result<Capability, StoreError> {
         65 => Ok(Capability::RegisterDeterministicExperiment),
         66 => Ok(Capability::RecordDeterministicEvaluationReceipt),
         67 => Ok(Capability::AdmitDeterministicEvidence),
-        68 => Ok(Capability::CloseDeterministicExperiment),
+        68 => Ok(Capability::FinalizeDeterministicExperiment),
         69 => Ok(Capability::AdmitPiChildSpawn),
         70 => Ok(Capability::RecordInertChildSpawn),
         71 => Ok(Capability::RecordPiAdapterReady),
@@ -17304,7 +18173,7 @@ fn capability_from_i64(value: i64) -> Result<Capability, StoreError> {
         82 => Ok(Capability::ReconcileCancellationPropagation),
         83 => Ok(Capability::OpenSupervisorEpoch),
         84 => Ok(Capability::RecordPiAbortControlDelivery),
-        85 => Ok(Capability::RecordPiChildNotSpawned),
+        85 => Ok(Capability::RecordNativeChildNotSpawned),
         86 => Ok(Capability::AuthorizePiOfficeTurnPrompt),
         87 => Ok(Capability::RecordPiOfficeTurnPromptDelivery),
         88 => Ok(Capability::RecordPiOfficeTurnPromptAccepted),
@@ -17317,6 +18186,8 @@ fn capability_from_i64(value: i64) -> Result<Capability, StoreError> {
         95 => Ok(Capability::RecordPiOfficeSessionDisposeUsage),
         96 => Ok(Capability::RecordPiOfficeSessionDisposeUsageFailure),
         97 => Ok(Capability::RecordPiOfficeSessionDisposed),
+        98 => Ok(Capability::AdmitDeterministicEvaluatorNativeChild),
+        99 => Ok(Capability::RecordDeterministicEvaluatorNativeChildSpawn),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }
@@ -17647,7 +18518,7 @@ fn event_kind_from_i64(value: i64) -> Result<EventKind, StoreError> {
         58 => Ok(EventKind::DeterministicExperimentRegistered),
         59 => Ok(EventKind::DeterministicEvaluationReceiptRecorded),
         60 => Ok(EventKind::DeterministicEvidenceAdmitted),
-        61 => Ok(EventKind::DeterministicExperimentClosed),
+        61 => Ok(EventKind::DeterministicExperimentFinalized),
         62 => Ok(EventKind::PiChildSpawnAdmitted),
         63 => Ok(EventKind::InertPiChildSpawnRecorded),
         64 => Ok(EventKind::PiAdapterReadyRecorded),
@@ -17665,7 +18536,7 @@ fn event_kind_from_i64(value: i64) -> Result<EventKind, StoreError> {
         76 => Ok(EventKind::SupervisorEpochOpened),
         77 => Ok(EventKind::CancellationPropagationContainmentFailed),
         78 => Ok(EventKind::PiAbortControlDeliveryRecorded),
-        79 => Ok(EventKind::PiChildSpawnInvalidated),
+        79 => Ok(EventKind::NativeChildSpawnInvalidated),
         80 => Ok(EventKind::PiOfficeTurnPromptAuthorized),
         81 => Ok(EventKind::PiOfficeTurnPromptDelivered),
         82 => Ok(EventKind::PiOfficeTurnPromptAccepted),
@@ -17678,6 +18549,8 @@ fn event_kind_from_i64(value: i64) -> Result<EventKind, StoreError> {
         89 => Ok(EventKind::PiOfficeSessionDisposeUsageRecorded),
         90 => Ok(EventKind::PiOfficeSessionDisposeUsageFrozen),
         91 => Ok(EventKind::PiOfficeSessionDisposed),
+        92 => Ok(EventKind::DeterministicEvaluatorNativeChildAdmitted),
+        93 => Ok(EventKind::DeterministicEvaluatorNativeChildSpawnRecorded),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }
@@ -17786,15 +18659,31 @@ fn pi_abort_control_write_outcome_from_i64(
     }
 }
 
-fn pi_child_not_spawned_reason_from_i64(value: i64) -> Result<PiChildNotSpawnedReason, StoreError> {
+fn native_child_not_spawned_reason_from_i64(
+    value: i64,
+) -> Result<NativeChildNotSpawnedReason, StoreError> {
     match value {
-        1 => Ok(PiChildNotSpawnedReason::CancelledBeforeSpawn),
-        2 => Ok(PiChildNotSpawnedReason::WorkspacePreparationFailed),
-        3 => Ok(PiChildNotSpawnedReason::ArtifactQualificationFailed),
-        4 => Ok(PiChildNotSpawnedReason::NativeSpawnFailed),
+        1 => Ok(NativeChildNotSpawnedReason::CancelledBeforeSpawn),
+        2 => Ok(NativeChildNotSpawnedReason::WorkspacePreparationFailed),
+        3 => Ok(NativeChildNotSpawnedReason::ArtifactQualificationFailed),
+        4 => Ok(NativeChildNotSpawnedReason::NativeSpawnFailed),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }
+
+fn deterministic_experiment_state_from_i64(
+    value: i64,
+) -> Result<DeterministicExperimentState, StoreError> {
+    match value {
+        1 => Ok(DeterministicExperimentState::Registered),
+        2 => Ok(DeterministicExperimentState::EvidenceAdmitted),
+        3 => Ok(DeterministicExperimentState::Closed),
+        4 => Ok(DeterministicExperimentState::Failed),
+        5 => Ok(DeterministicExperimentState::Cancelled),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+
 fn child_recovery_observation_from_i64(value: i64) -> Result<ChildRecoveryObservation, StoreError> {
     match value {
         1 => Ok(ChildRecoveryObservation::ParentageLost),
@@ -17861,6 +18750,7 @@ fn operating_cycle_treatment_from_i64(value: i64) -> Result<OperatingCycleTreatm
         1 => Ok(OperatingCycleTreatment::PiSdkQualificationV1),
         2 => Ok(OperatingCycleTreatment::PinnedPiSdkLiveV1),
         3 => Ok(OperatingCycleTreatment::DeterministicPiHostFixtureV1),
+        4 => Ok(OperatingCycleTreatment::DeterministicEvaluatorFixtureV1),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }
@@ -18104,6 +18994,7 @@ fn execution_profile_kind_from_i64(value: i64) -> Result<ExecutionProfileKind, S
     match value {
         1 => Ok(ExecutionProfileKind::DeterministicPiHostProcessDoubleV1),
         2 => Ok(ExecutionProfileKind::NativePinnedPiSdkV1),
+        3 => Ok(ExecutionProfileKind::DeterministicEvaluatorProcessFixtureV1),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }

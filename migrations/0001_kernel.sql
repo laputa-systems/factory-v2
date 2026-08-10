@@ -449,7 +449,7 @@ CREATE TABLE postmortems (
     project_id INTEGER NOT NULL REFERENCES projects(project_id),
     causal_episode_id INTEGER REFERENCES episodes(causal_episode_id),
     founding_mission_id INTEGER NOT NULL REFERENCES founding_missions(founding_mission_id),
-    lifecycle_state INTEGER NOT NULL CHECK (lifecycle_state IN (1, 2, 3)),
+    lifecycle_state INTEGER NOT NULL CHECK (lifecycle_state IN (1, 2, 3, 4, 5)),
     triggered_by_command_id INTEGER NOT NULL REFERENCES commands(command_row_id),
     closed_by_command_id INTEGER REFERENCES commands(command_row_id),
     CHECK ((lifecycle_state IN (1, 2) AND closed_by_command_id IS NULL)
@@ -537,7 +537,7 @@ CREATE TABLE operating_cycles (
     society_id INTEGER NOT NULL REFERENCES societies(society_id),
     founding_mission_id INTEGER NOT NULL REFERENCES founding_missions(founding_mission_id),
     office_occupancy_id INTEGER NOT NULL REFERENCES office_occupancies(office_occupancy_id),
-    treatment INTEGER NOT NULL CHECK (treatment IN (1, 2, 3)),
+    treatment INTEGER NOT NULL CHECK (treatment IN (1, 2, 3, 4)),
     budget_ceiling_micros INTEGER NOT NULL CHECK (budget_ceiling_micros > 0),
     lifecycle_state INTEGER NOT NULL CHECK (lifecycle_state BETWEEN 1 AND 11),
     admission_generation INTEGER NOT NULL CHECK (admission_generation >= 0),
@@ -546,22 +546,23 @@ CREATE TABLE operating_cycles (
 );
 CREATE TABLE command_propose_operating_cycle (
     command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id),
-    treatment INTEGER NOT NULL CHECK (treatment IN (1, 2, 3)),
+    treatment INTEGER NOT NULL CHECK (treatment IN (1, 2, 3, 4)),
     budget_ceiling_micros INTEGER NOT NULL CHECK (budget_ceiling_micros >= 0)
 );
 CREATE TABLE event_operating_cycle_proposed (
     event_id INTEGER PRIMARY KEY REFERENCES events(event_id),
     operating_cycle_id INTEGER NOT NULL REFERENCES operating_cycles(operating_cycle_id),
     admission_generation INTEGER NOT NULL CHECK (admission_generation >= 0),
-    treatment INTEGER NOT NULL CHECK (treatment IN (1, 2, 3)),
+    treatment INTEGER NOT NULL CHECK (treatment IN (1, 2, 3, 4)),
     budget_ceiling_micros INTEGER NOT NULL CHECK (budget_ceiling_micros > 0)
 );
 CREATE TABLE execution_profiles (
     execution_profile_id INTEGER PRIMARY KEY,
-    profile_kind INTEGER NOT NULL UNIQUE CHECK (profile_kind IN (1, 2)),
+    profile_kind INTEGER NOT NULL UNIQUE CHECK (profile_kind IN (1, 2, 3)),
     readiness INTEGER NOT NULL CHECK (readiness IN (1, 2, 3)),
     CHECK ((profile_kind = 1 AND readiness = 1)
-        OR (profile_kind = 2 AND readiness IN (2, 3)))
+        OR (profile_kind = 2 AND readiness IN (2, 3))
+        OR (profile_kind = 3 AND readiness = 1))
 );
 CREATE TABLE actor_configurations (
     actor_configuration_id INTEGER PRIMARY KEY,
@@ -881,7 +882,7 @@ CREATE TABLE deterministic_experiments (
     target_graph_revision_id INTEGER NOT NULL REFERENCES object_revisions(graph_revision_id),
     evaluator_revision_id INTEGER NOT NULL REFERENCES evaluator_revisions(evaluator_revision_id),
     input_manifest_id INTEGER NOT NULL REFERENCES input_manifests(input_manifest_id),
-    lifecycle_state INTEGER NOT NULL CHECK (lifecycle_state IN (1, 2, 3)),
+    lifecycle_state INTEGER NOT NULL CHECK (lifecycle_state IN (1, 2, 3, 4, 5)),
     registered_by_command_id INTEGER NOT NULL REFERENCES commands(command_row_id),
     last_transition_command_id INTEGER NOT NULL REFERENCES commands(command_row_id)
 );
@@ -954,7 +955,7 @@ CREATE TABLE command_admit_deterministic_evidence (
     applicability INTEGER NOT NULL CHECK (applicability = 1),
     limitation_text TEXT NOT NULL
 );
-CREATE TABLE command_close_deterministic_experiment (
+CREATE TABLE command_finalize_deterministic_experiment (
     command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id),
     operating_cycle_id INTEGER NOT NULL,
     deterministic_experiment_id INTEGER NOT NULL
@@ -993,14 +994,15 @@ CREATE TABLE event_deterministic_evidence_admitted (
     semantic_role INTEGER NOT NULL CHECK (semantic_role = 1),
     applicability INTEGER NOT NULL CHECK (applicability = 1)
 );
-CREATE TABLE event_deterministic_experiment_closed (
+CREATE TABLE event_deterministic_experiment_finalized (
     event_id INTEGER PRIMARY KEY REFERENCES events(event_id),
-    deterministic_experiment_id INTEGER NOT NULL REFERENCES deterministic_experiments(deterministic_experiment_id)
+    deterministic_experiment_id INTEGER NOT NULL REFERENCES deterministic_experiments(deterministic_experiment_id),
+    terminal_state INTEGER NOT NULL CHECK (terminal_state IN (3, 4, 5))
 );
 CREATE TABLE capability_grants (
     capability_grant_id INTEGER PRIMARY KEY,
     principal_id INTEGER NOT NULL REFERENCES principals(principal_id),
-    capability_kind INTEGER NOT NULL CHECK (capability_kind BETWEEN 1 AND 97),
+    capability_kind INTEGER NOT NULL CHECK (capability_kind BETWEEN 1 AND 99),
     office_occupancy_id INTEGER REFERENCES office_occupancies(office_occupancy_id),
     actor_instance_id INTEGER REFERENCES actor_instances(actor_instance_id),
     grant_state INTEGER NOT NULL CHECK (grant_state IN (1, 2)),
@@ -1049,9 +1051,9 @@ CREATE TABLE commands (
     command_id TEXT NOT NULL UNIQUE,
     principal_id INTEGER NOT NULL,
     capability_grant_id INTEGER NOT NULL,
-    capability_kind INTEGER NOT NULL CHECK (capability_kind BETWEEN 1 AND 97),
+    capability_kind INTEGER NOT NULL CHECK (capability_kind BETWEEN 1 AND 99),
     expected_generation INTEGER,
-    command_kind INTEGER NOT NULL CHECK (command_kind BETWEEN 1 AND 97),
+    command_kind INTEGER NOT NULL CHECK (command_kind BETWEEN 1 AND 99),
     request_fingerprint BLOB NOT NULL CHECK (length(request_fingerprint) = 32),
     command_status INTEGER NOT NULL CHECK (command_status IN (1, 2)),
     rejection_code INTEGER,
@@ -1062,7 +1064,7 @@ CREATE TABLE commands (
 CREATE TABLE events (
     event_id INTEGER PRIMARY KEY,
     command_row_id INTEGER NOT NULL UNIQUE REFERENCES commands(command_row_id),
-    event_kind INTEGER NOT NULL CHECK (event_kind BETWEEN 1 AND 91),
+    event_kind INTEGER NOT NULL CHECK (event_kind BETWEEN 1 AND 93),
     event_sequence INTEGER NOT NULL UNIQUE CHECK (event_sequence > 0),
     event_fingerprint BLOB NOT NULL CHECK (length(event_fingerprint) = 32)
 );
@@ -1088,27 +1090,45 @@ CREATE TABLE pi_child_sessions (
     created_by_command_id INTEGER NOT NULL REFERENCES commands(command_row_id),
     ready_by_command_id INTEGER REFERENCES commands(command_row_id)
 );
-CREATE TABLE pi_child_spawn_admissions (
-    pi_child_spawn_admission_id INTEGER PRIMARY KEY,
+CREATE TABLE native_child_spawn_admissions (
+    native_child_spawn_admission_id INTEGER PRIMARY KEY,
     operating_cycle_id INTEGER NOT NULL REFERENCES operating_cycles(operating_cycle_id),
     actor_attempt_id INTEGER REFERENCES attempts(actor_attempt_id),
     root_authority_office_session_id INTEGER REFERENCES root_authority_office_sessions(root_authority_office_session_id),
-    budget_reservation_id INTEGER NOT NULL REFERENCES budget_reservations(budget_reservation_id),
+    deterministic_experiment_id INTEGER REFERENCES deterministic_experiments(deterministic_experiment_id),
+    evaluator_revision_id INTEGER REFERENCES evaluator_revisions(evaluator_revision_id),
+    input_manifest_id INTEGER REFERENCES input_manifests(input_manifest_id),
+    budget_reservation_id INTEGER REFERENCES budget_reservations(budget_reservation_id),
     execution_profile_id INTEGER NOT NULL REFERENCES execution_profiles(execution_profile_id),
     workspace_id INTEGER NOT NULL REFERENCES workspaces(workspace_id),
     supervisor_epoch_id INTEGER NOT NULL REFERENCES supervisor_epochs(supervisor_epoch_id),
-    pi_session_id INTEGER NOT NULL REFERENCES pi_child_sessions(pi_session_id),
     admission_generation INTEGER NOT NULL CHECK (admission_generation >= 0),
     lifecycle_state INTEGER NOT NULL CHECK (lifecycle_state IN (1, 2, 3)),
     admitted_by_command_id INTEGER NOT NULL REFERENCES commands(command_row_id),
     spawned_by_command_id INTEGER REFERENCES commands(command_row_id),
-    CHECK ((actor_attempt_id IS NOT NULL AND root_authority_office_session_id IS NULL)
-        OR (actor_attempt_id IS NULL AND root_authority_office_session_id IS NOT NULL)),
+    CHECK ((actor_attempt_id IS NOT NULL AND root_authority_office_session_id IS NULL
+            AND deterministic_experiment_id IS NULL AND evaluator_revision_id IS NULL
+            AND input_manifest_id IS NULL AND budget_reservation_id IS NOT NULL)
+        OR (actor_attempt_id IS NULL AND root_authority_office_session_id IS NOT NULL
+            AND deterministic_experiment_id IS NULL AND evaluator_revision_id IS NULL
+            AND input_manifest_id IS NULL AND budget_reservation_id IS NOT NULL)
+        OR (actor_attempt_id IS NULL AND root_authority_office_session_id IS NULL
+            AND deterministic_experiment_id IS NOT NULL AND evaluator_revision_id IS NOT NULL
+            AND input_manifest_id IS NOT NULL AND budget_reservation_id IS NULL)),
     UNIQUE(actor_attempt_id),
-    UNIQUE(root_authority_office_session_id)
+    UNIQUE(root_authority_office_session_id),
+    UNIQUE(deterministic_experiment_id)
 );
-CREATE TABLE pi_child_spawn_invalidations (
-    pi_child_spawn_admission_id INTEGER PRIMARY KEY REFERENCES pi_child_spawn_admissions(pi_child_spawn_admission_id),
+-- Pi session identity is a strict sidecar over a generic native admission;
+-- deterministic evaluator admissions have no row here and therefore cannot
+-- cross the Adapter/Create/Session protocol boundary.
+CREATE TABLE pi_child_spawn_sidecars (
+    native_child_spawn_admission_id INTEGER PRIMARY KEY
+        REFERENCES native_child_spawn_admissions(native_child_spawn_admission_id),
+    pi_session_id INTEGER NOT NULL UNIQUE REFERENCES pi_child_sessions(pi_session_id)
+);
+CREATE TABLE native_child_spawn_invalidations (
+    native_child_spawn_admission_id INTEGER PRIMARY KEY REFERENCES native_child_spawn_admissions(native_child_spawn_admission_id),
     reason INTEGER NOT NULL CHECK (reason IN (1, 2, 3, 4)),
     invalidated_by_command_id INTEGER NOT NULL REFERENCES commands(command_row_id)
 );
@@ -1117,9 +1137,9 @@ CREATE TABLE office_session_budget_reservations (
     budget_reservation_id INTEGER NOT NULL UNIQUE REFERENCES budget_reservations(budget_reservation_id),
     bound_by_command_id INTEGER NOT NULL REFERENCES commands(command_row_id)
 );
-CREATE TABLE pi_child_processes (
-    child_process_id INTEGER PRIMARY KEY,
-    pi_child_spawn_admission_id INTEGER NOT NULL UNIQUE REFERENCES pi_child_spawn_admissions(pi_child_spawn_admission_id),
+CREATE TABLE native_children (
+    native_child_id INTEGER PRIMARY KEY,
+    native_child_spawn_admission_id INTEGER NOT NULL UNIQUE REFERENCES native_child_spawn_admissions(native_child_spawn_admission_id),
     child_identity TEXT NOT NULL UNIQUE,
     direct_child_pid INTEGER NOT NULL CHECK (direct_child_pid > 0),
     process_group_id INTEGER NOT NULL CHECK (process_group_id > 0),
@@ -1135,31 +1155,51 @@ CREATE TABLE pi_child_processes (
         OR (lifecycle_state IN (1, 2, 3, 4) AND terminal_disposition IS NULL))
 );
 CREATE TABLE pi_child_session_protocols (
-    child_process_id INTEGER PRIMARY KEY REFERENCES pi_child_processes(child_process_id),
+    native_child_id INTEGER PRIMARY KEY REFERENCES native_children(native_child_id),
     lifecycle_state INTEGER NOT NULL CHECK (lifecycle_state BETWEEN 1 AND 5),
     create_correlation_identity TEXT,
     create_request_digest BLOB CHECK (create_request_digest IS NULL OR length(create_request_digest) = 32),
     CHECK ((lifecycle_state < 3 AND create_correlation_identity IS NULL AND create_request_digest IS NULL)
         OR (lifecycle_state >= 3 AND create_correlation_identity IS NOT NULL AND create_request_digest IS NOT NULL))
 );
-CREATE TRIGGER live_pi_child_identity_not_reused
-BEFORE INSERT ON pi_child_processes
+CREATE TRIGGER pi_protocol_requires_pi_spawn_sidecar
+BEFORE INSERT ON pi_child_session_protocols
+WHEN NOT EXISTS (
+    SELECT 1
+      FROM native_children child
+      JOIN pi_child_spawn_sidecars sidecar
+        ON sidecar.native_child_spawn_admission_id = child.native_child_spawn_admission_id
+     WHERE child.native_child_id = NEW.native_child_id
+)
+BEGIN SELECT RAISE(ABORT, 'Pi protocol requires Pi native-child sidecar'); END;
+CREATE TRIGGER pi_protocol_update_requires_pi_spawn_sidecar
+BEFORE UPDATE OF native_child_id ON pi_child_session_protocols
+WHEN NOT EXISTS (
+    SELECT 1
+      FROM native_children child
+      JOIN pi_child_spawn_sidecars sidecar
+        ON sidecar.native_child_spawn_admission_id = child.native_child_spawn_admission_id
+     WHERE child.native_child_id = NEW.native_child_id
+)
+BEGIN SELECT RAISE(ABORT, 'Pi protocol requires Pi native-child sidecar'); END;
+CREATE TRIGGER live_native_child_identity_not_reused
+BEFORE INSERT ON native_children
 WHEN EXISTS (
-    SELECT 1 FROM pi_child_processes
+    SELECT 1 FROM native_children
     WHERE lifecycle_state != 8
        AND (direct_child_pid = NEW.direct_child_pid
             OR process_group_id = NEW.process_group_id)
 )
 BEGIN SELECT RAISE(ABORT, 'live or indeterminate PID/PGID may not be reused'); END;
-CREATE TABLE child_process_liveness_observations (
-    child_process_liveness_observation_id INTEGER PRIMARY KEY,
-    child_process_id INTEGER NOT NULL REFERENCES pi_child_processes(child_process_id),
+CREATE TABLE native_child_liveness_observations (
+    native_child_liveness_observation_id INTEGER PRIMARY KEY,
+    native_child_id INTEGER NOT NULL REFERENCES native_children(native_child_id),
     liveness INTEGER NOT NULL CHECK (liveness IN (1, 2, 3)),
     observed_by_command_id INTEGER NOT NULL REFERENCES commands(command_row_id)
 );
 CREATE TABLE process_signal_receipts (
     process_signal_receipt_id INTEGER PRIMARY KEY,
-    child_process_id INTEGER NOT NULL REFERENCES pi_child_processes(child_process_id),
+    native_child_id INTEGER NOT NULL REFERENCES native_children(native_child_id),
     signal_action INTEGER NOT NULL CHECK (signal_action IN (1, 2, 3)),
     delivery INTEGER NOT NULL CHECK (delivery IN (1, 2, 3, 4)),
     observed_liveness INTEGER NOT NULL CHECK (observed_liveness IN (1, 2, 3)),
@@ -1172,9 +1212,9 @@ CREATE TABLE process_signal_receipts (
     ,CHECK ((cause_kind = 1 AND cancellation_propagation_id IS NOT NULL)
         OR (cause_kind = 2 AND cancellation_propagation_id IS NULL))
 );
-CREATE TABLE child_process_reap_receipts (
-    child_process_reap_receipt_id INTEGER PRIMARY KEY,
-    child_process_id INTEGER NOT NULL UNIQUE REFERENCES pi_child_processes(child_process_id),
+CREATE TABLE native_child_reap_receipts (
+    native_child_reap_receipt_id INTEGER PRIMARY KEY,
+    native_child_id INTEGER NOT NULL UNIQUE REFERENCES native_children(native_child_id),
     wait_status_kind INTEGER NOT NULL CHECK (wait_status_kind IN (1, 2, 3)),
     status_value INTEGER,
     group_liveness_before_cleanup INTEGER NOT NULL CHECK (group_liveness_before_cleanup IN (1, 2, 3)),
@@ -1183,68 +1223,68 @@ CREATE TABLE child_process_reap_receipts (
     CHECK ((wait_status_kind IN (1, 2) AND status_value IS NOT NULL AND status_value >= 0)
         OR (wait_status_kind = 3 AND status_value IS NULL))
 );
-CREATE TABLE child_process_recovery_receipts (
-    child_process_recovery_receipt_id INTEGER PRIMARY KEY,
-    child_process_id INTEGER NOT NULL UNIQUE REFERENCES pi_child_processes(child_process_id),
+CREATE TABLE native_child_recovery_receipts (
+    native_child_recovery_receipt_id INTEGER PRIMARY KEY,
+    native_child_id INTEGER NOT NULL UNIQUE REFERENCES native_children(native_child_id),
     observation INTEGER NOT NULL CHECK (observation = 1),
     group_liveness_after_restart INTEGER NOT NULL CHECK (group_liveness_after_restart IN (1, 2, 3)),
     recorded_by_command_id INTEGER NOT NULL REFERENCES commands(command_row_id)
 );
 CREATE TABLE pi_abort_control_receipts (
     pi_abort_control_receipt_id INTEGER PRIMARY KEY,
-    child_process_id INTEGER NOT NULL REFERENCES pi_child_processes(child_process_id),
+    native_child_id INTEGER NOT NULL REFERENCES native_children(native_child_id),
     cancellation_propagation_id INTEGER NOT NULL REFERENCES cancellation_propagations(cancellation_propagation_id),
     correlation_identity TEXT NOT NULL,
     abort_command_digest BLOB NOT NULL CHECK (length(abort_command_digest) = 32),
     physical_write_outcome INTEGER NOT NULL CHECK (physical_write_outcome IN (1, 2, 3, 4)),
     recorded_by_command_id INTEGER NOT NULL REFERENCES commands(command_row_id),
-    UNIQUE(child_process_id, cancellation_propagation_id),
+    UNIQUE(native_child_id, cancellation_propagation_id),
     UNIQUE(correlation_identity)
 );
 CREATE TRIGGER child_liveness_reappearance_marks_containment
-AFTER INSERT ON child_process_liveness_observations
+AFTER INSERT ON native_child_liveness_observations
 WHEN NEW.liveness IN (1, 3) AND EXISTS (
-    SELECT 1 FROM child_process_liveness_observations WHERE child_process_id = NEW.child_process_id AND liveness = 2
-    UNION ALL SELECT 1 FROM process_signal_receipts WHERE child_process_id = NEW.child_process_id AND observed_liveness = 2
-    UNION ALL SELECT 1 FROM child_process_reap_receipts WHERE child_process_id = NEW.child_process_id AND (group_liveness_before_cleanup = 2 OR group_liveness_after_cleanup = 2)
+    SELECT 1 FROM native_child_liveness_observations WHERE native_child_id = NEW.native_child_id AND liveness = 2
+    UNION ALL SELECT 1 FROM process_signal_receipts WHERE native_child_id = NEW.native_child_id AND observed_liveness = 2
+    UNION ALL SELECT 1 FROM native_child_reap_receipts WHERE native_child_id = NEW.native_child_id AND (group_liveness_before_cleanup = 2 OR group_liveness_after_cleanup = 2)
 )
 BEGIN
-    UPDATE pi_child_processes SET lifecycle_state = 7, terminal_disposition = 7,
+    UPDATE native_children SET lifecycle_state = 7, terminal_disposition = 7,
         last_transition_command_id = NEW.observed_by_command_id
-     WHERE child_process_id = NEW.child_process_id;
+     WHERE native_child_id = NEW.native_child_id;
 END;
 CREATE TRIGGER signal_liveness_reappearance_marks_containment
 AFTER INSERT ON process_signal_receipts
 WHEN NEW.observed_liveness IN (1, 3) AND EXISTS (
-    SELECT 1 FROM child_process_liveness_observations WHERE child_process_id = NEW.child_process_id AND liveness = 2
-    UNION ALL SELECT 1 FROM process_signal_receipts WHERE child_process_id = NEW.child_process_id AND observed_liveness = 2
-    UNION ALL SELECT 1 FROM child_process_reap_receipts WHERE child_process_id = NEW.child_process_id AND (group_liveness_before_cleanup = 2 OR group_liveness_after_cleanup = 2)
+    SELECT 1 FROM native_child_liveness_observations WHERE native_child_id = NEW.native_child_id AND liveness = 2
+    UNION ALL SELECT 1 FROM process_signal_receipts WHERE native_child_id = NEW.native_child_id AND observed_liveness = 2
+    UNION ALL SELECT 1 FROM native_child_reap_receipts WHERE native_child_id = NEW.native_child_id AND (group_liveness_before_cleanup = 2 OR group_liveness_after_cleanup = 2)
 )
 BEGIN
-    UPDATE pi_child_processes SET lifecycle_state = 7, terminal_disposition = 7,
+    UPDATE native_children SET lifecycle_state = 7, terminal_disposition = 7,
         last_transition_command_id = NEW.recorded_by_command_id
-     WHERE child_process_id = NEW.child_process_id;
+     WHERE native_child_id = NEW.native_child_id;
 END;
 CREATE TRIGGER reap_liveness_reappearance_marks_containment
-AFTER INSERT ON child_process_reap_receipts
+AFTER INSERT ON native_child_reap_receipts
 WHEN (NEW.group_liveness_before_cleanup IN (1, 3) OR NEW.group_liveness_after_cleanup IN (1, 3)) AND EXISTS (
-    SELECT 1 FROM child_process_liveness_observations WHERE child_process_id = NEW.child_process_id AND liveness = 2
-    UNION ALL SELECT 1 FROM process_signal_receipts WHERE child_process_id = NEW.child_process_id AND observed_liveness = 2
+    SELECT 1 FROM native_child_liveness_observations WHERE native_child_id = NEW.native_child_id AND liveness = 2
+    UNION ALL SELECT 1 FROM process_signal_receipts WHERE native_child_id = NEW.native_child_id AND observed_liveness = 2
 )
 BEGIN
-    UPDATE pi_child_processes SET lifecycle_state = 7, terminal_disposition = 7,
+    UPDATE native_children SET lifecycle_state = 7, terminal_disposition = 7,
         last_transition_command_id = NEW.reaped_by_command_id
-     WHERE child_process_id = NEW.child_process_id;
+     WHERE native_child_id = NEW.native_child_id;
 END;
-CREATE TABLE child_stream_seals (
-    child_stream_seal_id INTEGER PRIMARY KEY,
-    child_process_id INTEGER NOT NULL REFERENCES pi_child_processes(child_process_id),
+CREATE TABLE native_child_stream_seals (
+    native_child_stream_seal_id INTEGER PRIMARY KEY,
+    native_child_id INTEGER NOT NULL REFERENCES native_children(native_child_id),
     stream_kind INTEGER NOT NULL CHECK (stream_kind IN (1, 2, 3, 4)),
     full_observed_digest BLOB NOT NULL CHECK (length(full_observed_digest) = 32),
     retained_content_object_id INTEGER NOT NULL REFERENCES content_objects(content_object_id),
     completeness INTEGER NOT NULL CHECK (completeness IN (1, 2, 3)),
     sealed_by_command_id INTEGER NOT NULL REFERENCES commands(command_row_id),
-    UNIQUE(child_process_id, stream_kind)
+    UNIQUE(native_child_id, stream_kind)
 );
 CREATE TABLE cancellation_propagations (
     cancellation_propagation_id INTEGER PRIMARY KEY,
@@ -1257,20 +1297,23 @@ CREATE TABLE cancellation_propagations (
 );
 CREATE TABLE cancellation_propagation_children (
     cancellation_propagation_id INTEGER NOT NULL REFERENCES cancellation_propagations(cancellation_propagation_id),
-    child_process_id INTEGER NOT NULL REFERENCES pi_child_processes(child_process_id),
-    PRIMARY KEY(cancellation_propagation_id, child_process_id)
+    native_child_id INTEGER NOT NULL REFERENCES native_children(native_child_id),
+    PRIMARY KEY(cancellation_propagation_id, native_child_id)
 );
 CREATE TABLE cancellation_propagation_targets (
     cancellation_propagation_target_id INTEGER PRIMARY KEY,
     cancellation_propagation_id INTEGER NOT NULL REFERENCES cancellation_propagations(cancellation_propagation_id),
     actor_attempt_id INTEGER REFERENCES attempts(actor_attempt_id),
     root_authority_office_session_id INTEGER REFERENCES root_authority_office_sessions(root_authority_office_session_id),
-    child_process_id INTEGER REFERENCES pi_child_processes(child_process_id),
+    deterministic_experiment_id INTEGER REFERENCES deterministic_experiments(deterministic_experiment_id),
+    native_child_id INTEGER REFERENCES native_children(native_child_id),
     target_disposition INTEGER NOT NULL CHECK (target_disposition IN (1, 2, 3, 4, 5, 6, 7)),
-    CHECK ((actor_attempt_id IS NOT NULL AND root_authority_office_session_id IS NULL)
-        OR (actor_attempt_id IS NULL AND root_authority_office_session_id IS NOT NULL)),
+    CHECK ((actor_attempt_id IS NOT NULL AND root_authority_office_session_id IS NULL AND deterministic_experiment_id IS NULL)
+        OR (actor_attempt_id IS NULL AND root_authority_office_session_id IS NOT NULL AND deterministic_experiment_id IS NULL)
+        OR (actor_attempt_id IS NULL AND root_authority_office_session_id IS NULL AND deterministic_experiment_id IS NOT NULL)),
     UNIQUE(cancellation_propagation_id, actor_attempt_id),
-    UNIQUE(cancellation_propagation_id, root_authority_office_session_id)
+    UNIQUE(cancellation_propagation_id, root_authority_office_session_id),
+    UNIQUE(cancellation_propagation_id, deterministic_experiment_id)
 );
 CREATE TABLE command_admit_pi_child_spawn (
     command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id),
@@ -1290,45 +1333,64 @@ CREATE TABLE command_admit_pi_child_spawn (
 );
 CREATE TABLE command_record_inert_pi_child_spawn (
     command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id),
-    pi_child_spawn_admission_id INTEGER NOT NULL,
+    native_child_spawn_admission_id INTEGER NOT NULL,
+    child_identity TEXT NOT NULL,
+    direct_child_pid INTEGER NOT NULL CHECK (direct_child_pid > 0),
+    process_group_id INTEGER NOT NULL CHECK (process_group_id > 0)
+);
+CREATE TABLE command_admit_deterministic_evaluator_native_child (
+    command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id),
+    operating_cycle_id INTEGER NOT NULL,
+    deterministic_experiment_id INTEGER NOT NULL,
+    evaluator_revision_id INTEGER NOT NULL,
+    input_manifest_id INTEGER NOT NULL,
+    execution_profile_id INTEGER NOT NULL,
+    native_workspace_id TEXT NOT NULL,
+    canonical_workspace_path TEXT NOT NULL,
+    supervisor_epoch_id INTEGER NOT NULL,
+    supervisor_epoch_identity TEXT NOT NULL
+);
+CREATE TABLE command_record_deterministic_evaluator_native_child_spawn (
+    command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id),
+    native_child_spawn_admission_id INTEGER NOT NULL,
     child_identity TEXT NOT NULL,
     direct_child_pid INTEGER NOT NULL CHECK (direct_child_pid > 0),
     process_group_id INTEGER NOT NULL CHECK (process_group_id > 0)
 );
 CREATE TABLE command_record_pi_adapter_ready (
     command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id),
-    child_process_id INTEGER NOT NULL, pi_session_identity TEXT NOT NULL, spawn_nonce TEXT NOT NULL
+    native_child_id INTEGER NOT NULL, pi_session_identity TEXT NOT NULL, spawn_nonce TEXT NOT NULL
 );
 CREATE TABLE command_authorize_pi_create_session (
-    command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), child_process_id INTEGER NOT NULL,
+    command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), native_child_id INTEGER NOT NULL,
     correlation_identity TEXT NOT NULL, create_request_digest BLOB NOT NULL CHECK (length(create_request_digest) = 32)
 );
 CREATE TABLE command_record_pi_create_session_delivery (
-    command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), child_process_id INTEGER NOT NULL,
+    command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), native_child_id INTEGER NOT NULL,
     correlation_identity TEXT NOT NULL, create_request_digest BLOB NOT NULL CHECK (length(create_request_digest) = 32)
 );
 CREATE TABLE command_record_pi_session_ready (
-    command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), child_process_id INTEGER NOT NULL, pi_session_identity TEXT NOT NULL
+    command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), native_child_id INTEGER NOT NULL, pi_session_identity TEXT NOT NULL
 );
 CREATE TABLE command_record_pi_abort_control_delivery (
     command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id),
-    child_process_id INTEGER NOT NULL,
+    native_child_id INTEGER NOT NULL,
     cancellation_propagation_id INTEGER NOT NULL,
     correlation_identity TEXT NOT NULL,
     abort_command_digest BLOB NOT NULL CHECK (length(abort_command_digest) = 32),
     physical_write_outcome INTEGER NOT NULL CHECK (physical_write_outcome IN (1, 2, 3, 4))
 );
 CREATE TABLE command_record_child_stream_seal (
-    command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), child_process_id INTEGER NOT NULL,
+    command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), native_child_id INTEGER NOT NULL,
     stream_kind INTEGER NOT NULL CHECK (stream_kind IN (1, 2, 3, 4)),
     full_observed_digest BLOB NOT NULL CHECK (length(full_observed_digest) = 32),
     retained_content_object_id INTEGER NOT NULL, completeness INTEGER NOT NULL CHECK (completeness IN (1, 2, 3))
 );
 CREATE TABLE command_record_child_process_liveness (
-    command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), child_process_id INTEGER NOT NULL, liveness INTEGER NOT NULL CHECK (liveness IN (1, 2, 3))
+    command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), native_child_id INTEGER NOT NULL, liveness INTEGER NOT NULL CHECK (liveness IN (1, 2, 3))
 );
 CREATE TABLE command_record_process_signal_receipt (
-    command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), child_process_id INTEGER NOT NULL,
+    command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), native_child_id INTEGER NOT NULL,
     signal_action INTEGER NOT NULL CHECK (signal_action IN (1, 2, 3)), delivery INTEGER NOT NULL CHECK (delivery IN (1, 2, 3, 4)),
     observed_liveness INTEGER NOT NULL CHECK (observed_liveness IN (1, 2, 3)),
     cause_kind INTEGER NOT NULL CHECK (cause_kind IN (1, 2)),
@@ -1337,7 +1399,7 @@ CREATE TABLE command_record_process_signal_receipt (
         OR (cause_kind = 2 AND cancellation_propagation_id IS NULL))
 );
 CREATE TABLE command_record_direct_child_reap (
-    command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), child_process_id INTEGER NOT NULL,
+    command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), native_child_id INTEGER NOT NULL,
     wait_status_kind INTEGER NOT NULL CHECK (wait_status_kind IN (1, 2, 3)), status_value INTEGER,
     group_liveness_before_cleanup INTEGER NOT NULL CHECK (group_liveness_before_cleanup IN (1, 2, 3)),
     group_liveness_after_cleanup INTEGER NOT NULL CHECK (group_liveness_after_cleanup IN (1, 2, 3)),
@@ -1345,12 +1407,12 @@ CREATE TABLE command_record_direct_child_reap (
         OR (wait_status_kind = 3 AND status_value IS NULL))
 );
 CREATE TABLE command_record_child_recovery (
-    command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), child_process_id INTEGER NOT NULL,
+    command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), native_child_id INTEGER NOT NULL,
     observation INTEGER NOT NULL CHECK (observation = 1),
     group_liveness_after_restart INTEGER NOT NULL CHECK (group_liveness_after_restart IN (1, 2, 3))
 );
 CREATE TABLE command_finalize_child_process (
-    command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), child_process_id INTEGER NOT NULL
+    command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), native_child_id INTEGER NOT NULL
 );
 CREATE TABLE command_begin_cancellation_propagation (
     command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id), cancellation_request_id INTEGER NOT NULL
@@ -1363,52 +1425,64 @@ CREATE TABLE command_open_supervisor_epoch (
     supervisor_epoch_id INTEGER NOT NULL,
     supervisor_epoch_identity TEXT NOT NULL
 );
-CREATE TABLE command_record_pi_child_not_spawned (
+CREATE TABLE command_record_native_child_not_spawned (
     command_row_id INTEGER PRIMARY KEY REFERENCES commands(command_row_id),
-    pi_child_spawn_admission_id INTEGER NOT NULL,
+    native_child_spawn_admission_id INTEGER NOT NULL,
     reason INTEGER NOT NULL CHECK (reason IN (1, 2, 3, 4))
 );
 CREATE TABLE event_pi_child_spawn_admitted (
-    event_id INTEGER PRIMARY KEY REFERENCES events(event_id), pi_child_spawn_admission_id INTEGER NOT NULL REFERENCES pi_child_spawn_admissions(pi_child_spawn_admission_id),
+    event_id INTEGER PRIMARY KEY REFERENCES events(event_id), native_child_spawn_admission_id INTEGER NOT NULL REFERENCES native_child_spawn_admissions(native_child_spawn_admission_id),
     actor_attempt_id INTEGER, root_authority_office_session_id INTEGER, budget_reservation_id INTEGER NOT NULL REFERENCES budget_reservations(budget_reservation_id),
     CHECK ((actor_attempt_id IS NOT NULL AND root_authority_office_session_id IS NULL)
         OR (actor_attempt_id IS NULL AND root_authority_office_session_id IS NOT NULL))
 );
 CREATE TABLE event_inert_pi_child_spawn_recorded (
-    event_id INTEGER PRIMARY KEY REFERENCES events(event_id), child_process_id INTEGER NOT NULL REFERENCES pi_child_processes(child_process_id), pi_child_spawn_admission_id INTEGER NOT NULL REFERENCES pi_child_spawn_admissions(pi_child_spawn_admission_id)
+    event_id INTEGER PRIMARY KEY REFERENCES events(event_id), native_child_id INTEGER NOT NULL REFERENCES native_children(native_child_id), native_child_spawn_admission_id INTEGER NOT NULL REFERENCES native_child_spawn_admissions(native_child_spawn_admission_id)
+);
+CREATE TABLE event_deterministic_evaluator_native_child_admitted (
+    event_id INTEGER PRIMARY KEY REFERENCES events(event_id),
+    native_child_spawn_admission_id INTEGER NOT NULL REFERENCES native_child_spawn_admissions(native_child_spawn_admission_id),
+    deterministic_experiment_id INTEGER NOT NULL REFERENCES deterministic_experiments(deterministic_experiment_id),
+    evaluator_revision_id INTEGER NOT NULL REFERENCES evaluator_revisions(evaluator_revision_id),
+    input_manifest_id INTEGER NOT NULL REFERENCES input_manifests(input_manifest_id)
+);
+CREATE TABLE event_deterministic_evaluator_native_child_spawn_recorded (
+    event_id INTEGER PRIMARY KEY REFERENCES events(event_id),
+    native_child_id INTEGER NOT NULL REFERENCES native_children(native_child_id),
+    native_child_spawn_admission_id INTEGER NOT NULL REFERENCES native_child_spawn_admissions(native_child_spawn_admission_id)
 );
 CREATE TABLE event_pi_adapter_ready_recorded (
-    event_id INTEGER PRIMARY KEY REFERENCES events(event_id), child_process_id INTEGER NOT NULL REFERENCES pi_child_processes(child_process_id), pi_session_id INTEGER NOT NULL REFERENCES pi_child_sessions(pi_session_id)
+    event_id INTEGER PRIMARY KEY REFERENCES events(event_id), native_child_id INTEGER NOT NULL REFERENCES native_children(native_child_id), pi_session_id INTEGER NOT NULL REFERENCES pi_child_sessions(pi_session_id)
 );
 CREATE TABLE event_pi_create_session_authorized (
-    event_id INTEGER PRIMARY KEY REFERENCES events(event_id), child_process_id INTEGER NOT NULL REFERENCES pi_child_processes(child_process_id)
+    event_id INTEGER PRIMARY KEY REFERENCES events(event_id), native_child_id INTEGER NOT NULL REFERENCES native_children(native_child_id)
 );
 CREATE TABLE event_pi_create_session_delivery_recorded (
-    event_id INTEGER PRIMARY KEY REFERENCES events(event_id), child_process_id INTEGER NOT NULL REFERENCES pi_child_processes(child_process_id)
+    event_id INTEGER PRIMARY KEY REFERENCES events(event_id), native_child_id INTEGER NOT NULL REFERENCES native_children(native_child_id)
 );
 CREATE TABLE event_pi_session_ready_recorded (
-    event_id INTEGER PRIMARY KEY REFERENCES events(event_id), child_process_id INTEGER NOT NULL REFERENCES pi_child_processes(child_process_id), pi_session_id INTEGER NOT NULL REFERENCES pi_child_sessions(pi_session_id)
+    event_id INTEGER PRIMARY KEY REFERENCES events(event_id), native_child_id INTEGER NOT NULL REFERENCES native_children(native_child_id), pi_session_id INTEGER NOT NULL REFERENCES pi_child_sessions(pi_session_id)
 );
 CREATE TABLE event_pi_abort_control_delivery_recorded (
     event_id INTEGER PRIMARY KEY REFERENCES events(event_id),
     pi_abort_control_receipt_id INTEGER NOT NULL REFERENCES pi_abort_control_receipts(pi_abort_control_receipt_id),
-    child_process_id INTEGER NOT NULL REFERENCES pi_child_processes(child_process_id),
+    native_child_id INTEGER NOT NULL REFERENCES native_children(native_child_id),
     cancellation_propagation_id INTEGER NOT NULL REFERENCES cancellation_propagations(cancellation_propagation_id),
     correlation_identity TEXT NOT NULL,
     abort_command_digest BLOB NOT NULL CHECK (length(abort_command_digest) = 32),
     physical_write_outcome INTEGER NOT NULL CHECK (physical_write_outcome IN (1, 2, 3, 4))
 );
 CREATE TABLE event_child_stream_sealed (
-    event_id INTEGER PRIMARY KEY REFERENCES events(event_id), child_stream_seal_id INTEGER NOT NULL REFERENCES child_stream_seals(child_stream_seal_id),
-    child_process_id INTEGER NOT NULL REFERENCES pi_child_processes(child_process_id), stream_kind INTEGER NOT NULL CHECK (stream_kind IN (1, 2, 3, 4)), completeness INTEGER NOT NULL CHECK (completeness IN (1, 2, 3))
+    event_id INTEGER PRIMARY KEY REFERENCES events(event_id), native_child_stream_seal_id INTEGER NOT NULL REFERENCES native_child_stream_seals(native_child_stream_seal_id),
+    native_child_id INTEGER NOT NULL REFERENCES native_children(native_child_id), stream_kind INTEGER NOT NULL CHECK (stream_kind IN (1, 2, 3, 4)), completeness INTEGER NOT NULL CHECK (completeness IN (1, 2, 3))
 );
 CREATE TABLE event_child_process_liveness_observed (
-    event_id INTEGER PRIMARY KEY REFERENCES events(event_id), child_process_liveness_observation_id INTEGER NOT NULL REFERENCES child_process_liveness_observations(child_process_liveness_observation_id),
-    child_process_id INTEGER NOT NULL REFERENCES pi_child_processes(child_process_id), liveness INTEGER NOT NULL CHECK (liveness IN (1, 2, 3))
+    event_id INTEGER PRIMARY KEY REFERENCES events(event_id), native_child_liveness_observation_id INTEGER NOT NULL REFERENCES native_child_liveness_observations(native_child_liveness_observation_id),
+    native_child_id INTEGER NOT NULL REFERENCES native_children(native_child_id), liveness INTEGER NOT NULL CHECK (liveness IN (1, 2, 3))
 );
 CREATE TABLE event_process_signal_receipt_recorded (
     event_id INTEGER PRIMARY KEY REFERENCES events(event_id), process_signal_receipt_id INTEGER NOT NULL REFERENCES process_signal_receipts(process_signal_receipt_id),
-    child_process_id INTEGER NOT NULL REFERENCES pi_child_processes(child_process_id), signal_action INTEGER NOT NULL CHECK (signal_action IN (1, 2, 3)), delivery INTEGER NOT NULL CHECK (delivery IN (1, 2, 3, 4)),
+    native_child_id INTEGER NOT NULL REFERENCES native_children(native_child_id), signal_action INTEGER NOT NULL CHECK (signal_action IN (1, 2, 3)), delivery INTEGER NOT NULL CHECK (delivery IN (1, 2, 3, 4)),
     observed_liveness INTEGER NOT NULL CHECK (observed_liveness IN (1, 2, 3)),
     cause_kind INTEGER NOT NULL CHECK (cause_kind IN (1, 2)), cancellation_propagation_id INTEGER,
     CHECK ((cause_kind = 1 AND cancellation_propagation_id IS NOT NULL)
@@ -1418,20 +1492,20 @@ CREATE TABLE event_process_signal_receipt_recorded (
         OR delivery = 1)
 );
 CREATE TABLE event_direct_child_reaped (
-    event_id INTEGER PRIMARY KEY REFERENCES events(event_id), child_process_reap_receipt_id INTEGER NOT NULL REFERENCES child_process_reap_receipts(child_process_reap_receipt_id),
-    child_process_id INTEGER NOT NULL REFERENCES pi_child_processes(child_process_id), wait_status_kind INTEGER NOT NULL CHECK (wait_status_kind IN (1, 2, 3)), status_value INTEGER,
+    event_id INTEGER PRIMARY KEY REFERENCES events(event_id), native_child_reap_receipt_id INTEGER NOT NULL REFERENCES native_child_reap_receipts(native_child_reap_receipt_id),
+    native_child_id INTEGER NOT NULL REFERENCES native_children(native_child_id), wait_status_kind INTEGER NOT NULL CHECK (wait_status_kind IN (1, 2, 3)), status_value INTEGER,
     group_liveness_before_cleanup INTEGER NOT NULL CHECK (group_liveness_before_cleanup IN (1, 2, 3)),
     group_liveness_after_cleanup INTEGER NOT NULL CHECK (group_liveness_after_cleanup IN (1, 2, 3)),
     CHECK ((wait_status_kind IN (1, 2) AND status_value IS NOT NULL AND status_value >= 0)
         OR (wait_status_kind = 3 AND status_value IS NULL))
 );
 CREATE TABLE event_child_recovery_observed (
-    event_id INTEGER PRIMARY KEY REFERENCES events(event_id), child_process_recovery_receipt_id INTEGER NOT NULL REFERENCES child_process_recovery_receipts(child_process_recovery_receipt_id),
-    child_process_id INTEGER NOT NULL REFERENCES pi_child_processes(child_process_id), observation INTEGER NOT NULL CHECK (observation = 1),
+    event_id INTEGER PRIMARY KEY REFERENCES events(event_id), native_child_recovery_receipt_id INTEGER NOT NULL REFERENCES native_child_recovery_receipts(native_child_recovery_receipt_id),
+    native_child_id INTEGER NOT NULL REFERENCES native_children(native_child_id), observation INTEGER NOT NULL CHECK (observation = 1),
     group_liveness_after_restart INTEGER NOT NULL CHECK (group_liveness_after_restart IN (1, 2, 3))
 );
 CREATE TABLE event_child_process_finalized (
-    event_id INTEGER PRIMARY KEY REFERENCES events(event_id), child_process_id INTEGER NOT NULL REFERENCES pi_child_processes(child_process_id), disposition INTEGER NOT NULL CHECK (disposition IN (1, 4, 5))
+    event_id INTEGER PRIMARY KEY REFERENCES events(event_id), native_child_id INTEGER NOT NULL REFERENCES native_children(native_child_id), disposition INTEGER NOT NULL CHECK (disposition IN (1, 4, 5))
 );
 CREATE TABLE event_cancellation_propagation_begun (
     event_id INTEGER PRIMARY KEY REFERENCES events(event_id), cancellation_propagation_id INTEGER NOT NULL REFERENCES cancellation_propagations(cancellation_propagation_id), cancellation_request_id INTEGER NOT NULL REFERENCES cancellation_requests(cancellation_request_id)
@@ -1447,9 +1521,9 @@ CREATE TABLE event_cancellation_propagation_containment_failed (
     event_id INTEGER PRIMARY KEY REFERENCES events(event_id),
     cancellation_propagation_id INTEGER NOT NULL REFERENCES cancellation_propagations(cancellation_propagation_id)
 );
-CREATE TABLE event_pi_child_spawn_invalidated (
+CREATE TABLE event_native_child_spawn_invalidated (
     event_id INTEGER PRIMARY KEY REFERENCES events(event_id),
-    pi_child_spawn_admission_id INTEGER NOT NULL REFERENCES pi_child_spawn_admissions(pi_child_spawn_admission_id),
+    native_child_spawn_admission_id INTEGER NOT NULL REFERENCES native_child_spawn_admissions(native_child_spawn_admission_id),
     reason INTEGER NOT NULL CHECK (reason IN (1, 2, 3, 4))
 );
 
@@ -1470,7 +1544,7 @@ CREATE TABLE office_turn_budget_checkpoints (
 CREATE TABLE pi_office_turn_prompt_authorizations (
     pi_office_turn_prompt_authorization_id INTEGER PRIMARY KEY,
     office_turn_id INTEGER NOT NULL UNIQUE REFERENCES office_turns(office_turn_id),
-    child_process_id INTEGER NOT NULL REFERENCES pi_child_processes(child_process_id),
+    native_child_id INTEGER NOT NULL REFERENCES native_children(native_child_id),
     pi_session_id INTEGER NOT NULL REFERENCES pi_child_sessions(pi_session_id),
     budget_reservation_id INTEGER NOT NULL REFERENCES budget_reservations(budget_reservation_id),
     correlation_identity TEXT NOT NULL UNIQUE,
@@ -1533,7 +1607,7 @@ CREATE TABLE pi_office_turn_terminal_receipts (
     pi_office_turn_terminal_receipt_id INTEGER PRIMARY KEY,
     office_turn_id INTEGER NOT NULL UNIQUE REFERENCES office_turns(office_turn_id),
     pi_office_turn_prompt_authorization_id INTEGER NOT NULL UNIQUE REFERENCES pi_office_turn_prompt_authorizations(pi_office_turn_prompt_authorization_id),
-    child_process_id INTEGER NOT NULL REFERENCES pi_child_processes(child_process_id),
+    native_child_id INTEGER NOT NULL REFERENCES native_children(native_child_id),
     pi_session_id INTEGER NOT NULL REFERENCES pi_child_sessions(pi_session_id),
     correlation_identity TEXT NOT NULL,
     terminal_evidence_kind INTEGER NOT NULL CHECK (terminal_evidence_kind IN (1, 2)),
@@ -1644,7 +1718,7 @@ CREATE TABLE event_pi_office_turn_prompt_authorized (
     event_id INTEGER PRIMARY KEY REFERENCES events(event_id),
     pi_office_turn_prompt_authorization_id INTEGER NOT NULL REFERENCES pi_office_turn_prompt_authorizations(pi_office_turn_prompt_authorization_id),
     office_turn_id INTEGER NOT NULL REFERENCES office_turns(office_turn_id),
-    child_process_id INTEGER NOT NULL REFERENCES pi_child_processes(child_process_id),
+    native_child_id INTEGER NOT NULL REFERENCES native_children(native_child_id),
     correlation_identity TEXT NOT NULL,
     budget_reservation_id INTEGER NOT NULL REFERENCES budget_reservations(budget_reservation_id)
 );
@@ -1699,7 +1773,7 @@ CREATE TABLE event_pi_office_turn_terminal_recorded (
 CREATE TABLE pi_office_session_dispose_authorizations (
     root_authority_office_session_id INTEGER PRIMARY KEY
         REFERENCES root_authority_office_sessions(root_authority_office_session_id),
-    child_process_id INTEGER NOT NULL REFERENCES pi_child_processes(child_process_id),
+    native_child_id INTEGER NOT NULL REFERENCES native_children(native_child_id),
     pi_session_id INTEGER NOT NULL REFERENCES pi_child_sessions(pi_session_id),
     correlation_identity TEXT NOT NULL,
     authorized_generation INTEGER NOT NULL CHECK (authorized_generation >= 0),
@@ -1709,7 +1783,7 @@ CREATE TABLE pi_office_session_dispose_authorizations (
 CREATE TABLE pi_office_session_dispose_deliveries (
     root_authority_office_session_id INTEGER PRIMARY KEY
         REFERENCES pi_office_session_dispose_authorizations(root_authority_office_session_id),
-    child_process_id INTEGER NOT NULL REFERENCES pi_child_processes(child_process_id),
+    native_child_id INTEGER NOT NULL REFERENCES native_children(native_child_id),
     pi_session_id INTEGER NOT NULL REFERENCES pi_child_sessions(pi_session_id),
     correlation_identity TEXT NOT NULL,
     delivered_by_command_id INTEGER NOT NULL REFERENCES commands(command_row_id),
@@ -1759,7 +1833,7 @@ CREATE TABLE pi_office_session_dispose_receipts (
     pi_office_session_dispose_receipt_id INTEGER PRIMARY KEY,
     root_authority_office_session_id INTEGER NOT NULL UNIQUE
         REFERENCES pi_office_session_dispose_usage_receipts(root_authority_office_session_id),
-    child_process_id INTEGER NOT NULL REFERENCES pi_child_processes(child_process_id),
+    native_child_id INTEGER NOT NULL REFERENCES native_children(native_child_id),
     pi_session_id INTEGER NOT NULL REFERENCES pi_child_sessions(pi_session_id),
     correlation_identity TEXT NOT NULL,
     disposed_sequence INTEGER NOT NULL CHECK (disposed_sequence > 0),
@@ -1856,14 +1930,14 @@ CREATE TABLE command_record_pi_office_session_disposed (
 CREATE TABLE event_pi_office_session_dispose_authorized (
     event_id INTEGER PRIMARY KEY REFERENCES events(event_id),
     root_authority_office_session_id INTEGER NOT NULL REFERENCES root_authority_office_sessions(root_authority_office_session_id),
-    child_process_id INTEGER NOT NULL REFERENCES pi_child_processes(child_process_id),
+    native_child_id INTEGER NOT NULL REFERENCES native_children(native_child_id),
     correlation_identity TEXT NOT NULL,
     authorized_generation INTEGER NOT NULL CHECK (authorized_generation >= 0)
 );
 CREATE TABLE event_pi_office_session_dispose_delivered (
     event_id INTEGER PRIMARY KEY REFERENCES events(event_id),
     root_authority_office_session_id INTEGER NOT NULL REFERENCES root_authority_office_sessions(root_authority_office_session_id),
-    child_process_id INTEGER NOT NULL REFERENCES pi_child_processes(child_process_id),
+    native_child_id INTEGER NOT NULL REFERENCES native_children(native_child_id),
     correlation_identity TEXT NOT NULL
 );
 CREATE TABLE event_pi_office_session_dispose_accepted (
@@ -1966,6 +2040,7 @@ INSERT INTO principals VALUES(1,1,'bootstrap_principal',1);
 INSERT INTO principals VALUES(2,2,'kernel_service',1);
 INSERT INTO execution_profiles VALUES(1,1,1);
 INSERT INTO execution_profiles VALUES(2,2,2);
+INSERT INTO execution_profiles VALUES(3,3,1);
 INSERT INTO capability_grants VALUES(1,1,1,NULL,NULL,1,1,NULL,NULL);
 INSERT INTO capability_grants VALUES(2,1,2,NULL,NULL,1,1,NULL,NULL);
 INSERT INTO capability_grants VALUES(3,1,3,NULL,NULL,1,1,NULL,NULL);
@@ -2020,6 +2095,8 @@ INSERT INTO capability_grants VALUES(51,2,94,NULL,NULL,1,3,NULL,NULL);
 INSERT INTO capability_grants VALUES(52,2,95,NULL,NULL,1,3,NULL,NULL);
 INSERT INTO capability_grants VALUES(53,2,96,NULL,NULL,1,3,NULL,NULL);
 INSERT INTO capability_grants VALUES(54,2,97,NULL,NULL,1,3,NULL,NULL);
-PRAGMA user_version = 13;
+INSERT INTO capability_grants VALUES(55,2,98,NULL,NULL,1,3,NULL,NULL);
+INSERT INTO capability_grants VALUES(56,2,99,NULL,NULL,1,3,NULL,NULL);
+PRAGMA user_version = 14;
 COMMIT;
 PRAGMA foreign_keys = ON;

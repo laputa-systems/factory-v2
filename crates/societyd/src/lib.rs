@@ -12,11 +12,18 @@
 #[allow(dead_code)]
 mod content;
 mod daemon;
+// This private driver has no supervisor mutation wire. It accepts only the
+// already-admitted deterministic evaluator treatment and seals reaped bytes
+// before a later kernel evidence command may observe them.
+#[allow(dead_code)]
+mod deterministic_evaluator;
 mod observability;
 // The daemon-private M5 bridge is intentionally not yet reachable from the
 // public/supervisor wire. Its provider-free integration tests exercise the
 // real kernel/process path while the next resident control-loop tranche wires
 // in its typed scheduler call site.
+#[allow(dead_code)]
+mod native_child;
 #[allow(dead_code)]
 mod pi_execution;
 pub mod protocol;

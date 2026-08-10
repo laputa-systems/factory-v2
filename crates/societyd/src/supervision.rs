@@ -13,9 +13,9 @@ use std::{
     fs,
     io::{self, BufRead, BufReader, Read, Write},
     os::fd::AsRawFd,
-    os::unix::{fs::MetadataExt, process::CommandExt},
+    os::unix::fs::MetadataExt,
     path::Path,
-    process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus, Stdio},
+    process::{ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus, Stdio},
     sync::{Arc, Mutex},
     thread::{self, JoinHandle},
 };
@@ -30,12 +30,16 @@ use society_pi::{
 };
 use thiserror::Error;
 
+use crate::native_child::{NativeSignalGroupOutcome, spawn_owned_native_child};
+
 const MAX_HANDSHAKE_FRAMES: usize = 8;
 const WORKSPACE_MODE: libc::mode_t = 0o700;
 const MAX_TRANSIENT_STREAM_BYTES: usize = 8 * MAX_JSONL_FRAME_BYTES;
 
-/// A kernel-assigned child identity. It is never inferred from a PID: PIDs can
-/// be reused while the logical child must remain unique through its receipt.
+/// The resident's stable identity for one supervised child before the kernel
+/// assigns its numeric `NativeChildId`. It is never inferred from a PID: PIDs
+/// can be reused while the logical child must remain unique through its
+/// receipt.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct SupervisedChildId(String);
 
@@ -167,7 +171,7 @@ impl NativeWorkspace {
 pub struct OwnedProcessGroupId(libc::pid_t);
 
 impl OwnedProcessGroupId {
-    fn from_child_pid(pid: HostProcessId) -> Result<Self, SupervisionError> {
+    pub(crate) fn from_host_process_id(pid: HostProcessId) -> Result<Self, SupervisionError> {
         let pid =
             i32::try_from(pid.value()).map_err(|_| SupervisionError::InvalidProcessIdentity)?;
         if pid <= 0 {
@@ -691,12 +695,23 @@ impl VerifiedArtifact {
         &self.path
     }
 
+    pub(crate) const fn expected_blake3(&self) -> &Blake3Digest {
+        &self.expected_blake3
+    }
+
     fn verify_matches(&self, expected: &Blake3Digest) -> Result<(), SupervisionError> {
         let observed = digest_file(self.path.as_path())?;
         if &observed != expected || &self.expected_blake3 != expected {
             return Err(SupervisionError::ArtifactDigestDrift);
         }
         Ok(())
+    }
+
+    /// Rechecks the canonical file against the identity established by
+    /// [`Self::inspect`]. Native execution calls this immediately before
+    /// `exec`, after its side-effect-free admission preflight has succeeded.
+    pub(crate) fn verify_current_identity(&self) -> Result<(), SupervisionError> {
+        self.verify_matches(&self.expected_blake3)
     }
 }
 
@@ -796,6 +811,16 @@ pub enum SupervisionError {
     ArtifactDigestDrift,
     #[error("spawn request does not exactly bind its workspace/profile")]
     InvalidSpawnRequest,
+    #[error("native child request does not exactly bind its closed profile/artifacts")]
+    InvalidNativeChildRequest,
+    #[error("registered native child has no stdout pipe")]
+    MissingNativeChildStdout,
+    #[error("registered native child has no stderr pipe")]
+    MissingNativeChildStderr,
+    #[error("native child exceeded the fixed bounded output capture")]
+    NativeChildOutputLimitExceeded,
+    #[error("native child output capture could not be observed")]
+    NativeChildOutputCaptureFailed,
     #[error("child id was already supervised; successors are never automatic")]
     DuplicateChildIdentity,
     #[error("child operation is invalid in its closed lifecycle")]
@@ -970,37 +995,21 @@ impl PiSupervisor {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        // SAFETY: this closure runs in the freshly forked child immediately
-        // before exec. It invokes only async-signal-safe `setpgid(0, 0)` and
-        // returns the OS error without touching Rust allocation or locks.
-        unsafe {
-            command.pre_exec(|| {
-                if libc::setpgid(0, 0) != 0 {
-                    return Err(io::Error::last_os_error());
-                }
-                Ok(())
-            });
-        }
-        let mut child = command.spawn().map_err(SupervisionError::NativeSpawn)?;
-        let host_process_id =
-            HostProcessId::parse(u64::from(child.id())).map_err(SupervisionError::Protocol)?;
-        let process_group_id = OwnedProcessGroupId::from_child_pid(host_process_id)?;
+        let mut native_child = spawn_owned_native_child(command)?;
         // `Stdio::piped` makes these handles expected, but retaining their
         // optional shape until `finish_inert_setup` means a hypothetical
         // platform/runtime violation is a *registered* setup failure rather
         // than an orphaned physical child.
-        let stdin = child.stdin.take();
-        let stdout = child.stdout.take().map(BufReader::new);
-        let stderr_capture = child.stderr.take().map(spawn_stderr_capture);
+        let stdin = native_child.child.stdin.take();
+        let stdout = native_child.child.stdout.take().map(BufReader::new);
+        let stderr_capture = native_child.child.stderr.take().map(spawn_stderr_capture);
         let child_process_id = request.child_process_id.clone();
         self.historical_child_ids.insert(child_process_id.clone());
         self.children.insert(
             child_process_id.clone(),
             ManagedPiChild {
                 request,
-                child,
-                host_process_id,
-                process_group_id,
+                native_child,
                 stdin,
                 stdout,
                 stderr_capture,
@@ -1618,9 +1627,7 @@ impl PiSupervisor {
 
 struct ManagedPiChild {
     request: PiSpawnRequest,
-    child: Child,
-    host_process_id: HostProcessId,
-    process_group_id: OwnedProcessGroupId,
+    native_child: crate::native_child::OwnedNativeChildProcess,
     stdin: Option<ChildStdin>,
     stdout: Option<BufReader<ChildStdout>>,
     stderr_capture: Option<StderrCaptureTask>,
@@ -1804,7 +1811,7 @@ impl ManagedPiChild {
         // by the peer API, so it belongs after durable native registration.
         let peer = BoundaryPeer::new(
             self.request.session_identity.clone(),
-            self.host_process_id,
+            self.native_child.native_process.host_process_id(),
             self.request.spawn_nonce.clone(),
             self.request.host_execution.runtime.clone(),
         )
@@ -1845,8 +1852,8 @@ impl ManagedPiChild {
             child_process_id: self.request.child_process_id.clone(),
             session_identity: self.request.session_identity.clone(),
             spawn_nonce: self.request.spawn_nonce.clone(),
-            host_process_id: self.host_process_id,
-            process_group_id: self.process_group_id,
+            host_process_id: self.native_child.native_process.host_process_id(),
+            process_group_id: self.native_child.native_process.process_group_id(),
             workspace_identity: self.request.workspace.identity().clone(),
             workspace_directory: self.request.workspace.directory().clone(),
             runtime: self.request.host_execution.runtime.clone(),
@@ -1858,8 +1865,8 @@ impl ManagedPiChild {
         InertChildFacts {
             child_process_id: self.request.child_process_id.clone(),
             session_identity: self.request.session_identity.clone(),
-            host_process_id: self.host_process_id,
-            process_group_id: self.process_group_id,
+            host_process_id: self.native_child.native_process.host_process_id(),
+            process_group_id: self.native_child.native_process.process_group_id(),
             workspace_identity: self.request.workspace.identity().clone(),
             workspace_directory: self.request.workspace.directory().clone(),
             runtime: self.request.host_execution.runtime.clone(),
@@ -2105,49 +2112,30 @@ impl ManagedPiChild {
         // SAFETY: `getpgid` only observes the direct child PID retained by
         // `std::process::Child`; no signal is delivered. The PID has not been
         // reaped, so it cannot be reused while this handle remains live.
-        let observed = unsafe { libc::getpgid(self.process_group_id.value()) };
-        if observed < 0 {
-            return match io::Error::last_os_error().raw_os_error() {
-                Some(libc::ESRCH) => Ok(false),
-                _ => Err(SupervisionError::ProcessGroup(io::Error::last_os_error())),
-            };
-        }
-        Ok(observed == self.process_group_id.value())
+        self.native_child.native_process.owns_expected_group()
     }
 
     fn group_liveness(&self) -> Result<ProcessGroupLiveness, SupervisionError> {
         // SAFETY: negative PGID targets only the process group this object
         // created. Signal zero probes liveness without delivering a signal.
-        let result = unsafe { libc::kill(-self.process_group_id.value(), 0) };
-        if result == 0 {
-            return Ok(ProcessGroupLiveness::Present);
-        }
-        match io::Error::last_os_error().raw_os_error() {
-            Some(libc::ESRCH) => Ok(ProcessGroupLiveness::Absent),
-            Some(libc::EPERM) => Ok(ProcessGroupLiveness::Inaccessible),
-            _ => Err(SupervisionError::ProcessGroup(io::Error::last_os_error())),
-        }
+        self.native_child.native_process.liveness()
     }
 
     fn signal_group(&self, signal: libc::c_int) -> Result<SignalGroupOutcome, SupervisionError> {
-        match self.group_liveness()? {
-            ProcessGroupLiveness::Absent => return Ok(SignalGroupOutcome::AbsentBeforeSignal),
-            ProcessGroupLiveness::Inaccessible => {
-                return Ok(SignalGroupOutcome::InaccessibleBeforeSignal);
+        Ok(match self.native_child.native_process.signal(signal)? {
+            NativeSignalGroupOutcome::AbsentBeforeSignal => SignalGroupOutcome::AbsentBeforeSignal,
+            NativeSignalGroupOutcome::InaccessibleBeforeSignal => {
+                SignalGroupOutcome::InaccessibleBeforeSignal
             }
-            ProcessGroupLiveness::Present => {}
-        }
-        // SAFETY: the negative PGID was derived from this direct child after a
-        // pre-exec `setpgid(0, 0)`, so it addresses only its owned group.
-        if unsafe { libc::kill(-self.process_group_id.value(), signal) } != 0 {
-            match io::Error::last_os_error().raw_os_error() {
-                Some(libc::ESRCH) => return Ok(SignalGroupOutcome::AbsentDuringSignal),
-                Some(libc::EPERM) => return Ok(SignalGroupOutcome::InaccessibleDuringSignal),
-                _ => return Err(SupervisionError::ProcessGroup(io::Error::last_os_error())),
+            NativeSignalGroupOutcome::AbsentDuringSignal => SignalGroupOutcome::AbsentDuringSignal,
+            NativeSignalGroupOutcome::InaccessibleDuringSignal => {
+                SignalGroupOutcome::InaccessibleDuringSignal
             }
-        }
-        Ok(SignalGroupOutcome::Delivered {
-            group_liveness_after_delivery: self.group_liveness()?,
+            NativeSignalGroupOutcome::Delivered {
+                group_liveness_after_delivery,
+            } => SignalGroupOutcome::Delivered {
+                group_liveness_after_delivery,
+            },
         })
     }
 
@@ -2155,8 +2143,8 @@ impl ManagedPiChild {
         if let Some(pending) = &self.pending_direct_reap {
             return Ok(Some(DirectChildReapFacts {
                 child_process_id: self.request.child_process_id.clone(),
-                host_process_id: self.host_process_id,
-                process_group_id: self.process_group_id,
+                host_process_id: self.native_child.native_process.host_process_id(),
+                process_group_id: self.native_child.native_process.process_group_id(),
                 status: reap_status(pending.status),
                 group_liveness_after_direct_child_reap: pending
                     .group_liveness_after_direct_child_reap,
@@ -2166,7 +2154,7 @@ impl ManagedPiChild {
         if self.completed_receipt.is_some() {
             return Err(SupervisionError::InvalidLifecycle);
         }
-        let Some(status) = self.child.try_wait()? else {
+        let Some(status) = self.native_child.poll_direct_wait()? else {
             return Ok(None);
         };
         let group_liveness_after_direct_child_reap = self.group_liveness()?;
@@ -2177,8 +2165,8 @@ impl ManagedPiChild {
         });
         Ok(Some(DirectChildReapFacts {
             child_process_id: self.request.child_process_id.clone(),
-            host_process_id: self.host_process_id,
-            process_group_id: self.process_group_id,
+            host_process_id: self.native_child.native_process.host_process_id(),
+            process_group_id: self.native_child.native_process.process_group_id(),
             status: reap_status(status),
             group_liveness_after_direct_child_reap,
             prior_signal_receipts: self.deliveries.clone(),
@@ -2244,7 +2232,7 @@ impl ManagedPiChild {
         if let Some(receipt) = self.completed_receipt.clone() {
             return Ok(Some(receipt));
         }
-        let Some(status) = self.child.try_wait()? else {
+        let Some(status) = self.native_child.poll_direct_wait()? else {
             return Ok(None);
         };
         Ok(Some(self.complete_reap(status, now)?))
@@ -2265,7 +2253,7 @@ impl ManagedPiChild {
             }
             return Err(SupervisionError::ContainmentAwaitingDrive);
         }
-        let status = self.child.wait()?;
+        let status = self.native_child.wait_direct()?;
         self.complete_reap(status, now)
     }
 
@@ -2352,8 +2340,8 @@ impl ManagedPiChild {
         };
         let reap = ReapReceipt {
             child_process_id: self.request.child_process_id.clone(),
-            host_process_id: self.host_process_id,
-            process_group_id: self.process_group_id,
+            host_process_id: self.native_child.native_process.host_process_id(),
+            process_group_id: self.native_child.native_process.process_group_id(),
             status: reap_status(status),
             group_liveness_before_cleanup,
             group_liveness_after_reap,
@@ -2506,8 +2494,8 @@ impl Drop for ManagedPiChild {
         self.stdin.take();
         // SAFETY: while `Child` remains unreaped its PID cannot be reused;
         // this group was created by `pre_exec(setpgid(0, 0))` for this child.
-        let _ = unsafe { libc::kill(-self.process_group_id.value(), libc::SIGKILL) };
-        let _ = self.child.wait();
+        let _ = self.native_child.native_process.signal(libc::SIGKILL);
+        let _ = self.native_child.wait_direct();
     }
 }
 

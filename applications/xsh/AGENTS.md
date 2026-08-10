@@ -35,6 +35,17 @@ which this application may consume but may not modify through application code.
   the present foundation completed them.
 - No application JSON, metadata map, EAV relation, or stringly discriminator
   may be introduced as a shortcut around a typed evaluator or generic boundary.
+- The XSH evaluator port owns the canonical VS-001 evaluator programs,
+  application profile names, invocation grammar, fixture/case manifests,
+  expected output contracts, and semantic parsers. It constructs only bounded
+  canonical program/input renderings, their declared BLAKE3 identities, and a
+  closed application invocation description. A later daemon-private bridge may
+  revalidate those artifacts against an already durable generic admission, use
+  the native custody core, and seal fully reaped output before invoking a
+  separate closed evidence path. No such resident scheduler path exists yet.
+  The port cannot choose a durable child identity, invoke or supervise a child,
+  seal bytes, write SQLite, or admit evidence; generic crates must not name XSH
+  evaluator semantics.
 
 ## Application map
 
@@ -44,7 +55,7 @@ ARCHITECTURE.md                   preserved XSH application architecture/history
 GLOSSARY.md                       XSH canonical vocabulary
 VERTICAL-SLICE.md                 exact XSH VS-001 executable contract
 README.md                         isolated workspace entry point
-society-xsh-circuit/              closed parsing-only XSH observation adapter
+society-xsh-circuit/              closed XSH observation adapter and evaluator port
 society-xsh-contract/             XSH mission and north-star input factory
 circuits/vs-001-spawn-stderr/     XSH fixtures and deterministic judges
 ```

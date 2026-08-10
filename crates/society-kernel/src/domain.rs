@@ -78,20 +78,22 @@ identifier!(EvidenceAdmissionId);
 identifier!(SupervisorEpochId);
 identifier!(WorkspaceId);
 identifier!(PiSessionId);
-identifier!(PiChildSpawnAdmissionId);
-identifier!(ChildProcessId);
-identifier!(ChildProcessLivenessObservationId);
+// Identity of one OS child under resident custody. Pi protocol identity is a
+// sidecar and is absent for deterministic evaluator children.
+identifier!(NativeChildId);
+identifier!(NativeChildSpawnAdmissionId);
+identifier!(NativeChildLivenessObservationId);
+identifier!(NativeChildReapReceiptId);
+identifier!(NativeChildRecoveryReceiptId);
+identifier!(NativeChildStreamSealId);
 identifier!(ProcessSignalReceiptId);
 identifier!(PiAbortControlReceiptId);
-identifier!(ChildProcessReapReceiptId);
 identifier!(PiOfficeTurnPromptAuthorizationId);
 identifier!(PiOfficeTurnUsageReceiptId);
 identifier!(PiOfficeTurnUsageFailureId);
 identifier!(PiOfficeTurnTerminalReceiptId);
 identifier!(PiOfficeSessionDisposeReceiptId);
 identifier!(PiProtocolSequence);
-identifier!(ChildProcessRecoveryReceiptId);
-identifier!(ChildStreamSealId);
 identifier!(CancellationPropagationId);
 identifier!(CancellationPropagationTargetId);
 
@@ -265,6 +267,9 @@ impl ExecutionProfileId {
     /// The pinned native profile identity. M3 records it as Unqualified;
     /// only the later PiSdkQualification path may make it live-admissible.
     pub const NATIVE_PINNED_PI_SDK_V1: Self = Self(2);
+    /// Provider-free native evaluator fixture profile. It has no Pi protocol
+    /// authority and is intentionally distinct from paid/live treatments.
+    pub const DETERMINISTIC_EVALUATOR_PROCESS_FIXTURE_V1: Self = Self(3);
 }
 
 impl PrincipalId {
@@ -867,7 +872,7 @@ pub enum Capability {
     RegisterDeterministicExperiment = 65,
     RecordDeterministicEvaluationReceipt = 66,
     AdmitDeterministicEvidence = 67,
-    CloseDeterministicExperiment = 68,
+    FinalizeDeterministicExperiment = 68,
     AdmitPiChildSpawn = 69,
     RecordInertChildSpawn = 70,
     RecordPiAdapterReady = 71,
@@ -890,7 +895,7 @@ pub enum Capability {
     RecordPiAbortControlDelivery = 84,
     /// Resolves an admitted-but-never-spawned child after cancellation froze
     /// its owner target. A later inert spawn is then impossible.
-    RecordPiChildNotSpawned = 85,
+    RecordNativeChildNotSpawned = 85,
     AuthorizePiOfficeTurnPrompt = 86,
     RecordPiOfficeTurnPromptDelivery = 87,
     RecordPiOfficeTurnPromptAccepted = 88,
@@ -909,6 +914,12 @@ pub enum Capability {
     RecordPiOfficeSessionDisposeUsage = 95,
     RecordPiOfficeSessionDisposeUsageFailure = 96,
     RecordPiOfficeSessionDisposed = 97,
+    /// Provider-free admission for one deterministic evaluator native child.
+    /// The input binds the exact registered evaluator experiment; it has no Pi
+    /// identity and no monetary-reservation field because this fixture profile
+    /// is explicitly non-monetized.
+    AdmitDeterministicEvaluatorNativeChild = 98,
+    RecordDeterministicEvaluatorNativeChildSpawn = 99,
 }
 
 impl Capability {
@@ -967,10 +978,10 @@ impl Capability {
         Self::RegisterOutcomeObligation,
         Self::ResolveOutcomeObligation,
         Self::RegisterDeterministicExperiment,
-        Self::CloseDeterministicExperiment,
+        Self::FinalizeDeterministicExperiment,
     ];
 
-    pub const KERNEL_SERVICE: [Self; 46] = [
+    pub const KERNEL_SERVICE: [Self; 48] = [
         Self::RecordCycleDrained,
         Self::RecordOfficeSessionReady,
         Self::SettleOfficeTurn,
@@ -1004,7 +1015,7 @@ impl Capability {
         Self::ReconcileCancellationPropagation,
         Self::OpenSupervisorEpoch,
         Self::RecordPiAbortControlDelivery,
-        Self::RecordPiChildNotSpawned,
+        Self::RecordNativeChildNotSpawned,
         Self::AuthorizePiOfficeTurnPrompt,
         Self::RecordPiOfficeTurnPromptDelivery,
         Self::RecordPiOfficeTurnPromptAccepted,
@@ -1017,6 +1028,8 @@ impl Capability {
         Self::RecordPiOfficeSessionDisposeUsage,
         Self::RecordPiOfficeSessionDisposeUsageFailure,
         Self::RecordPiOfficeSessionDisposed,
+        Self::AdmitDeterministicEvaluatorNativeChild,
+        Self::RecordDeterministicEvaluatorNativeChildSpawn,
     ];
 
     pub const fn requires_consumption(self) -> bool {
@@ -1066,9 +1079,9 @@ impl OperatingCycleState {
     }
 }
 
-/// The finite operating treatments permitted by the current pinned Pi SDK
-/// policy. A treatment carries its constitutional budget exactly; callers
-/// never select an arbitrary ceiling for a cycle.
+/// The finite operating treatments admitted by the current prototype. A
+/// treatment carries its constitutional budget exactly; callers never select
+/// an arbitrary ceiling for a cycle.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(i64)]
 pub enum OperatingCycleTreatment {
@@ -1079,6 +1092,10 @@ pub enum OperatingCycleTreatment {
     /// provider access and cannot stand in for the paid native qualification
     /// run.
     DeterministicPiHostFixtureV1 = 3,
+    /// Provider-free fixture treatment for deterministic evaluator processes.
+    /// It is intentionally distinct from the Pi host double: evaluator work
+    /// must not manufacture Pi identity or become paid/live work.
+    DeterministicEvaluatorFixtureV1 = 4,
 }
 
 /// M2 contains the planning and closure-blocker portion of the Project
@@ -1270,6 +1287,7 @@ pub enum ActorInstanceState {
 pub enum ExecutionProfileKind {
     DeterministicPiHostProcessDoubleV1 = 1,
     NativePinnedPiSdkV1 = 2,
+    DeterministicEvaluatorProcessFixtureV1 = 3,
 }
 
 /// This is deliberately not a boolean "qualified" flag. The process-double
@@ -1342,9 +1360,23 @@ pub enum PiChildOwner {
     RootAuthorityOfficeSession(RootAuthorityOfficeSessionId),
 }
 
+/// The closed owner union for a native child.  Only the Pi arm has a Pi
+/// session/protocol sidecar.  The evaluator arm pins the exact experiment
+/// revision and input manifest that the child may execute; it is not an
+/// application-defined discriminator.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativeChildOwner {
+    Pi(PiChildOwner),
+    DeterministicEvaluator {
+        deterministic_experiment_id: DeterministicExperimentId,
+        evaluator_revision_id: EvaluatorRevisionId,
+        input_manifest_id: InputManifestId,
+    },
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(i64)]
-pub enum PiChildSpawnAdmissionState {
+pub enum NativeChildSpawnAdmissionState {
     Admitted = 1,
     Spawned = 2,
     Invalidated = 3,
@@ -1662,7 +1694,7 @@ pub enum ChildRecoveryObservation {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(i64)]
-pub enum PiChildNotSpawnedReason {
+pub enum NativeChildNotSpawnedReason {
     CancelledBeforeSpawn = 1,
     WorkspacePreparationFailed = 2,
     ArtifactQualificationFailed = 3,
@@ -1755,6 +1787,8 @@ pub enum DeterministicExperimentState {
     Registered = 1,
     EvidenceAdmitted = 2,
     Closed = 3,
+    Failed = 4,
+    Cancelled = 5,
 }
 
 /// The only M4 semantic admission role. Graph nodes, curation, influence,
@@ -2379,9 +2413,26 @@ pub enum CommandBody {
         applicability: EvidenceApplicability,
         limitation: EvidenceLimitationText,
     },
-    CloseDeterministicExperiment {
+    FinalizeDeterministicExperiment {
         operating_cycle_id: OperatingCycleId,
         deterministic_experiment_id: DeterministicExperimentId,
+    },
+    AdmitDeterministicEvaluatorNativeChild {
+        operating_cycle_id: OperatingCycleId,
+        deterministic_experiment_id: DeterministicExperimentId,
+        evaluator_revision_id: EvaluatorRevisionId,
+        input_manifest_id: InputManifestId,
+        execution_profile_id: ExecutionProfileId,
+        native_workspace_id: NativeWorkspaceId,
+        canonical_workspace_path: CanonicalWorkspacePath,
+        supervisor_epoch_id: SupervisorEpochId,
+        supervisor_epoch_identity: SupervisorEpochIdentity,
+    },
+    RecordDeterministicEvaluatorNativeChildSpawn {
+        native_child_spawn_admission_id: NativeChildSpawnAdmissionId,
+        child_identity: SupervisedChildIdentity,
+        direct_child_pid: NativeChildPid,
+        process_group_id: OwnedProcessGroupId,
     },
     /// The sole M5 opening fact for a resident supervisor lifetime. The epoch
     /// has event-sequence ordering only; it does not claim a durable clock.
@@ -2406,70 +2457,70 @@ pub enum CommandBody {
         spawn_nonce: SpawnNonce,
     },
     RecordInertChildSpawn {
-        pi_child_spawn_admission_id: PiChildSpawnAdmissionId,
+        native_child_spawn_admission_id: NativeChildSpawnAdmissionId,
         child_identity: SupervisedChildIdentity,
         direct_child_pid: NativeChildPid,
         process_group_id: OwnedProcessGroupId,
     },
     RecordPiAdapterReady {
-        child_process_id: ChildProcessId,
+        native_child_id: NativeChildId,
         pi_session_identity: PiBoundarySessionIdentity,
         spawn_nonce: SpawnNonce,
     },
     AuthorizePiCreateSession {
-        child_process_id: ChildProcessId,
+        native_child_id: NativeChildId,
         correlation_identity: PiCorrelationIdentity,
         create_request_digest: Blake3Digest,
     },
     RecordPiCreateSessionDelivery {
-        child_process_id: ChildProcessId,
+        native_child_id: NativeChildId,
         correlation_identity: PiCorrelationIdentity,
         create_request_digest: Blake3Digest,
     },
     RecordPiSessionReady {
-        child_process_id: ChildProcessId,
+        native_child_id: NativeChildId,
         pi_session_identity: PiBoundarySessionIdentity,
     },
     RecordPiAbortControlDelivery {
-        child_process_id: ChildProcessId,
+        native_child_id: NativeChildId,
         cancellation_propagation_id: CancellationPropagationId,
         correlation_identity: PiCorrelationIdentity,
         abort_command_digest: Blake3Digest,
         outcome: PiAbortControlWriteOutcome,
     },
     RecordChildStreamSeal {
-        child_process_id: ChildProcessId,
+        native_child_id: NativeChildId,
         stream_kind: ChildStreamKind,
         full_observed_digest: Blake3Digest,
         retained_content_object_id: ContentObjectId,
         completeness: ChildStreamSealCompleteness,
     },
     RecordChildProcessLiveness {
-        child_process_id: ChildProcessId,
+        native_child_id: NativeChildId,
         liveness: ProcessGroupLiveness,
     },
     RecordProcessSignalReceipt {
-        child_process_id: ChildProcessId,
+        native_child_id: NativeChildId,
         action: ProcessSignalAction,
         delivery: ProcessSignalDelivery,
         observed_liveness: ProcessGroupLiveness,
         cause: ProcessSignalCause,
     },
     RecordDirectChildReap {
-        child_process_id: ChildProcessId,
+        native_child_id: NativeChildId,
         wait_status: DirectChildWaitStatus,
         group_liveness_before_cleanup: ProcessGroupLiveness,
         group_liveness_after_cleanup: ProcessGroupLiveness,
     },
     RecordChildRecovery {
-        child_process_id: ChildProcessId,
+        native_child_id: NativeChildId,
         observation: ChildRecoveryObservation,
         group_liveness_after_restart: ProcessGroupLiveness,
     },
     /// A terminal classification is derived only from preceding receipt rows;
     /// this command does not accept a caller-selected result.
     FinalizeChildProcess {
-        child_process_id: ChildProcessId,
+        native_child_id: NativeChildId,
     },
     BeginCancellationPropagation {
         cancellation_request_id: CancellationRequestId,
@@ -2477,9 +2528,9 @@ pub enum CommandBody {
     ReconcileCancellationPropagation {
         cancellation_propagation_id: CancellationPropagationId,
     },
-    RecordPiChildNotSpawned {
-        pi_child_spawn_admission_id: PiChildSpawnAdmissionId,
-        reason: PiChildNotSpawnedReason,
+    RecordNativeChildNotSpawned {
+        native_child_spawn_admission_id: NativeChildSpawnAdmissionId,
+        reason: NativeChildNotSpawnedReason,
     },
     /// Final, provider-free kernel authority for one exact Office Prompt.
     /// The sealed bytes and current ledger frontier are named before anything
@@ -2661,7 +2712,15 @@ impl CommandBody {
                 CommandKind::RecordDeterministicEvaluationReceipt
             }
             Self::AdmitDeterministicEvidence { .. } => CommandKind::AdmitDeterministicEvidence,
-            Self::CloseDeterministicExperiment { .. } => CommandKind::CloseDeterministicExperiment,
+            Self::FinalizeDeterministicExperiment { .. } => {
+                CommandKind::FinalizeDeterministicExperiment
+            }
+            Self::AdmitDeterministicEvaluatorNativeChild { .. } => {
+                CommandKind::AdmitDeterministicEvaluatorNativeChild
+            }
+            Self::RecordDeterministicEvaluatorNativeChildSpawn { .. } => {
+                CommandKind::RecordDeterministicEvaluatorNativeChildSpawn
+            }
             Self::OpenSupervisorEpoch { .. } => CommandKind::OpenSupervisorEpoch,
             Self::AdmitPiChildSpawn { .. } => CommandKind::AdmitPiChildSpawn,
             Self::RecordInertChildSpawn { .. } => CommandKind::RecordInertChildSpawn,
@@ -2682,7 +2741,7 @@ impl CommandBody {
             Self::ReconcileCancellationPropagation { .. } => {
                 CommandKind::ReconcileCancellationPropagation
             }
-            Self::RecordPiChildNotSpawned { .. } => CommandKind::RecordPiChildNotSpawned,
+            Self::RecordNativeChildNotSpawned { .. } => CommandKind::RecordNativeChildNotSpawned,
             Self::AuthorizePiOfficeTurnPrompt { .. } => CommandKind::AuthorizePiOfficeTurnPrompt,
             Self::RecordPiOfficeTurnPromptDelivery { .. } => {
                 CommandKind::RecordPiOfficeTurnPromptDelivery
@@ -2791,7 +2850,15 @@ impl CommandBody {
                 Capability::RecordDeterministicEvaluationReceipt
             }
             Self::AdmitDeterministicEvidence { .. } => Capability::AdmitDeterministicEvidence,
-            Self::CloseDeterministicExperiment { .. } => Capability::CloseDeterministicExperiment,
+            Self::FinalizeDeterministicExperiment { .. } => {
+                Capability::FinalizeDeterministicExperiment
+            }
+            Self::AdmitDeterministicEvaluatorNativeChild { .. } => {
+                Capability::AdmitDeterministicEvaluatorNativeChild
+            }
+            Self::RecordDeterministicEvaluatorNativeChildSpawn { .. } => {
+                Capability::RecordDeterministicEvaluatorNativeChildSpawn
+            }
             Self::OpenSupervisorEpoch { .. } => Capability::OpenSupervisorEpoch,
             Self::AdmitPiChildSpawn { .. } => Capability::AdmitPiChildSpawn,
             Self::RecordInertChildSpawn { .. } => Capability::RecordInertChildSpawn,
@@ -2810,7 +2877,7 @@ impl CommandBody {
             Self::ReconcileCancellationPropagation { .. } => {
                 Capability::ReconcileCancellationPropagation
             }
-            Self::RecordPiChildNotSpawned { .. } => Capability::RecordPiChildNotSpawned,
+            Self::RecordNativeChildNotSpawned { .. } => Capability::RecordNativeChildNotSpawned,
             Self::AuthorizePiOfficeTurnPrompt { .. } => Capability::AuthorizePiOfficeTurnPrompt,
             Self::RecordPiOfficeTurnPromptDelivery { .. } => {
                 Capability::RecordPiOfficeTurnPromptDelivery
@@ -2913,7 +2980,7 @@ pub enum CommandKind {
     RegisterDeterministicExperiment = 65,
     RecordDeterministicEvaluationReceipt = 66,
     AdmitDeterministicEvidence = 67,
-    CloseDeterministicExperiment = 68,
+    FinalizeDeterministicExperiment = 68,
     AdmitPiChildSpawn = 69,
     RecordInertChildSpawn = 70,
     RecordPiAdapterReady = 71,
@@ -2930,7 +2997,7 @@ pub enum CommandKind {
     ReconcileCancellationPropagation = 82,
     OpenSupervisorEpoch = 83,
     RecordPiAbortControlDelivery = 84,
-    RecordPiChildNotSpawned = 85,
+    RecordNativeChildNotSpawned = 85,
     AuthorizePiOfficeTurnPrompt = 86,
     RecordPiOfficeTurnPromptDelivery = 87,
     RecordPiOfficeTurnPromptAccepted = 88,
@@ -2943,6 +3010,8 @@ pub enum CommandKind {
     RecordPiOfficeSessionDisposeUsage = 95,
     RecordPiOfficeSessionDisposeUsageFailure = 96,
     RecordPiOfficeSessionDisposed = 97,
+    AdmitDeterministicEvaluatorNativeChild = 98,
+    RecordDeterministicEvaluatorNativeChildSpawn = 99,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -3322,74 +3391,83 @@ pub enum EventBody {
         semantic_role: EvidenceSemanticRole,
         applicability: EvidenceApplicability,
     },
-    DeterministicExperimentClosed {
+    DeterministicExperimentFinalized {
         deterministic_experiment_id: DeterministicExperimentId,
+        terminal_state: DeterministicExperimentState,
+    },
+    DeterministicEvaluatorNativeChildAdmitted {
+        native_child_spawn_admission_id: NativeChildSpawnAdmissionId,
+        owner: NativeChildOwner,
+    },
+    DeterministicEvaluatorNativeChildSpawnRecorded {
+        native_child_id: NativeChildId,
+        native_child_spawn_admission_id: NativeChildSpawnAdmissionId,
     },
     PiChildSpawnAdmitted {
-        pi_child_spawn_admission_id: PiChildSpawnAdmissionId,
+        native_child_spawn_admission_id: NativeChildSpawnAdmissionId,
         owner: PiChildOwner,
         budget_reservation_id: BudgetReservationId,
     },
     InertPiChildSpawnRecorded {
-        child_process_id: ChildProcessId,
-        pi_child_spawn_admission_id: PiChildSpawnAdmissionId,
+        native_child_id: NativeChildId,
+        native_child_spawn_admission_id: NativeChildSpawnAdmissionId,
     },
     PiAdapterReadyRecorded {
-        child_process_id: ChildProcessId,
+        native_child_id: NativeChildId,
         pi_session_id: PiSessionId,
     },
     PiCreateSessionAuthorized {
-        child_process_id: ChildProcessId,
+        native_child_id: NativeChildId,
     },
     PiCreateSessionDeliveryRecorded {
-        child_process_id: ChildProcessId,
+        native_child_id: NativeChildId,
     },
     PiSessionReadyRecorded {
-        child_process_id: ChildProcessId,
+        native_child_id: NativeChildId,
         pi_session_id: PiSessionId,
     },
     PiAbortControlDeliveryRecorded {
         pi_abort_control_receipt_id: PiAbortControlReceiptId,
-        child_process_id: ChildProcessId,
+        native_child_id: NativeChildId,
         cancellation_propagation_id: CancellationPropagationId,
         correlation_identity: PiCorrelationIdentity,
         abort_command_digest: Blake3Digest,
         outcome: PiAbortControlWriteOutcome,
     },
     ChildStreamSealed {
-        child_stream_seal_id: ChildStreamSealId,
-        child_process_id: ChildProcessId,
+        native_child_stream_seal_id: NativeChildStreamSealId,
+        native_child_id: NativeChildId,
         stream_kind: ChildStreamKind,
         completeness: ChildStreamSealCompleteness,
     },
     ChildProcessLivenessObserved {
-        child_process_liveness_observation_id: ChildProcessLivenessObservationId,
-        child_process_id: ChildProcessId,
+        native_child_liveness_observation_id: NativeChildLivenessObservationId,
+        native_child_id: NativeChildId,
         liveness: ProcessGroupLiveness,
     },
     ProcessSignalReceiptRecorded {
         process_signal_receipt_id: ProcessSignalReceiptId,
-        child_process_id: ChildProcessId,
+        native_child_id: NativeChildId,
         action: ProcessSignalAction,
         delivery: ProcessSignalDelivery,
         observed_liveness: ProcessGroupLiveness,
         cause: ProcessSignalCause,
     },
     DirectChildReaped {
-        child_process_reap_receipt_id: ChildProcessReapReceiptId,
-        child_process_id: ChildProcessId,
+        native_child_reap_receipt_id: NativeChildReapReceiptId,
+        native_child_id: NativeChildId,
         wait_status: DirectChildWaitStatus,
         group_liveness_before_cleanup: ProcessGroupLiveness,
         group_liveness_after_cleanup: ProcessGroupLiveness,
     },
     ChildRecoveryObserved {
-        child_process_recovery_receipt_id: ChildProcessRecoveryReceiptId,
-        child_process_id: ChildProcessId,
+        native_child_recovery_receipt_id: NativeChildRecoveryReceiptId,
+        native_child_id: NativeChildId,
         observation: ChildRecoveryObservation,
         group_liveness_after_restart: ProcessGroupLiveness,
     },
     ChildProcessFinalized {
-        child_process_id: ChildProcessId,
+        native_child_id: NativeChildId,
         disposition: ChildTerminalDisposition,
     },
     CancellationPropagationBegun {
@@ -3402,9 +3480,9 @@ pub enum EventBody {
     CancellationPropagationContainmentFailed {
         cancellation_propagation_id: CancellationPropagationId,
     },
-    PiChildSpawnInvalidated {
-        pi_child_spawn_admission_id: PiChildSpawnAdmissionId,
-        reason: PiChildNotSpawnedReason,
+    NativeChildSpawnInvalidated {
+        native_child_spawn_admission_id: NativeChildSpawnAdmissionId,
+        reason: NativeChildNotSpawnedReason,
     },
     SupervisorEpochOpened {
         supervisor_epoch_id: SupervisorEpochId,
@@ -3412,7 +3490,7 @@ pub enum EventBody {
     PiOfficeTurnPromptAuthorized {
         pi_office_turn_prompt_authorization_id: PiOfficeTurnPromptAuthorizationId,
         office_turn_id: OfficeTurnId,
-        child_process_id: ChildProcessId,
+        native_child_id: NativeChildId,
         correlation_identity: PiCorrelationIdentity,
         budget_reservation_id: BudgetReservationId,
     },
@@ -3446,13 +3524,13 @@ pub enum EventBody {
     },
     PiOfficeSessionDisposeAuthorized {
         session_id: RootAuthorityOfficeSessionId,
-        child_process_id: ChildProcessId,
+        native_child_id: NativeChildId,
         correlation_identity: PiCorrelationIdentity,
         authorized_generation: AdmissionGeneration,
     },
     PiOfficeSessionDisposeDelivered {
         session_id: RootAuthorityOfficeSessionId,
-        child_process_id: ChildProcessId,
+        native_child_id: NativeChildId,
         correlation_identity: PiCorrelationIdentity,
     },
     PiOfficeSessionDisposeAccepted {
@@ -3544,7 +3622,7 @@ pub enum EventKind {
     DeterministicExperimentRegistered = 58,
     DeterministicEvaluationReceiptRecorded = 59,
     DeterministicEvidenceAdmitted = 60,
-    DeterministicExperimentClosed = 61,
+    DeterministicExperimentFinalized = 61,
     PiChildSpawnAdmitted = 62,
     InertPiChildSpawnRecorded = 63,
     PiAdapterReadyRecorded = 64,
@@ -3562,7 +3640,7 @@ pub enum EventKind {
     SupervisorEpochOpened = 76,
     CancellationPropagationContainmentFailed = 77,
     PiAbortControlDeliveryRecorded = 78,
-    PiChildSpawnInvalidated = 79,
+    NativeChildSpawnInvalidated = 79,
     PiOfficeTurnPromptAuthorized = 80,
     PiOfficeTurnPromptDelivered = 81,
     PiOfficeTurnPromptAccepted = 82,
@@ -3575,6 +3653,8 @@ pub enum EventKind {
     PiOfficeSessionDisposeUsageRecorded = 89,
     PiOfficeSessionDisposeUsageFrozen = 90,
     PiOfficeSessionDisposed = 91,
+    DeterministicEvaluatorNativeChildAdmitted = 92,
+    DeterministicEvaluatorNativeChildSpawnRecorded = 93,
 }
 
 impl EventBody {
@@ -3650,7 +3730,15 @@ impl EventBody {
                 EventKind::DeterministicEvaluationReceiptRecorded
             }
             Self::DeterministicEvidenceAdmitted { .. } => EventKind::DeterministicEvidenceAdmitted,
-            Self::DeterministicExperimentClosed { .. } => EventKind::DeterministicExperimentClosed,
+            Self::DeterministicExperimentFinalized { .. } => {
+                EventKind::DeterministicExperimentFinalized
+            }
+            Self::DeterministicEvaluatorNativeChildAdmitted { .. } => {
+                EventKind::DeterministicEvaluatorNativeChildAdmitted
+            }
+            Self::DeterministicEvaluatorNativeChildSpawnRecorded { .. } => {
+                EventKind::DeterministicEvaluatorNativeChildSpawnRecorded
+            }
             Self::PiChildSpawnAdmitted { .. } => EventKind::PiChildSpawnAdmitted,
             Self::InertPiChildSpawnRecorded { .. } => EventKind::InertPiChildSpawnRecorded,
             Self::PiAdapterReadyRecorded { .. } => EventKind::PiAdapterReadyRecorded,
@@ -3676,7 +3764,7 @@ impl EventBody {
             Self::CancellationPropagationContainmentFailed { .. } => {
                 EventKind::CancellationPropagationContainmentFailed
             }
-            Self::PiChildSpawnInvalidated { .. } => EventKind::PiChildSpawnInvalidated,
+            Self::NativeChildSpawnInvalidated { .. } => EventKind::NativeChildSpawnInvalidated,
             Self::PiOfficeTurnPromptAuthorized { .. } => EventKind::PiOfficeTurnPromptAuthorized,
             Self::PiOfficeTurnPromptDelivered { .. } => EventKind::PiOfficeTurnPromptDelivered,
             Self::PiOfficeTurnPromptAccepted { .. } => EventKind::PiOfficeTurnPromptAccepted,

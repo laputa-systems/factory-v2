@@ -112,6 +112,13 @@ The generic OS-custody state of a registered native child. It is distinct from
 SDK-session progress and from application work success. A retained readiness
 fact cannot make a reaped or recovery-contained process operational.
 
+The custody nucleus owns the one PID/PGID, group liveness, signals, direct
+wait, and bounded native streams. Pi may attach a strict session/protocol
+sidecar; a deterministic evaluator attaches no Pi identity. The current
+direct-executable evaluator treatment is a private unscheduled fixture, not an
+application evaluator profile, scheduler, evidence admission, or execution
+result.
+
 ### Office Prompt terminal evidence
 
 The closed SDK-boundary result for one authorized Office Prompt. An observed

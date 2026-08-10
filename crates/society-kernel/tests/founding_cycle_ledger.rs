@@ -14,28 +14,29 @@ use society_kernel::{
     ApplicationName, ApplicationRevisionId, ApplicationRevisionOrdinal, Blake3Digest,
     BudgetFreezeReason, BudgetReservationId, CancellationRequestId,
     CanonicalPiSessionTranscriptPath, CanonicalWorkspacePath, Capability, CausalEpisodeId,
-    ChildProcessId, CommandBody, CommandDisposition, CommandId, CommandReceipt, CommandRequest,
-    CostObservation, CostPostmortemResolution, CostUnavailableReason, CostUnknownReason,
-    EpisodeState, EventBody, ExpectedGeneration, GraphEdgeKind, GraphRevisionBody, GraphRevisionId,
-    HypothesisRevisionText, InstallFoundingMissionPreflight, KernelStore, MissionPrinciple,
-    MissionPrincipleKind, MissionPrincipleText, MissionPrinciples, MissionSourceRendering,
-    MissionStatement, NativeChildPid, NativeWorkspaceId, NorthStarBoundaryCommitmentQuestion,
-    NorthStarChangeQuestion, NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet,
-    NorthStarRevisitQuestion, ObservationRevisionText, OfficeSessionTerminalState, OfficeTurnId,
-    OfficeTurnPurpose, OperatingCycleId, OperatingCycleState, OperatingCycleTreatment,
-    OwnedProcessGroupId, PiBoundarySessionIdentity, PiChildOwner, PiChildSpawnAdmissionId,
-    PiCorrelationIdentity, PiCumulativeUsage, PiOfficeSessionTranscriptReceipt,
-    PiOfficeTurnAssistantOutcome, PiOfficeTurnDisposition, PiOfficeTurnTerminalEvidence,
-    PiOfficeTurnTerminalReceiptId, PiOfficeTurnTranscriptDisposition, PiOfficeTurnUsageFailure,
-    PiOfficeTurnUsageUnavailableReason, PiProtocolSequence, PiTokenCount, PostmortemActionKind,
-    PostmortemActionProposalText, PostmortemCausalClaimKind, PostmortemCausalClaimText,
-    PostmortemId, PrincipalDisplayName, PrincipalId, ProjectId, ProjectMilestoneName, ProjectName,
-    ProjectNorthStarAlignment, ProjectNorthStarBoundaryCommitmentAnswer,
-    ProjectNorthStarChangeAnswer, ProjectNorthStarImprovementEvidenceAnswer,
-    ProjectNorthStarRevisitAnswer, ProjectObjectiveText, ProjectState, ProjectStopConditionText,
-    ProviderCostBinary64, Rejection, ReviewChallengeSeverity, ReviewFailureHypothesis,
-    RootAuthorityOfficeSessionId, SocietyName, SpawnNonce, StoreError, SupervisedChildIdentity,
-    SupervisorEpochId, SupervisorEpochIdentity, UsdMicros,
+    CommandBody, CommandDisposition, CommandId, CommandReceipt, CommandRequest, CostObservation,
+    CostPostmortemResolution, CostUnavailableReason, CostUnknownReason, EpisodeState, EventBody,
+    ExpectedGeneration, GraphEdgeKind, GraphRevisionBody, GraphRevisionId, HypothesisRevisionText,
+    InstallFoundingMissionPreflight, KernelStore, MissionPrinciple, MissionPrincipleKind,
+    MissionPrincipleText, MissionPrinciples, MissionSourceRendering, MissionStatement,
+    NativeChildId, NativeChildPid, NativeChildSpawnAdmissionId, NativeWorkspaceId,
+    NorthStarBoundaryCommitmentQuestion, NorthStarChangeQuestion,
+    NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet, NorthStarRevisitQuestion,
+    ObservationRevisionText, OfficeSessionTerminalState, OfficeTurnId, OfficeTurnPurpose,
+    OperatingCycleId, OperatingCycleState, OperatingCycleTreatment, OwnedProcessGroupId,
+    PiBoundarySessionIdentity, PiChildOwner, PiCorrelationIdentity, PiCumulativeUsage,
+    PiOfficeSessionTranscriptReceipt, PiOfficeTurnAssistantOutcome, PiOfficeTurnDisposition,
+    PiOfficeTurnTerminalEvidence, PiOfficeTurnTerminalReceiptId, PiOfficeTurnTranscriptDisposition,
+    PiOfficeTurnUsageFailure, PiOfficeTurnUsageUnavailableReason, PiProtocolSequence, PiTokenCount,
+    PostmortemActionKind, PostmortemActionProposalText, PostmortemCausalClaimKind,
+    PostmortemCausalClaimText, PostmortemId, PrincipalDisplayName, PrincipalId, ProjectId,
+    ProjectMilestoneName, ProjectName, ProjectNorthStarAlignment,
+    ProjectNorthStarBoundaryCommitmentAnswer, ProjectNorthStarChangeAnswer,
+    ProjectNorthStarImprovementEvidenceAnswer, ProjectNorthStarRevisitAnswer, ProjectObjectiveText,
+    ProjectState, ProjectStopConditionText, ProviderCostBinary64, Rejection,
+    ReviewChallengeSeverity, ReviewFailureHypothesis, RootAuthorityOfficeSessionId, SocietyName,
+    SpawnNonce, StoreError, SupervisedChildIdentity, SupervisorEpochId, SupervisorEpochIdentity,
+    UsdMicros,
 };
 
 fn example_application_mission() -> ApplicationMissionInput {
@@ -631,7 +632,7 @@ fn ready_supervised_office_session(
             spawn_nonce: spawn_nonce.clone(),
         },
     );
-    let child = ChildProcessId::new(1).unwrap();
+    let child = NativeChildId::new(1).unwrap();
     accepted(
         store,
         &format!("{label}-spawn"),
@@ -639,7 +640,7 @@ fn ready_supervised_office_session(
         Capability::RecordInertChildSpawn,
         generation,
         CommandBody::RecordInertChildSpawn {
-            pi_child_spawn_admission_id: PiChildSpawnAdmissionId::new(1).unwrap(),
+            native_child_spawn_admission_id: NativeChildSpawnAdmissionId::new(1).unwrap(),
             child_identity: SupervisedChildIdentity::parse(format!("child-{label}")).unwrap(),
             direct_child_pid: NativeChildPid::try_from(3001).unwrap(),
             process_group_id: OwnedProcessGroupId::try_from(3001).unwrap(),
@@ -652,7 +653,7 @@ fn ready_supervised_office_session(
         Capability::RecordPiAdapterReady,
         generation,
         CommandBody::RecordPiAdapterReady {
-            child_process_id: child,
+            native_child_id: child,
             pi_session_identity: session_identity.clone(),
             spawn_nonce,
         },
@@ -666,7 +667,7 @@ fn ready_supervised_office_session(
         Capability::AuthorizePiCreateSession,
         generation,
         CommandBody::AuthorizePiCreateSession {
-            child_process_id: child,
+            native_child_id: child,
             correlation_identity: correlation.clone(),
             create_request_digest: create_digest,
         },
@@ -678,7 +679,7 @@ fn ready_supervised_office_session(
         Capability::RecordPiCreateSessionDelivery,
         generation,
         CommandBody::RecordPiCreateSessionDelivery {
-            child_process_id: child,
+            native_child_id: child,
             correlation_identity: correlation,
             create_request_digest: create_digest,
         },
@@ -690,7 +691,7 @@ fn ready_supervised_office_session(
         Capability::RecordPiSessionReady,
         generation,
         CommandBody::RecordPiSessionReady {
-            child_process_id: child,
+            native_child_id: child,
             pi_session_identity: session_identity,
         },
     );
@@ -1410,7 +1411,7 @@ fn current_schema_reopens_after_atomic_fresh_bootstrap() {
         connection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        13
+        14
     );
     drop(connection);
     drop(KernelStore::open(&path).unwrap());
@@ -1419,7 +1420,7 @@ fn current_schema_reopens_after_atomic_fresh_bootstrap() {
         reopened
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        13
+        14
     );
     assert_eq!(
         reopened

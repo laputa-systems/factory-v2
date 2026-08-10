@@ -8,4 +8,7 @@ mod domain;
 mod store;
 
 pub use domain::*;
-pub use store::{ContentIdentityState, InstallFoundingMissionPreflight, KernelStore, StoreError};
+pub use store::{
+    ContentIdentityState, DeterministicEvaluatorNativeChildAdmission,
+    InstallFoundingMissionPreflight, KernelStore, StoreError,
+};

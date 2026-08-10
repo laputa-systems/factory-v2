@@ -64,7 +64,8 @@ Cargo.toml                 generic Rust workspace manifest
 crates/society-kernel/     trusted domain, ledger, and SQLite authority
 crates/society-content/    physical byte-seal store without evidence meaning
 crates/society-pi/         typed Rust peer for the SDK-host boundary
-crates/societyd/           resident authority, process custody, and monitor
+crates/societyd/           resident authority, generic NativeChild custody,
+                           optional Pi sidecar, and monitor
 crates/societyctl/         public query and supervisor-stream client
 crates/society-product/    root-workspace guarded local materialization
                            mechanics
@@ -92,6 +93,16 @@ workspace disposal, semantic submission, paid/native qualification, or an
 end-to-end application execution claim. Direct-child reap remains a separate
 process-custody fact.
 
+The current generic `NativeChild` foundation owns one PID/PGID, group
+liveness, signal delivery, direct wait, bounded stdout/stderr capture, and
+post-reap receipt shape. Pi composes that custody nucleus through a strict
+session/protocol sidecar rather than defining the base process identity. A
+daemon-private deterministic-evaluator pre-bridge admits only a verified direct
+executable, its verified input-manifest path, a fixed argv grammar, and an
+empty environment; it is unscheduled and has no supervisor/public execution
+command. It does not run an application evaluator, seal semantic evidence, or
+claim an end-to-end application result.
+
 ## Nearest hard judges
 
 Run the narrowest relevant judge first, then broaden:
@@ -102,6 +113,7 @@ cargo test -p society-pi --lib
 npm test --prefix packages/society-pi-host
 cargo test -p society-content
 cargo test -p society-product
+cargo test -p societyd --lib native_child
 cargo test -p societyd --test supervision -- --test-threads=1
 tests/generic-boundary/run-no-application-knowledge.sh
 

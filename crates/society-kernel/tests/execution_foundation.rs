@@ -15,7 +15,7 @@ use society_kernel::{
     AdmissionGeneration, AdversarialReviewId, ApplicationIdentity, ApplicationMissionInput,
     ApplicationName, ApplicationRevisionId, ApplicationRevisionOrdinal, Blake3Digest,
     BudgetReservationId, CancellationMode, CancellationPropagationId, CancellationRequestId,
-    CanonicalWorkspacePath, Capability, ChildProcessId, ChildRecoveryObservation, ChildStreamKind,
+    CanonicalWorkspacePath, Capability, ChildRecoveryObservation, ChildStreamKind,
     ChildStreamSealCompleteness, CommandBody, CommandDisposition, CommandId, CommandReceipt,
     CommandRequest, ContentObjectId, ContentSealReceiptId, ContextPackPurpose,
     DeterministicEvaluationReceiptId, DeterministicExperimentId, DevelopmentalAttractor,
@@ -23,12 +23,12 @@ use society_kernel::{
     EvidenceLimitationText, EvidenceSemanticRole, ExecutionProfileId, ExpectedGeneration,
     ForensicManifestCapturePolicy, ForensicManifestId, GraphRevisionBody, GraphRevisionId,
     HypothesisRevisionText, InputManifestId, KernelStore, MissionPrinciple, MissionPrincipleKind,
-    MissionPrincipleText, MissionPrinciples, MissionStatement, NativeChildPid, NativeWorkspaceId,
-    NorthStarBoundaryCommitmentQuestion, NorthStarChangeQuestion,
-    NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet, NorthStarRevisitQuestion,
-    OfficeTurnPurpose, OperatingCycleId, OperatingCycleTreatment, OutcomeObligationDisposition,
-    OutcomeObligationId, OutcomeObligationText, OwnedProcessGroupId, PiAbortControlWriteOutcome,
-    PiBoundarySessionIdentity, PiChildOwner, PiChildSpawnAdmissionId, PiCorrelationIdentity,
+    MissionPrincipleText, MissionPrinciples, MissionStatement, NativeChildId, NativeChildPid,
+    NativeChildSpawnAdmissionId, NativeWorkspaceId, NorthStarBoundaryCommitmentQuestion,
+    NorthStarChangeQuestion, NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet,
+    NorthStarRevisitQuestion, OfficeTurnPurpose, OperatingCycleId, OperatingCycleTreatment,
+    OutcomeObligationDisposition, OutcomeObligationId, OutcomeObligationText, OwnedProcessGroupId,
+    PiAbortControlWriteOutcome, PiBoundarySessionIdentity, PiChildOwner, PiCorrelationIdentity,
     PrincipalDisplayName, PrincipalId, ProcessExitCode, ProcessGroupLiveness, ProcessSignalAction,
     ProcessSignalCause, ProcessSignalDelivery, ProjectId, ProjectMilestoneId, ProjectMilestoneName,
     ProjectName, ProjectNorthStarAlignment, ProjectNorthStarBoundaryCommitmentAnswer,
@@ -343,6 +343,552 @@ fn active_project(
     project_id
 }
 
+#[test]
+fn deterministic_evaluator_native_child_is_not_a_pi_child() {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("society-evaluator-native-{nonce}.sqlite"));
+    let mut store = KernelStore::open(&path).unwrap();
+    let (root_authority, cycle) = founded_cycle(
+        &mut store,
+        OperatingCycleTreatment::DeterministicEvaluatorFixtureV1,
+    );
+    let generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
+    let project = active_project(&mut store, root_authority, cycle);
+    accepted(
+        &mut store,
+        "evaluator-ticket",
+        root_authority,
+        Capability::CreateTicket,
+        generation,
+        CommandBody::CreateTicket {
+            operating_cycle_id: cycle,
+            project_id: project,
+            ticket_title: TicketTitle::parse("Evaluate one committed hypothesis").unwrap(),
+            acceptance_condition: TicketAcceptanceConditionText::parse(
+                "Evaluator bytes are sealed.",
+            )
+            .unwrap(),
+            prerequisite_ticket_id: None,
+        },
+    );
+    accepted(
+        &mut store,
+        "evaluator-graph",
+        root_authority,
+        Capability::AddGraphObjectRevision,
+        generation,
+        CommandBody::AddGraphObjectRevision {
+            operating_cycle_id: cycle,
+            project_id: project,
+            causal_episode_id: None,
+            graph_object_id: None,
+            body: GraphRevisionBody::Hypothesis {
+                hypothesis: HypothesisRevisionText::parse("Evaluator result is bounded.").unwrap(),
+            },
+        },
+    );
+    let graph_revision = GraphRevisionId::new(1).unwrap();
+    accepted(
+        &mut store,
+        "evaluator-graph-commit",
+        root_authority,
+        Capability::CommitGraphRevision,
+        generation,
+        CommandBody::CommitGraphRevision {
+            operating_cycle_id: cycle,
+            graph_revision_id: graph_revision,
+        },
+    );
+    for (command, digest, receipt) in [
+        (
+            "evaluator-seal-program",
+            Blake3Digest::of_bytes(b"evaluator-program"),
+            2_i64,
+        ),
+        (
+            "evaluator-seal-input",
+            Blake3Digest::of_bytes(b"evaluator-input"),
+            3_i64,
+        ),
+    ] {
+        accepted(
+            &mut store,
+            command,
+            PrincipalId::KERNEL,
+            Capability::RecordContentSealReceipt,
+            ExpectedGeneration::NotApplicable,
+            CommandBody::RecordContentSealReceipt { digest },
+        );
+        accepted(
+            &mut store,
+            &format!("{command}-object"),
+            PrincipalId::KERNEL,
+            Capability::RegisterContentObject,
+            ExpectedGeneration::NotApplicable,
+            CommandBody::RegisterContentObject {
+                content_seal_receipt_id: ContentSealReceiptId::new(receipt).unwrap(),
+            },
+        );
+    }
+    accepted(
+        &mut store,
+        "evaluator-experiment",
+        root_authority,
+        Capability::RegisterDeterministicExperiment,
+        generation,
+        CommandBody::RegisterDeterministicExperiment {
+            operating_cycle_id: cycle,
+            project_id: project,
+            ticket_id: TicketId::new(1).unwrap(),
+            target_graph_revision_id: graph_revision,
+            evaluator_content_object_id: ContentObjectId::new(2).unwrap(),
+            input_manifest_content_object_id: ContentObjectId::new(3).unwrap(),
+        },
+    );
+    let epoch_identity = SupervisorEpochIdentity::parse("evaluator-native-epoch").unwrap();
+    accepted(
+        &mut store,
+        "evaluator-epoch",
+        PrincipalId::KERNEL,
+        Capability::OpenSupervisorEpoch,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::OpenSupervisorEpoch {
+            supervisor_epoch_id: SupervisorEpochId::new(1).unwrap(),
+            supervisor_epoch_identity: epoch_identity.clone(),
+        },
+    );
+    let evaluator_generation = ExpectedGeneration::Exact(
+        store
+            .current_operating_cycle_admission_generation(cycle)
+            .unwrap(),
+    );
+    accepted(
+        &mut store,
+        "evaluator-admit",
+        PrincipalId::KERNEL,
+        Capability::AdmitDeterministicEvaluatorNativeChild,
+        evaluator_generation,
+        CommandBody::AdmitDeterministicEvaluatorNativeChild {
+            operating_cycle_id: cycle,
+            deterministic_experiment_id: DeterministicExperimentId::new(1).unwrap(),
+            evaluator_revision_id: EvaluatorRevisionId::new(1).unwrap(),
+            input_manifest_id: InputManifestId::new(1).unwrap(),
+            execution_profile_id: ExecutionProfileId::DETERMINISTIC_EVALUATOR_PROCESS_FIXTURE_V1,
+            native_workspace_id: NativeWorkspaceId::parse("evaluator-native-workspace").unwrap(),
+            canonical_workspace_path: CanonicalWorkspacePath::parse(
+                "/tmp/evaluator-native-workspace",
+            )
+            .unwrap(),
+            supervisor_epoch_id: SupervisorEpochId::new(1).unwrap(),
+            supervisor_epoch_identity: epoch_identity.clone(),
+        },
+    );
+    let admission_id = NativeChildSpawnAdmissionId::new(1).unwrap();
+    let admission = store
+        .deterministic_evaluator_native_child_admission(admission_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(admission.operating_cycle_id(), cycle);
+    assert_eq!(
+        admission.evaluator_digest(),
+        Blake3Digest::of_bytes(b"evaluator-program")
+    );
+    assert_eq!(
+        admission.input_manifest_digest(),
+        Blake3Digest::of_bytes(b"evaluator-input")
+    );
+    assert!(
+        store
+            .deterministic_evaluator_native_child_admission(
+                NativeChildSpawnAdmissionId::new(99).unwrap()
+            )
+            .unwrap()
+            .is_none()
+    );
+    rejected(
+        &mut store,
+        "pi-cannot-spawn-evaluator",
+        PrincipalId::KERNEL,
+        Capability::RecordInertChildSpawn,
+        generation,
+        CommandBody::RecordInertChildSpawn {
+            native_child_spawn_admission_id: admission_id,
+            child_identity: SupervisedChildIdentity::parse("evaluator-native-child").unwrap(),
+            direct_child_pid: NativeChildPid::try_from(9031).unwrap(),
+            process_group_id: OwnedProcessGroupId::try_from(9031).unwrap(),
+        },
+        Rejection::ChildSpawnAdmissionInvalid,
+    );
+    accepted(
+        &mut store,
+        "evaluator-spawn",
+        PrincipalId::KERNEL,
+        Capability::RecordDeterministicEvaluatorNativeChildSpawn,
+        generation,
+        CommandBody::RecordDeterministicEvaluatorNativeChildSpawn {
+            native_child_spawn_admission_id: admission_id,
+            child_identity: SupervisedChildIdentity::parse("evaluator-native-child").unwrap(),
+            direct_child_pid: NativeChildPid::try_from(9031).unwrap(),
+            process_group_id: OwnedProcessGroupId::try_from(9031).unwrap(),
+        },
+    );
+    let child = NativeChildId::new(1).unwrap();
+    rejected(
+        &mut store,
+        "pi-cannot-ready-evaluator",
+        PrincipalId::KERNEL,
+        Capability::RecordPiAdapterReady,
+        generation,
+        CommandBody::RecordPiAdapterReady {
+            native_child_id: child,
+            pi_session_identity: PiBoundarySessionIdentity::parse("forged-pi-session").unwrap(),
+            spawn_nonce: SpawnNonce::parse("forged-pi-nonce").unwrap(),
+        },
+        Rejection::SubjectNotFound,
+    );
+    rejected(
+        &mut store,
+        "evaluator-stdout-before-reap",
+        PrincipalId::KERNEL,
+        Capability::RecordChildStreamSeal,
+        generation,
+        CommandBody::RecordChildStreamSeal {
+            native_child_id: child,
+            stream_kind: ChildStreamKind::Stdout,
+            full_observed_digest: Blake3Digest::of_bytes(b"evaluator-program"),
+            retained_content_object_id: ContentObjectId::new(2).unwrap(),
+            completeness: ChildStreamSealCompleteness::Complete,
+        },
+        Rejection::InvalidLifecycleTransition,
+    );
+    accepted(
+        &mut store,
+        "evaluator-reap",
+        PrincipalId::KERNEL,
+        Capability::RecordDirectChildReap,
+        generation,
+        CommandBody::RecordDirectChildReap {
+            native_child_id: child,
+            wait_status: DirectChildWaitStatus::Exited {
+                exit_code: ProcessExitCode::try_from(0).unwrap(),
+            },
+            group_liveness_before_cleanup: ProcessGroupLiveness::Absent,
+            group_liveness_after_cleanup: ProcessGroupLiveness::Absent,
+        },
+    );
+    rejected(
+        &mut store,
+        "evaluator-control-stream-rejected",
+        PrincipalId::KERNEL,
+        Capability::RecordChildStreamSeal,
+        generation,
+        CommandBody::RecordChildStreamSeal {
+            native_child_id: child,
+            stream_kind: ChildStreamKind::AdmittedControl,
+            full_observed_digest: Blake3Digest::of_bytes(b"evaluator-program"),
+            retained_content_object_id: ContentObjectId::new(2).unwrap(),
+            completeness: ChildStreamSealCompleteness::Complete,
+        },
+        Rejection::InvalidLifecycleTransition,
+    );
+    accepted(
+        &mut store,
+        "evaluator-stdout",
+        PrincipalId::KERNEL,
+        Capability::RecordChildStreamSeal,
+        generation,
+        CommandBody::RecordChildStreamSeal {
+            native_child_id: child,
+            stream_kind: ChildStreamKind::Stdout,
+            full_observed_digest: Blake3Digest::of_bytes(b"evaluator-program"),
+            retained_content_object_id: ContentObjectId::new(2).unwrap(),
+            completeness: ChildStreamSealCompleteness::Complete,
+        },
+    );
+    rejected(
+        &mut store,
+        "evaluator-one-stream-cannot-finalize",
+        PrincipalId::KERNEL,
+        Capability::FinalizeChildProcess,
+        generation,
+        CommandBody::FinalizeChildProcess {
+            native_child_id: child,
+        },
+        Rejection::ChildLifecycleReceiptMissing,
+    );
+    accepted(
+        &mut store,
+        "evaluator-stderr",
+        PrincipalId::KERNEL,
+        Capability::RecordChildStreamSeal,
+        generation,
+        CommandBody::RecordChildStreamSeal {
+            native_child_id: child,
+            stream_kind: ChildStreamKind::Stderr,
+            full_observed_digest: Blake3Digest::of_bytes(b"evaluator-input"),
+            retained_content_object_id: ContentObjectId::new(3).unwrap(),
+            completeness: ChildStreamSealCompleteness::Complete,
+        },
+    );
+    accepted(
+        &mut store,
+        "evaluator-two-stream-finalize",
+        PrincipalId::KERNEL,
+        Capability::FinalizeChildProcess,
+        generation,
+        CommandBody::FinalizeChildProcess {
+            native_child_id: child,
+        },
+    );
+    assert!(
+        store
+            .deterministic_evaluator_native_child_admission(admission_id)
+            .unwrap()
+            .is_none()
+    );
+    let failed_receipt = accepted(
+        &mut store,
+        "evaluator-process-failure-finalizes-experiment",
+        root_authority,
+        Capability::FinalizeDeterministicExperiment,
+        generation,
+        CommandBody::FinalizeDeterministicExperiment {
+            operating_cycle_id: cycle,
+            deterministic_experiment_id: DeterministicExperimentId::new(1).unwrap(),
+        },
+    );
+    let failed_event_id = match failed_receipt.disposition {
+        CommandDisposition::Accepted(event_id) => event_id,
+        other => panic!("accepted helper returned {other:?}"),
+    };
+    assert!(matches!(
+        store.ledger_event(failed_event_id).unwrap().body,
+        EventBody::DeterministicExperimentFinalized {
+            deterministic_experiment_id,
+            terminal_state: society_kernel::DeterministicExperimentState::Failed,
+        } if deterministic_experiment_id == DeterministicExperimentId::new(1).unwrap()
+    ));
+
+    // A second admitted evaluator is cancelled before exec. Its typed absence
+    // resolves the frozen experiment target and must remain Cancelled rather
+    // than being collapsed into an ordinary spawn failure.
+    accepted(
+        &mut store,
+        "cancelled-evaluator-experiment",
+        root_authority,
+        Capability::RegisterDeterministicExperiment,
+        generation,
+        CommandBody::RegisterDeterministicExperiment {
+            operating_cycle_id: cycle,
+            project_id: project,
+            ticket_id: TicketId::new(1).unwrap(),
+            target_graph_revision_id: graph_revision,
+            evaluator_content_object_id: ContentObjectId::new(2).unwrap(),
+            input_manifest_content_object_id: ContentObjectId::new(3).unwrap(),
+        },
+    );
+    accepted(
+        &mut store,
+        "cancelled-evaluator-admit",
+        PrincipalId::KERNEL,
+        Capability::AdmitDeterministicEvaluatorNativeChild,
+        generation,
+        CommandBody::AdmitDeterministicEvaluatorNativeChild {
+            operating_cycle_id: cycle,
+            deterministic_experiment_id: DeterministicExperimentId::new(2).unwrap(),
+            evaluator_revision_id: EvaluatorRevisionId::new(1).unwrap(),
+            input_manifest_id: InputManifestId::new(1).unwrap(),
+            execution_profile_id: ExecutionProfileId::DETERMINISTIC_EVALUATOR_PROCESS_FIXTURE_V1,
+            native_workspace_id: NativeWorkspaceId::parse("cancelled-evaluator-workspace").unwrap(),
+            canonical_workspace_path: CanonicalWorkspacePath::parse(
+                "/tmp/cancelled-evaluator-workspace",
+            )
+            .unwrap(),
+            supervisor_epoch_id: SupervisorEpochId::new(1).unwrap(),
+            supervisor_epoch_identity: epoch_identity,
+        },
+    );
+    rejected(
+        &mut store,
+        "cancelled-evaluator-reason-requires-cancellation",
+        PrincipalId::KERNEL,
+        Capability::RecordNativeChildNotSpawned,
+        generation,
+        CommandBody::RecordNativeChildNotSpawned {
+            native_child_spawn_admission_id: NativeChildSpawnAdmissionId::new(2).unwrap(),
+            reason: society_kernel::NativeChildNotSpawnedReason::CancelledBeforeSpawn,
+        },
+        Rejection::InvalidLifecycleTransition,
+    );
+    accepted(
+        &mut store,
+        "failed-during-cancellation-experiment",
+        root_authority,
+        Capability::RegisterDeterministicExperiment,
+        generation,
+        CommandBody::RegisterDeterministicExperiment {
+            operating_cycle_id: cycle,
+            project_id: project,
+            ticket_id: TicketId::new(1).unwrap(),
+            target_graph_revision_id: graph_revision,
+            evaluator_content_object_id: ContentObjectId::new(2).unwrap(),
+            input_manifest_content_object_id: ContentObjectId::new(3).unwrap(),
+        },
+    );
+    accepted(
+        &mut store,
+        "failed-during-cancellation-admit",
+        PrincipalId::KERNEL,
+        Capability::AdmitDeterministicEvaluatorNativeChild,
+        generation,
+        CommandBody::AdmitDeterministicEvaluatorNativeChild {
+            operating_cycle_id: cycle,
+            deterministic_experiment_id: DeterministicExperimentId::new(3).unwrap(),
+            evaluator_revision_id: EvaluatorRevisionId::new(1).unwrap(),
+            input_manifest_id: InputManifestId::new(1).unwrap(),
+            execution_profile_id: ExecutionProfileId::DETERMINISTIC_EVALUATOR_PROCESS_FIXTURE_V1,
+            native_workspace_id: NativeWorkspaceId::parse("failed-during-cancellation-workspace")
+                .unwrap(),
+            canonical_workspace_path: CanonicalWorkspacePath::parse(
+                "/tmp/failed-during-cancellation-workspace",
+            )
+            .unwrap(),
+            supervisor_epoch_id: SupervisorEpochId::new(1).unwrap(),
+            supervisor_epoch_identity: SupervisorEpochIdentity::parse("evaluator-native-epoch")
+                .unwrap(),
+        },
+    );
+    accepted(
+        &mut store,
+        "cancelled-evaluator-request",
+        root_authority,
+        Capability::RequestCancellation,
+        generation,
+        CommandBody::RequestCancellation {
+            cycle_id: cycle,
+            mode: CancellationMode::EmergencyStop,
+        },
+    );
+    let cancelled_generation = ExpectedGeneration::Exact(AdmissionGeneration::try_from(1).unwrap());
+    accepted(
+        &mut store,
+        "cancelled-evaluator-snapshot",
+        PrincipalId::KERNEL,
+        Capability::BeginCancellationPropagation,
+        cancelled_generation,
+        CommandBody::BeginCancellationPropagation {
+            cancellation_request_id: CancellationRequestId::new(1).unwrap(),
+        },
+    );
+    rejected(
+        &mut store,
+        "cancelled-evaluator-reconcile-before-absence",
+        PrincipalId::KERNEL,
+        Capability::ReconcileCancellationPropagation,
+        cancelled_generation,
+        CommandBody::ReconcileCancellationPropagation {
+            cancellation_propagation_id: CancellationPropagationId::new(1).unwrap(),
+        },
+        Rejection::CancellationPropagationIncomplete,
+    );
+    accepted(
+        &mut store,
+        "cancelled-evaluator-not-spawned",
+        PrincipalId::KERNEL,
+        Capability::RecordNativeChildNotSpawned,
+        cancelled_generation,
+        CommandBody::RecordNativeChildNotSpawned {
+            native_child_spawn_admission_id: NativeChildSpawnAdmissionId::new(2).unwrap(),
+            reason: society_kernel::NativeChildNotSpawnedReason::CancelledBeforeSpawn,
+        },
+    );
+    accepted(
+        &mut store,
+        "failed-during-cancellation-not-spawned",
+        PrincipalId::KERNEL,
+        Capability::RecordNativeChildNotSpawned,
+        cancelled_generation,
+        CommandBody::RecordNativeChildNotSpawned {
+            native_child_spawn_admission_id: NativeChildSpawnAdmissionId::new(3).unwrap(),
+            reason: society_kernel::NativeChildNotSpawnedReason::NativeSpawnFailed,
+        },
+    );
+    accepted(
+        &mut store,
+        "cancelled-evaluator-reconcile",
+        PrincipalId::KERNEL,
+        Capability::ReconcileCancellationPropagation,
+        cancelled_generation,
+        CommandBody::ReconcileCancellationPropagation {
+            cancellation_propagation_id: CancellationPropagationId::new(1).unwrap(),
+        },
+    );
+    let cancelled_receipt = accepted(
+        &mut store,
+        "cancelled-evaluator-finalize",
+        root_authority,
+        Capability::FinalizeDeterministicExperiment,
+        cancelled_generation,
+        CommandBody::FinalizeDeterministicExperiment {
+            operating_cycle_id: cycle,
+            deterministic_experiment_id: DeterministicExperimentId::new(2).unwrap(),
+        },
+    );
+    let cancelled_event_id = match cancelled_receipt.disposition {
+        CommandDisposition::Accepted(event_id) => event_id,
+        other => panic!("accepted helper returned {other:?}"),
+    };
+    assert!(matches!(
+        store.ledger_event(cancelled_event_id).unwrap().body,
+        EventBody::DeterministicExperimentFinalized {
+            deterministic_experiment_id,
+            terminal_state: society_kernel::DeterministicExperimentState::Cancelled,
+        } if deterministic_experiment_id == DeterministicExperimentId::new(2).unwrap()
+    ));
+    let failed_during_cancellation_receipt = accepted(
+        &mut store,
+        "failed-during-cancellation-finalize",
+        root_authority,
+        Capability::FinalizeDeterministicExperiment,
+        cancelled_generation,
+        CommandBody::FinalizeDeterministicExperiment {
+            operating_cycle_id: cycle,
+            deterministic_experiment_id: DeterministicExperimentId::new(3).unwrap(),
+        },
+    );
+    let failed_during_cancellation_event_id = match failed_during_cancellation_receipt.disposition {
+        CommandDisposition::Accepted(event_id) => event_id,
+        other => panic!("accepted helper returned {other:?}"),
+    };
+    assert!(matches!(
+        store
+            .ledger_event(failed_during_cancellation_event_id)
+            .unwrap()
+            .body,
+        EventBody::DeterministicExperimentFinalized {
+            deterministic_experiment_id,
+            terminal_state: society_kernel::DeterministicExperimentState::Failed,
+        } if deterministic_experiment_id == DeterministicExperimentId::new(3).unwrap()
+    ));
+    assert!(store.validate_replayed_materialized_state().is_ok());
+    drop(store);
+    let tampered = Connection::open(&path).unwrap();
+    tampered
+        .execute("UPDATE native_children SET child_identity = 'tampered-evaluator' WHERE native_child_id = 1", [])
+        .unwrap();
+    drop(tampered);
+    assert!(
+        KernelStore::open(&path)
+            .unwrap()
+            .validate_replayed_materialized_state()
+            .is_err()
+    );
+    fs::remove_file(path).unwrap();
+}
+
 /// A fresh deterministic M5 fixture with an exact Office owner, active
 /// reservation, epoch, and Pi child admission. It stops before the OS spawn
 /// so each regression can establish its own physical receipt ordering.
@@ -350,8 +896,8 @@ struct AdmittedPiOfficeFixture {
     root_authority: PrincipalId,
     cycle: OperatingCycleId,
     office_session: RootAuthorityOfficeSessionId,
-    admission: PiChildSpawnAdmissionId,
-    child: ChildProcessId,
+    admission: NativeChildSpawnAdmissionId,
+    child: NativeChildId,
     pi_session_identity: PiBoundarySessionIdentity,
     spawn_nonce: SpawnNonce,
     admission_event_id: EventId,
@@ -417,8 +963,8 @@ fn admitted_pi_office_fixture(store: &mut KernelStore, label: &str) -> AdmittedP
         root_authority,
         cycle,
         office_session,
-        admission: PiChildSpawnAdmissionId::new(1).unwrap(),
-        child: ChildProcessId::new(1).unwrap(),
+        admission: NativeChildSpawnAdmissionId::new(1).unwrap(),
+        child: NativeChildId::new(1).unwrap(),
         pi_session_identity,
         spawn_nonce,
         admission_event_id,
@@ -438,7 +984,7 @@ fn record_fixture_inert_spawn(
         Capability::RecordInertChildSpawn,
         expected_generation,
         CommandBody::RecordInertChildSpawn {
-            pi_child_spawn_admission_id: fixture.admission,
+            native_child_spawn_admission_id: fixture.admission,
             child_identity: SupervisedChildIdentity::parse(format!("child-{label}")).unwrap(),
             direct_child_pid: NativeChildPid::try_from(7101).unwrap(),
             process_group_id: OwnedProcessGroupId::try_from(7101).unwrap(),
@@ -461,7 +1007,7 @@ fn record_fixture_session_ready(
         Capability::RecordPiAdapterReady,
         expected_generation,
         CommandBody::RecordPiAdapterReady {
-            child_process_id: fixture.child,
+            native_child_id: fixture.child,
             pi_session_identity: fixture.pi_session_identity.clone(),
             spawn_nonce: fixture.spawn_nonce.clone(),
         },
@@ -475,7 +1021,7 @@ fn record_fixture_session_ready(
         Capability::AuthorizePiCreateSession,
         expected_generation,
         CommandBody::AuthorizePiCreateSession {
-            child_process_id: fixture.child,
+            native_child_id: fixture.child,
             correlation_identity: correlation.clone(),
             create_request_digest: create_digest,
         },
@@ -487,7 +1033,7 @@ fn record_fixture_session_ready(
         Capability::RecordPiCreateSessionDelivery,
         expected_generation,
         CommandBody::RecordPiCreateSessionDelivery {
-            child_process_id: fixture.child,
+            native_child_id: fixture.child,
             correlation_identity: correlation,
             create_request_digest: create_digest,
         },
@@ -499,7 +1045,7 @@ fn record_fixture_session_ready(
         Capability::RecordPiSessionReady,
         expected_generation,
         CommandBody::RecordPiSessionReady {
-            child_process_id: fixture.child,
+            native_child_id: fixture.child,
             pi_session_identity: fixture.pi_session_identity.clone(),
         },
     );
@@ -530,7 +1076,7 @@ fn finalize_fixture_child(
         Capability::RecordDirectChildReap,
         expected_generation,
         CommandBody::RecordDirectChildReap {
-            child_process_id: fixture.child,
+            native_child_id: fixture.child,
             wait_status: DirectChildWaitStatus::Exited {
                 exit_code: ProcessExitCode::try_from(0).unwrap(),
             },
@@ -574,7 +1120,7 @@ fn finalize_fixture_child(
             Capability::RecordChildStreamSeal,
             expected_generation,
             CommandBody::RecordChildStreamSeal {
-                child_process_id: fixture.child,
+                native_child_id: fixture.child,
                 stream_kind: stream,
                 full_observed_digest: digest,
                 retained_content_object_id: ContentObjectId::new(number + 1).unwrap(),
@@ -589,7 +1135,7 @@ fn finalize_fixture_child(
         Capability::FinalizeChildProcess,
         expected_generation,
         CommandBody::FinalizeChildProcess {
-            child_process_id: fixture.child,
+            native_child_id: fixture.child,
         },
     );
 }
@@ -616,10 +1162,10 @@ fn ledger_event_reads_verified_pi_child_receipts_and_rejects_tampering() {
     assert!(matches!(
         admitted.body,
         EventBody::PiChildSpawnAdmitted {
-            pi_child_spawn_admission_id,
+            native_child_spawn_admission_id,
             owner: PiChildOwner::RootAuthorityOfficeSession(office_session),
             budget_reservation_id,
-        } if pi_child_spawn_admission_id == fixture.admission
+        } if native_child_spawn_admission_id == fixture.admission
             && office_session == fixture.office_session
             && budget_reservation_id == BudgetReservationId::new(1).unwrap()
     ));
@@ -628,10 +1174,10 @@ fn ledger_event_reads_verified_pi_child_receipts_and_rejects_tampering() {
     assert!(matches!(
         inert.body,
         EventBody::InertPiChildSpawnRecorded {
-            child_process_id,
-            pi_child_spawn_admission_id,
-        } if child_process_id == fixture.child
-            && pi_child_spawn_admission_id == fixture.admission
+            native_child_id,
+            native_child_spawn_admission_id,
+        } if native_child_id == fixture.child
+            && native_child_spawn_admission_id == fixture.admission
     ));
 
     let unknown = EventId::new(9_999_999).unwrap();
@@ -647,7 +1193,7 @@ fn ledger_event_reads_verified_pi_child_receipts_and_rejects_tampering() {
     inspect
         .execute(
             "INSERT INTO event_pi_adapter_ready_recorded(
-                 event_id, child_process_id, pi_session_id
+                 event_id, native_child_id, pi_session_id
              ) VALUES (?1, 1, 1)",
             [inert_event_id.value()],
         )
@@ -1504,9 +2050,9 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
         &mut store,
         "m4-experiment-close",
         root_authority,
-        Capability::CloseDeterministicExperiment,
+        Capability::FinalizeDeterministicExperiment,
         generation,
-        CommandBody::CloseDeterministicExperiment {
+        CommandBody::FinalizeDeterministicExperiment {
             operating_cycle_id: cycle,
             deterministic_experiment_id: first_experiment,
         },
@@ -1528,9 +2074,9 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
         &mut store,
         "m4-experiment-close-second",
         root_authority,
-        Capability::CloseDeterministicExperiment,
+        Capability::FinalizeDeterministicExperiment,
         generation,
-        CommandBody::CloseDeterministicExperiment {
+        CommandBody::FinalizeDeterministicExperiment {
             operating_cycle_id: cycle,
             deterministic_experiment_id: second_experiment,
         },
@@ -1804,8 +2350,8 @@ fn pi_child_receipts_bind_epoch_treatment_cancellation_and_containment() {
             spawn_nonce: nonce.clone(),
         },
     );
-    let admission = PiChildSpawnAdmissionId::new(1).unwrap();
-    let child = ChildProcessId::new(1).unwrap();
+    let admission = NativeChildSpawnAdmissionId::new(1).unwrap();
+    let child = NativeChildId::new(1).unwrap();
     assert!(NativeChildPid::try_from(0).is_err());
     assert!(OwnedProcessGroupId::try_from(-1).is_err());
     assert!(ProcessExitCode::try_from(-1).is_err());
@@ -1817,7 +2363,7 @@ fn pi_child_receipts_bind_epoch_treatment_cancellation_and_containment() {
         Capability::RecordInertChildSpawn,
         generation,
         CommandBody::RecordInertChildSpawn {
-            pi_child_spawn_admission_id: admission,
+            native_child_spawn_admission_id: admission,
             child_identity: SupervisedChildIdentity::parse("native-child-m5-proof").unwrap(),
             direct_child_pid: NativeChildPid::try_from(4182).unwrap(),
             process_group_id: OwnedProcessGroupId::try_from(4183).unwrap(),
@@ -1831,7 +2377,7 @@ fn pi_child_receipts_bind_epoch_treatment_cancellation_and_containment() {
         Capability::RecordInertChildSpawn,
         generation,
         CommandBody::RecordInertChildSpawn {
-            pi_child_spawn_admission_id: admission,
+            native_child_spawn_admission_id: admission,
             child_identity: SupervisedChildIdentity::parse("native-child-m5-proof").unwrap(),
             direct_child_pid: NativeChildPid::try_from(4182).unwrap(),
             process_group_id: OwnedProcessGroupId::try_from(4182).unwrap(),
@@ -1857,7 +2403,7 @@ fn pi_child_receipts_bind_epoch_treatment_cancellation_and_containment() {
         Capability::RecordPiAdapterReady,
         generation,
         CommandBody::RecordPiAdapterReady {
-            child_process_id: child,
+            native_child_id: child,
             pi_session_identity: pi_session.clone(),
             spawn_nonce: nonce.clone(),
         },
@@ -1871,7 +2417,7 @@ fn pi_child_receipts_bind_epoch_treatment_cancellation_and_containment() {
         Capability::AuthorizePiCreateSession,
         generation,
         CommandBody::AuthorizePiCreateSession {
-            child_process_id: child,
+            native_child_id: child,
             correlation_identity: correlation.clone(),
             create_request_digest: create_digest,
         },
@@ -1883,7 +2429,7 @@ fn pi_child_receipts_bind_epoch_treatment_cancellation_and_containment() {
         Capability::RecordPiCreateSessionDelivery,
         generation,
         CommandBody::RecordPiCreateSessionDelivery {
-            child_process_id: child,
+            native_child_id: child,
             correlation_identity: correlation.clone(),
             create_request_digest: Blake3Digest::of_bytes(b"altered-create-request"),
         },
@@ -1896,7 +2442,7 @@ fn pi_child_receipts_bind_epoch_treatment_cancellation_and_containment() {
         Capability::RecordPiCreateSessionDelivery,
         generation,
         CommandBody::RecordPiCreateSessionDelivery {
-            child_process_id: child,
+            native_child_id: child,
             correlation_identity: correlation,
             create_request_digest: create_digest,
         },
@@ -1908,7 +2454,7 @@ fn pi_child_receipts_bind_epoch_treatment_cancellation_and_containment() {
         Capability::RecordPiSessionReady,
         generation,
         CommandBody::RecordPiSessionReady {
-            child_process_id: child,
+            native_child_id: child,
             pi_session_identity: pi_session,
         },
     );
@@ -1929,7 +2475,7 @@ fn pi_child_receipts_bind_epoch_treatment_cancellation_and_containment() {
         Capability::RecordProcessSignalReceipt,
         generation,
         CommandBody::RecordProcessSignalReceipt {
-            child_process_id: child,
+            native_child_id: child,
             action: ProcessSignalAction::Kill,
             delivery: ProcessSignalDelivery::Delivered,
             observed_liveness: ProcessGroupLiveness::Present,
@@ -1944,7 +2490,7 @@ fn pi_child_receipts_bind_epoch_treatment_cancellation_and_containment() {
         Capability::RecordProcessSignalReceipt,
         generation,
         CommandBody::RecordProcessSignalReceipt {
-            child_process_id: child,
+            native_child_id: child,
             action: ProcessSignalAction::Terminate,
             delivery: ProcessSignalDelivery::Delivered,
             observed_liveness: ProcessGroupLiveness::Present,
@@ -1958,7 +2504,7 @@ fn pi_child_receipts_bind_epoch_treatment_cancellation_and_containment() {
         Capability::RecordProcessSignalReceipt,
         generation,
         CommandBody::RecordProcessSignalReceipt {
-            child_process_id: child,
+            native_child_id: child,
             action: ProcessSignalAction::Terminate,
             delivery: ProcessSignalDelivery::AbsentBeforeSignal,
             observed_liveness: ProcessGroupLiveness::Present,
@@ -1973,7 +2519,7 @@ fn pi_child_receipts_bind_epoch_treatment_cancellation_and_containment() {
         Capability::RecordPiAbortControlDelivery,
         generation,
         CommandBody::RecordPiAbortControlDelivery {
-            child_process_id: child,
+            native_child_id: child,
             cancellation_propagation_id: CancellationPropagationId::new(1).unwrap(),
             correlation_identity: PiCorrelationIdentity::parse("abort-unsnapshotted-m5").unwrap(),
             abort_command_digest: Blake3Digest::of_bytes(b"canonical-abort-unsnapshotted"),
@@ -2014,7 +2560,7 @@ fn pi_child_receipts_bind_epoch_treatment_cancellation_and_containment() {
         Capability::RecordProcessSignalReceipt,
         post_cancel_generation,
         CommandBody::RecordProcessSignalReceipt {
-            child_process_id: child,
+            native_child_id: child,
             action: ProcessSignalAction::Terminate,
             delivery: ProcessSignalDelivery::Delivered,
             observed_liveness: ProcessGroupLiveness::Present,
@@ -2029,7 +2575,7 @@ fn pi_child_receipts_bind_epoch_treatment_cancellation_and_containment() {
         Capability::RecordPiAbortControlDelivery,
         post_cancel_generation,
         CommandBody::RecordPiAbortControlDelivery {
-            child_process_id: child,
+            native_child_id: child,
             cancellation_propagation_id: propagation,
             correlation_identity: PiCorrelationIdentity::parse("abort-cancellation-m5").unwrap(),
             abort_command_digest: Blake3Digest::of_bytes(b"canonical-abort-cancellation"),
@@ -2043,7 +2589,7 @@ fn pi_child_receipts_bind_epoch_treatment_cancellation_and_containment() {
         Capability::RecordProcessSignalReceipt,
         post_cancel_generation,
         CommandBody::RecordProcessSignalReceipt {
-            child_process_id: child,
+            native_child_id: child,
             action: ProcessSignalAction::Terminate,
             delivery: ProcessSignalDelivery::Delivered,
             observed_liveness: ProcessGroupLiveness::Present,
@@ -2057,7 +2603,7 @@ fn pi_child_receipts_bind_epoch_treatment_cancellation_and_containment() {
         Capability::RecordDirectChildReap,
         post_cancel_generation,
         CommandBody::RecordDirectChildReap {
-            child_process_id: child,
+            native_child_id: child,
             wait_status: DirectChildWaitStatus::Exited {
                 exit_code: ProcessExitCode::try_from(0).unwrap(),
             },
@@ -2072,7 +2618,7 @@ fn pi_child_receipts_bind_epoch_treatment_cancellation_and_containment() {
         Capability::FinalizeChildProcess,
         post_cancel_generation,
         CommandBody::FinalizeChildProcess {
-            child_process_id: child,
+            native_child_id: child,
         },
         Rejection::ProcessContainmentFailed,
     );
@@ -2083,7 +2629,7 @@ fn pi_child_receipts_bind_epoch_treatment_cancellation_and_containment() {
         Capability::RecordChildRecovery,
         post_cancel_generation,
         CommandBody::RecordChildRecovery {
-            child_process_id: child,
+            native_child_id: child,
             observation: society_kernel::ChildRecoveryObservation::ParentageLost,
             group_liveness_after_restart: ProcessGroupLiveness::Absent,
         },
@@ -2170,14 +2716,14 @@ fn pi_child_receipts_bind_epoch_treatment_cancellation_and_containment() {
     // table deliberately does not encode this transition predicate.
     assert!(inspect
         .execute(
-            "INSERT INTO process_signal_receipts(child_process_id, signal_action, delivery, observed_liveness, cause_kind, cancellation_propagation_id, recorded_by_command_id)
+            "INSERT INTO process_signal_receipts(native_child_id, signal_action, delivery, observed_liveness, cause_kind, cancellation_propagation_id, recorded_by_command_id)
              VALUES (1, 1, 2, 1, 2, NULL, 1)",
             [],
         )
         .is_err());
     inspect
         .execute(
-            "UPDATE pi_child_processes SET child_identity = 'tampered-child-m5' WHERE child_process_id = 1",
+            "UPDATE native_children SET child_identity = 'tampered-child-m5' WHERE native_child_id = 1",
             [],
         )
         .unwrap();
@@ -2248,7 +2794,7 @@ fn lingering_group_cleanup_requires_later_absence_before_finalization() {
             spawn_nonce: nonce.clone(),
         },
     );
-    let child = ChildProcessId::new(1).unwrap();
+    let child = NativeChildId::new(1).unwrap();
     accepted(
         &mut store,
         "m5-linger-spawn",
@@ -2256,7 +2802,7 @@ fn lingering_group_cleanup_requires_later_absence_before_finalization() {
         Capability::RecordInertChildSpawn,
         generation,
         CommandBody::RecordInertChildSpawn {
-            pi_child_spawn_admission_id: PiChildSpawnAdmissionId::new(1).unwrap(),
+            native_child_spawn_admission_id: NativeChildSpawnAdmissionId::new(1).unwrap(),
             child_identity: SupervisedChildIdentity::parse("native-child-m5-linger").unwrap(),
             direct_child_pid: NativeChildPid::try_from(5182).unwrap(),
             process_group_id: OwnedProcessGroupId::try_from(5182).unwrap(),
@@ -2269,7 +2815,7 @@ fn lingering_group_cleanup_requires_later_absence_before_finalization() {
         Capability::RecordPiAdapterReady,
         generation,
         CommandBody::RecordPiAdapterReady {
-            child_process_id: child,
+            native_child_id: child,
             pi_session_identity: pi_session.clone(),
             spawn_nonce: nonce,
         },
@@ -2283,7 +2829,7 @@ fn lingering_group_cleanup_requires_later_absence_before_finalization() {
         Capability::AuthorizePiCreateSession,
         generation,
         CommandBody::AuthorizePiCreateSession {
-            child_process_id: child,
+            native_child_id: child,
             correlation_identity: correlation.clone(),
             create_request_digest: digest,
         },
@@ -2295,7 +2841,7 @@ fn lingering_group_cleanup_requires_later_absence_before_finalization() {
         Capability::RecordPiCreateSessionDelivery,
         generation,
         CommandBody::RecordPiCreateSessionDelivery {
-            child_process_id: child,
+            native_child_id: child,
             correlation_identity: correlation,
             create_request_digest: digest,
         },
@@ -2307,7 +2853,7 @@ fn lingering_group_cleanup_requires_later_absence_before_finalization() {
         Capability::RecordPiSessionReady,
         generation,
         CommandBody::RecordPiSessionReady {
-            child_process_id: child,
+            native_child_id: child,
             pi_session_identity: pi_session,
         },
     );
@@ -2318,7 +2864,7 @@ fn lingering_group_cleanup_requires_later_absence_before_finalization() {
         Capability::RecordDirectChildReap,
         generation,
         CommandBody::RecordDirectChildReap {
-            child_process_id: child,
+            native_child_id: child,
             wait_status: DirectChildWaitStatus::Exited {
                 exit_code: ProcessExitCode::try_from(0).unwrap(),
             },
@@ -2333,7 +2879,7 @@ fn lingering_group_cleanup_requires_later_absence_before_finalization() {
         Capability::RecordProcessSignalReceipt,
         generation,
         CommandBody::RecordProcessSignalReceipt {
-            child_process_id: child,
+            native_child_id: child,
             action: ProcessSignalAction::LingeringGroupKill,
             delivery: ProcessSignalDelivery::Delivered,
             observed_liveness: ProcessGroupLiveness::Present,
@@ -2347,7 +2893,7 @@ fn lingering_group_cleanup_requires_later_absence_before_finalization() {
         Capability::FinalizeChildProcess,
         generation,
         CommandBody::FinalizeChildProcess {
-            child_process_id: child,
+            native_child_id: child,
         },
         Rejection::ProcessContainmentFailed,
     );
@@ -2358,7 +2904,7 @@ fn lingering_group_cleanup_requires_later_absence_before_finalization() {
         Capability::RecordChildProcessLiveness,
         generation,
         CommandBody::RecordChildProcessLiveness {
-            child_process_id: child,
+            native_child_id: child,
             liveness: ProcessGroupLiveness::Absent,
         },
     );
@@ -2397,7 +2943,7 @@ fn lingering_group_cleanup_requires_later_absence_before_finalization() {
             Capability::RecordChildStreamSeal,
             generation,
             CommandBody::RecordChildStreamSeal {
-                child_process_id: child,
+                native_child_id: child,
                 stream_kind,
                 full_observed_digest: digest,
                 retained_content_object_id: ContentObjectId::new((index + 2) as i64).unwrap(),
@@ -2412,7 +2958,7 @@ fn lingering_group_cleanup_requires_later_absence_before_finalization() {
         Capability::FinalizeChildProcess,
         generation,
         CommandBody::FinalizeChildProcess {
-            child_process_id: child,
+            native_child_id: child,
         },
     );
 }
@@ -2510,11 +3056,11 @@ fn cancellation_freezes_an_admitted_unspawned_child_until_a_typed_not_spawned_fa
         &mut store,
         "m5-unspawned-invalidate",
         PrincipalId::KERNEL,
-        Capability::RecordPiChildNotSpawned,
+        Capability::RecordNativeChildNotSpawned,
         cancelled_generation,
-        CommandBody::RecordPiChildNotSpawned {
-            pi_child_spawn_admission_id: PiChildSpawnAdmissionId::new(1).unwrap(),
-            reason: society_kernel::PiChildNotSpawnedReason::CancelledBeforeSpawn,
+        CommandBody::RecordNativeChildNotSpawned {
+            native_child_spawn_admission_id: NativeChildSpawnAdmissionId::new(1).unwrap(),
+            reason: society_kernel::NativeChildNotSpawnedReason::CancelledBeforeSpawn,
         },
     );
     rejected(
@@ -2524,7 +3070,7 @@ fn cancellation_freezes_an_admitted_unspawned_child_until_a_typed_not_spawned_fa
         Capability::RecordInertChildSpawn,
         cancelled_generation,
         CommandBody::RecordInertChildSpawn {
-            pi_child_spawn_admission_id: PiChildSpawnAdmissionId::new(1).unwrap(),
+            native_child_spawn_admission_id: NativeChildSpawnAdmissionId::new(1).unwrap(),
             child_identity: SupervisedChildIdentity::parse("native-child-m5-unspawned").unwrap(),
             direct_child_pid: NativeChildPid::try_from(9191).unwrap(),
             process_group_id: OwnedProcessGroupId::try_from(9191).unwrap(),
@@ -2589,7 +3135,7 @@ fn supervised_office_turns_recheck_the_exact_live_pi_child() {
         Capability::RecordDirectChildReap,
         zero,
         CommandBody::RecordDirectChildReap {
-            child_process_id: fixture.child,
+            native_child_id: fixture.child,
             wait_status: DirectChildWaitStatus::Exited {
                 exit_code: ProcessExitCode::try_from(0).unwrap(),
             },
@@ -2645,7 +3191,7 @@ fn supervised_office_turns_recheck_the_exact_live_pi_child() {
             Capability::RecordChildStreamSeal,
             zero,
             CommandBody::RecordChildStreamSeal {
-                child_process_id: fixture.child,
+                native_child_id: fixture.child,
                 stream_kind: stream,
                 full_observed_digest: digest,
                 retained_content_object_id: ContentObjectId::new(number + 1).unwrap(),
@@ -2660,7 +3206,7 @@ fn supervised_office_turns_recheck_the_exact_live_pi_child() {
         Capability::FinalizeChildProcess,
         zero,
         CommandBody::FinalizeChildProcess {
-            child_process_id: fixture.child,
+            native_child_id: fixture.child,
         },
     );
     rejected(
@@ -2733,7 +3279,7 @@ fn supervised_office_turns_recheck_the_exact_live_pi_child() {
             Capability::RecordChildRecovery,
             zero,
             CommandBody::RecordChildRecovery {
-                child_process_id: secondary_fixture.child,
+                native_child_id: secondary_fixture.child,
                 observation: ChildRecoveryObservation::ParentageLost,
                 group_liveness_after_restart: liveness,
             },
@@ -2768,7 +3314,7 @@ fn buffered_pi_receipts_after_cancellation_are_attributed_without_reopening_work
         Capability::RecordPiAdapterReady,
         zero,
         CommandBody::RecordPiAdapterReady {
-            child_process_id: fixture.child,
+            native_child_id: fixture.child,
             pi_session_identity: fixture.pi_session_identity.clone(),
             spawn_nonce: fixture.spawn_nonce.clone(),
         },
@@ -2782,7 +3328,7 @@ fn buffered_pi_receipts_after_cancellation_are_attributed_without_reopening_work
         Capability::AuthorizePiCreateSession,
         zero,
         CommandBody::AuthorizePiCreateSession {
-            child_process_id: fixture.child,
+            native_child_id: fixture.child,
             correlation_identity: correlation.clone(),
             create_request_digest: create_digest,
         },
@@ -2816,7 +3362,7 @@ fn buffered_pi_receipts_after_cancellation_are_attributed_without_reopening_work
         Capability::RecordProcessSignalReceipt,
         one,
         CommandBody::RecordProcessSignalReceipt {
-            child_process_id: fixture.child,
+            native_child_id: fixture.child,
             action: ProcessSignalAction::Terminate,
             delivery: ProcessSignalDelivery::Delivered,
             observed_liveness: ProcessGroupLiveness::Present,
@@ -2830,7 +3376,7 @@ fn buffered_pi_receipts_after_cancellation_are_attributed_without_reopening_work
         Capability::RecordPiCreateSessionDelivery,
         one,
         CommandBody::RecordPiCreateSessionDelivery {
-            child_process_id: fixture.child,
+            native_child_id: fixture.child,
             correlation_identity: correlation.clone(),
             create_request_digest: Blake3Digest::of_bytes(b"altered-buffered-create"),
         },
@@ -2843,7 +3389,7 @@ fn buffered_pi_receipts_after_cancellation_are_attributed_without_reopening_work
         Capability::RecordPiCreateSessionDelivery,
         one,
         CommandBody::RecordPiCreateSessionDelivery {
-            child_process_id: fixture.child,
+            native_child_id: fixture.child,
             correlation_identity: correlation.clone(),
             create_request_digest: create_digest,
         },
@@ -2855,7 +3401,7 @@ fn buffered_pi_receipts_after_cancellation_are_attributed_without_reopening_work
         Capability::RecordPiSessionReady,
         one,
         CommandBody::RecordPiSessionReady {
-            child_process_id: fixture.child,
+            native_child_id: fixture.child,
             pi_session_identity: fixture.pi_session_identity.clone(),
         },
     );
@@ -2866,7 +3412,7 @@ fn buffered_pi_receipts_after_cancellation_are_attributed_without_reopening_work
         Capability::AuthorizePiCreateSession,
         one,
         CommandBody::AuthorizePiCreateSession {
-            child_process_id: fixture.child,
+            native_child_id: fixture.child,
             correlation_identity: PiCorrelationIdentity::parse("second-buffered-create").unwrap(),
             create_request_digest: Blake3Digest::of_bytes(b"second-buffered-create"),
         },
@@ -2910,7 +3456,7 @@ fn adapter_ready_race_after_cancellation_preserves_receipt_but_rejects_create() 
         Capability::RecordProcessSignalReceipt,
         one,
         CommandBody::RecordProcessSignalReceipt {
-            child_process_id: fixture.child,
+            native_child_id: fixture.child,
             action: ProcessSignalAction::Terminate,
             delivery: ProcessSignalDelivery::Delivered,
             observed_liveness: ProcessGroupLiveness::Present,
@@ -2926,7 +3472,7 @@ fn adapter_ready_race_after_cancellation_preserves_receipt_but_rejects_create() 
         Capability::RecordPiAdapterReady,
         one,
         CommandBody::RecordPiAdapterReady {
-            child_process_id: fixture.child,
+            native_child_id: fixture.child,
             pi_session_identity: fixture.pi_session_identity.clone(),
             spawn_nonce: fixture.spawn_nonce.clone(),
         },
@@ -2942,7 +3488,7 @@ fn adapter_ready_race_after_cancellation_preserves_receipt_but_rejects_create() 
             Capability::AuthorizePiCreateSession,
             expected,
             CommandBody::AuthorizePiCreateSession {
-                child_process_id: fixture.child,
+                native_child_id: fixture.child,
                 correlation_identity: PiCorrelationIdentity::parse(format!(
                     "{command_id}-correlation"
                 ))
@@ -2969,7 +3515,7 @@ fn partial_abort_is_a_durable_attempt_and_allows_cancellation_escalation() {
         Capability::RecordPiAdapterReady,
         zero,
         CommandBody::RecordPiAdapterReady {
-            child_process_id: fixture.child,
+            native_child_id: fixture.child,
             pi_session_identity: fixture.pi_session_identity.clone(),
             spawn_nonce: fixture.spawn_nonce.clone(),
         },
@@ -2983,7 +3529,7 @@ fn partial_abort_is_a_durable_attempt_and_allows_cancellation_escalation() {
         Capability::AuthorizePiCreateSession,
         zero,
         CommandBody::AuthorizePiCreateSession {
-            child_process_id: fixture.child,
+            native_child_id: fixture.child,
             correlation_identity: create.clone(),
             create_request_digest: create_digest,
         },
@@ -2995,7 +3541,7 @@ fn partial_abort_is_a_durable_attempt_and_allows_cancellation_escalation() {
         Capability::RecordPiCreateSessionDelivery,
         zero,
         CommandBody::RecordPiCreateSessionDelivery {
-            child_process_id: fixture.child,
+            native_child_id: fixture.child,
             correlation_identity: create,
             create_request_digest: create_digest,
         },
@@ -3007,7 +3553,7 @@ fn partial_abort_is_a_durable_attempt_and_allows_cancellation_escalation() {
         Capability::RecordPiSessionReady,
         zero,
         CommandBody::RecordPiSessionReady {
-            child_process_id: fixture.child,
+            native_child_id: fixture.child,
             pi_session_identity: fixture.pi_session_identity.clone(),
         },
     );
@@ -3040,7 +3586,7 @@ fn partial_abort_is_a_durable_attempt_and_allows_cancellation_escalation() {
         Capability::RecordProcessSignalReceipt,
         one,
         CommandBody::RecordProcessSignalReceipt {
-            child_process_id: fixture.child,
+            native_child_id: fixture.child,
             action: ProcessSignalAction::Terminate,
             delivery: ProcessSignalDelivery::Delivered,
             observed_liveness: ProcessGroupLiveness::Present,
@@ -3055,7 +3601,7 @@ fn partial_abort_is_a_durable_attempt_and_allows_cancellation_escalation() {
         Capability::RecordPiAbortControlDelivery,
         one,
         CommandBody::RecordPiAbortControlDelivery {
-            child_process_id: fixture.child,
+            native_child_id: fixture.child,
             cancellation_propagation_id: propagation,
             correlation_identity: PiCorrelationIdentity::parse("partial-abort-attempt").unwrap(),
             abort_command_digest: Blake3Digest::of_bytes(b"partial-abort-command"),
@@ -3069,7 +3615,7 @@ fn partial_abort_is_a_durable_attempt_and_allows_cancellation_escalation() {
         Capability::RecordProcessSignalReceipt,
         one,
         CommandBody::RecordProcessSignalReceipt {
-            child_process_id: fixture.child,
+            native_child_id: fixture.child,
             action: ProcessSignalAction::Terminate,
             delivery: ProcessSignalDelivery::Delivered,
             observed_liveness: ProcessGroupLiveness::Present,
@@ -3093,7 +3639,7 @@ fn recovery_containment_and_liveness_reuse_remain_durable_close_blockers() {
         Capability::RecordChildRecovery,
         zero,
         CommandBody::RecordChildRecovery {
-            child_process_id: fixture.child,
+            native_child_id: fixture.child,
             observation: ChildRecoveryObservation::ParentageLost,
             group_liveness_after_restart: ProcessGroupLiveness::Present,
         },
@@ -3105,7 +3651,7 @@ fn recovery_containment_and_liveness_reuse_remain_durable_close_blockers() {
         Capability::RecordPiAdapterReady,
         zero,
         CommandBody::RecordPiAdapterReady {
-            child_process_id: fixture.child,
+            native_child_id: fixture.child,
             pi_session_identity: fixture.pi_session_identity.clone(),
             spawn_nonce: fixture.spawn_nonce.clone(),
         },
@@ -3118,7 +3664,7 @@ fn recovery_containment_and_liveness_reuse_remain_durable_close_blockers() {
         Capability::RecordDirectChildReap,
         zero,
         CommandBody::RecordDirectChildReap {
-            child_process_id: fixture.child,
+            native_child_id: fixture.child,
             wait_status: DirectChildWaitStatus::Exited {
                 exit_code: ProcessExitCode::try_from(0).unwrap(),
             },
@@ -3166,7 +3712,7 @@ fn recovery_containment_and_liveness_reuse_remain_durable_close_blockers() {
         Capability::RecordChildProcessLiveness,
         one,
         CommandBody::RecordChildProcessLiveness {
-            child_process_id: fixture.child,
+            native_child_id: fixture.child,
             liveness: ProcessGroupLiveness::Absent,
         },
     );
@@ -3197,7 +3743,7 @@ fn recovery_containment_and_liveness_reuse_remain_durable_close_blockers() {
         Capability::RecordChildRecovery,
         zero,
         CommandBody::RecordChildRecovery {
-            child_process_id: inaccessible_fixture.child,
+            native_child_id: inaccessible_fixture.child,
             observation: ChildRecoveryObservation::ParentageLost,
             group_liveness_after_restart: ProcessGroupLiveness::Inaccessible,
         },
@@ -3209,7 +3755,7 @@ fn recovery_containment_and_liveness_reuse_remain_durable_close_blockers() {
         Capability::FinalizeChildProcess,
         zero,
         CommandBody::FinalizeChildProcess {
-            child_process_id: inaccessible_fixture.child,
+            native_child_id: inaccessible_fixture.child,
         },
         Rejection::ProcessContainmentFailed,
     );
@@ -3230,7 +3776,7 @@ fn recovery_containment_and_liveness_reuse_remain_durable_close_blockers() {
         Capability::RecordChildProcessLiveness,
         zero,
         CommandBody::RecordChildProcessLiveness {
-            child_process_id: reappearance_fixture.child,
+            native_child_id: reappearance_fixture.child,
             liveness: ProcessGroupLiveness::Absent,
         },
     );
@@ -3241,7 +3787,7 @@ fn recovery_containment_and_liveness_reuse_remain_durable_close_blockers() {
         Capability::RecordChildProcessLiveness,
         zero,
         CommandBody::RecordChildProcessLiveness {
-            child_process_id: reappearance_fixture.child,
+            native_child_id: reappearance_fixture.child,
             liveness: ProcessGroupLiveness::Present,
         },
     );
@@ -3252,7 +3798,7 @@ fn recovery_containment_and_liveness_reuse_remain_durable_close_blockers() {
         Capability::FinalizeChildProcess,
         zero,
         CommandBody::FinalizeChildProcess {
-            child_process_id: reappearance_fixture.child,
+            native_child_id: reappearance_fixture.child,
         },
         Rejection::ProcessContainmentFailed,
     );
@@ -3265,15 +3811,15 @@ fn pre_spawn_failure_and_raced_spawn_are_accounted_before_cancellation_reconcili
     let mut ordinary = KernelStore::open_in_memory().unwrap();
     let ordinary_fixture = admitted_pi_office_fixture(&mut ordinary, "m5-ordinary-no-spawn");
     let zero = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
-    let body = CommandBody::RecordPiChildNotSpawned {
-        pi_child_spawn_admission_id: ordinary_fixture.admission,
-        reason: society_kernel::PiChildNotSpawnedReason::NativeSpawnFailed,
+    let body = CommandBody::RecordNativeChildNotSpawned {
+        native_child_spawn_admission_id: ordinary_fixture.admission,
+        reason: society_kernel::NativeChildNotSpawnedReason::NativeSpawnFailed,
     };
     let first = accepted(
         &mut ordinary,
         "m5-ordinary-no-spawn",
         PrincipalId::KERNEL,
-        Capability::RecordPiChildNotSpawned,
+        Capability::RecordNativeChildNotSpawned,
         zero,
         body.clone(),
     );
@@ -3281,7 +3827,7 @@ fn pre_spawn_failure_and_raced_spawn_are_accounted_before_cancellation_reconcili
         &mut ordinary,
         "m5-ordinary-no-spawn",
         PrincipalId::KERNEL,
-        Capability::RecordPiChildNotSpawned,
+        Capability::RecordNativeChildNotSpawned,
         zero,
         body,
     );
@@ -3333,7 +3879,7 @@ fn pre_spawn_failure_and_raced_spawn_are_accounted_before_cancellation_reconcili
         Capability::RecordChildRecovery,
         one,
         CommandBody::RecordChildRecovery {
-            child_process_id: raced_fixture.child,
+            native_child_id: raced_fixture.child,
             observation: ChildRecoveryObservation::ParentageLost,
             group_liveness_after_restart: ProcessGroupLiveness::Inaccessible,
         },

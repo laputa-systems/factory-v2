@@ -12,8 +12,9 @@ use society_content::{
     ContentStoreRoot,
 };
 use society_kernel::{
-    Blake3Digest, Capability, CommandBody, CommandDisposition, CommandId, CommandRequest,
-    ContentIdentityState, ContentObjectId, KernelStore, PrincipalId, StoreError,
+    Blake3Digest, Capability, ChildStreamKind, CommandBody, CommandDisposition, CommandId,
+    CommandRequest, ContentIdentityState, ContentObjectId, KernelStore,
+    NativeChildSpawnAdmissionId, PrincipalId, StoreError,
 };
 use thiserror::Error;
 
@@ -37,6 +38,29 @@ pub(crate) struct ContentSealOperationId {
 }
 
 impl ContentSealOperationId {
+    /// A native-child admission and stream have one stable daemon-derived
+    /// operation identity. One admission can produce at most one child, so the
+    /// label is available before a later bridge decodes the numeric child ID
+    /// from its spawn event, while still preventing cross-admission splicing.
+    pub(crate) fn native_child_stream(
+        native_child_spawn_admission_id: NativeChildSpawnAdmissionId,
+        stream: ChildStreamKind,
+        expected_digest: Blake3Digest,
+    ) -> Result<Self, ContentSealOperationIdError> {
+        let stream = match stream {
+            ChildStreamKind::AdmittedControl => "admitted-control",
+            ChildStreamKind::PhysicalStdin => "physical-stdin",
+            ChildStreamKind::Stdout => "stdout",
+            ChildStreamKind::Stderr => "stderr",
+        };
+        Self::parse(
+            format!(
+                "native-admission-{}-{stream}",
+                native_child_spawn_admission_id.value()
+            ),
+            expected_digest,
+        )
+    }
     /// The fixed daemon-private operation namespace for one founding mission
     /// source digest. Its 79-byte label is canonical ASCII and therefore
     /// derives the same receipt/object command identities across retries.
@@ -442,6 +466,31 @@ mod tests {
             .join("blake3")
             .join(&hex[..2])
             .join(&hex[2..])
+    }
+
+    #[test]
+    fn native_stream_operation_identity_is_retry_stable_and_stream_specific() {
+        let admission = NativeChildSpawnAdmissionId::new(7).unwrap();
+        let digest = Blake3Digest::of_bytes(b"native stream bytes");
+        let stdout =
+            ContentSealOperationId::native_child_stream(admission, ChildStreamKind::Stdout, digest)
+                .unwrap();
+        let retry =
+            ContentSealOperationId::native_child_stream(admission, ChildStreamKind::Stdout, digest)
+                .unwrap();
+        let stderr =
+            ContentSealOperationId::native_child_stream(admission, ChildStreamKind::Stderr, digest)
+                .unwrap();
+
+        assert_eq!(stdout, retry);
+        assert_ne!(
+            stdout.record_content_seal_receipt_command_id(),
+            stderr.record_content_seal_receipt_command_id()
+        );
+        assert_ne!(
+            stdout.register_content_object_command_id(),
+            stderr.register_content_object_command_id()
+        );
     }
 
     #[test]

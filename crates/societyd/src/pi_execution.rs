@@ -18,15 +18,15 @@ use std::{
 use society_content::ContentSealLimit;
 use society_kernel::{
     AdmissionGeneration, Blake3Digest as KernelDigest, BudgetReservationId,
-    CanonicalPiSessionTranscriptPath, CanonicalWorkspacePath, Capability, ChildProcessId,
-    ChildStreamKind, ChildStreamSealCompleteness, CommandBody, CommandDisposition, CommandId,
-    CommandRequest, ContentObjectId, DirectChildWaitStatus, EventBody, EventId, ExecutionProfileId,
-    ExpectedGeneration, KernelStore, NativeChildPid, NativeWorkspaceId as KernelWorkspaceId,
-    OfficeTurnId, OwnedProcessGroupId as KernelProcessGroupId, PiBoundarySessionIdentity,
-    PiChildOwner, PiChildSpawnAdmissionId, PiCorrelationIdentity, PiCumulativeUsage,
-    PiOfficeSessionFirstUserPromptReceipt, PiOfficeSessionTranscriptReceipt,
-    PiOfficeTurnAssistantOutcome, PiOfficeTurnDisposition, PiOfficeTurnTerminalEvidence,
-    PiOfficeTurnTranscriptDisposition, PiOfficeTurnUsageFailure,
+    CanonicalPiSessionTranscriptPath, CanonicalWorkspacePath, Capability, ChildStreamKind,
+    ChildStreamSealCompleteness, CommandBody, CommandDisposition, CommandId, CommandRequest,
+    ContentObjectId, DirectChildWaitStatus, EventBody, EventId, ExecutionProfileId,
+    ExpectedGeneration, KernelStore, NativeChildId, NativeChildPid, NativeChildSpawnAdmissionId,
+    NativeWorkspaceId as KernelWorkspaceId, OfficeTurnId,
+    OwnedProcessGroupId as KernelProcessGroupId, PiBoundarySessionIdentity, PiChildOwner,
+    PiCorrelationIdentity, PiCumulativeUsage, PiOfficeSessionFirstUserPromptReceipt,
+    PiOfficeSessionTranscriptReceipt, PiOfficeTurnAssistantOutcome, PiOfficeTurnDisposition,
+    PiOfficeTurnTerminalEvidence, PiOfficeTurnTranscriptDisposition, PiOfficeTurnUsageFailure,
     PiOfficeTurnUsageUnavailableReason, PiOfficeTurnUsageUnknownReason, PiProtocolSequence,
     PiTokenCount, PrincipalId, ProcessExitCode, ProcessGroupLiveness as KernelLiveness,
     ProcessSignalNumber, ProviderCostBinary64, RootAuthorityOfficeSessionId,
@@ -95,7 +95,7 @@ impl PiExecutionOperationId {
 
     fn content_label(
         &self,
-        child_process_id: ChildProcessId,
+        child_process_id: NativeChildId,
         stream: ChildStreamKind,
     ) -> Result<String, PiExecutionError> {
         let label = format!(
@@ -353,7 +353,7 @@ enum OfficePiExecutionPhase {
 pub(crate) struct OfficePiExecutionChild {
     operation: PiExecutionOperationId,
     supervised_child_id: SupervisedChildId,
-    child_process_id: ChildProcessId,
+    child_process_id: NativeChildId,
     office_session_id: RootAuthorityOfficeSessionId,
     /// Native paths remain daemon-private process custody facts. The kernel
     /// receives only a canonical transcript path after peer validation and a
@@ -594,7 +594,7 @@ pub(crate) enum OfficePiTurnOutput {
 }
 
 /// A native child exists, but the kernel rejected (or could not persist) its
-/// first PID/PGID receipt. There is intentionally no `ChildProcessId`: the
+/// first PID/PGID receipt. There is intentionally no `NativeChildId`: the
 /// admission stays durably unresolved and cannot be rewritten as
 /// `NotSpawned`. The current resident must only finish physical containment;
 /// a restart remains RecoveryFenced because no later process can attach to
@@ -602,7 +602,7 @@ pub(crate) enum OfficePiTurnOutput {
 #[derive(Debug)]
 pub(crate) struct UnregisteredOfficePiChild {
     supervised_child_id: SupervisedChildId,
-    pi_child_spawn_admission_id: PiChildSpawnAdmissionId,
+    native_child_spawn_admission_id: NativeChildSpawnAdmissionId,
     phase: UnregisteredOfficePiChildPhase,
     transient_completion: Option<SupervisionReceipt>,
 }
@@ -614,8 +614,8 @@ enum UnregisteredOfficePiChildPhase {
 }
 
 impl UnregisteredOfficePiChild {
-    pub(crate) fn pi_child_spawn_admission_id(&self) -> PiChildSpawnAdmissionId {
-        self.pi_child_spawn_admission_id
+    pub(crate) fn native_child_spawn_admission_id(&self) -> NativeChildSpawnAdmissionId {
+        self.native_child_spawn_admission_id
     }
 
     pub(crate) fn transient_completion(&self) -> Option<&SupervisionReceipt> {
@@ -624,7 +624,7 @@ impl UnregisteredOfficePiChild {
 }
 
 /// The first bridge transition has two non-ambiguous outcomes.  A physical
-/// child is never collapsed into `RecordPiChildNotSpawned`: callers receive
+/// child is never collapsed into `RecordNativeChildNotSpawned`: callers receive
 /// its registered handle and must drive/reconcile containment.
 #[derive(Debug)]
 pub(crate) enum OfficePiSpawnRegistration {
@@ -654,7 +654,7 @@ pub(crate) enum OfficePiSpawnRegistration {
 }
 
 impl OfficePiExecutionChild {
-    pub(crate) fn child_process_id(&self) -> ChildProcessId {
+    pub(crate) fn child_process_id(&self) -> NativeChildId {
         self.child_process_id
     }
 
@@ -802,7 +802,7 @@ impl PiExecutionDriver {
         // paths/profile/artifacts must not create an admission that no exact
         // process outcome can close. `spawn_native` repeats the same checks
         // immediately before exec and maps only that proven-absent TOCTOU
-        // failure into `RecordPiChildNotSpawned`.
+        // failure into `RecordNativeChildNotSpawned`.
         self.supervisor
             .preflight_spawn(&start.spawn_request)
             .map_err(PiExecutionError::Supervision)?;
@@ -836,13 +836,13 @@ impl PiExecutionDriver {
         )?;
         let admission_id = match admitted {
             EventBody::PiChildSpawnAdmitted {
-                pi_child_spawn_admission_id,
+                native_child_spawn_admission_id,
                 owner: PiChildOwner::RootAuthorityOfficeSession(session_id),
                 budget_reservation_id,
             } if session_id == start.office_session_id
                 && budget_reservation_id == start.budget_reservation_id =>
             {
-                pi_child_spawn_admission_id
+                native_child_spawn_admission_id
             }
             _ => return Err(PiExecutionError::UnexpectedKernelEvent),
         };
@@ -862,10 +862,10 @@ impl PiExecutionDriver {
                         store,
                         &start.operation,
                         PiExecutionCommand::RecordNotSpawned,
-                        Capability::RecordPiChildNotSpawned,
+                        Capability::RecordNativeChildNotSpawned,
                         ExpectedGeneration::Exact(current_generation),
-                        CommandBody::RecordPiChildNotSpawned {
-                            pi_child_spawn_admission_id: admission_id,
+                        CommandBody::RecordNativeChildNotSpawned {
+                            native_child_spawn_admission_id: admission_id,
                             reason,
                         },
                     )?;
@@ -930,7 +930,7 @@ impl PiExecutionDriver {
                 Capability::RecordInertChildSpawn,
                 ExpectedGeneration::Exact(registration_generation),
                 CommandBody::RecordInertChildSpawn {
-                    pi_child_spawn_admission_id: admission_id,
+                    native_child_spawn_admission_id: admission_id,
                     child_identity,
                     direct_child_pid,
                     process_group_id,
@@ -949,9 +949,9 @@ impl PiExecutionDriver {
         };
         let child_process_id = match registered {
             EventBody::InertPiChildSpawnRecorded {
-                child_process_id,
-                pi_child_spawn_admission_id,
-            } if pi_child_spawn_admission_id == admission_id => child_process_id,
+                native_child_id: child_process_id,
+                native_child_spawn_admission_id,
+            } if native_child_spawn_admission_id == admission_id => child_process_id,
             _ => {
                 return Ok(self.unresolved_registration(
                     spawned.child_process_id,
@@ -1017,7 +1017,7 @@ impl PiExecutionDriver {
     }
 
     /// Drives physical containment for a child which exists natively but was
-    /// never assigned a kernel `ChildProcessId`. Its completed receipt is
+    /// never assigned a kernel `NativeChildId`. Its completed receipt is
     /// intentionally retained only as transient local evidence: no signal,
     /// wait, stream-seal, or finalization command can honestly name it.
     pub(crate) fn drive_unregistered_spawn_containment(
@@ -1079,7 +1079,7 @@ impl PiExecutionDriver {
             Capability::RecordPiAdapterReady,
             ExpectedGeneration::Exact(child.expected_generation),
             CommandBody::RecordPiAdapterReady {
-                child_process_id: child.child_process_id,
+                native_child_id: child.child_process_id,
                 pi_session_identity: child.pi_session_identity.clone(),
                 spawn_nonce: child.spawn_nonce.clone(),
             },
@@ -1204,7 +1204,7 @@ impl PiExecutionDriver {
             Capability::RecordPiSessionReady,
             ExpectedGeneration::Exact(child.expected_generation),
             CommandBody::RecordPiSessionReady {
-                child_process_id: child.child_process_id,
+                native_child_id: child.child_process_id,
                 pi_session_identity: child.pi_session_identity.clone(),
             },
         );
@@ -1297,7 +1297,7 @@ impl PiExecutionDriver {
         match authorized {
             EventBody::PiOfficeTurnPromptAuthorized {
                 office_turn_id,
-                child_process_id,
+                native_child_id: child_process_id,
                 correlation_identity,
                 ..
             } if office_turn_id == start.office_turn_id
@@ -1448,7 +1448,7 @@ impl PiExecutionDriver {
         match authorized {
             Ok(EventBody::PiOfficeSessionDisposeAuthorized {
                 session_id,
-                child_process_id,
+                native_child_id: child_process_id,
                 correlation_identity,
                 authorized_generation,
             }) if session_id == child.office_session_id
@@ -1652,7 +1652,7 @@ impl PiExecutionDriver {
         match event {
             Ok(EventBody::PiOfficeSessionDisposeDelivered {
                 session_id,
-                child_process_id,
+                native_child_id: child_process_id,
                 correlation_identity,
             }) if session_id == child.office_session_id
                 && child_process_id == child.child_process_id
@@ -2677,7 +2677,7 @@ impl PiExecutionDriver {
             Capability::RecordPiCreateSessionDelivery,
             ExpectedGeneration::Exact(child.expected_generation),
             CommandBody::RecordPiCreateSessionDelivery {
-                child_process_id: child.child_process_id,
+                native_child_id: child.child_process_id,
                 correlation_identity: child.create_correlation.clone(),
                 create_request_digest: child.create_request_digest,
             },
@@ -2722,7 +2722,7 @@ impl PiExecutionDriver {
             Capability::RecordDirectChildReap,
             ExpectedGeneration::Exact(child.expected_generation),
             CommandBody::RecordDirectChildReap {
-                child_process_id: child.child_process_id,
+                native_child_id: child.child_process_id,
                 wait_status: kernel_wait_status(direct_reap.status)?,
                 // The supervisor has not issued the *distinct* lingering
                 // group policy action yet. Both observations therefore name
@@ -2747,7 +2747,7 @@ impl PiExecutionDriver {
             Capability::RecordChildProcessLiveness,
             ExpectedGeneration::Exact(child.expected_generation),
             CommandBody::RecordChildProcessLiveness {
-                child_process_id: child.child_process_id,
+                native_child_id: child.child_process_id,
                 liveness: kernel_liveness(liveness),
             },
         )?;
@@ -2803,7 +2803,7 @@ impl PiExecutionDriver {
             Capability::FinalizeChildProcess,
             ExpectedGeneration::Exact(child.expected_generation),
             CommandBody::FinalizeChildProcess {
-                child_process_id: child.child_process_id,
+                native_child_id: child.child_process_id,
             },
         )?;
         Ok(())
@@ -2857,7 +2857,7 @@ impl PiExecutionDriver {
             Capability::RecordProcessSignalReceipt,
             ExpectedGeneration::Exact(child.expected_generation),
             CommandBody::RecordProcessSignalReceipt {
-                child_process_id: child.child_process_id,
+                native_child_id: child.child_process_id,
                 action,
                 delivery,
                 observed_liveness: kernel_liveness(signal.group_liveness_after_attempt),
@@ -2891,7 +2891,7 @@ impl PiExecutionDriver {
             Capability::RecordChildStreamSeal,
             ExpectedGeneration::Exact(child.expected_generation),
             CommandBody::RecordChildStreamSeal {
-                child_process_id: child.child_process_id,
+                native_child_id: child.child_process_id,
                 stream_kind,
                 full_observed_digest: kernel_digest_from_boundary(capture)?,
                 retained_content_object_id: registration.content_object_id,
@@ -2914,7 +2914,7 @@ impl PiExecutionDriver {
     fn unresolved_registration(
         &mut self,
         supervised_child_id: SupervisedChildId,
-        pi_child_spawn_admission_id: PiChildSpawnAdmissionId,
+        native_child_spawn_admission_id: NativeChildSpawnAdmissionId,
         failure: PiExecutionError,
     ) -> OfficePiSpawnRegistration {
         // The durable admission exists but `RecordInertChildSpawn` does not,
@@ -2925,7 +2925,7 @@ impl PiExecutionDriver {
         OfficePiSpawnRegistration::RegistrationUnresolved {
             child: Box::new(UnregisteredOfficePiChild {
                 supervised_child_id,
-                pi_child_spawn_admission_id,
+                native_child_spawn_admission_id,
                 phase: UnregisteredOfficePiChildPhase::ContainmentRequired,
                 transient_completion: None,
             }),
@@ -2943,7 +2943,7 @@ impl PiExecutionDriver {
 struct KernelCreateAuthorizationGate<'a> {
     store: &'a mut KernelStore,
     operation: &'a PiExecutionOperationId,
-    child_process_id: ChildProcessId,
+    child_process_id: NativeChildId,
     expected_generation: AdmissionGeneration,
     correlation: &'a PiCorrelationIdentity,
     create_request_digest: KernelDigest,
@@ -2979,17 +2979,15 @@ impl PreCreateAdmissionGate for KernelCreateAuthorizationGate<'_> {
             Capability::AuthorizePiCreateSession,
             ExpectedGeneration::Exact(self.expected_generation),
             CommandBody::AuthorizePiCreateSession {
-                child_process_id: self.child_process_id,
+                native_child_id: self.child_process_id,
                 correlation_identity: self.correlation.clone(),
                 create_request_digest: self.create_request_digest,
             },
         )
         .and_then(|event| match event {
-            EventBody::PiCreateSessionAuthorized { child_process_id }
-                if child_process_id == self.child_process_id =>
-            {
-                Ok(())
-            }
+            EventBody::PiCreateSessionAuthorized {
+                native_child_id: child_process_id,
+            } if child_process_id == self.child_process_id => Ok(()),
             _ => Err(PiExecutionError::UnexpectedKernelEvent),
         });
         self.outcome = Some(outcome);
@@ -3307,22 +3305,22 @@ fn kernel_process_group_id(value: libc::pid_t) -> Result<KernelProcessGroupId, P
     KernelProcessGroupId::try_from(value).map_err(|_| PiExecutionError::IdentityConversion)
 }
 
-/// `RecordPiChildNotSpawned` is a durable assertion of physical absence, not
+/// `RecordNativeChildNotSpawned` is a durable assertion of physical absence, not
 /// a catch-all spawn/setup error. Keep this mapping deliberately small: other
 /// failures leave the already-admitted operation fenced for a later exact
 /// recovery path rather than fabricating a negative child receipt.
 fn proven_not_spawned_reason(
     error: &SupervisionError,
-) -> Option<society_kernel::PiChildNotSpawnedReason> {
+) -> Option<society_kernel::NativeChildNotSpawnedReason> {
     match error {
         SupervisionError::NativeSpawn(_) => {
-            Some(society_kernel::PiChildNotSpawnedReason::NativeSpawnFailed)
+            Some(society_kernel::NativeChildNotSpawnedReason::NativeSpawnFailed)
         }
         SupervisionError::ArtifactIsNotRegularFile | SupervisionError::ArtifactDigestDrift => {
-            Some(society_kernel::PiChildNotSpawnedReason::ArtifactQualificationFailed)
+            Some(society_kernel::NativeChildNotSpawnedReason::ArtifactQualificationFailed)
         }
         SupervisionError::InvalidSpawnRequest => {
-            Some(society_kernel::PiChildNotSpawnedReason::WorkspacePreparationFailed)
+            Some(society_kernel::NativeChildNotSpawnedReason::WorkspacePreparationFailed)
         }
         _ => None,
     }
@@ -5976,7 +5974,7 @@ mod tests {
             }
             other => panic!("native registration failure must retain containment: {other:?}"),
         };
-        assert_eq!(unresolved.pi_child_spawn_admission_id().value(), 1);
+        assert_eq!(unresolved.native_child_spawn_admission_id().value(), 1);
         // Only the pre-spawn admission exists. In particular no false
         // NotSpawned, PID/PGID, signal, or finalization receipt was written.
         assert_eq!(store.command_count().unwrap(), before_commands + 1);

@@ -117,6 +117,18 @@ owned children, seals partial evidence, reconciles cost, and proves closure.
 An OS signal, a process exit, a direct-child reap, and protocol completion are
 distinct facts.
 
+One generic `NativeChild` custody nucleus owns PID/PGID identity, liveness
+probes, signal races, direct wait, and bounded stream capture. Pi execution is
+an optional strict session/protocol sidecar over that base; evaluator-owned
+children have no Pi session, nonce, Create/Abort grammar, or Pi stream
+requirements. The only current evaluator process treatment is a verified
+direct executable with one verified input-manifest argument and an empty
+environment. It rejects shebang scripts and supplies no interpreter or shell
+launcher, retains bounded stdout/stderr, and permits sealing only after direct
+reap and owned-group absence. This is a private, unscheduled custody
+pre-bridge: there is no resident evaluator scheduler, public execution command,
+semantic evidence admission, or application execution claim.
+
 Office Prompt completion also has two deliberately distinct closed sequence
 shapes. Observed assistant results require `AgentSettled`, a later exact final
 accounting fact, and the immediately following `Settled`. SDK-level failures

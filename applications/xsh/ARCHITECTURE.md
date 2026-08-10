@@ -506,6 +506,46 @@ its active mission and constitutional scoreboard through an explicit Grand
 Architect amendment; it cannot pretend that the descendant seed governed its
 ancestors or erase the evidence used to amend it.
 
+### XSH evaluator port
+
+The XSH evaluator port is the narrow application adapter between a canonical
+VS-001 evaluator contract and generic native-child custody. It owns the named
+judge program, XSH/Xsht invocation, closed fixture and case manifests, expected
+output shape, and the semantic parser that interprets a report. The port
+constructs bounded canonical program and input renderings, their declared
+BLAKE3 identities, an opaque application evaluator-profile identity, and a
+closed application-owned invocation description. It neither assigns a sealed
+identity nor sends XSH command names or result semantics across the generic
+boundary. A future daemon-private bridge may check the declared identities
+against an already durable generic admission, use the direct-executable custody
+core, and seal fully reaped output before a separate evidence command refers to
+it. The present daemon has no evaluator scheduler or application execution
+entry point, so the port does not yet submit a generic execution request.
+
+The port does not create a content object, assign an evaluator or input
+revision, select a durable child identity, run a process, write SQLite, or
+admit evidence. A parsed `BehaviorObservationSetV1`, documentation matrix,
+fluency report, curation report, uptake report, or frontier report remains an
+XSH application claim until a separate generic admission command binds the
+privately sealed occurrence and authorized semantic role. This preserves a
+useful split: the generic layer can prove which evaluator/input/output
+occurrence was custodied, while XSH alone can say what its cases and outputs
+mean.
+
+This is preparation, not a claim that the present native evaluator fixture can
+execute a VS-001 judge. That generic profile admits only one closed direct
+executable treatment; the checked-in VS-001 judges are POSIX-shell source. A
+future XSH-owned direct evaluator adapter may carry that source semantics, but
+it must be a separately pinned direct executable and use direct arguments. The
+generic ABI will not accept a general shell command, interpreter profile, or
+interpreter `-c` payload.
+
+The current construction pins the checked-in entrypoint script, not a complete
+evaluator package. Fixtures, transitive judge scripts, and assigned external
+XSH/Xsht binaries remain separately named application inputs. A later closed
+package manifest must bind their ordered roles and BLAKE3 identities before an
+entrypoint digest can be treated as a complete evaluator identity.
+
 ## Three forms of durable truth
 
 The implementation must not collapse three different records into one.

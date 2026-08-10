@@ -545,11 +545,7 @@ fn malformed_host_stdout_is_not_normalized_into_a_successful_handshake() {
     let mut supervisor = PiSupervisor::new();
     supervisor.spawn_inert(fixture.spawn_request()).unwrap();
     await_adapter(&mut supervisor, &child_id);
-    assert!(
-        supervisor
-            .observe_live_output_at(&child_id, MonotonicTick::from_milliseconds(1))
-            .is_err()
-    );
+    await_malformed_output(&mut supervisor, &child_id);
     let receipt = reap_contained(&mut supervisor, &child_id);
     assert_eq!(
         receipt.terminal_disposition,
@@ -862,11 +858,7 @@ fn malformed_live_host_is_contained_then_reaped_without_waiting_forever() {
     let mut supervisor = PiSupervisor::new();
     supervisor.spawn_inert(fixture.spawn_request()).unwrap();
     await_adapter(&mut supervisor, &child_id);
-    assert!(
-        supervisor
-            .observe_live_output_at(&child_id, MonotonicTick::ZERO)
-            .is_err()
-    );
+    await_malformed_output(&mut supervisor, &child_id);
     let receipt = reap_contained(&mut supervisor, &child_id);
     assert_eq!(
         receipt.terminal_disposition,
@@ -1070,6 +1062,18 @@ fn await_session_ready(supervisor: &mut PiSupervisor, child_id: &SupervisedChild
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
     panic!("provider-free host double did not emit SessionReady before its test deadline");
+}
+
+fn await_malformed_output(supervisor: &mut PiSupervisor, child_id: &SupervisedChildId) {
+    for tick in 0..1_000 {
+        match supervisor.observe_live_output_at(child_id, MonotonicTick::from_milliseconds(tick)) {
+            Err(SupervisionError::Peer(_) | SupervisionError::Protocol(_)) => return,
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(1)),
+            Ok(Some(_)) => panic!("malformed raw bytes became a protocol observation"),
+            Err(error) => panic!("unexpected malformed-output containment error: {error}"),
+        }
+    }
+    panic!("malformed host double did not reach the bounded reader");
 }
 
 fn await_disposed(supervisor: &mut PiSupervisor, child_id: &SupervisedChildId) {
