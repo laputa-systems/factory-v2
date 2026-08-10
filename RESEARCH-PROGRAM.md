@@ -92,6 +92,12 @@ memory, knowledge promotion, communication topology, and versioned coordination
 policies. An institution is executable policy plus durable state—not a title or
 a long prompt.
 
+The first concrete institution is a chronological episode-scoped Forum. It
+lets one disposable actor leave an immutable attributed Message which a fresh
+actor can later read. The Forum is public communication and institutional
+memory, not truth or epistemic admission. Its retained-versus-reset visibility
+frontier is CL-001's only treatment variable.
+
 ### Experimental control
 
 The experimental layer owns protocols, episodes, treatment assignment,
@@ -178,8 +184,8 @@ defined by an experimental world.
 ## Research sequence
 
 1. **Correction latency.** Build CL-001 with synthetic ground truth, partitioned
-   evidence, actor replacement, retained versus reset institutional memory, and
-   one delayed correction.
+   evidence, actor replacement, retained versus reset chronological Forum
+   history, and one identical post-replacement correction.
 2. **Propagation topology.** Compare centralized and decentralized correction
    routing without changing actors or evidence.
 3. **Authority amplification.** Vary how source role and citation count affect
@@ -194,6 +200,11 @@ defined by an experimental world.
 
 Open-ended software work may later become a demanding experimental world. It
 is deliberately not the first one.
+
+The first Forum contains no rank, consensus, reputation, karma, subscription
+interrupt, or social recommendation. Those mechanisms change the information
+environment and therefore enter only as later matched treatments against the
+chronological baseline. See `FORUM.md`.
 
 ## Safety and scientific integrity
 

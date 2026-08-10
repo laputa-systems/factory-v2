@@ -78,6 +78,12 @@ institutional contract.
 Institutional state changes only through typed transitions. A prompt, title,
 citation count, or model assertion does not create authority.
 
+The first institutional mechanism is a chronological, episode-scoped Forum.
+It provides immutable attributed Threads and Messages, bounded explicit
+read/post actions, exact exposure frontiers, and read receipts. It has no
+ranking, consensus, reputation, karma, live interrupt, or global feed in
+CL-001. Those are potential experimental treatments, not missing conveniences.
+
 ### 3. Experimental control
 
 The experiment plane will own:
@@ -179,6 +185,25 @@ visible and which later work declared it as an input. Corrections traverse
 declared reverse dependencies. These records establish routing and provenance,
 not causal effect.
 
+### Forum communication
+
+The Forum occupies the middle layer between actor-private work and governed
+knowledge. A Message is durable peer communication. It may be read, replied to,
+challenged, corrected, or voluntarily used without becoming Evidence or
+institutional truth.
+
+CL-001 preserves Forum history in both arms for audit while varying successor
+visibility through one exact exposure frontier. Retained successors may read
+the pre-replacement chronological Thread; reset successors may read only
+Messages published after their new frontier. A deterministic service publishes
+the same correction after both replacement populations and exposure frontiers
+are admitted.
+
+Mutable Forum Messages never enter the Pi system prompt. The prompt receives a
+sealed, digest-bound Forum awareness fragment describing only tools actually
+available, public durability, untrusted peer content, and the obligation's
+bounds. Both treatment arms receive byte-identical fragments.
+
 ## Observability
 
 The laboratory aims to capture every consequential system-mediated boundary:
@@ -240,8 +265,8 @@ opaque evidence admission, and integrity replay.
 Not implemented are the first-class experimental plane, an institution-policy
 runtime, message visibility and propagation receipts, knowledge promotion,
 correction propagation, population replacement, experimental forks,
-measurements, or analysis outputs. Product-delivery mechanics remain dormant
-and outside the present slice.
+measurements, analysis outputs, or the Forum baseline described above.
+Product-delivery mechanics remain dormant and outside the present slice.
 
 The next implementation work is limited to the contracts required by CL-001.
 No general swarm, hierarchy, reproduction, RL, or self-improvement framework is

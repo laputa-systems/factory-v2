@@ -42,6 +42,12 @@ generic schema/validation framework. Identifier generation, clocks, codecs,
 state transitions, supervision, and canonical schema bootstrapping are trusted
 kernel contracts rather than delegated policy.
 
+CL-001's initial chronological Forum authorizes no new dependency. Explicit
+turn-bound read/post tools use the current resident and Pi boundaries. In
+particular, `mio`, an async runtime, full-text search, ranking math, and a
+notification broker remain deferred until a live-subscription or scale
+experiment demonstrates the need and receives a separate dependency review.
+
 ## Replaceable actor-runtime adapter
 
 `packages/society-pi-host/package.json` and its exact npm lockfile own the

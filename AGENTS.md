@@ -61,6 +61,8 @@ Keep these distinctions explicit:
 - `GLOSSARY.md` owns generic vocabulary and implementation-status labels.
 - `ARCHITECTURE.md` owns the trust, society, experiment, and application
   boundaries.
+- `FORUM.md` owns the staged communication substrate, Pi awareness contract,
+  and explicit deferrals.
 - `VERTICAL-SLICE.md` owns the generic path required by the first experiment.
 - `applications/correction-latency/VERTICAL-SLICE.md` owns the exact synthetic
   world, treatment arms, measurements, controls, and falsification criteria.
@@ -79,6 +81,7 @@ RESEARCH-PROGRAM.md        institutional model-organism research program
 AGENTS.md                  engineering and research contract
 ARCHITECTURE.md            generic four-plane architecture
 GLOSSARY.md                canonical generic vocabulary
+FORUM.md                   chronological Forum baseline and deferred research
 VERTICAL-SLICE.md          generic CL-001 execution requirements
 DEPENDENCIES.md            exact dependency contract
 
@@ -115,6 +118,8 @@ interventions, measurements, or experimental forks. Current evaluator evidence
 is deliberately `ApplicationSemanticsUninterpreted`. Current replay validates
 history; it does not rerun a counterfactual episode. The resident serving loop
 does not yet execute the deterministic-evaluator or evidence-admission path.
+There is no Forum storage, read/post tool, exposure frontier, Forum prompt
+contract, or read receipt yet.
 
 Do not relabel these omissions as implemented by reusing a nearby type. Add a
 new contract only after its authority and role in CL-001 are explicit.

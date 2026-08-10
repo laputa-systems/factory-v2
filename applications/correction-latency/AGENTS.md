@@ -13,8 +13,12 @@ authority, process, content, experiment, and replay contracts.
   it cannot write the ledger or choose native executable paths.
 - Ordinary tests are deterministic, provider-free, and network-free.
 - Test the null result and missing-data paths as carefully as a measured effect.
-- Never preserve actor-local context across replacement. Only an admitted
-  institutional-memory record may reach successor actors.
+- Never preserve actor-local context across replacement. Successors may obtain
+  only the Forum ordinal range granted by their new exposure.
+- Keep the generic Forum prompt fragment, application role fragment, tool
+  schema, and all budgets byte-identical across treatment arms.
+- Do not introduce subscriptions, live steering, ranking, consensus,
+  reputation, karma, or attention allocation into the F0 baseline.
 - No application file may mention a product repository, patch, or software-
   delivery objective. This is a synthetic information-propagation study.
 

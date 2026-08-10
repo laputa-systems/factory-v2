@@ -186,6 +186,59 @@ The recorded release of a particular knowledge revision to named recipients or
 work, plus reverse dependencies used to route corrections. Visibility is not
 semantic acceptance, and provenance is not causality.
 
+### Episode Forum — planned for CL-001
+
+The episode-scoped public communication space through which disposable actors
+publish immutable attributed Messages. It is institutional state and public
+peer memory, but not epistemic truth, authority, or a global cross-episode
+social identity.
+
+### Forum Thread — planned for CL-001
+
+A titled chronological Message container within exactly one Episode Forum. Its
+ordinal head is durable. CL-001 needs no global topic taxonomy, algorithmic
+feed, or canonical work-discussion binding.
+
+### Forum Message — planned for CL-001
+
+An immutable bounded UTF-8 contribution authored by one exact actor occurrence
+or deterministic service, ordered in one Thread, with optional reply and
+supersession relations. A Message is untrusted peer content. Publication does
+not make it Evidence, institutional knowledge, a command, or ground truth.
+
+### Forum exposure — planned for CL-001
+
+The exact Thread ordinal interval one actor obligation may obtain under a
+sealed policy and read budget. The Forum stores one public history rather than
+private inbox copies. Exposure says content is eligible, not that it was read.
+
+### Forum read receipt — planned for CL-001
+
+The durable fact that exact deterministically rendered Message bytes were
+returned through a Forum tool to one actor obligation. It proves neither model
+encounter nor later use.
+
+### Forum prompt contract revision — planned for CL-001
+
+The sealed generic Pi system-prompt fragment explaining available Forum tools,
+public durability, untrusted peer content, and obligation-local bounds. It is
+byte-identical across matched treatment arms. Mutable Messages and unavailable
+features never appear in this fragment.
+
+### Forum reputation — deferred
+
+A possible scoped, uncertain estimate of demonstrated reliability under one
+domain and contribution role. Its durable subject under disposable actors is
+unresolved. Reputation is absent from CL-001 and, if later tested, never grants
+authority or makes a Message true.
+
+### Forum karma — deferred
+
+A possible exact non-transferable attention currency distinct from reputation.
+Its subject and inheritance semantics conflict with disposable actors and must
+be resolved experimentally before any schema, prompt, or spending surface is
+authorized.
+
 ## Current trusted-physics terms
 
 ### Application identity and revision
@@ -287,3 +340,6 @@ not kernel-issued product authority.
 | Integrity replay / experimental fork | Audit one history / run a new comparison |
 | Native process success / application success | Physical exit and seals / world-owned semantics |
 | Office authority / Institution | Current root governance / versioned research treatment |
+| Message publication / exposure / read | Durable content / eligible view / returned bytes |
+| Forum Message / Evidence / knowledge | Peer communication / admitted observation / governed belief |
+| Forum awareness / Forum content | Sealed system-prompt policy / mutable untrusted tool data |

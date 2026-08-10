@@ -18,8 +18,8 @@ challengeable institutional transition.
 The initial research claim is deliberately modest:
 
 > Holding actor policy and inference budget fixed, retained institutional state
-> measurably changes how a population incorporates a delayed correction after
-> every actor is replaced.
+> measurably changes how a population incorporates a delayed Forum correction
+> after every actor is replaced.
 
 The first project is the synthetic, provider-free-first correction-latency
 study described in
@@ -36,7 +36,7 @@ experimental control
   protocol, episode, treatment, population, intervention, fork
                          |
 institutional substrate
-  actors, work, claims, evidence, memory, propagation, policy
+  actors, Forum, work, claims, evidence, memory, propagation, policy
                          |
 trusted physics
   ledger, content, authority, budget, process custody, replay
@@ -51,6 +51,7 @@ framework.
 - [`RESEARCH-PROGRAM.md`](RESEARCH-PROGRAM.md) — thesis and research sequence
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — generic boundaries and invariants
 - [`GLOSSARY.md`](GLOSSARY.md) — canonical terms and implementation status
+- [`FORUM.md`](FORUM.md) — staged communication substrate and deferrals
 - [`VERTICAL-SLICE.md`](VERTICAL-SLICE.md) — generic requirements for CL-001
 - [`AGENTS.md`](AGENTS.md) — engineering contract
 - [`DEPENDENCIES.md`](DEPENDENCIES.md) — trusted dependency allowance

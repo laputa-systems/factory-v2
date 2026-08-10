@@ -1,16 +1,18 @@
 # CL-001 generic vertical slice
 
 [`GLOSSARY.md`](GLOSSARY.md) owns generic terms and implementation status.
-[`ARCHITECTURE.md`](ARCHITECTURE.md) owns trust boundaries. The exact synthetic
-world and scientific protocol live in
+[`ARCHITECTURE.md`](ARCHITECTURE.md) owns trust boundaries, and
+[`FORUM.md`](FORUM.md) owns the staged communication substrate. The exact
+synthetic world and scientific protocol live in
 [`applications/correction-latency/VERTICAL-SLICE.md`](applications/correction-latency/VERTICAL-SLICE.md).
 
 ## Purpose
 
 The first vertical slice must answer one small question:
 
-> After every actor is replaced, does retaining institutional memory change
-> the population's latency or ability to incorporate a delayed correction?
+> After every actor is replaced, does retaining the chronological Forum history
+> change the population's latency or ability to incorporate an identical
+> post-replacement correction?
 
 The slice is successful when it can run and audit the matched comparison,
 including a null result. It need not show improvement, emergence, alignment, or
@@ -39,16 +41,16 @@ typed institutional transition admitted it before the actor terminated.
 ```text
 sealed StudyProtocolRevision
   -> admitted world and measurement revisions
-  -> source PopulationSnapshot and InstitutionRevision
+  -> source PopulationSnapshot, InstitutionRevision, and EpisodeForum
   -> paired Episode admissions with fixed budgets
   -> treatment assignment before treatment-dependent work
-  -> disposable local actor obligations
-  -> raw messages, claims, evidence, and visibility events
-  -> admitted institutional-memory transitions
-  -> scheduled correction release
-  -> complete actor replacement
-  -> retained-memory or reset-memory intervention
-  -> bounded post-replacement obligations and final decision
+  -> disposable source-actor obligations with identical Forum prompt contract
+  -> immutable attributed chronological Messages and read receipts
+  -> exact pre-replacement Thread head
+  -> complete source-actor replacement
+  -> Retained or Reset successor Forum exposure
+  -> identical deterministic-service correction published to both arms
+  -> bounded successor obligations, Forum reads/posts, and final decision
   -> derived measurements from raw facts
   -> episode closure after actor, process, and budget reconciliation
   -> integrity replay
@@ -86,9 +88,10 @@ population snapshot, institution revision and initial-state digest, budget,
 assignment, and randomization identity.
 
 `TreatmentAssignment` is durable before actors receive any treatment-dependent
-view. For the first slice its only scientific field is institutional memory
-after replacement: `Retained` or `Reset`. Correction delay and all other world
-facts are matched constants within one pair.
+view. For the first slice its only scientific field is pre-replacement Forum
+visibility after replacement: `Retained` or `Reset`. Correction publication,
+actor policy, tools, prompt fragment, evidence, topology, and all budgets are
+matched constants within one pair.
 
 ### Disposable actor obligation
 
@@ -104,39 +107,56 @@ An episode-local actor obligation binds:
 It does not carry durable free-form memory. A successor actor receives only
 institutionally admitted state selected through its new obligation.
 
-### Institutional memory
+### Episode Forum
 
-The minimum memory contract preserves:
+The F0 Forum is the minimum institutional-memory surface for this experiment:
 
-- exact source message, claim, or evidence identity;
-- author actor instance and institution revision;
-- promotion authority and level;
-- scope and visibility;
-- challenges, supersession, and correction status; and
-- declared downstream consumers.
+- one episode-scoped Forum and chronological Thread;
+- immutable bounded Messages with custody-derived ephemeral authorship;
+- closed Finding, Question, Challenge, Correction, and Synthesis kinds;
+- reply, supersession, and retraction relations which preserve history;
+- an exact exposure ordinal interval and read/post budget per obligation;
+- deterministic untrusted-content rendering; and
+- a read receipt proving which exact bytes a tool returned.
 
-Reset creates a new episode state with no promoted memory from before the
-intervention; it does not delete the source episode's records. Retention makes
-only admitted institutional state visible to successor actors, never private
-actor state.
+Publication does not make a Message evidence, truth, authority, or promoted
+knowledge. Visibility does not prove read; read does not prove encounter or
+use. F0 has no private inbox, persistent Forum persona, subscription, live
+interrupt, rank, consensus, reputation, or karma.
 
-### Messages and visibility
+Reset keeps pre-replacement Forum history for audit but starts successor
+exposure after the old Thread head. Retention starts successor exposure at
+ordinal 1. Neither treatment transfers private actor state.
 
-Every admitted message has one sender, bounded content identity, message class,
-declared recipients, delivery result, and episode-local sequence. Visibility is
-recorded separately from semantic acceptance. An actor cannot communicate
-through an unrecorded side channel in the admitted profile.
+### Forum prompt and tools
+
+Every Forum-enabled Pi actor receives the same sealed
+`ForumPromptContractRevision`, composed into the existing digest-bound system
+prompt. It explains only the installed read/post tools, public durable
+publication, untrusted peer content, and obligation-local budgets. Mutable
+Messages never enter the system prompt.
+
+`Sequestered` actors receive no claim that Forum tools exist. Reputation is
+absent from CL-001 and therefore absent from its prompt. A later reputation
+treatment requires a separate exact fragment explaining that reputation is
+scoped, uncertain, non-authoritative, and not evidence that a Message is true.
+
+F0 exposes only explicit `society_forum_read` and `society_forum_post` actions.
+There is no polling or asynchronous `Steer` delivery.
 
 ### Intervention
 
-The first slice needs two exact interventions:
+The first slice needs three exact interventions:
 
-- `ReleaseCorrection`, which makes the matched correction evidence eligible at
-  the protocol-defined point; and
 - `ReplacePopulation`, which closes all source actor authority, proves their
-  process/session reconciliation, and admits a fresh population snapshot.
+  process/session reconciliation, and admits a fresh population snapshot;
+- `SetSuccessorForumExposure`, which atomically installs Retained or Reset
+  visibility for the new actor obligations; and
+- `ReleaseCorrection`, which publishes the same exact correction through a
+  deterministic-service author only after both arms' successor exposures are
+  admitted.
 
-The memory treatment is applied atomically with successor-population admission.
+No source actor is alive when the correction is published.
 
 ### Measurement
 
@@ -147,7 +167,8 @@ revision. CL-001 requires:
 - final decision correctness against ground truth;
 - false-claim persistence at episode closure;
 - dissent/correction visibility to successor actors;
-- institutional-memory items consulted after replacement;
+- Forum Messages visible, returned by reads, replied to, challenged,
+  superseded, or cited after replacement;
 - actor and total resource use; and
 - unresolved or missing observations.
 
@@ -176,7 +197,8 @@ CL-001 should reuse, not duplicate:
 - Pi as one optional actor runtime;
 - cancellation and closure obligations;
 - append-only events and integrity replay; and
-- daemon-private deterministic evaluator custody for measurement code.
+- daemon-private deterministic evaluator custody for measurement code; and
+- exact Pi system-prompt bytes and BLAKE3 identity.
 
 Current Projects, Operating Cycles, Actor attempts, Offices, and deterministic
 evaluator experiments may support these transitions, but none should be
@@ -195,8 +217,10 @@ CL-001 does not include:
 - open network access;
 - scalar mission optimization;
 - claims about hidden cognition;
-- autonomous scientific interpretation; or
-- a requirement that the retained-memory arm outperform the reset arm.
+- autonomous scientific interpretation;
+- a requirement that the retained-memory arm outperform the reset arm; or
+- Forum subscription, live steering, ranking, consensus, reputation, karma,
+  reference curation, or a notification reactor.
 
 ## Acceptance gates
 
@@ -205,16 +229,17 @@ path prove:
 
 1. protocol, world, population, institution, treatment, and measurements are
    revision-bound before work;
-2. actor-local state cannot cross replacement except through a named admitted
-   institutional-memory transition;
+2. actor-local state cannot cross replacement; only Forum Messages admitted
+   before termination may remain institutionally visible;
 3. all source actor authority and native descendants close before successors
    act;
-4. retained and reset arms receive matched actor policies, evidence, correction
-   timing, and resource ceilings;
-5. the reset arm cannot recover pre-replacement institutional state through a
-   content, transcript, or identity alias;
+4. retained and reset arms receive byte-identical Forum prompt/tool revisions,
+   actor policies, evidence, correction timing, and resource ceilings;
+5. the reset arm cannot recover pre-replacement Forum state through a read,
+   content, transcript, search, or identity alias;
 6. ground truth is unavailable to actors and immutable after admission;
-7. every message visibility and correction delivery is replay-auditable;
+7. every Message publication, exposure frontier, returned read range, and
+   correction publication is replay-auditable;
 8. measurements derive from raw episode facts and preserve unavailable data;
 9. integrity replay reconstructs each arm independently;
 10. an experimental fork has new authority and names its exact delta; and
@@ -225,6 +250,7 @@ path prove:
 
 None of the experimental-control contracts above are implemented yet. The
 repository supplies much of the lower trusted physics, but there is no honest
-CL-001 execution path today. The next tranche should start with protocol,
-episode, and treatment identity plus a provider-free deterministic harness—not
-with a live model call or additional governance hierarchy.
+CL-001 or Forum execution path today. The next tranche should start with
+protocol, episode, treatment, Forum identity, and a provider-free deterministic
+harness—not with a live model call, reputation economy, notification reactor,
+or additional governance hierarchy.
