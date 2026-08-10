@@ -33,6 +33,7 @@ const POPULATION_SIZE: u8 = 8;
 const ACTOR_BUDGET_UNITS: i64 = 2;
 const EPISODE_BUDGET_UNITS: i64 = (POPULATION_SIZE as i64) * ACTOR_BUDGET_UNITS * 2;
 const FORUM_READ_BUDGET: i64 = 4;
+const MEASUREMENTS_PER_ARM: i64 = 9;
 
 /// A report value that preserves unavailable and invalidated outcomes instead
 /// of translating them into zero.
@@ -50,10 +51,35 @@ pub enum MeasurementOutcome {
     },
 }
 
+/// Activity accounting for one deterministic arm. These are accepted study
+/// transitions and bounded fixture work, not provider billing observations.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ArmActivityReport {
+    pub source_actor_obligations: i64,
+    pub successor_actor_obligations: i64,
+    pub source_forum_posts: i64,
+    pub correction_forum_posts: i64,
+    pub successor_forum_posts: i64,
+    pub accepted_forum_reads: i64,
+    pub forum_read_bytes: i64,
+    pub study_budget_units: i64,
+}
+
+impl ArmActivityReport {
+    pub const fn total_actor_obligations(&self) -> i64 {
+        self.source_actor_obligations + self.successor_actor_obligations
+    }
+
+    pub const fn total_forum_posts(&self) -> i64 {
+        self.source_forum_posts + self.correction_forum_posts + self.successor_forum_posts
+    }
+}
+
 /// Deterministic report for one matched arm.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ArmReport {
     pub treatment: StudyTreatment,
+    pub activity: ArmActivityReport,
     pub frozen_forum_head: i64,
     pub correction_digest: Blake3Digest,
     pub correction_adoption_latency: MeasurementOutcome,
@@ -91,6 +117,283 @@ pub struct PairedReport {
     pub unstructured_baseline: BaselineReport,
     pub ground_truth_reveal_digest: Blake3Digest,
     pub replay_materialized_state_digest: Blake3Digest,
+}
+
+/// A monetary status that does not turn a provider-free execution into a
+/// misleading zero-cost billing observation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MonetaryCostStatus {
+    NotApplicableProviderFree,
+}
+
+impl fmt::Display for MonetaryCostStatus {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotApplicableProviderFree => {
+                formatter.write_str("not_applicable(provider_free_deterministic_fixture)")
+            }
+        }
+    }
+}
+
+/// Human-facing end-of-run status for the provider-free synthetic world.
+///
+/// The generic live Pi path records exact provider-cost evidence in the
+/// trusted ledger. This summary deliberately reports that cost as not
+/// applicable because this harness creates no provider-backed agents or
+/// usage receipts.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorldSimulationSummary {
+    pub execution_profile: &'static str,
+    pub provider_calls: i64,
+    pub monetary_cost: MonetaryCostStatus,
+    pub retained: ArmReport,
+    pub reset: ArmReport,
+    pub total_actor_obligations: i64,
+    pub total_forum_posts: i64,
+    pub total_forum_reads: i64,
+    pub total_forum_read_bytes: i64,
+    pub total_study_budget_units: i64,
+    pub rejected_control_probes: i64,
+    pub measurements_recorded: i64,
+    pub isolated_baseline: BaselineReport,
+    pub unstructured_baseline: BaselineReport,
+    pub retained_minus_reset_latency: Option<i64>,
+    pub source_authority_rejected_after_replacement: bool,
+    pub reset_history_read_rejected: bool,
+    pub ground_truth_reveal_digest: Blake3Digest,
+    pub replay_materialized_state_digest: Blake3Digest,
+}
+
+impl PairedReport {
+    /// Builds the closed-world status artifact without querying or mutating
+    /// any external provider or runtime.
+    pub fn world_simulation_summary(&self) -> WorldSimulationSummary {
+        let total_actor_obligations = self.retained.activity.total_actor_obligations()
+            + self.reset.activity.total_actor_obligations();
+        let total_forum_posts =
+            self.retained.activity.total_forum_posts() + self.reset.activity.total_forum_posts();
+        let total_forum_reads =
+            self.retained.activity.accepted_forum_reads + self.reset.activity.accepted_forum_reads;
+        let total_forum_read_bytes =
+            self.retained.activity.forum_read_bytes + self.reset.activity.forum_read_bytes;
+        let total_study_budget_units =
+            self.retained.activity.study_budget_units + self.reset.activity.study_budget_units;
+        WorldSimulationSummary {
+            execution_profile: "provider_free_deterministic_fixture_v1",
+            provider_calls: 0,
+            monetary_cost: MonetaryCostStatus::NotApplicableProviderFree,
+            retained: self.retained.clone(),
+            reset: self.reset.clone(),
+            total_actor_obligations,
+            total_forum_posts,
+            total_forum_reads,
+            total_forum_read_bytes,
+            total_study_budget_units,
+            rejected_control_probes: i64::from(
+                self.source_authority_rejected_after_replacement,
+            ) + i64::from(self.reset_history_read_rejected),
+            measurements_recorded: MEASUREMENTS_PER_ARM * 2,
+            isolated_baseline: self.isolated_baseline.clone(),
+            unstructured_baseline: self.unstructured_baseline.clone(),
+            retained_minus_reset_latency: self.retained_minus_reset_latency,
+            source_authority_rejected_after_replacement: self
+                .source_authority_rejected_after_replacement,
+            reset_history_read_rejected: self.reset_history_read_rejected,
+            ground_truth_reveal_digest: self.ground_truth_reveal_digest,
+            replay_materialized_state_digest: self.replay_materialized_state_digest,
+        }
+    }
+}
+
+impl fmt::Display for WorldSimulationSummary {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(formatter, "WORLD SIMULATION SUMMARY")?;
+        writeln!(formatter, "world: correction-latency / CL-001")?;
+        writeln!(formatter, "execution_profile: {}", self.execution_profile)?;
+        writeln!(formatter, "world_state: closed")?;
+        writeln!(formatter, "economic_status:")?;
+        writeln!(formatter, "  provider_calls: {}", self.provider_calls)?;
+        writeln!(formatter, "  total_cost_usd: {}", self.monetary_cost)?;
+        writeln!(
+            formatter,
+            "  per_agent_cost: not_applicable(no provider-backed agents)"
+        )?;
+        writeln!(formatter, "activity_totals:")?;
+        writeln!(
+            formatter,
+            "  actor_obligations: {}",
+            self.total_actor_obligations
+        )?;
+        writeln!(formatter, "  forum_posts: {}", self.total_forum_posts)?;
+        writeln!(formatter, "  accepted_forum_reads: {}", self.total_forum_reads)?;
+        writeln!(
+            formatter,
+            "  forum_read_bytes: {}",
+            self.total_forum_read_bytes
+        )?;
+        writeln!(
+            formatter,
+            "  study_budget_units: {}",
+            self.total_study_budget_units
+        )?;
+        writeln!(
+            formatter,
+            "  rejected_control_probes: {}",
+            self.rejected_control_probes
+        )?;
+        writeln!(
+            formatter,
+            "  measurements_recorded: {}",
+            self.measurements_recorded
+        )?;
+        write_arm_report(formatter, "retained", &self.retained)?;
+        write_arm_report(formatter, "reset", &self.reset)?;
+        writeln!(formatter, "pair_invariants:")?;
+        writeln!(
+            formatter,
+            "  retained_minus_reset_latency: {:?}",
+            self.retained_minus_reset_latency
+        )?;
+        writeln!(
+            formatter,
+            "  source_authority_rejected_after_replacement: {}",
+            self.source_authority_rejected_after_replacement
+        )?;
+        writeln!(
+            formatter,
+            "  reset_history_read_rejected: {}",
+            self.reset_history_read_rejected
+        )?;
+        writeln!(formatter, "baselines:")?;
+        write_baseline_report(formatter, &self.isolated_baseline)?;
+        write_baseline_report(formatter, &self.unstructured_baseline)?;
+        writeln!(formatter, "integrity:")?;
+        writeln!(
+            formatter,
+            "  ground_truth_reveal_digest: {:?}",
+            self.ground_truth_reveal_digest
+        )?;
+        writeln!(
+            formatter,
+            "  replay_materialized_state_digest: {:?}",
+            self.replay_materialized_state_digest
+        )
+    }
+}
+
+fn write_arm_report(
+    formatter: &mut fmt::Formatter<'_>,
+    name: &str,
+    report: &ArmReport,
+) -> fmt::Result {
+    writeln!(formatter, "arm: {name} ({:?})", report.treatment)?;
+    writeln!(
+        formatter,
+        "  actors: source={} successor={} total={}",
+        report.activity.source_actor_obligations,
+        report.activity.successor_actor_obligations,
+        report.activity.total_actor_obligations()
+    )?;
+    writeln!(
+        formatter,
+        "  forum: posts={} (source={} correction={} successor={}) reads={} bytes={}",
+        report.activity.total_forum_posts(),
+        report.activity.source_forum_posts,
+        report.activity.correction_forum_posts,
+        report.activity.successor_forum_posts,
+        report.activity.accepted_forum_reads,
+        report.activity.forum_read_bytes
+    )?;
+    writeln!(
+        formatter,
+        "  study_budget_units: {}",
+        report.activity.study_budget_units
+    )?;
+    writeln!(formatter, "  frozen_forum_head: {}", report.frozen_forum_head)?;
+    writeln!(
+        formatter,
+        "  correction_digest: {:?}",
+        report.correction_digest
+    )?;
+    write_measurement(
+        formatter,
+        "correction_adoption_latency",
+        &report.correction_adoption_latency,
+    )?;
+    write_measurement(
+        formatter,
+        "final_decision_correct",
+        &report.final_decision_correct,
+    )?;
+    write_measurement(
+        formatter,
+        "false_claim_persistence",
+        &report.false_claim_persistence,
+    )?;
+    write_measurement(
+        formatter,
+        "correction_visibility",
+        &report.correction_visibility,
+    )?;
+    write_measurement(formatter, "dissent_survival", &report.dissent_survival)?;
+    write_measurement(
+        formatter,
+        "forum_history_utilization",
+        &report.forum_history_utilization,
+    )?;
+    write_measurement(
+        formatter,
+        "forum_attention_bytes",
+        &report.forum_attention_bytes,
+    )?;
+    write_measurement(
+        formatter,
+        "forum_attention_turns",
+        &report.forum_attention_turns,
+    )?;
+    write_measurement(
+        formatter,
+        "forum_attention_runtime_micros",
+        &report.forum_attention_runtime_micros,
+    )
+}
+
+fn write_baseline_report(
+    formatter: &mut fmt::Formatter<'_>,
+    report: &BaselineReport,
+) -> fmt::Result {
+    writeln!(formatter, "  {}:", report.name)?;
+    write_measurement(
+        formatter,
+        "    final_decision_correct",
+        &report.final_decision_correct,
+    )?;
+    write_measurement(formatter, "    actor_turns", &report.actor_turns)
+}
+
+fn write_measurement(
+    formatter: &mut fmt::Formatter<'_>,
+    name: &str,
+    outcome: &MeasurementOutcome,
+) -> fmt::Result {
+    match outcome {
+        MeasurementOutcome::Observed {
+            value,
+            value_digest,
+        } => writeln!(
+            formatter,
+            "  {name}: observed(value={value}, digest={value_digest:?})"
+        ),
+        MeasurementOutcome::Unavailable { reason_digest } => writeln!(
+            formatter,
+            "  {name}: unavailable(reason_digest={reason_digest:?})"
+        ),
+        MeasurementOutcome::Invalidated { reason_digest } => writeln!(
+            formatter,
+            "  {name}: invalidated(reason_digest={reason_digest:?})"
+        ),
+    }
 }
 
 /// A deterministic harness failure, including a durable rejected transition.
@@ -150,6 +453,11 @@ struct ArmRun {
     dissent_consulted: bool,
     successor_turns: i64,
     returned_forum_bytes: i64,
+    source_forum_reads: i64,
+    source_forum_read_bytes: i64,
+    successor_forum_reads: i64,
+    successor_forum_posts: i64,
+    correction_forum_posts: i64,
 }
 
 #[derive(Clone, Copy)]
@@ -340,6 +648,8 @@ pub fn run_provider_free_pair() -> Result<PairedReport, HarnessError> {
     };
     retained.correction_message_id = Some(retained_correction);
     reset.correction_message_id = Some(reset_correction);
+    retained.correction_forum_posts = 1;
+    reset.correction_forum_posts = 1;
     retained.correction_release_sequence = Some(correction_release_sequence);
     reset.correction_release_sequence = Some(correction_release_sequence);
     run_successor_population(
@@ -712,6 +1022,11 @@ fn create_arm(
         dissent_consulted: false,
         successor_turns: 0,
         returned_forum_bytes: 0,
+        source_forum_reads: 0,
+        source_forum_read_bytes: 0,
+        successor_forum_reads: 0,
+        successor_forum_posts: 0,
+        correction_forum_posts: 0,
     })
 }
 
@@ -771,7 +1086,7 @@ fn run_source_population(
     {
         let role = index + 1;
         if role > 1 {
-            let _ = accepted(
+            let read = accepted(
                 store,
                 sequence,
                 StudyCommand::ReadForum {
@@ -781,6 +1096,15 @@ fn run_source_population(
                         .map_err(|_| HarnessError::UnexpectedEvent("source range"))?,
                 },
             )?;
+            if let StudyEvent::ForumMessagesRead { receipt_id, .. } = read {
+                let rendering = store
+                    .forum_read_receipt_rendering_for_obligation(receipt_id, obligation_id)?;
+                arm.source_forum_reads += 1;
+                arm.source_forum_read_bytes += i64::try_from(rendering.len())
+                    .map_err(|_| HarnessError::UnexpectedEvent("source read rendering length"))?;
+            } else {
+                return Err(HarnessError::UnexpectedEvent("source ForumMessagesRead"));
+            }
         }
         let view = specification
             .private_view(fixture)
@@ -977,6 +1301,7 @@ fn run_successor_population(
             ..
         } = read
         {
+            arm.successor_forum_reads += 1;
             let rendering = store
                 .forum_read_receipt_rendering_for_obligation(receipt_id, obligation_id)?;
             arm.returned_forum_bytes += i64::try_from(rendering.len())
@@ -1027,6 +1352,7 @@ fn run_successor_population(
             },
         )?;
         if let StudyEvent::ForumMessagePublished { .. } = published {
+            arm.successor_forum_posts += 1;
             arm.post_correction_admitted_steps += 1;
             arm.successor_turns += 1;
             if arm.first_corrected_statement_step.is_none() {
@@ -1211,6 +1537,24 @@ fn close_and_measure(
             attention_runtime_micros,
         ],
     )?;
+    let source_actor_obligations = i64::try_from(arm.source_obligations.len())
+        .map_err(|_| HarnessError::UnexpectedEvent("source actor count"))?;
+    let successor_actor_obligations = i64::try_from(arm.successor_obligations.len())
+        .map_err(|_| HarnessError::UnexpectedEvent("successor actor count"))?;
+    let source_forum_posts = i64::try_from(arm.source_message_ids.len())
+        .map_err(|_| HarnessError::UnexpectedEvent("source Forum post count"))?;
+    let forum_read_bytes = arm
+        .source_forum_read_bytes
+        .checked_add(arm.returned_forum_bytes)
+        .ok_or(HarnessError::UnexpectedEvent("Forum read byte count"))?;
+    let accepted_forum_reads = arm
+        .source_forum_reads
+        .checked_add(arm.successor_forum_reads)
+        .ok_or(HarnessError::UnexpectedEvent("Forum read count"))?;
+    let study_budget_units = source_actor_obligations
+        .checked_add(successor_actor_obligations)
+        .and_then(|actors| actors.checked_mul(ACTOR_BUDGET_UNITS))
+        .ok_or(HarnessError::UnexpectedEvent("study budget total"))?;
     accepted(
         store,
         sequence,
@@ -1220,6 +1564,16 @@ fn close_and_measure(
     )?;
     Ok(ArmReport {
         treatment,
+        activity: ArmActivityReport {
+            source_actor_obligations,
+            successor_actor_obligations,
+            source_forum_posts,
+            correction_forum_posts: arm.correction_forum_posts,
+            successor_forum_posts: arm.successor_forum_posts,
+            accepted_forum_reads,
+            forum_read_bytes,
+            study_budget_units,
+        },
         frozen_forum_head: arm.frozen_head,
         correction_digest,
         correction_adoption_latency: adoption,
@@ -1557,6 +1911,34 @@ mod tests {
             first.reset.dissent_survival,
             MeasurementOutcome::Unavailable { .. }
         ));
+    }
+
+    #[test]
+    fn world_summary_reports_activity_without_inventing_billing() {
+        let report = run_provider_free_pair().expect("provider-free pair must run");
+        let summary = report.world_simulation_summary();
+
+        assert_eq!(summary.provider_calls, 0);
+        assert_eq!(
+            summary.monetary_cost,
+            MonetaryCostStatus::NotApplicableProviderFree
+        );
+        assert_eq!(summary.total_actor_obligations, 32);
+        assert_eq!(summary.total_forum_posts, 34);
+        assert_eq!(summary.total_forum_reads, 30);
+        assert_eq!(summary.total_study_budget_units, 64);
+        assert_eq!(summary.rejected_control_probes, 2);
+        assert_eq!(summary.measurements_recorded, 18);
+        assert_eq!(summary.retained.activity.source_forum_posts, 8);
+        assert_eq!(summary.retained.activity.correction_forum_posts, 1);
+        assert_eq!(summary.retained.activity.successor_forum_posts, 8);
+        assert_eq!(summary.retained.activity.accepted_forum_reads, 15);
+        assert_eq!(summary.reset.activity.accepted_forum_reads, 15);
+
+        let rendered = format!("{summary}");
+        assert!(rendered.contains("total_cost_usd: not_applicable"));
+        assert!(rendered.contains("forum_posts: 34"));
+        assert!(rendered.contains("replay_materialized_state_digest:"));
     }
 
     #[test]

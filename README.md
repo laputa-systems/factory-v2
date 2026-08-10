@@ -55,6 +55,13 @@ For isolated SDK exercises, the Pi host also offers opt-in
 search subprocesses, and no ambient model-catalog cache. It is not the live
 CL-001 runtime profile.
 
+The provider-free CL-001 world summary is runnable with `make run-society`.
+It reports accepted actor and Forum activity, study budget units, measurements,
+baselines, and replay integrity; monetary cost is explicitly not applicable to
+that deterministic fixture. Live Pi Office usage already records exact
+provider-cost evidence in the trusted ledger, but a live end-of-cycle report
+remains a separately scoped runtime/reporting surface.
+
 ## Documents
 
 - [`RESEARCH-PROGRAM.md`](RESEARCH-PROGRAM.md) — thesis and research sequence

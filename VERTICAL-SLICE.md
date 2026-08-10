@@ -75,6 +75,12 @@ The isolated `applications/correction-latency/correction-latency-harness`
 admits the canonical world, runs the eight-role retained/reset pair, emits a
 deterministic report, and validates replay. It intentionally does not claim a
 live provider call, a Pi SDK session, or native-child lifecycle custody.
+The repository-root `make run-society` recipe runs this provider-free world and
+prints its `WorldSimulationSummary`: accepted actor and Forum activity, study
+budget units, measurements, baselines, and replay integrity. Its monetary cost
+is explicitly not applicable because no provider-backed agent runs. Live Pi
+Office usage has exact ledger-backed provider-cost accounting; a live
+end-of-cycle aggregate remains separately scoped.
 
 ### Study protocol
 

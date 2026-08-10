@@ -29,6 +29,18 @@ The isolated deterministic paired run is available without a provider call:
 cargo run --manifest-path applications/correction-latency/Cargo.toml -p correction-latency-harness
 ```
 
+From the repository root, the same provider-free run and its end-of-world
+status report are available as:
+
+```text
+make run-society
+```
+
+The report includes per-arm actor, Forum, study-budget, measurement, baseline,
+and replay-integrity facts. Monetary cost is explicitly reported as not
+applicable: this fixture makes no provider calls and has no provider-backed
+agent cost to inspect. Live Pi Office cost is a separate ledger-backed path.
+
 It admits the canonical eight-role source and successor populations in both
 arms, freezes the source head, proves reset-history denial and source-authority
 loss, releases the same correction through one matched service transition,

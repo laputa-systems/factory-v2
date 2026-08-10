@@ -2,6 +2,6 @@
 
 fn main() -> Result<(), correction_latency_harness::HarnessError> {
     let report = correction_latency_harness::run_provider_free_pair()?;
-    println!("{report:#?}");
+    println!("{}", report.world_simulation_summary());
     Ok(())
 }
