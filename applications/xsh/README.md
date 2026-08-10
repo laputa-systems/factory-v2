@@ -40,6 +40,11 @@ POSIX-shell judges. A future XSH-owned direct evaluator adapter may carry that
 source semantics, but the generic ABI will not gain an interpreter profile or
 shell `-c` execution.
 
+The prepared direct-bridge manifest contains only a declared adapter BLAKE3
+identity and the fixed `--input-manifest` position beside the application
+construction. It contains no path, environment, durable ID, receipt, or
+authority; future daemon scheduling and sealing remain separate.
+
 The generic direct-executable custody driver is daemon-private and currently
 unscheduled, so this application construction cannot enter it yet.
 

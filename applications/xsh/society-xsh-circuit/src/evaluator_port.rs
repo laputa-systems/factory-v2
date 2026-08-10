@@ -219,6 +219,40 @@ impl Vs001EvaluatorInvocationV1 {
     }
 }
 
+/// One exact direct-adapter artifact declared by the application build path.
+/// This is a byte identity, not a durable content-store object, an executable
+/// path, or a claim that an adapter has been sealed, materialized, or admitted.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DirectEvaluatorAdapterArtifactV1 {
+    declared_blake3: ContentDigest,
+}
+
+impl DirectEvaluatorAdapterArtifactV1 {
+    pub const fn from_declared_blake3(declared_blake3: ContentDigest) -> Self {
+        Self { declared_blake3 }
+    }
+
+    pub const fn declared_blake3(self) -> ContentDigest {
+        self.declared_blake3
+    }
+}
+
+/// The sole argument position a future direct adapter receives from generic
+/// custody. The trusted daemon supplies the verified absolute input-manifest
+/// path; application construction cannot supply that path or add argv atoms.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DirectEvaluatorAdapterArgumentV1 {
+    VerifiedInputManifest,
+}
+
+impl DirectEvaluatorAdapterArgumentV1 {
+    pub const fn flag(self) -> &'static str {
+        match self {
+            Self::VerifiedInputManifest => "--input-manifest",
+        }
+    }
+}
+
 /// The output grammar that remains owned by the XSH parser boundary.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Vs001EvaluatorOutputContractV1 {
@@ -280,5 +314,44 @@ impl Vs001EvaluatorConstructionV1 {
 
     pub const fn input_rendering(&self) -> &CanonicalEvaluatorInputRenderingV1 {
         &self.input_rendering
+    }
+
+    /// Prepare the neutral artifact facts a future bridge needs after it has
+    /// independently sealed and registered them. This neither authorizes nor
+    /// executes a native child.
+    pub fn prepare_direct_adapter(
+        self,
+        adapter: DirectEvaluatorAdapterArtifactV1,
+    ) -> Vs001DirectEvaluatorBridgeManifestV1 {
+        Vs001DirectEvaluatorBridgeManifestV1 {
+            construction: self,
+            adapter,
+            arguments: [DirectEvaluatorAdapterArgumentV1::VerifiedInputManifest],
+        }
+    }
+}
+
+/// Application-owned, non-durable manifest for the future direct-executable
+/// bridge. Generic custody may later consume only the adapter and input
+/// identities plus its own fixed argument contract; all XSH program, package,
+/// and output meaning stays in [`Vs001EvaluatorConstructionV1`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Vs001DirectEvaluatorBridgeManifestV1 {
+    construction: Vs001EvaluatorConstructionV1,
+    adapter: DirectEvaluatorAdapterArtifactV1,
+    arguments: [DirectEvaluatorAdapterArgumentV1; 1],
+}
+
+impl Vs001DirectEvaluatorBridgeManifestV1 {
+    pub const fn construction(&self) -> &Vs001EvaluatorConstructionV1 {
+        &self.construction
+    }
+
+    pub const fn adapter(&self) -> DirectEvaluatorAdapterArtifactV1 {
+        self.adapter
+    }
+
+    pub const fn arguments(&self) -> &[DirectEvaluatorAdapterArgumentV1; 1] {
+        &self.arguments
     }
 }

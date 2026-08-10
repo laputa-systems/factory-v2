@@ -546,6 +546,16 @@ XSH/Xsht binaries remain separately named application inputs. A later closed
 package manifest must bind their ordered roles and BLAKE3 identities before an
 entrypoint digest can be treated as a complete evaluator identity.
 
+`Vs001DirectEvaluatorBridgeManifestV1` is the small application preparation
+for that later bridge: it carries the application-owned construction, one
+declared direct-adapter artifact digest, and exactly one
+`--input-manifest` position. It cannot carry a path, environment, child ID,
+receipt, content object, evaluator revision, or extra argv atom. The daemon
+will have to seal and resolve the adapter and input identities, materialize
+their paths in its owned workspace, and supply the verified absolute input path
+only after separate schedule authority exists. The manifest is therefore not
+an execution request or evidence claim.
+
 ## Three forms of durable truth
 
 The implementation must not collapse three different records into one.
