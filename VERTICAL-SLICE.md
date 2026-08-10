@@ -116,19 +116,24 @@ kernel-issued `AuthorizedProductChange`.
 
 The current process foundation also has one generic `NativeChild` custody
 nucleus for PID/PGID ownership, liveness, signalling, direct wait, and bounded
-streams. Pi is a strict optional session/protocol sidecar over that base. A
-daemon-private deterministic-evaluator pre-bridge accepts only a verified
-direct executable, a verified input manifest, fixed argv, and an empty
-environment, with sealing allowed only after reap and group absence. The
-kernel now has an idempotent daemon-facing claim which treats an already
-registered deterministic experiment as the sole scheduling authorization and
-derives the oldest eligible experiment's exact evaluator/input/workspace
-admission. Once its child is finalized with complete stdout and stderr seals,
-the kernel derives the forensic output occurrence from that exact stdout seal;
-an arbitrary global content object cannot be substituted. The resident serving
-loop has no call site for this claim yet, and there is no public execution
-command, application evaluator run, semantic evidence admission, or completed
-slice claim.
+streams. Pi is a strict optional session/protocol sidecar over that base. The
+kernel has an idempotent daemon-facing claim which treats an already registered
+deterministic experiment as the sole scheduling authorization and derives the
+oldest eligible experiment's exact evaluator/input/workspace admission.
+
+A provider-free daemon-private coordinator exercises that claim. It derives a
+prospective workspace without creating it, claims first, and only then
+allocates private fixed paths and streams the exact sealed evaluator and input
+bytes into them. It admits only a verified direct executable, a verified input
+manifest, fixed argv, and an empty environment. The coordinator records spawn,
+signal, reap, and later owned-group liveness facts, seals complete stdout and
+stderr only after group absence, finalizes the child, and invokes the
+kernel-derived forensic-manifest and deterministic-receipt transitions. The
+forensic output is the exact stdout seal and requires the exact complete stderr
+seal; an arbitrary global content object cannot be substituted. The resident
+serving loop has no call site for this coordinator yet, and there is no public
+execution command, post-restart reconciliation, workspace disposal,
+application semantic evidence admission, or completed slice claim.
 
 The fresh bootstrap names its single generic root-governance relation
 `FoundingMission`, `RootAuthorityOffice`, and `RootAuthorityOfficeSession`.

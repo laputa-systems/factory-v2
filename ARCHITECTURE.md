@@ -129,15 +129,23 @@ requirements. The only current evaluator process treatment is a verified
 direct executable with one verified input-manifest argument and an empty
 environment. It rejects shebang scripts and supplies no interpreter or shell
 launcher, retains bounded stdout/stderr, and permits sealing only after direct
-reap and owned-group absence. The kernel's daemon-facing scheduler claim treats
-an existing registered deterministic experiment as the sole scheduling
-authorization, chooses the oldest eligible experiment, and atomically derives
-its exact evaluator/input/workspace admission. After native finalization, a
-second constrained transition derives the forensic output from that child's
-complete stdout seal while also requiring complete stderr; callers cannot
-substitute an unrelated global object. The resident serving loop still has no
-call site for this claim, and there is no public execution command, semantic
-evidence admission, or application execution claim.
+reap and owned-group absence.
+
+The kernel's daemon-facing scheduler claim treats an existing registered
+deterministic experiment as the sole scheduling authorization, chooses the
+oldest eligible experiment, and atomically derives its exact
+evaluator/input/workspace admission. The daemon-private coordinator computes a
+prospective workspace without mutating the filesystem, claims first, and
+allocates and materializes the fixed evaluator/input paths only for an accepted
+claim. It records spawn, signals, direct reap, any later owned-group liveness,
+and both complete stream seals. Only after child finalization may a constrained
+transition derive the forensic output from that child's stdout seal while also
+requiring complete stderr; callers cannot substitute an unrelated global
+object. Provider-free integration covers the ordinary and lingering-descendant
+paths. The resident serving loop still has no call site for this coordinator,
+and there is no public execution command, post-restart reconciliation,
+workspace disposal, semantic evidence admission, or application execution
+claim.
 
 Office Prompt completion also has two deliberately distinct closed sequence
 shapes. Observed assistant results require `AgentSettled`, a later exact final

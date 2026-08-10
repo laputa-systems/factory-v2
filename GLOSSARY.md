@@ -115,9 +115,11 @@ fact cannot make a reaped or recovery-contained process operational.
 The custody nucleus owns the one PID/PGID, group liveness, signals, direct
 wait, and bounded native streams. Pi may attach a strict session/protocol
 sidecar; a deterministic evaluator attaches no Pi identity. The current
-direct-executable evaluator treatment is a private unscheduled fixture, not an
-application evaluator profile, scheduler, evidence admission, or execution
-result.
+direct-executable evaluator treatment is driven only by a daemon-private,
+provider-free coordinator after a kernel claim over an already registered
+experiment. The coordinator is not an application evaluator profile, public
+scheduler, evidence admission, or application execution result, and the
+resident serving loop does not yet dispatch it.
 
 ### Office Prompt terminal evidence
 

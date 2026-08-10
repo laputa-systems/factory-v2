@@ -37,6 +37,13 @@ impl ContentDigest {
         Self(*blake3::hash(bytes).as_bytes())
     }
 
+    /// Constructs the same physical digest identity from an already decoded
+    /// 32-byte boundary value. This avoids routing typed digest equality
+    /// through a debug or hexadecimal string representation.
+    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
     pub fn parse(value: &str) -> Result<Self, ContentDigestError> {
         if value.len() != DIGEST_HEX_LENGTH
             || !value

@@ -7,9 +7,11 @@
 //! provenance, retention, evaluator, or evidence fields: the resulting
 //! `ContentObject` is global byte identity only.
 
+use std::io::Write;
+
 use society_content::{
-    ContentDigest, ContentObjectStore, ContentSealDisposition, ContentSealLimit, ContentStoreError,
-    ContentStoreRoot,
+    ContentDigest, ContentObjectStore, ContentReadLimit, ContentReadReceipt,
+    ContentSealDisposition, ContentSealLimit, ContentStoreError, ContentStoreRoot,
 };
 use society_kernel::{
     Blake3Digest, Capability, ChildStreamKind, CommandBody, CommandDisposition, CommandId,
@@ -175,6 +177,26 @@ impl ContentSealingAuthority {
         bytes: &[u8],
     ) -> Result<ContentObjectRegistration, ContentSealingError> {
         self.seal_and_register_inner(kernel, operation, bytes, None)
+    }
+
+    /// Releases exact physically sealed bytes only to another daemon-private
+    /// custody step. The caller supplies the kernel-bound digest rather than
+    /// a path or content-store layout; the content store reopens its own
+    /// immutable object with no-follow metadata and BLAKE3 verification.
+    ///
+    /// This does not look up a `ContentObjectId` or attach a role to the
+    /// bytes. A kernel admission has already bound that global object identity
+    /// to its own closed operation before it reaches this physical seam.
+    pub(crate) fn copy_verified_content_to(
+        &self,
+        digest: Blake3Digest,
+        limit: ContentReadLimit,
+        destination: &mut impl Write,
+    ) -> Result<ContentReadReceipt, ContentSealingError> {
+        let digest = ContentDigest::from_bytes(digest.as_bytes());
+        self.store
+            .copy_verified_to(digest, limit, destination)
+            .map_err(ContentSealingError::Physical)
     }
 
     /// Deterministic resident-only crash seam used to prove that each durable

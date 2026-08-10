@@ -593,6 +593,27 @@ impl NativeChildSupervisor {
         self.child_mut(child_process_id)?.complete_deferred_reap()
     }
 
+    /// Observes only the liveness of the PID-derived process group which this
+    /// supervisor already owns. The caller remains responsible for recording
+    /// the resulting exact kernel receipt before relying on it for closure.
+    pub fn observe_group_liveness(
+        &mut self,
+        child_process_id: &SupervisedChildId,
+    ) -> Result<ProcessGroupLiveness, SupervisionError> {
+        self.child_mut(child_process_id)?.group_liveness()
+    }
+
+    /// Returns the exact signal-attempt history accumulated so far for one
+    /// owned child. The history remains retained for the final native receipt;
+    /// callers use their own projected-count cursor so a kernel receipt can
+    /// be committed promptly without erasing the post-reap audit shape.
+    pub fn signal_receipts(
+        &mut self,
+        child_process_id: &SupervisedChildId,
+    ) -> Result<Vec<SignalReceipt>, SupervisionError> {
+        Ok(self.child_mut(child_process_id)?.signals.clone())
+    }
+
     fn child_mut(
         &mut self,
         child_process_id: &SupervisedChildId,

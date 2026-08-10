@@ -98,16 +98,19 @@ The current generic `NativeChild` foundation owns one PID/PGID, group
 liveness, signal delivery, direct wait, bounded stdout/stderr capture, and
 post-reap receipt shape. Pi composes that custody nucleus through a strict
 session/protocol sidecar rather than defining the base process identity. A
-daemon-private deterministic-evaluator pre-bridge admits only a verified direct
-executable, its verified input-manifest path, a fixed argv grammar, and an
-empty environment. `KernelStore::claim_registered_deterministic_evaluator`
-atomically derives the oldest eligible experiment's native admission from its
-already durable registration; applications do not issue scheduling authority.
-After a finalized child has complete stdout and stderr seals, the kernel derives
-the forensic output occurrence from that exact admission rather than accepting
-an arbitrary global object. The resident serving loop does not yet call this
-claim, and no supervisor/public execution command or end-to-end application
-result exists.
+daemon-private deterministic-evaluator coordinator invokes
+`KernelStore::claim_registered_deterministic_evaluator` before it allocates a
+workspace or releases sealed bytes. An accepted claim derives the oldest
+eligible experiment's exact native admission; the coordinator then
+materializes the verified direct executable and input manifest under private
+fixed paths, uses the fixed argv and empty environment, records native custody,
+seals both streams after reap and group absence, finalizes the child, and asks
+the kernel to derive the forensic output occurrence from that exact stdout
+seal. Applications neither issue scheduling authority nor select an output
+object. This path is provider-free and integration-tested, but the resident
+serving loop does not yet call it; there is no supervisor/public execution
+command, post-restart reconciliation, semantic evidence admission, or
+end-to-end application result.
 
 ## Nearest hard judges
 
@@ -120,6 +123,7 @@ npm test --prefix packages/society-pi-host
 cargo test -p society-content
 cargo test -p society-product
 cargo test -p societyd --lib native_child
+cargo test -p societyd --lib deterministic_evaluator -- --test-threads=1
 cargo test -p societyd --test supervision -- --test-threads=1
 tests/generic-boundary/run-no-application-knowledge.sh
 

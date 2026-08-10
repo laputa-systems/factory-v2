@@ -328,6 +328,7 @@ fn digest_and_root_text_require_one_canonical_spelling() {
     );
     let digest = ContentDigest::of_bytes(b"canonical");
     assert_eq!(ContentDigest::parse(&digest.to_hex()).unwrap(), digest);
+    assert_eq!(ContentDigest::from_bytes(*digest.as_bytes()), digest);
     assert!(ContentDigest::parse(&digest.to_hex().to_uppercase()).is_err());
     assert!(ContentStoreRoot::parse("relative/objects").is_err());
     assert!(ContentStoreRoot::parse("/tmp/objects/").is_err());
