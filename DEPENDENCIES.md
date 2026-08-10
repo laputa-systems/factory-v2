@@ -2,10 +2,10 @@
 
 This file records the complete dependency allowance for the generic trusted
 implementation. A version appearing here is permission to use it only in the
-named boundary; it is not a reason to add it to every crate. An application
-records any additional dependency decision beneath `applications/<product>/`.
-Adding another direct dependency requires an explicit contract decision and an
-update here.
+named boundary; it is not a reason to add it to every crate. An experimental
+world records any additional decision beneath `applications/<experiment>/`.
+Adding another direct dependency requires an explicit contract decision, an
+identified need in the current experimental protocol, and an update here.
 
 ## Rust workspace
 
@@ -29,12 +29,12 @@ crate sources are registry-resolved and lockfile-pinned, not copied into this
 repository.
 
 `society-content` and `society-product` are root-workspace members.
-`society-content` provides physical byte seals; `society-product` provides
-guarded local materialization mechanics, but does not yet bind a receipt to
-resident authority. Product-specific observation adapters belong in isolated
-application workspaces and may depend on the public content-identity boundary
-by path. Separate lockfiles with the same exact dependency versions grant no
-daemon or kernel authority.
+`society-content` provides physical byte seals. `society-product` is retained
+as dormant guarded Git materialization mechanics and is outside CL-001; it does
+not bind a receipt to resident authority. Experimental-world adapters belong in
+isolated application workspaces and may depend on public generic identity
+boundaries by path. Separate lockfiles with the same exact dependency versions
+grant no daemon or kernel authority.
 
 The workspace deliberately has no async runtime, ORM, workflow framework,
 process-control framework, tracing appender, UUID crate, time/date crate, or
@@ -42,7 +42,7 @@ generic schema/validation framework. Identifier generation, clocks, codecs,
 state transitions, supervision, and canonical schema bootstrapping are trusted
 kernel contracts rather than delegated policy.
 
-## TypeScript SDK host
+## Replaceable actor-runtime adapter
 
 `packages/society-pi-host/package.json` and its exact npm lockfile own the
 JavaScript dependency surface. The production dependencies are
@@ -61,7 +61,9 @@ supervisor rejects any other executable before a paid session is constructed.
 The host imports the SDK directly and calls `createAgentSession()`. It does not
 shell out to the Pi CLI. It may serialize JSON only across its versioned,
 closed stdin/stdout boundary and Pi's canonical session files. It receives no
-SQLite, Git, capability, budget, scheduling, or cancellation-policy authority.
+SQLite, capability, budget, experiment assignment, institutional-memory,
+scheduling, or cancellation-policy authority. Pi is one replaceable actor
+runtime; the institutional model is not encoded in the SDK adapter.
 
 ### Paid-admission advisory gate
 
@@ -74,16 +76,19 @@ Pi's package/model discovery dependencies, which this host disables, but it
 remains part of the admitted package graph.
 
 This does not authorize a silent transitive override or a move away from Pi
-0.83.0. Native qualification and every paid attempt remain blocked until the
-authorized office explicitly chooses a dependency resolution, the lock delta is
-reviewed, and the full host/Rust-peer qualification suite is rerun. The known
-fixed transitive releases are `undici` 8.9.0 and `brace-expansion` 5.0.9; those
-versions are candidates for that decision, not current execution authority.
+0.83.0. Native qualification and every paid or live-study actor attempt remain
+blocked until the authorized office explicitly chooses a dependency
+resolution, the lock delta is reviewed, and the full host/Rust-peer
+qualification suite is rerun. The known fixed transitive releases are `undici`
+8.9.0 and `brace-expansion` 5.0.9; those versions are candidates for that
+decision, not current execution authority.
 
 ## Upgrade rule
 
-An upgrade is a contract change. It must record the reason, inspect the direct
-and transitive delta, update both lockfiles where relevant, rerun the nearest
-boundary and replay judges, and create a new typed execution-profile revision
-before a paid session can use it. A lockfile refresh with no reviewed contract
-change is not accepted.
+An upgrade is a contract and potentially an experimental-treatment change. It
+must record the reason, inspect the direct and transitive delta, update all
+relevant lockfiles, rerun the nearest boundary and replay judges, and create a
+new typed execution-profile revision before a paid session or study can use it.
+Results from different runtime dependency graphs must not be pooled as one
+actor-policy revision. A lockfile refresh with no reviewed contract change is
+not accepted.

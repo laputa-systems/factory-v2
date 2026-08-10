@@ -1,3 +1,0 @@
-# schema: CurationContractObservationV1/tsv-v1
-account_kind	purpose	hypothesis_coverage	counterevidence	preserved_conflict	unknowns	exclusions	raw_escalations	frontier_admission	disposition
-decision_curation	authorize_spawn_stderr_prototype	h1_h2_h3_with_dissent	declared	preserved	declared	semantic	none_requested	frontier_constrained	acceptance_ready

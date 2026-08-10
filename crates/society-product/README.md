@@ -1,7 +1,9 @@
-# `society-product` — guarded Git materialization core
+# `society-product` — dormant guarded Git materialization core
 
-This repository-root workspace member implements only provider-free local Git
-materialization mechanics. It is not a durable authority: its trusted caller
+This repository-root workspace member preserves provider-free local Git
+materialization mechanics developed before the institutional model-organism
+reorientation. It is outside the current CL-001 research slice and has no
+resident call site. It is not a durable authority: its trusted caller
 supplies a typed `ProductChangeAuthorizationInput`, whose construction proves
 no kernel or other authority issuance, and persists the returned evidence.
 Dependency resolution is governed by the repository-root `Cargo.lock`.
@@ -61,7 +63,7 @@ destructor cannot return durable cleanup evidence: its holder must call exactly
 one of `finalize_materialization` or `abandon_prepared_materialization` and
 persist the resulting receipt/evidence.
 
-Run the provider-free contract suite from the repository root:
+Its preservation contract remains executable from the repository root:
 
 ```text
 cargo test -p society-product
@@ -73,7 +75,7 @@ The tests require a local `/usr/bin/git` (the current macOS host path) and
 create/retire only uniquely named temporary repositories. They never access or
 modify an existing checkout.
 
-Deliberate omissions for a future authority/supervisor integration: durable
-workflow authorization and idempotency, content-object sealing, budget and
-cancellation supervision, scheduling, external-validation receipt
+No current roadmap item integrates this crate. Deliberate omissions remain:
+durable workflow authorization and idempotency, content-object sealing, budget
+and cancellation supervision, scheduling, external-validation receipt
 authentication and process-group/liveness evidence, and any remote delivery.

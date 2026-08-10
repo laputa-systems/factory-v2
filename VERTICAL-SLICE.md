@@ -1,205 +1,230 @@
-# Generic society execution sequence
+# CL-001 generic vertical slice
 
-[`GLOSSARY.md`](GLOSSARY.md) is canonical for the generic terms used here, and
-[`ARCHITECTURE.md`](ARCHITECTURE.md) owns the general trust boundary. An
-application owns its own executable slice beneath `applications/<product>/`.
+[`GLOSSARY.md`](GLOSSARY.md) owns generic terms and implementation status.
+[`ARCHITECTURE.md`](ARCHITECTURE.md) owns trust boundaries. The exact synthetic
+world and scientific protocol live in
+[`applications/correction-latency/VERTICAL-SLICE.md`](applications/correction-latency/VERTICAL-SLICE.md).
 
 ## Purpose
 
-The generic apparatus is a resident authority for bounded, replayable work. It
-does not contain a mission for a named product, an evaluator for a named
-product behavior, or a product-specific delivery rule. It accepts typed
-application purpose and alignment records, enforces authority and physical
-boundaries, and emits an authorized product-change output only after the
-required generic decision and review gates succeed.
+The first vertical slice must answer one small question:
 
-## Intended typed application port
+> After every actor is replaced, does retaining institutional memory change
+> the population's latency or ability to incorporate a delayed correction?
 
-The following contract is the required complete boundary. The current
-prototype implements the normalized mission, its daemon-private sealed-source
-binding, and Project alignment portion, but not durable authorized
-product-change output.
+The slice is successful when it can run and audit the matched comparison,
+including a null result. It need not show improvement, emergence, alignment, or
+self-improvement.
 
-```text
-ApplicationMissionInput
-  application: ApplicationIdentity
-  revision: ApplicationRevision
-  mission: MissionStatement
-  principles: nonempty ordered MissionPrinciple relation
-  north_star_questions:
-    change
-    improvement_evidence
-    boundary_commitment
-    revisit
-  source_rendering_digest: Blake3Digest
+## Governing constraint
 
-MissionSourceRendering
-  canonical nonempty bytes, bounded to 16,384 bytes
+**Individual agents should be cheap and disposable. Do not make actors
+increasingly stateful; make the society increasingly stateful.**
 
-ProjectNorthStarAlignment
-  application_revision: ApplicationRevisionId
-  change: CapabilityOrBehaviorChange
-  improvement_evidence: ImprovementDiscriminator
-  boundary_commitment: BoundaryCommitment
-  revisit: RevisitCondition
+For CL-001, each actor instance:
 
-AuthorizedProductChange
-  authorization: ProductDeliveryAuthorizationId
-  application_revision: ApplicationRevisionId
-  product_change: ProductChangeId
-  authorizing_decision: DecisionId
-  repository: ProductRepositoryId
-  admitted_base: CommitId
-  accepted_patch: PatchDigest
-  accepted_tree: TreeId
-  validation_profile: ValidationProfileId
-  delivery_target: LocalBranchRef
-```
+1. receives one local obligation, bounded evidence view, institution revision,
+   narrow capability set, and hard resource budget;
+2. may emit only typed messages, claims, evidence, uncertainty, or task status;
+3. cannot inspect platform ground truth, arbitrary institutional memory, another
+   actor's private context, or the experiment assignment beyond its view;
+4. relinquishes authority at obligation completion or deadline; and
+5. terminates before the replacement intervention completes.
 
-Each field is a domain newtype, identifier, or closed relation. The durable
-schema uses one named table per body and closed enum kinds where a vocabulary
-is required. The port must not introduce a JSON document, generic payload,
-metadata map, EAV table, or a stringly application discriminator. Human text is
-admitted only through its named typed field and, where provenance matters,
-through a separately sealed `ContentObjectId`.
+No hidden actor session is resumed after replacement. State survives only if a
+typed institutional transition admitted it before the actor terminated.
 
-An application may define additional meaning behind its own revision and
-content objects. The generic kernel records the revision, cardinality,
-authority, lineage, and evidence links; it does not reinterpret application
-semantics or load an application crate.
-
-## Generic execution sequence
+## Required generic sequence
 
 ```text
-typed application mission and north-star input
-  -> generic bootstrap, capability, and budget envelope
-  -> admitted Operating Cycle with a pinned execution profile
-  -> bounded actor or deterministic work under process ownership
-  -> sealed content and typed evidence admission
-  -> preserved challenge, decision, and review records
-  -> AuthorizedProductChange
-  -> isolated materialization and typed validation receipt
-  -> guarded local delivery receipt
-  -> outcome obligation, replay, reconciliation, and closure
+sealed StudyProtocolRevision
+  -> admitted world and measurement revisions
+  -> source PopulationSnapshot and InstitutionRevision
+  -> paired Episode admissions with fixed budgets
+  -> treatment assignment before treatment-dependent work
+  -> disposable local actor obligations
+  -> raw messages, claims, evidence, and visibility events
+  -> admitted institutional-memory transitions
+  -> scheduled correction release
+  -> complete actor replacement
+  -> retained-memory or reset-memory intervention
+  -> bounded post-replacement obligations and final decision
+  -> derived measurements from raw facts
+  -> episode closure after actor, process, and budget reconciliation
+  -> integrity replay
+  -> optional ExperimentalFork with a named treatment delta
 ```
 
-The trusted apparatus owns SQLite mutation, identity, capability checks,
-budgets, content sealing, process groups, cancellation, replay, and the
-authenticated product-delivery boundary. Applications own mission prose,
-alignment questions, source-specific evaluators, validation profiles, and
-product conclusions. An application child never gains SQLite, capability,
-Pi-session, process-reaping, cancellation, or delivery-ref authority merely by
-being able to run a tool.
+Every arrow is a typed authority boundary. Application bytes and parsers may
+define world semantics but cannot write these transitions directly.
+
+## Minimum new contracts
+
+Names are directional until implemented; code, schema, protocol, tests, and
+this document must land together when a name becomes durable.
+
+### Study protocol
+
+`StudyProtocolRevision` freezes:
+
+- research question and application/world revision;
+- eligibility and baseline requirements;
+- treatment fields and assignment procedure;
+- actor count, policy revisions, role topology, and replacement point;
+- per-actor and total episode ceilings;
+- correction-release schedule;
+- raw fact retention and exclusion rules;
+- measurement revisions and analysis population; and
+- stop and closure conditions.
+
+The protocol cannot contain the observed result or select a preferred outcome.
+
+### Episode and treatment
+
+`Episode` binds one protocol, world instance, ground-truth commitment,
+population snapshot, institution revision and initial-state digest, budget,
+assignment, and randomization identity.
+
+`TreatmentAssignment` is durable before actors receive any treatment-dependent
+view. For the first slice its only scientific field is institutional memory
+after replacement: `Retained` or `Reset`. Correction delay and all other world
+facts are matched constants within one pair.
+
+### Disposable actor obligation
+
+An episode-local actor obligation binds:
+
+- one population member and actor-policy revision;
+- one role and local evidence view;
+- one institution revision;
+- one bounded work item and deadline;
+- one capability subset and resource ceiling; and
+- one authority-closing completion, failure, or expiry.
+
+It does not carry durable free-form memory. A successor actor receives only
+institutionally admitted state selected through its new obligation.
+
+### Institutional memory
+
+The minimum memory contract preserves:
+
+- exact source message, claim, or evidence identity;
+- author actor instance and institution revision;
+- promotion authority and level;
+- scope and visibility;
+- challenges, supersession, and correction status; and
+- declared downstream consumers.
+
+Reset creates a new episode state with no promoted memory from before the
+intervention; it does not delete the source episode's records. Retention makes
+only admitted institutional state visible to successor actors, never private
+actor state.
+
+### Messages and visibility
+
+Every admitted message has one sender, bounded content identity, message class,
+declared recipients, delivery result, and episode-local sequence. Visibility is
+recorded separately from semantic acceptance. An actor cannot communicate
+through an unrecorded side channel in the admitted profile.
+
+### Intervention
+
+The first slice needs two exact interventions:
+
+- `ReleaseCorrection`, which makes the matched correction evidence eligible at
+  the protocol-defined point; and
+- `ReplacePopulation`, which closes all source actor authority, proves their
+  process/session reconciliation, and admits a fresh population snapshot.
+
+The memory treatment is applied atomically with successor-population admission.
+
+### Measurement
+
+Measurements are derived from retained raw facts under a sealed analysis
+revision. CL-001 requires:
+
+- correction adoption latency;
+- final decision correctness against ground truth;
+- false-claim persistence at episode closure;
+- dissent/correction visibility to successor actors;
+- institutional-memory items consulted after replacement;
+- actor and total resource use; and
+- unresolved or missing observations.
+
+The result may be `Observed`, `Unavailable`, or `Invalidated`. Missing data is
+never converted to zero or a favorable result.
+
+### Experimental fork
+
+`ExperimentalFork` names a closed source checkpoint and one treatment delta,
+then creates a new Episode identity. It may reuse sealed world and institution
+content but cannot reuse command, event, actor, budget, or result identities.
+
+The first implementation may create paired episodes from a common declared
+initial state rather than pause and clone a live process image. It must not call
+integrity replay a counterfactual.
+
+## Existing foundations to reuse
+
+CL-001 should reuse, not duplicate:
+
+- typed application mission and revision identity;
+- capability grants and admission generations;
+- integer budgets and conservative accounting freeze;
+- content objects and bounded verified reads;
+- `NativeChild` process-group custody and stream seals;
+- Pi as one optional actor runtime;
+- cancellation and closure obligations;
+- append-only events and integrity replay; and
+- daemon-private deterministic evaluator custody for measurement code.
+
+Current Projects, Operating Cycles, Actor attempts, Offices, and deterministic
+evaluator experiments may support these transitions, but none should be
+silently relabeled as the scientific contract.
+
+## Explicit non-goals
+
+CL-001 does not include:
+
+- software-product mutation or delivery;
+- a general-purpose swarm API;
+- endogenous actor reproduction;
+- institution mutation or self-modification;
+- reinforcement learning;
+- model fine-tuning;
+- open network access;
+- scalar mission optimization;
+- claims about hidden cognition;
+- autonomous scientific interpretation; or
+- a requirement that the retained-memory arm outperform the reset arm.
+
+## Acceptance gates
+
+The slice is complete only when provider-free tests and the admitted live-run
+path prove:
+
+1. protocol, world, population, institution, treatment, and measurements are
+   revision-bound before work;
+2. actor-local state cannot cross replacement except through a named admitted
+   institutional-memory transition;
+3. all source actor authority and native descendants close before successors
+   act;
+4. retained and reset arms receive matched actor policies, evidence, correction
+   timing, and resource ceilings;
+5. the reset arm cannot recover pre-replacement institutional state through a
+   content, transcript, or identity alias;
+6. ground truth is unavailable to actors and immutable after admission;
+7. every message visibility and correction delivery is replay-auditable;
+8. measurements derive from raw episode facts and preserve unavailable data;
+9. integrity replay reconstructs each arm independently;
+10. an experimental fork has new authority and names its exact delta; and
+11. the report includes isolated and unstructured actor baselines before using
+    the term emergent.
 
 ## Current implementation boundary
 
-The repository currently implements a normalized `ApplicationMissionInput`,
-four typed north-star questions, founding-mission-revision-bound
-`ProjectNorthStarAlignment`, and closed daemon transport for that founding
-input. The application owns bounded `MissionSourceRendering` bytes plus the
-input's BLAKE3 digest, but never a `ContentObjectId`. A daemon-private
-founding-source path checks those bytes, side-effect-free preflights the outer
-command, physically seals them, records the seal receipt and global object,
-then invokes `InstallFoundingMission`; the kernel resolves the declared digest
-to the registered object and persists a derived private binding. Deterministic
-internal operation identities make the content primitive retry-stable while the
-authority remains live; they do not make a failed supervisor handler resumable.
-The request ends on that failure, and restart remains `RecoveryFenced`, with no
-partial source-operation recovery. The supervisor carries
-`MissionSourceRendering` only with `InstallFoundingMission`; no public or
-supervisor generic content-mutation command or content-writer authority exists.
-This is byte custody only: it establishes no producer provenance,
-semantic/evidence admission, or end-to-end application execution.
-The materializer's caller-supplied
-`ProductChangeAuthorizationInput` and local receipt are likewise not a durable
-kernel-issued `AuthorizedProductChange`.
-
-The current process foundation also has one generic `NativeChild` custody
-nucleus for PID/PGID ownership, liveness, signalling, direct wait, and bounded
-streams. Pi is a strict optional session/protocol sidecar over that base. The
-kernel has an idempotent daemon-facing claim which treats an already registered
-deterministic experiment as the sole scheduling authorization and derives the
-oldest eligible experiment's exact evaluator/input/workspace admission.
-
-A provider-free daemon-private coordinator exercises that claim. It derives a
-prospective workspace without creating it, claims first, and only then
-allocates private fixed paths and streams the exact sealed evaluator and input
-bytes into them. It admits only a verified direct executable, a verified input
-manifest, fixed argv, and an empty environment. The coordinator records spawn,
-signal, reap, and later owned-group liveness facts, seals complete stdout and
-stderr only after group absence, finalizes the child, and invokes the
-kernel-derived forensic-manifest and deterministic-receipt transitions. The
-forensic output is the exact stdout seal and requires the exact complete stderr
-seal; an arbitrary global content object cannot be substituted.
-
-The kernel now scopes evaluator revisions to the Project's aligned application
-revision and narrows `AdmitDeterministicEvidence` to the exact evaluation
-receipt. It derives all lineage and accepts only a scheduler-claimed,
-finalized, two-stream child whose direct wait status is exit zero. The durable
-result is the closed generic role `DeterministicObservation`, applicability
-`TestsTargetHypothesis`, and limitation
-`ApplicationSemanticsUninterpreted`; the kernel does not parse the application
-package or persist its vocabulary. The daemon coordinator and resident serving
-loop have no call site for this evidence transition yet, and there is no public
-execution command, post-restart reconciliation, workspace disposal,
-application-semantic admission, or completed slice claim.
-
-The fresh bootstrap names its single generic root-governance relation
-`FoundingMission`, `RootAuthorityOffice`, and `RootAuthorityOfficeSession`.
-Those names preserve the existing single-root-office state and numeric
-protocol semantics without importing an application's institutional vocabulary.
-
-The daemon-private Pi bridge currently projects an authorized Office Prompt's
-complete physical delivery, accepted result, cumulative accounting facts, and
-closed terminal sequence into the kernel. Observed assistant results require
-`AgentSettled -> final accounting -> Settled`; SDK-unavailable results require
-the adjacent final Known usage fact and `Settled` without inventing an agent
-lifecycle. Only completed/observed-stop returns the Office to Ready. This is a
-generic execution boundary, not evidence that an application's requested work
-was correct or that a product change is authorized.
-
-The same daemon-private foundation now records an idle Office-session Dispose
-chain as `Authorize-before-write -> delivered -> accepted -> final
-Known/failure -> Disposed`. Authorization is durable before the physical
-Dispose write; delivery is the complete pipe write; accepted is a separate host
-fact. The immediately following final Known usage permits the next `Disposed`
-receipt, whose materialized SessionManager transcript is verified under the
-owned session directory and sealed by the daemon's sole content writer before
-the kernel records its object identity. A no-Prompt session may instead have a
-sealed materialized transcript whose first prompt is explicitly absent; only a
-lazy missing session file is explicitly unmaterialized and has no content
-object. Neither absence arm can invent a first prompt or content. The final Known terminal
-reconciles the existing parent reservation, releasing its unused reserve, or
-freezes a known overrun. A final accounting failure freezes the reservation and
-enters containment without a synthetic `Disposed` receipt. Reaping the child
-is a separate process-custody transition.
-
-This is still only a same-lifetime foundation: the resident serving loop has
-no scheduler/control-loop call site for it, and there is no post-restart
-recovery, workspace disposal, semantic submission, paid/native qualification,
-or end-to-end application execution claim.
-
-The generic sequence therefore makes no claim that an application can yet run
-end to end. A product-specific executable contract must state its own admitted
-inputs, evaluators, budgets, delivery gates, and acceptance judge under
-`applications/<product>/`.
-
-## Acceptance direction
-
-Before an application may claim a complete generic-society execution, its
-acceptance suite must demonstrate all of the following without provider calls
-in ordinary tests:
-
-- typed mission and alignment records are revisioned, authorized, and linked to
-  every consequential work object;
-- stale admission, authority escalation, budget overrun, unsealed content,
-  invalid evidence, and a moved delivery base are rejected;
-- every accepted transition replays from the ledger and no application child
-  writes durable state directly;
-- a product delivery follows one exact authorization, base, patch, tree, and
-  validation profile; and
-- closure proves reconciliation of owned children, budgets, and open outcome
-  obligations.
-
-An application-specific slice may prove additional behavior. That evidence is
-owned by the application and must not be represented as a generic capability.
+None of the experimental-control contracts above are implemented yet. The
+repository supplies much of the lower trusted physics, but there is no honest
+CL-001 execution path today. The next tranche should start with protocol,
+episode, and treatment identity plus a provider-free deterministic harness—not
+with a live model call or additional governance hierarchy.
