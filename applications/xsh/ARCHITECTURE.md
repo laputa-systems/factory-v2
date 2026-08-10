@@ -532,29 +532,31 @@ useful split: the generic layer can prove which evaluator/input/output
 occurrence was custodied, while XSH alone can say what its cases and outputs
 mean.
 
-This is preparation, not a claim that the present native evaluator fixture can
-execute a VS-001 judge. That generic profile admits only one closed direct
-executable treatment; the checked-in VS-001 judges are POSIX-shell source. A
-future XSH-owned direct evaluator adapter may carry that source semantics, but
-it must be a separately pinned direct executable and use direct arguments. The
-generic ABI will not accept a general shell command, interpreter profile, or
-interpreter `-c` payload.
+The application now supplies `vs001-direct-evaluator-adapter`, a separately
+compiled direct executable whose first candidate is deliberately narrow:
+`CurationContract` only. The adapter reads the verified input-manifest file,
+parses seven closed length-framed TSV members in their fixed order, evaluates
+the existing C1 curation contract in Rust, and writes its canonical observation
+to stdout. It starts no shell or child, accepts no external path from the
+manifest, and depends on no XSH/Xsht binary, source checkout, `PATH`, or host
+tool. The direct profile consequently has one bounded input object rather than
+a false multi-file package provenance claim.
 
-The current construction pins the checked-in entrypoint script, not a complete
-evaluator package. Fixtures, transitive judge scripts, and assigned external
-XSH/Xsht binaries remain separately named application inputs. A later closed
-package manifest must bind their ordered roles and BLAKE3 identities before an
-entrypoint digest can be treated as a complete evaluator identity.
+`Vs001CurationDirectEvaluatorPackageV1` names exactly those seven application
+member roles. `Vs001DirectEvaluatorInputManifestV1` is their canonical bounded
+outer rendering; it has no durable identity and does not itself seal, admit,
+or authorize anything. The Rust adapter is cross-checked against the existing
+shell judge's checked-in positive output and negative relations. The other
+VS-001 judges, their scripts/fixtures, and their external XSH/Xsht/source-tree
+requirements remain application-owned but are explicitly pending a separate
+sealed-materialization design.
 
-`Vs001DirectEvaluatorBridgeManifestV1` is the small application preparation
-for that later bridge: it carries the application-owned construction, one
-declared direct-adapter artifact digest, and exactly one
-`--input-manifest` position. It cannot carry a path, environment, child ID,
-receipt, content object, evaluator revision, or extra argv atom. The daemon
-will have to seal and resolve the adapter and input identities, materialize
-their paths in its owned workspace, and supply the verified absolute input path
-only after separate schedule authority exists. The manifest is therefore not
-an execution request or evidence claim.
+No application evaluator is registered or scheduled. A later generic bridge
+may seal an actual adapter build and one exact input manifest, materialize only
+that verified manifest path in its private workspace, and invoke the fixed
+`--input-manifest` ABI. This application construction carries no path,
+environment, child ID, receipt, content object, evaluator revision, authority,
+or evidence claim.
 
 ## Three forms of durable truth
 

@@ -397,7 +397,9 @@ pub enum NegativeControlParseError {
         line: usize,
         control: NegativeControlId,
     },
-    #[error("negative-control row {line} is out of order: expected {expected:?}, got {observed:?}")]
+    #[error(
+        "negative-control row {line} is out of order: expected {expected:?}, got {observed:?}"
+    )]
     ControlOutOfOrder {
         line: usize,
         expected: NegativeControlId,

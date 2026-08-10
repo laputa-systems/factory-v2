@@ -46,6 +46,17 @@ which this application may consume but may not modify through application code.
   The port cannot choose a durable child identity, invoke or supervise a child,
   seal bytes, write SQLite, or admit evidence; generic crates must not name XSH
   evaluator semantics.
+- `society-xsh-circuit/src/bin/vs001-direct-evaluator-adapter.rs` is the sole
+  intentional application I/O exception. It may read one already verified,
+  bounded direct-candidate manifest and write its closed observation to stdout.
+  It must not start a child. Its pure parser/evaluator remains in
+  `curation_direct.rs`; no application library, contract, or ordinary adapter
+  test may access the filesystem, start a child, or use SQLite. The dedicated
+  executable integration test may create its isolated input fixture and invoke
+  that binary, but retains the same authority and SQLite prohibition. The
+  current direct candidate is self-contained C1 curation only. All other
+  VS-001 programs remain pending rather than treating external paths, source
+  checkouts, or host tools as admitted evaluator inputs.
 
 ## Application map
 
@@ -55,7 +66,7 @@ ARCHITECTURE.md                   preserved XSH application architecture/history
 GLOSSARY.md                       XSH canonical vocabulary
 VERTICAL-SLICE.md                 exact XSH VS-001 executable contract
 README.md                         isolated workspace entry point
-society-xsh-circuit/              closed XSH observation adapter and evaluator port
+society-xsh-circuit/              closed XSH adapters and C1 direct candidate
 society-xsh-contract/             XSH mission and north-star input factory
 circuits/vs-001-spawn-stderr/     XSH fixtures and deterministic judges
 ```
@@ -71,6 +82,7 @@ itself.
 ```text
 cargo test -p society-xsh-circuit
 cargo clippy -p society-xsh-circuit --all-targets -- -D warnings
+sh tests/run-curation-direct-cross-check.sh
 cargo test -p society-xsh-contract
 cargo clippy -p society-xsh-contract --all-targets -- -D warnings
 tests/run-boundary.sh

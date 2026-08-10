@@ -2,8 +2,7 @@
 
 use society_content::ContentDigest;
 use society_xsh_circuit::{
-    CanonicalEvaluatorInputRenderingV1, DirectEvaluatorAdapterArgumentV1,
-    DirectEvaluatorAdapterArtifactV1, EvaluatorPortError, Vs001EvaluatorConstructionV1,
+    CanonicalEvaluatorInputRenderingV1, EvaluatorPortError, Vs001EvaluatorConstructionV1,
     Vs001EvaluatorInvocationV1, Vs001EvaluatorOutputContractV1, Vs001EvaluatorProfileV1,
     Vs001EvaluatorProgramV1,
 };
@@ -29,7 +28,7 @@ fn construction_derives_the_checked_in_entrypoint_and_declares_only_bounded_inpu
     );
     assert_eq!(
         construction.profile(),
-        Vs001EvaluatorProfileV1::DirectAdapterPendingV1
+        Vs001EvaluatorProfileV1::DirectAdapterAdmissionPendingV1
     );
     assert_eq!(
         construction.invocation(),
@@ -58,27 +57,6 @@ fn input_rendering_rejects_empty_and_over_limit_values_before_any_sealing_or_req
             actual,
         }) if limit == 128 * 1024 && actual == 128 * 1024 + 1
     ));
-}
-
-#[test]
-fn direct_adapter_manifest_carries_only_declared_artifact_id_and_the_fixed_input_position() {
-    let construction = Vs001EvaluatorConstructionV1::new(
-        Vs001EvaluatorProgramV1::CurationContract,
-        CanonicalEvaluatorInputRenderingV1::from_bytes(b"canonical input manifest".to_vec())
-            .unwrap(),
-    );
-    let adapter_digest = ContentDigest::of_bytes(b"future direct adapter artifact");
-    let manifest = construction.clone().prepare_direct_adapter(
-        DirectEvaluatorAdapterArtifactV1::from_declared_blake3(adapter_digest),
-    );
-
-    assert_eq!(manifest.construction(), &construction);
-    assert_eq!(manifest.adapter().declared_blake3(), adapter_digest);
-    assert_eq!(
-        manifest.arguments(),
-        &[DirectEvaluatorAdapterArgumentV1::VerifiedInputManifest]
-    );
-    assert_eq!(manifest.arguments()[0].flag(), "--input-manifest");
 }
 
 #[test]
@@ -132,6 +110,13 @@ fn every_named_judge_has_one_checked_in_entrypoint_digest_invocation_and_output_
             Vs001EvaluatorInvocationV1::FrontierLeakage,
             Vs001EvaluatorOutputContractV1::FrontierLeakage,
             "circuits/vs-001-spawn-stderr/judges/run-frontier-leakage-controls.sh",
+        ),
+        (
+            Vs001EvaluatorProgramV1::SocietyNegativeControls,
+            "e71b8c82c6fcc0cbcd54d65eb644f3368d9e860b6ecab61b3d49bd3a0b13860c",
+            Vs001EvaluatorInvocationV1::SocietyNegativeControls,
+            Vs001EvaluatorOutputContractV1::SocietyNegativeControls,
+            "circuits/vs-001-spawn-stderr/judges/run-society-negative-controls.sh",
         ),
     ];
 

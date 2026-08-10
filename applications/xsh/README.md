@@ -7,7 +7,7 @@ fixtures, and evaluator contracts out of generic society crates.
 ```text
 applications/xsh/
 ├── Cargo.toml                         isolated XSH Rust workspace
-├── society-xsh-circuit/               parsing-only XSH VS-001 adapter
+├── society-xsh-circuit/               XSH VS-001 adapters and C1 direct candidate
 ├── society-xsh-contract/              typed mission/alignment input factory
 └── circuits/vs-001-spawn-stderr/      deterministic XSH fixtures and judges
 ```
@@ -28,22 +28,21 @@ cargo clippy -p society-xsh-circuit --all-targets -- -D warnings
 The application-owned evaluator invocation and its provider-free contracts are
 documented in `circuits/vs-001-spawn-stderr/README.md`.
 
-`society-xsh-circuit` also prepares the closed VS-001 evaluator-port
-construction: a checked-in entrypoint and canonical input bytes with declared
-BLAKE3 identities, one named judge invocation, one opaque application profile,
-and one closed output contract. It does not execute or seal a judge. Its
-entrypoint identity is not yet a complete evaluator-package identity: fixtures,
-transitive scripts, and assigned XSH/Xsht binaries still need a later closed
-application package manifest. The current generic native evaluator fixture
-accepts only a direct executable and therefore cannot run the checked-in
-POSIX-shell judges. A future XSH-owned direct evaluator adapter may carry that
-source semantics, but the generic ABI will not gain an interpreter profile or
-shell `-c` execution.
+`society-xsh-circuit` contains the compiled
+`vs001-direct-evaluator-adapter` binary. Its only direct-executable candidate
+is the self-contained `CurationContract` evaluator: it accepts exactly
+`--input-manifest <verified absolute path>`, reads one bounded length-framed
+file, evaluates the seven fixed curation TSV members in Rust, and writes the
+canonical curation observation to stdout. The adapter has no child process,
+shell, external path, XSH/Xsht binary, source checkout, host-tool, durable ID,
+receipt, or authority.
 
-The prepared direct-bridge manifest contains only a declared adapter BLAKE3
-identity and the fixed `--input-manifest` position beside the application
-construction. It contains no path, environment, durable ID, receipt, or
-authority; future daemon scheduling and sealing remain separate.
+The other seven VS-001 judges, scripts, fixtures, and external-artifact
+requirements remain wholly application-owned and are explicitly pending the
+direct profile. No application evaluator is registered or scheduled yet: a
+future generic bridge may seal the direct adapter and this one manifest file,
+then invoke the fixed ABI, but that bridge and evidence admission remain
+separate.
 
 The generic direct-executable custody driver is daemon-private and currently
 unscheduled, so this application construction cannot enter it yet.

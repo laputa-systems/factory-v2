@@ -46,6 +46,53 @@ pair, cached offline `cargo`, and `awk`, `cmp`, `cp`, `cut`, `env`, `find`, `git
 `b3sum` must be available. These are evaluator prerequisites,
 not XSH product dependencies.
 
+## Direct-adapter package handoff
+
+`society-xsh-circuit` builds the application-owned
+`vs001-direct-evaluator-adapter` binary. Its sole candidate direct profile is
+the self-contained C1 `CurationContract` evaluator. A future generic bridge
+would start that binary with exactly:
+
+```text
+vs001-direct-evaluator-adapter --input-manifest VERIFIED_ABSOLUTE_PATH
+```
+
+and an empty environment. The adapter starts no shell or child. It reads only
+the verified manifest and writes the canonical observation to stdout; it does
+not accept a package path, external input path, interpreter, shell source,
+`-c` payload, extra argv, `PATH`, XSH/Xsht binary, source checkout, or host
+tool.
+
+The input file is a length-framed application relation, not a generic metadata
+channel or execution request:
+
+```text
+# schema: Vs001CurationDirectInputManifestV1/framed-v1
+account <decimal-byte-length>
+<exact account.v1.tsv bytes>
+selected_items <decimal-byte-length>
+<exact selected-items.v1.tsv bytes>
+preserved_conflicts <decimal-byte-length>
+<exact preserved-conflicts.v1.tsv bytes>
+decision_relevant_unknowns <decimal-byte-length>
+<exact decision-relevant-unknowns.v1.tsv bytes>
+exclusions <decimal-byte-length>
+<exact exclusions.v1.tsv bytes>
+raw_evidence_escalations <decimal-byte-length>
+<exact raw-evidence-escalations.v1.tsv bytes>
+frontier_members <decimal-byte-length>
+<exact frontier-c1-members.v1.tsv bytes>
+```
+
+The role order, canonical decimal length, and every member byte are checked
+before semantic evaluation. The output is the existing
+`CurationContractObservationV1/tsv-v1` observation. Its checked-in positive
+and negative fixtures cross-check the Rust evaluator against
+`run-curation-contract-judge.sh`; this neither admits an account nor proves an
+adapter build, generic sealing, or evidence admission. The remaining VS-001
+shell judges and their XSH/Xsht/source-tree prerequisites remain application
+contracts, but are not direct-executable candidates yet.
+
 `judges/run-negative-controls.sh` takes the same `--xsh`, `--xsht`, and
 `--xsh-root` inputs, invokes the positive behavior suite, and then proves that
 each deliberately bad fixture is rejected for its named reason. It is a test

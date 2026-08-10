@@ -73,15 +73,41 @@ const assertNoMatch = (files, expression, contract) => {
 };
 
 const applicationRust = sourceFiles(applicationRoot, (name) => name.endsWith(".rs"));
+const directAdapterBinary = path.join(
+    applicationRoot,
+    "society-xsh-circuit/src/bin/vs001-direct-evaluator-adapter.rs",
+);
+const directAdapterBinaryTest = path.join(
+    applicationRoot,
+    "society-xsh-circuit/tests/direct_adapter_binary.rs",
+);
+const applicationLibraryRust = applicationRust.filter(
+    (file) => file !== directAdapterBinary && file !== directAdapterBinaryTest,
+);
 assertNoMatch(
-    applicationRust,
+    applicationLibraryRust,
     /\b(?:societyd|societyctl|society_product|ContentObjectId)\b/,
     "XSH application source received resident, product, or content-writer authority",
 );
 assertNoMatch(
-    applicationRust,
+    applicationLibraryRust,
     /\b(?:std::process|std::fs|rusqlite)\b/,
     "XSH application port performs resident process, filesystem, or SQLite work",
+);
+assertNoMatch(
+    [directAdapterBinary],
+    /\b(?:societyd|societyctl|society_product|ContentObjectId|rusqlite)\b/,
+    "XSH direct adapter received resident, product, content-writer, or SQLite authority",
+);
+assertNoMatch(
+    [directAdapterBinary],
+    /\b(?:Command|Child|Stdio)\b|\.spawn\(|\.output\(|\.status\(/,
+    "XSH direct adapter starts a child instead of evaluating its self-contained input",
+);
+assertNoMatch(
+    [directAdapterBinaryTest],
+    /\b(?:societyd|societyctl|society_product|ContentObjectId|rusqlite)\b/,
+    "XSH direct-adapter executable test received resident, product, content-writer, or SQLite authority",
 );
 
 // Generic trusted physics must remain application-blind.  XSH command names,

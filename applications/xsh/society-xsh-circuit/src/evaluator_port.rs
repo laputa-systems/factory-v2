@@ -1,20 +1,20 @@
 //! Application-owned construction for VS-001 evaluator custody.
 //!
 //! This module deliberately stops before durable authority. It binds one
-//! closed XSH evaluator entrypoint, its canonical input rendering and declared
-//! BLAKE3 identity, a future direct-adapter profile, and the exact
+//! closed XSH evaluator-package entrypoint, its canonical input rendering and
+//! declared BLAKE3 identity, the direct-adapter profile, and the exact
 //! application output contract. A future resident bridge may verify and seal
 //! the bytes, resolve its own durable identities, and use the generic
 //! native-child custody contract. No such scheduler path exists today, and no
 //! application value here is a content object, child identity, process
 //! request, or evidence admission.
 //!
-//! The canonical program value below covers the entrypoint script only. The
-//! VS-001 judges also consume fixtures, external XSH/Xsht binaries, and, for
-//! some judges, other scripts. A closed evaluator-package manifest that binds
-//! those transitive application artifacts remains a separate follow-on; this
-//! entrypoint identity must not be mistaken for package provenance or complete
-//! evaluator authentication.
+//! The individual program identity below covers its primary shell judge only.
+//! The sole direct-executable candidate is separately described by
+//! [`crate::Vs001CurationDirectEvaluatorPackageV1`]: it has one sealed outer
+//! manifest containing seven exact C1 relation bytes. All other VS-001 judges
+//! retain their XSH/Xsht, source-checkout, fixture, and host-tool semantics as
+//! application-owned pending work; none of those paths claims build provenance.
 
 use society_content::ContentDigest;
 use thiserror::Error;
@@ -101,6 +101,7 @@ pub enum Vs001EvaluatorProgramV1 {
     CurationContract,
     UptakeApplication,
     FrontierLeakage,
+    SocietyNegativeControls,
 }
 
 impl Vs001EvaluatorProgramV1 {
@@ -113,10 +114,13 @@ impl Vs001EvaluatorProgramV1 {
             Self::CurationContract => Vs001EvaluatorOutputContractV1::CurationContract,
             Self::UptakeApplication => Vs001EvaluatorOutputContractV1::UptakeApplication,
             Self::FrontierLeakage => Vs001EvaluatorOutputContractV1::FrontierLeakage,
+            Self::SocietyNegativeControls => {
+                Vs001EvaluatorOutputContractV1::SocietyNegativeControls
+            }
         }
     }
 
-    const fn invocation(self) -> Vs001EvaluatorInvocationV1 {
+    pub const fn invocation(self) -> Vs001EvaluatorInvocationV1 {
         match self {
             Self::BehaviorMatrix => Vs001EvaluatorInvocationV1::BehaviorMatrix,
             Self::DocumentationMatrix => Vs001EvaluatorInvocationV1::DocumentationMatrix,
@@ -125,6 +129,7 @@ impl Vs001EvaluatorProgramV1 {
             Self::CurationContract => Vs001EvaluatorInvocationV1::CurationContract,
             Self::UptakeApplication => Vs001EvaluatorInvocationV1::UptakeApplication,
             Self::FrontierLeakage => Vs001EvaluatorInvocationV1::FrontierLeakage,
+            Self::SocietyNegativeControls => Vs001EvaluatorInvocationV1::SocietyNegativeControls,
         }
     }
 
@@ -163,17 +168,21 @@ impl Vs001EvaluatorProgramV1 {
                     "../../circuits/vs-001-spawn-stderr/judges/run-frontier-leakage-controls.sh"
                 ))
             }
+            Self::SocietyNegativeControls => {
+                CanonicalEvaluatorEntrypointRenderingV1::from_checked_in(include_bytes!(
+                    "../../circuits/vs-001-spawn-stderr/judges/run-society-negative-controls.sh"
+                ))
+            }
         }
     }
 }
 
-/// The application profile for a future direct evaluator adapter. The resident
-/// accepts direct executables only, while the checked-in VS-001 judges remain
-/// shell source today. This variant therefore names pending application work,
-/// not a generic interpreter profile or an executable custody claim.
+/// Generic evaluator admission remains pending. The checked-in direct adapter
+/// is self-contained for C1 curation, but no generic registration or schedule
+/// command carries its actual compiled identity or input rendering yet.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Vs001EvaluatorProfileV1 {
-    DirectAdapterPendingV1,
+    DirectAdapterAdmissionPendingV1,
 }
 
 /// The application-owned invocation selector. The daemon must resolve this
@@ -188,6 +197,7 @@ pub enum Vs001EvaluatorInvocationV1 {
     CurationContract,
     UptakeApplication,
     FrontierLeakage,
+    SocietyNegativeControls,
 }
 
 impl Vs001EvaluatorInvocationV1 {
@@ -215,40 +225,9 @@ impl Vs001EvaluatorInvocationV1 {
             Self::FrontierLeakage => {
                 "circuits/vs-001-spawn-stderr/judges/run-frontier-leakage-controls.sh"
             }
-        }
-    }
-}
-
-/// One exact direct-adapter artifact declared by the application build path.
-/// This is a byte identity, not a durable content-store object, an executable
-/// path, or a claim that an adapter has been sealed, materialized, or admitted.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct DirectEvaluatorAdapterArtifactV1 {
-    declared_blake3: ContentDigest,
-}
-
-impl DirectEvaluatorAdapterArtifactV1 {
-    pub const fn from_declared_blake3(declared_blake3: ContentDigest) -> Self {
-        Self { declared_blake3 }
-    }
-
-    pub const fn declared_blake3(self) -> ContentDigest {
-        self.declared_blake3
-    }
-}
-
-/// The sole argument position a future direct adapter receives from generic
-/// custody. The trusted daemon supplies the verified absolute input-manifest
-/// path; application construction cannot supply that path or add argv atoms.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum DirectEvaluatorAdapterArgumentV1 {
-    VerifiedInputManifest,
-}
-
-impl DirectEvaluatorAdapterArgumentV1 {
-    pub const fn flag(self) -> &'static str {
-        match self {
-            Self::VerifiedInputManifest => "--input-manifest",
+            Self::SocietyNegativeControls => {
+                "circuits/vs-001-spawn-stderr/judges/run-society-negative-controls.sh"
+            }
         }
     }
 }
@@ -263,6 +242,7 @@ pub enum Vs001EvaluatorOutputContractV1 {
     CurationContract,
     UptakeApplication,
     FrontierLeakage,
+    SocietyNegativeControls,
 }
 
 /// One complete application construction that a daemon may preflight,
@@ -284,7 +264,7 @@ impl Vs001EvaluatorConstructionV1 {
     ) -> Self {
         Self {
             program,
-            profile: Vs001EvaluatorProfileV1::DirectAdapterPendingV1,
+            profile: Vs001EvaluatorProfileV1::DirectAdapterAdmissionPendingV1,
             invocation: program.invocation(),
             expected_output: program.expected_output(),
             entrypoint_rendering: program.canonical_entrypoint(),
@@ -314,44 +294,5 @@ impl Vs001EvaluatorConstructionV1 {
 
     pub const fn input_rendering(&self) -> &CanonicalEvaluatorInputRenderingV1 {
         &self.input_rendering
-    }
-
-    /// Prepare the neutral artifact facts a future bridge needs after it has
-    /// independently sealed and registered them. This neither authorizes nor
-    /// executes a native child.
-    pub fn prepare_direct_adapter(
-        self,
-        adapter: DirectEvaluatorAdapterArtifactV1,
-    ) -> Vs001DirectEvaluatorBridgeManifestV1 {
-        Vs001DirectEvaluatorBridgeManifestV1 {
-            construction: self,
-            adapter,
-            arguments: [DirectEvaluatorAdapterArgumentV1::VerifiedInputManifest],
-        }
-    }
-}
-
-/// Application-owned, non-durable manifest for the future direct-executable
-/// bridge. Generic custody may later consume only the adapter and input
-/// identities plus its own fixed argument contract; all XSH program, package,
-/// and output meaning stays in [`Vs001EvaluatorConstructionV1`].
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Vs001DirectEvaluatorBridgeManifestV1 {
-    construction: Vs001EvaluatorConstructionV1,
-    adapter: DirectEvaluatorAdapterArtifactV1,
-    arguments: [DirectEvaluatorAdapterArgumentV1; 1],
-}
-
-impl Vs001DirectEvaluatorBridgeManifestV1 {
-    pub const fn construction(&self) -> &Vs001EvaluatorConstructionV1 {
-        &self.construction
-    }
-
-    pub const fn adapter(&self) -> DirectEvaluatorAdapterArtifactV1 {
-        self.adapter
-    }
-
-    pub const fn arguments(&self) -> &[DirectEvaluatorAdapterArgumentV1; 1] {
-        &self.arguments
     }
 }

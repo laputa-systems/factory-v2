@@ -9,9 +9,11 @@
 use society_content::ContentDigest;
 use thiserror::Error;
 
+mod curation_direct;
 mod evaluator_port;
 mod vs001;
 
+pub use curation_direct::*;
 pub use evaluator_port::*;
 pub use vs001::*;
 
