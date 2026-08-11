@@ -115,14 +115,17 @@ decisions, committed post-actor ground-truth reveal, measurements, closure,
 and ledger integrity replay. The application harness runs the closed eight-role
 synthetic world and reports its paired controls.
 
-This does **not** make a live weak-actor experiment complete. The Pi host now
-accepts a closed Forum session-contract descriptor and verifies its digests,
-but it deliberately has no mutable Forum tool transport. No live actor is yet
-bound to an obligation, native child, process-group reconciliation, or
-actor-facing `society_forum_read/post` call. Current replay validates one
-accepted history; `ForkEpisode` records a new linked episode identity but does
-not rerun a counterfactual. Keep these boundaries explicit rather than
-claiming a nearby mechanism closes them.
+This does **not** make a live weak-actor experiment complete. The Pi host
+accepts the closed Forum session-contract descriptor, verifies its digests, and
+has the explicit mutable Forum tool transport. The resident daemon's private
+TaskAttempt bridge can bind an exact running actor attempt to its native child,
+carry the one-shot digest-bound task prompt and tool results, then record
+terminal, disposal, transcript, and process-reconciliation receipts. No
+application-owned paired-study scheduler yet selects admitted obligations,
+constructs those task starts, drives treatment timing, or closes a canonical
+live CL-001 pair. Current replay validates one accepted history; `ForkEpisode`
+records a new linked episode identity but does not rerun a counterfactual. Keep
+these boundaries explicit rather than claiming a nearby mechanism closes them.
 
 ## Nearest hard judges
 

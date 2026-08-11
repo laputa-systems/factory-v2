@@ -448,8 +448,28 @@ fn ensure_test_template(
                 .get_database()
                 .unwrap_or("postgres")
                 .to_owned();
+            // A test template must be derived from the current authoritative
+            // bootstrap. Without this check a direct `cargo test` could copy
+            // an old SQLite-era/partial PostgreSQL database into a template
+            // and all later tests would appear isolated while exercising the
+            // wrong contract.
+            let source = PostgresKernelStore::connect(url)
+                .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(Box::new(error))))?;
+            let source_revision = source
+                .catalog_snapshot()
+                .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(Box::new(error))))?
+                .schema_revision;
+            if source_revision.as_deref() != Some(crate::postgres::POSTGRES_SCHEMA_REVISION) {
+                return Err(DbError::Sqlx(sqlx::Error::Configuration(
+                    format!(
+                        "test source database has schema revision {source_revision:?}; run `make postgres-test-ready`"
+                    )
+                    .into(),
+                )));
+            }
+            drop(source);
             let admin_url = url.with_database("template1");
-            let admin = PostgresKernelStore::connect(&admin_url)
+            let admin = PostgresKernelStore::connect_for_test(&admin_url)
                 .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(Box::new(error))))?;
             let lock = admin
                 .acquire_advisory_lock(TEST_FIXTURE_ADVISORY_LOCK_KEY)
@@ -463,7 +483,28 @@ fn ensure_test_template(
                 })
                 .map(|row| sqlx::Row::try_get::<bool, _>(&row, 0).unwrap_or(false))
                 .map_err(DbError::Sqlx)?;
-            if !exists {
+            let template_ready = if exists {
+                let template_url = url.with_database(TEST_TEMPLATE_DATABASE);
+                let template = PostgresKernelStore::connect_for_test(&template_url)
+                    .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(Box::new(error))))?;
+                template
+                    .catalog_snapshot()
+                    .map(|catalog| {
+                        catalog.schema_revision.as_deref()
+                            == Some(crate::postgres::POSTGRES_SCHEMA_REVISION)
+                    })
+                    .unwrap_or(false)
+            } else {
+                false
+            };
+            if !template_ready {
+                if exists {
+                    admin
+                        .drop_database(TEST_TEMPLATE_DATABASE)
+                        .map_err(|error| {
+                            DbError::Sqlx(sqlx::Error::Configuration(Box::new(error)))
+                        })?;
+                }
                 admin
                     .create_database_from_template(TEST_TEMPLATE_DATABASE, &source_database)
                     .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(Box::new(error))))?;
@@ -480,6 +521,19 @@ fn ensure_test_template(
 /// the complete canonical DDL for every test case; foreign keys and triggers
 /// are installed afterward because `LIKE` does not copy them.
 fn clone_fresh_test_schema(admin: &PostgresKernelStore, schema: &str) -> Result<(), DbError> {
+    clone_schema_from_source(admin, "public", schema)
+}
+
+/// Clone one complete Society schema, including its rows and the cross-table
+/// objects which PostgreSQL's `CREATE TABLE ... LIKE` does not copy. This is
+/// deliberately used for both fresh fixtures and replay/tamper forks: a
+/// destination that only has columns and rows is not a faithful PostgreSQL
+/// migration of the source ledger.
+fn clone_schema_from_source(
+    admin: &PostgresKernelStore,
+    source_schema: &str,
+    target_schema: &str,
+) -> Result<(), DbError> {
     let mut lock = admin
         .acquire_advisory_lock(TEST_FIXTURE_ADVISORY_LOCK_KEY)
         .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(Box::new(error))))?;
@@ -487,9 +541,12 @@ fn clone_fresh_test_schema(admin: &PostgresKernelStore, schema: &str) -> Result<
         r#"
 DO $society_clone$
 DECLARE
-    target_schema text := {schema_literal};
+    source_schema text := {source_schema_literal};
+    target_schema text := {target_schema_literal};
     table_row record;
     identity_row record;
+    function_row record;
+    function_definition text;
     foreign_key_row record;
     trigger_row record;
     next_value bigint;
@@ -497,17 +554,40 @@ BEGIN
     FOR table_row IN
         SELECT tablename
         FROM pg_catalog.pg_tables
-        WHERE schemaname = 'public'
+        WHERE schemaname = source_schema
         ORDER BY tablename
     LOOP
         EXECUTE format(
-            'CREATE TABLE %I.%I (LIKE public.%I INCLUDING ALL)',
-            target_schema, table_row.tablename, table_row.tablename
+            'CREATE TABLE %I.%I (LIKE %I.%I INCLUDING ALL)',
+            target_schema, table_row.tablename, source_schema, table_row.tablename
         );
         EXECUTE format(
-            'INSERT INTO %I.%I SELECT * FROM public.%I',
-            target_schema, table_row.tablename, table_row.tablename
+            'INSERT INTO %I.%I SELECT * FROM %I.%I',
+            target_schema, table_row.tablename, source_schema, table_row.tablename
         );
+    END LOOP;
+
+    -- Trigger definitions carry function OIDs, not function names.  If the
+    -- source schema's functions are not copied before the triggers, creating
+    -- a trigger in the destination resolves the source function through the
+    -- temporary search path.  Dropping the source then cascades into the
+    -- destination trigger and leaves the fork without its invariants.
+    FOR function_row IN
+        SELECT p.oid
+        FROM pg_catalog.pg_proc p
+        JOIN pg_catalog.pg_namespace function_schema ON function_schema.oid = p.pronamespace
+        WHERE function_schema.nspname = source_schema
+          AND p.prokind = 'f'
+        ORDER BY p.oid
+    LOOP
+        SELECT pg_get_functiondef(function_row.oid)
+          INTO function_definition;
+        function_definition := replace(
+            function_definition,
+            format('FUNCTION %I.', source_schema),
+            format('FUNCTION %I.', target_schema)
+        );
+        EXECUTE function_definition;
     END LOOP;
 
     FOR identity_row IN
@@ -526,7 +606,7 @@ BEGIN
         );
     END LOOP;
 
-    PERFORM set_config('search_path', format('%I, public', target_schema), true);
+    PERFORM set_config('search_path', format('%I, %I, public', target_schema, source_schema), true);
 
     FOR foreign_key_row IN
         SELECT child.relname AS table_name,
@@ -535,7 +615,7 @@ BEGIN
         FROM pg_catalog.pg_constraint constraint_row
         JOIN pg_catalog.pg_class child ON child.oid = constraint_row.conrelid
         JOIN pg_catalog.pg_namespace child_schema ON child_schema.oid = child.relnamespace
-        WHERE constraint_row.contype = 'f' AND child_schema.nspname = 'public'
+        WHERE constraint_row.contype = 'f' AND child_schema.nspname = source_schema
         ORDER BY constraint_row.oid
     LOOP
         EXECUTE format(
@@ -544,10 +624,10 @@ BEGIN
             foreign_key_row.table_name,
             foreign_key_row.constraint_name,
             CASE
-                WHEN position('REFERENCES public.' IN foreign_key_row.definition) > 0 THEN
+                WHEN position(format('REFERENCES %I.', source_schema) IN foreign_key_row.definition) > 0 THEN
                     replace(
                         foreign_key_row.definition,
-                        'REFERENCES public.',
+                        format('REFERENCES %I.', source_schema),
                         format('REFERENCES %I.', target_schema)
                     )
                 ELSE
@@ -565,19 +645,26 @@ BEGIN
         FROM pg_catalog.pg_trigger trigger_catalog_row
         JOIN pg_catalog.pg_class class_row ON class_row.oid = trigger_catalog_row.tgrelid
         JOIN pg_catalog.pg_namespace namespace_row ON namespace_row.oid = class_row.relnamespace
-        WHERE NOT trigger_catalog_row.tgisinternal AND namespace_row.nspname = 'public'
+        WHERE NOT trigger_catalog_row.tgisinternal AND namespace_row.nspname = source_schema
         ORDER BY trigger_catalog_row.oid
     LOOP
         EXECUTE replace(
             trigger_row.definition,
-            ' ON public.',
+            format(' ON %I.', source_schema),
             format(' ON %I.', target_schema)
         );
     END LOOP;
+    EXECUTE format(
+        'COMMENT ON SCHEMA %I IS %L',
+        target_schema,
+        {schema_revision_literal}
+    );
 END
 $society_clone$;
 "#,
-        schema_literal = sql_literal(schema),
+        source_schema_literal = sql_literal(source_schema),
+        target_schema_literal = sql_literal(target_schema),
+        schema_revision_literal = sql_literal(crate::postgres::POSTGRES_SCHEMA_REVISION),
     );
     admin.block_on(async {
         let connection = lock
@@ -601,6 +688,28 @@ fn private_schema_exists(admin: &PostgresKernelStore, schema: &str) -> Result<bo
                 .await
         })
         .map(|row| sqlx::Row::try_get::<bool, _>(&row, 0).unwrap_or(false))
+        .map_err(DbError::Sqlx)
+}
+
+fn private_schema_revision(
+    admin: &PostgresKernelStore,
+    schema: &str,
+) -> Result<Option<String>, DbError> {
+    admin
+        .block_on(async {
+            sqlx::query(
+                "SELECT obj_description(namespace.oid, 'pg_namespace')
+                   FROM pg_namespace AS namespace
+                  WHERE namespace.nspname = $1",
+            )
+            .bind(schema)
+            .fetch_optional(admin.pool())
+            .await
+        })
+        .map(|row| {
+            row.and_then(|row| sqlx::Row::try_get::<Option<String>, _>(&row, 0).ok())
+                .flatten()
+        })
         .map_err(DbError::Sqlx)
 }
 
@@ -638,39 +747,23 @@ pub fn clone_test_schema(
         .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(Box::new(error))))?;
     let source = PostgresKernelStore::connect_in_schema_for_test(&url, &source_schema)
         .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(Box::new(error))))?;
+    let source_revision = source
+        .catalog_snapshot()
+        .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(Box::new(error))))?
+        .schema_revision;
+    if source_revision.as_deref() != Some(crate::postgres::POSTGRES_SCHEMA_REVISION) {
+        return Err(DbError::Sqlx(sqlx::Error::Configuration(
+            format!(
+                "cannot clone test schema with revision {source_revision:?}; recreate the source fixture"
+            )
+            .into(),
+        )));
+    }
     let _ = admin.drop_private_schema(&destination_schema);
     admin
         .create_private_schema(&destination_schema)
         .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(Box::new(error))))?;
-    let tables = source.block_on(async {
-        sqlx::query(
-            "SELECT tablename FROM pg_catalog.pg_tables
-             WHERE schemaname = current_schema() ORDER BY tablename",
-        )
-        .fetch_all(source.pool())
-        .await
-    })?;
-    for table in tables {
-        let table = table.try_get::<String, _>("tablename")?;
-        let source_table = format!("{source_schema}.{}", quote_identifier(&table));
-        let destination_table = format!("{destination_schema}.{}", quote_identifier(&table));
-        admin.block_on(async {
-            sqlx::query(AssertSqlSafe(
-                format!(
-                    "CREATE TABLE {destination_table} (LIKE {source_table} INCLUDING DEFAULTS INCLUDING GENERATED INCLUDING IDENTITY)"
-                )
-                .as_str(),
-            ))
-            .execute(admin.pool())
-            .await?;
-            sqlx::query(AssertSqlSafe(
-                format!("INSERT INTO {destination_table} SELECT * FROM {source_table}").as_str(),
-            ))
-            .execute(admin.pool())
-            .await
-        })?;
-    }
-    Ok(())
+    clone_schema_from_source(&admin, &source_schema, &destination_schema)
 }
 
 impl Connection {
@@ -727,7 +820,14 @@ impl Connection {
         let schema = test_schema_for_path(_path);
         let admin = PostgresKernelStore::connect_for_test(url)
             .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(Box::new(error))))?;
-        if !private_schema_exists(&admin, &schema)? {
+        let schema_is_current = private_schema_exists(&admin, &schema)?
+            && private_schema_revision(&admin, &schema)?.as_deref()
+                == Some(crate::postgres::POSTGRES_SCHEMA_REVISION);
+        if !schema_is_current {
+            // A path-oriented fixture may outlive a schema revision. Reusing
+            // it would silently exercise an old PostgreSQL contract, so the
+            // private fixture is recreated from the validated public source.
+            let _ = admin.drop_private_schema(&schema);
             admin
                 .create_private_schema(&schema)
                 .map_err(|error| DbError::Sqlx(sqlx::Error::Configuration(Box::new(error))))?;

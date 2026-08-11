@@ -45,7 +45,13 @@ use crate::{
     PiOfficeTurnPromptAuthorizationId, PiOfficeTurnTerminalEvidence, PiOfficeTurnTerminalReceiptId,
     PiOfficeTurnTranscriptDisposition, PiOfficeTurnUsageFailure, PiOfficeTurnUsageFailureId,
     PiOfficeTurnUsageReceiptId, PiOfficeTurnUsageUnavailableReason, PiOfficeTurnUsageUnknownReason,
-    PiProtocolSequence, PiSessionId, PiTokenCount, PostmortemActionKind,
+    PiProtocolSequence, PiSessionId, PiTaskAttemptAssistantOutcome, PiTaskAttemptDisposition,
+    PiTaskAttemptFirstUserPromptReceipt, PiTaskAttemptPromptAuthorizationId,
+    PiTaskAttemptSessionDisposeBudgetDisposition, PiTaskAttemptSessionDisposeReceiptId,
+    PiTaskAttemptSessionTranscriptReceipt, PiTaskAttemptTerminalEvidence,
+    PiTaskAttemptTerminalReceiptId, PiTaskAttemptTranscriptDisposition, PiTaskAttemptUsageFailure,
+    PiTaskAttemptUsageReceiptId, PiTaskAttemptUsageUnavailableReason,
+    PiTaskAttemptUsageUnknownReason, PiTokenCount, PostmortemActionKind,
     PostmortemActionProposalId, PostmortemCausalClaimId, PostmortemCausalClaimKind, PostmortemId,
     PostmortemState, PrincipalId, PrincipalKind, ProcessExitCode, ProcessGroupLiveness,
     ProcessSignalAction, ProcessSignalCause, ProcessSignalDelivery, ProcessSignalNumber,
@@ -55,9 +61,12 @@ use crate::{
     ProjectNorthStarRevisitAnswer, ProjectState, ProviderCostBinary64, Rejection,
     RetentionAccessClass, ReviewChallengeId, ReviewChallengeResponseState, ReviewChallengeSeverity,
     ReviewDispositionKind, ReviewResolutionKind, RootAuthorityOfficeSessionId, SocietyId,
-    SocietyName, SpawnNonce, StudyCommand, StudyTransitionDisposition, StudyTransitionReceipt,
-    SupervisedChildIdentity, SupervisorEpochId, SupervisorEpochIdentity, TicketId, TicketState,
-    UsdMicros, WorkItemId, WorkItemKind, WorkItemState, WorkLeaseId, WorkLeaseState,
+    SocietyName, SpawnNonce, StudyActorObligationId, StudyActorObligationObservation,
+    StudyActorRuntimeBindingObservation, StudyCommand, StudyEpisodeId, StudyPairId,
+    StudyPairObservation, StudyRunId, StudyRunObservation, StudyTransitionDisposition,
+    StudyTransitionReceipt, SupervisedChildIdentity, SupervisorEpochId, SupervisorEpochIdentity,
+    TicketId, TicketState, UsdMicros, WorkItemId, WorkItemKind, WorkItemState, WorkLeaseId,
+    WorkLeaseState,
 };
 
 struct PiChildSpawnAdmissionInput<'a> {
@@ -116,6 +125,25 @@ struct PiOfficeTurnTerminalInput<'a> {
     transcript_disposition: PiOfficeTurnTranscriptDisposition,
 }
 
+struct PiTaskAttemptPromptAuthorizationInput<'a> {
+    expected_generation: ExpectedGeneration,
+    actor_attempt_id: ActorAttemptId,
+    correlation_identity: &'a PiCorrelationIdentity,
+    prompt_content_object_id: ContentObjectId,
+    prompt_digest: Blake3Digest,
+    frontier_event_id: EventId,
+}
+
+struct PiTaskAttemptTerminalInput<'a> {
+    actor_attempt_id: ActorAttemptId,
+    correlation_identity: &'a PiCorrelationIdentity,
+    terminal_evidence: PiTaskAttemptTerminalEvidence,
+    settled_sequence: PiProtocolSequence,
+    disposition: PiTaskAttemptDisposition,
+    assistant_outcome: PiTaskAttemptAssistantOutcome,
+    transcript_disposition: PiTaskAttemptTranscriptDisposition,
+}
+
 type StoredPiChildAdmissionCommand = (
     i64,
     Option<i64>,
@@ -132,6 +160,24 @@ type StoredPiChildAdmissionCommand = (
 
 type PiOfficeTurnUsageSqlRow = (i64, i64, i64, i64, i64, Vec<u8>, i64, i64);
 type PiOfficeTurnSettlementSqlRow = (i64, i64, i64, i64, i64, i64, i64, i64, i64, i64);
+type PiTaskAttemptUsageSqlRow = (i64, i64, i64, i64, i64, Vec<u8>, i64, i64);
+type PiTaskAttemptSessionDisposeBindingSqlRow = (i64, i64, i64, i64, i64, i64, i64, i64);
+type PiTaskAttemptSessionDisposeTerminalSqlRow = (
+    i64,
+    i64,
+    String,
+    i64,
+    i64,
+    i64,
+    i64,
+    i64,
+    i64,
+    i64,
+    Vec<u8>,
+    i64,
+    i64,
+    i64,
+);
 type PiOfficeSessionDisposeBindingSqlRow = (i64, i64, i64, i64, i64, i64, i64);
 type PiOfficeSessionDisposeTerminalSqlRow = (
     i64,
@@ -170,7 +216,7 @@ type PiOfficeSessionDisposedCommandSqlRow = (
     Option<Vec<u8>>,
 );
 
-const COMMAND_BODY_TABLES: [&str; 101] = [
+const COMMAND_BODY_TABLES: [&str; 113] = [
     "command_create_society_identity",
     "command_install_root_authority_office",
     "command_install_founding_mission",
@@ -272,9 +318,21 @@ const COMMAND_BODY_TABLES: [&str; 101] = [
     "command_record_deterministic_evaluator_native_child_spawn",
     "command_register_deterministic_evaluator_forensic_manifest",
     "command_study_transition",
+    "command_authorize_pi_task_attempt_prompt",
+    "command_record_pi_task_attempt_prompt_delivery",
+    "command_record_pi_task_attempt_prompt_accepted",
+    "command_record_pi_task_attempt_usage",
+    "command_record_pi_task_attempt_usage_failure",
+    "command_record_pi_task_attempt_terminal",
+    "command_authorize_pi_task_attempt_session_dispose",
+    "command_record_pi_task_attempt_session_dispose_delivery",
+    "command_record_pi_task_attempt_session_dispose_accepted",
+    "command_record_pi_task_attempt_session_dispose_usage",
+    "command_record_pi_task_attempt_session_dispose_usage_failure",
+    "command_record_pi_task_attempt_session_disposed",
 ];
 
-const EVENT_BODY_TABLES: [&str; 95] = [
+const EVENT_BODY_TABLES: [&str; 107] = [
     "event_society_identity_created",
     "event_root_authority_office_installed",
     "event_founding_mission_installed",
@@ -370,6 +428,18 @@ const EVENT_BODY_TABLES: [&str; 95] = [
     "event_deterministic_evaluator_native_child_spawn_recorded",
     "event_deterministic_evaluator_forensic_manifest_registered",
     "event_study_transition",
+    "event_pi_task_attempt_prompt_authorized",
+    "event_pi_task_attempt_prompt_delivered",
+    "event_pi_task_attempt_prompt_accepted",
+    "event_pi_task_attempt_usage_recorded",
+    "event_pi_task_attempt_usage_frozen",
+    "event_pi_task_attempt_terminal_recorded",
+    "event_pi_task_attempt_session_dispose_authorized",
+    "event_pi_task_attempt_session_dispose_delivered",
+    "event_pi_task_attempt_session_dispose_accepted",
+    "event_pi_task_attempt_session_dispose_usage_recorded",
+    "event_pi_task_attempt_session_dispose_usage_frozen",
+    "event_pi_task_attempt_session_disposed",
 ];
 
 const GRAPH_REVISION_BODY_TABLES: [&str; 2] = ["observation_revisions", "hypothesis_revisions"];
@@ -617,6 +687,12 @@ pub enum StoreError {
     OperatingCycleNotFound(OperatingCycleId),
     #[error("ledger event {0:?} was not found")]
     LedgerEventNotFound(EventId),
+    #[error("study pair {0:?} was not found")]
+    StudyPairNotFound(StudyPairId),
+    #[error("study episode {0:?} was not found")]
+    StudyEpisodeNotFound(StudyEpisodeId),
+    #[error("study run {0:?} was not found")]
+    StudyRunNotFound(StudyRunId),
     #[error("ledger corruption: {0}")]
     LedgerCorruption(&'static str),
     #[error("stored integer does not represent a valid domain value")]
@@ -766,6 +842,59 @@ impl KernelStore {
             disposition,
             idempotent: receipt.idempotent,
         })
+    }
+
+    /// Reads the fixed facts of one matched experimental pair from normalized
+    /// PostgreSQL state. This is intentionally narrower than a table browser:
+    /// it preserves the treatment/measurement/closure boundary an application
+    /// analysis needs without granting direct database authority.
+    pub fn study_pair_observation(
+        &self,
+        pair_id: StudyPairId,
+    ) -> Result<StudyPairObservation, StoreError> {
+        crate::study::pair_observation(&self.connection, pair_id)
+    }
+
+    /// Reads one finite sealed study run and its ordinal-ordered matched pairs
+    /// from normalized PostgreSQL state. Application plan bytes stay in the
+    /// immutable content plane and are intentionally not returned here.
+    pub fn study_run_observation(
+        &self,
+        study_run_id: StudyRunId,
+    ) -> Result<StudyRunObservation, StoreError> {
+        crate::study::run_observation(&self.connection, study_run_id)
+    }
+
+    /// Reads one ordinal-identified pair registration from an admitted study
+    /// run. This is deliberately separate from [`Self::study_run_observation`]
+    /// so a 10,000-pair run can cross bounded monitor transports without
+    /// materializing an oversized response frame.
+    pub fn study_run_pair_registration(
+        &self,
+        study_run_id: StudyRunId,
+        pair_ordinal: crate::StudyRunPairOrdinal,
+    ) -> Result<Option<crate::StudyRunPairRegistrationObservation>, StoreError> {
+        crate::study::run_pair_registration(&self.connection, study_run_id, pair_ordinal)
+    }
+
+    /// Reads one exact study actor-runtime binding for resident recovery. The
+    /// owner is a closed typed identity (task attempt or root Office session),
+    /// never a generic payload selected by the caller.
+    pub fn study_actor_runtime_binding(
+        &self,
+        obligation_id: StudyActorObligationId,
+    ) -> Result<Option<StudyActorRuntimeBindingObservation>, StoreError> {
+        crate::study::actor_runtime_binding(&self.connection, obligation_id)
+    }
+
+    /// Reads the stable, typed obligation set for one episode. A resident
+    /// coordinator uses this after restart to reconstruct schedule state;
+    /// application bytes remain outside the kernel projection.
+    pub fn study_actor_obligation_observations(
+        &self,
+        episode_id: crate::StudyEpisodeId,
+    ) -> Result<Vec<StudyActorObligationObservation>, StoreError> {
+        crate::study::actor_obligation_observations(&self.connection, episode_id)
     }
 
     /// Prepares the exact deterministic bytes which a read transition will
@@ -1901,6 +2030,42 @@ fn command_operating_cycle_for_treatment(
         }
         | CommandBody::CancelActorAttempt {
             actor_attempt_id, ..
+        }
+        | CommandBody::AuthorizePiTaskAttemptPrompt {
+            actor_attempt_id, ..
+        }
+        | CommandBody::RecordPiTaskAttemptPromptDelivery {
+            actor_attempt_id, ..
+        }
+        | CommandBody::RecordPiTaskAttemptPromptAccepted {
+            actor_attempt_id, ..
+        }
+        | CommandBody::RecordPiTaskAttemptUsage {
+            actor_attempt_id, ..
+        }
+        | CommandBody::RecordPiTaskAttemptUsageFailure {
+            actor_attempt_id, ..
+        }
+        | CommandBody::RecordPiTaskAttemptTerminal {
+            actor_attempt_id, ..
+        }
+        | CommandBody::AuthorizePiTaskAttemptSessionDispose {
+            actor_attempt_id, ..
+        }
+        | CommandBody::RecordPiTaskAttemptSessionDisposeDelivery {
+            actor_attempt_id, ..
+        }
+        | CommandBody::RecordPiTaskAttemptSessionDisposeAccepted {
+            actor_attempt_id, ..
+        }
+        | CommandBody::RecordPiTaskAttemptSessionDisposeUsage {
+            actor_attempt_id, ..
+        }
+        | CommandBody::RecordPiTaskAttemptSessionDisposeUsageFailure {
+            actor_attempt_id, ..
+        }
+        | CommandBody::RecordPiTaskAttemptSessionDisposed {
+            actor_attempt_id, ..
         } => transaction
             .query_row(
                 "SELECT operating_cycle_id FROM attempts WHERE actor_attempt_id = $1",
@@ -2017,6 +2182,18 @@ fn apply_command(
             | CommandBody::RecordPiOfficeSessionDisposeUsage { .. }
             | CommandBody::RecordPiOfficeSessionDisposeUsageFailure { .. }
             | CommandBody::RecordPiOfficeSessionDisposed { .. }
+            | CommandBody::AuthorizePiTaskAttemptPrompt { .. }
+            | CommandBody::RecordPiTaskAttemptPromptDelivery { .. }
+            | CommandBody::RecordPiTaskAttemptPromptAccepted { .. }
+            | CommandBody::RecordPiTaskAttemptUsage { .. }
+            | CommandBody::RecordPiTaskAttemptUsageFailure { .. }
+            | CommandBody::RecordPiTaskAttemptTerminal { .. }
+            | CommandBody::AuthorizePiTaskAttemptSessionDispose { .. }
+            | CommandBody::RecordPiTaskAttemptSessionDisposeDelivery { .. }
+            | CommandBody::RecordPiTaskAttemptSessionDisposeAccepted { .. }
+            | CommandBody::RecordPiTaskAttemptSessionDisposeUsage { .. }
+            | CommandBody::RecordPiTaskAttemptSessionDisposeUsageFailure { .. }
+            | CommandBody::RecordPiTaskAttemptSessionDisposed { .. }
     ) != matches!(request.expected_generation, ExpectedGeneration::Exact(_))
     {
         return Ok(Err(Rejection::InvalidExpectedGeneration));
@@ -3146,6 +3323,167 @@ fn apply_command(
             *disposed_sequence,
             transcript_receipt,
         ),
+        CommandBody::AuthorizePiTaskAttemptPrompt {
+            actor_attempt_id,
+            correlation_identity,
+            prompt_content_object_id,
+            prompt_digest,
+            frontier_event_id,
+        } => authorize_pi_task_attempt_prompt(
+            transaction,
+            command_row_id,
+            PiTaskAttemptPromptAuthorizationInput {
+                expected_generation: request.expected_generation,
+                actor_attempt_id: *actor_attempt_id,
+                correlation_identity,
+                prompt_content_object_id: *prompt_content_object_id,
+                prompt_digest: *prompt_digest,
+                frontier_event_id: *frontier_event_id,
+            },
+        ),
+        CommandBody::RecordPiTaskAttemptPromptDelivery {
+            actor_attempt_id,
+            correlation_identity,
+            prompt_digest,
+        } => record_pi_task_attempt_prompt_delivery(
+            transaction,
+            command_row_id,
+            *actor_attempt_id,
+            correlation_identity,
+            *prompt_digest,
+        ),
+        CommandBody::RecordPiTaskAttemptPromptAccepted {
+            actor_attempt_id,
+            correlation_identity,
+            command_result_sequence,
+        } => record_pi_task_attempt_prompt_accepted(
+            transaction,
+            command_row_id,
+            *actor_attempt_id,
+            correlation_identity,
+            *command_result_sequence,
+        ),
+        CommandBody::RecordPiTaskAttemptUsage {
+            actor_attempt_id,
+            correlation_identity,
+            protocol_sequence,
+            usage,
+        } => record_pi_task_attempt_usage(
+            transaction,
+            command_row_id,
+            *actor_attempt_id,
+            correlation_identity,
+            *protocol_sequence,
+            *usage,
+        ),
+        CommandBody::RecordPiTaskAttemptUsageFailure {
+            actor_attempt_id,
+            correlation_identity,
+            protocol_sequence,
+            failure,
+        } => record_pi_task_attempt_usage_failure(
+            transaction,
+            command_row_id,
+            *actor_attempt_id,
+            correlation_identity,
+            *protocol_sequence,
+            *failure,
+        ),
+        CommandBody::RecordPiTaskAttemptTerminal {
+            actor_attempt_id,
+            correlation_identity,
+            terminal_evidence,
+            settled_sequence,
+            disposition,
+            assistant_outcome,
+            transcript_disposition,
+        } => record_pi_task_attempt_terminal(
+            transaction,
+            command_row_id,
+            PiTaskAttemptTerminalInput {
+                actor_attempt_id: *actor_attempt_id,
+                correlation_identity,
+                terminal_evidence: *terminal_evidence,
+                settled_sequence: *settled_sequence,
+                disposition: *disposition,
+                assistant_outcome: *assistant_outcome,
+                transcript_disposition: *transcript_disposition,
+            },
+        ),
+        CommandBody::AuthorizePiTaskAttemptSessionDispose {
+            actor_attempt_id,
+            correlation_identity,
+        } => authorize_pi_task_attempt_session_dispose(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *actor_attempt_id,
+            correlation_identity,
+        ),
+        CommandBody::RecordPiTaskAttemptSessionDisposeDelivery {
+            actor_attempt_id,
+            correlation_identity,
+        } => record_pi_task_attempt_session_dispose_delivery(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *actor_attempt_id,
+            correlation_identity,
+        ),
+        CommandBody::RecordPiTaskAttemptSessionDisposeAccepted {
+            actor_attempt_id,
+            correlation_identity,
+            command_result_sequence,
+        } => record_pi_task_attempt_session_dispose_accepted(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *actor_attempt_id,
+            correlation_identity,
+            *command_result_sequence,
+        ),
+        CommandBody::RecordPiTaskAttemptSessionDisposeUsage {
+            actor_attempt_id,
+            correlation_identity,
+            protocol_sequence,
+            usage,
+        } => record_pi_task_attempt_session_dispose_usage(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *actor_attempt_id,
+            correlation_identity,
+            *protocol_sequence,
+            *usage,
+        ),
+        CommandBody::RecordPiTaskAttemptSessionDisposeUsageFailure {
+            actor_attempt_id,
+            correlation_identity,
+            protocol_sequence,
+            failure,
+        } => record_pi_task_attempt_session_dispose_usage_failure(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *actor_attempt_id,
+            correlation_identity,
+            *protocol_sequence,
+            *failure,
+        ),
+        CommandBody::RecordPiTaskAttemptSessionDisposed {
+            actor_attempt_id,
+            correlation_identity,
+            disposed_sequence,
+            transcript_receipt,
+        } => record_pi_task_attempt_session_disposed(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *actor_attempt_id,
+            correlation_identity,
+            *disposed_sequence,
+            transcript_receipt,
+        ),
         CommandBody::StudyTransition { command } => {
             crate::study::apply(transaction, command_row_id, command)
                 .map(|event| EventBody::StudyTransition { event })
@@ -4088,6 +4426,1139 @@ fn record_pi_office_turn_usage_failure(
     })
 }
 
+/// Resolves the one supervised Pi child and reservation owned by a replaceable
+/// actor attempt.  The task path intentionally has no Office session state:
+/// one attempt owns one child, one Pi session, and one task prompt.
+fn pi_task_attempt_binding(
+    transaction: &Transaction<'_>,
+    actor_attempt_id: ActorAttemptId,
+) -> Result<PiTaskAttemptSessionDisposeBindingSqlRow, Rejection> {
+    transaction
+        .query_row(
+            "SELECT attempt.lifecycle_state, attempt.operating_cycle_id,
+                    reservation.budget_reservation_id, admission.execution_profile_id,
+                    sidecar.pi_session_id, child.native_child_id,
+                    child.lifecycle_state, protocol.lifecycle_state
+             FROM attempts attempt
+             JOIN attempt_budget_reservations reservation
+               ON reservation.actor_attempt_id = attempt.actor_attempt_id
+             JOIN native_child_spawn_admissions admission
+               ON admission.actor_attempt_id = attempt.actor_attempt_id
+             JOIN pi_child_spawn_sidecars sidecar
+               ON sidecar.native_child_spawn_admission_id = admission.native_child_spawn_admission_id
+             JOIN native_children child
+               ON child.native_child_spawn_admission_id = admission.native_child_spawn_admission_id
+             JOIN pi_child_session_protocols protocol
+               ON protocol.native_child_id = child.native_child_id
+             WHERE attempt.actor_attempt_id = $1",
+            [actor_attempt_id.value()],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|_| Rejection::PiTaskAttemptAuthorityMissing)?
+        .ok_or(Rejection::PiTaskAttemptAuthorityMissing)
+}
+
+fn pi_task_attempt_profile_is_eligible(
+    transaction: &Transaction<'_>,
+    operating_cycle_id: OperatingCycleId,
+    execution_profile_id: i64,
+) -> Result<bool, Rejection> {
+    let (treatment, profile_kind, readiness): (i64, i64, i64) = transaction
+        .query_row(
+            "SELECT cycle.treatment, profile.profile_kind, profile.readiness
+             FROM operating_cycles cycle
+             JOIN execution_profiles profile ON profile.execution_profile_id = $2
+             WHERE cycle.operating_cycle_id = $1",
+            params![operating_cycle_id.value(), execution_profile_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .map_err(|_| Rejection::ExecutionProfileIneligible)?
+        .ok_or(Rejection::ExecutionProfileIneligible)?;
+    Ok(matches!(
+        (treatment, profile_kind, readiness),
+        (
+            value,
+            profile,
+            readiness
+        ) if value == OperatingCycleTreatment::DeterministicPiHostFixtureV1 as i64
+            && profile == ExecutionProfileKind::DeterministicPiHostProcessDoubleV1 as i64
+            && readiness == ExecutionProfileReadiness::DeterministicFixtureOnly as i64
+            || value == OperatingCycleTreatment::PinnedPiSdkLiveV1 as i64
+            && profile == ExecutionProfileKind::NativePinnedPiSdkV1 as i64
+            && readiness == ExecutionProfileReadiness::QualifiedForLiveUse as i64
+    ))
+}
+
+fn pi_task_attempt_has_terminal_receipt(
+    transaction: &Transaction<'_>,
+    actor_attempt_id: ActorAttemptId,
+) -> Result<bool, Rejection> {
+    transaction
+        .query_row(
+            "SELECT EXISTS(
+                 SELECT 1 FROM pi_task_attempt_terminal_receipts
+                  WHERE actor_attempt_id = $1
+                 UNION ALL
+                 SELECT 1 FROM study_actor_task_attempt_recovery_settlements
+                  WHERE actor_attempt_id = $1
+             )",
+            [actor_attempt_id.value()],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|value| value != 0)
+        .map_err(|_| Rejection::PiTaskAttemptTerminalEvidenceMissing)
+}
+
+fn pi_task_attempt_session_max_sequence(
+    transaction: &Transaction<'_>,
+    pi_session_id: i64,
+) -> Result<Option<i64>, Rejection> {
+    transaction
+        .query_row(
+            "SELECT MAX(protocol_sequence) FROM (
+                 SELECT accepted.command_result_sequence AS protocol_sequence
+                   FROM pi_task_attempt_prompt_acceptances accepted
+                   JOIN pi_task_attempt_prompt_authorizations prompt_authorization
+                     ON prompt_authorization.pi_task_attempt_prompt_authorization_id = accepted.pi_task_attempt_prompt_authorization_id
+                  WHERE prompt_authorization.pi_session_id = $1
+                 UNION ALL SELECT protocol_sequence FROM pi_task_attempt_usage_receipts WHERE pi_session_id = $1
+                 UNION ALL SELECT protocol_sequence FROM pi_task_attempt_usage_failures WHERE pi_session_id = $1
+                 UNION ALL SELECT agent_settled_sequence FROM pi_task_attempt_terminal_receipts WHERE pi_session_id = $1
+                 UNION ALL SELECT final_accounting_sequence FROM pi_task_attempt_terminal_receipts WHERE pi_session_id = $1
+                 UNION ALL SELECT settled_sequence FROM pi_task_attempt_terminal_receipts WHERE pi_session_id = $1
+                 UNION ALL SELECT accepted.command_result_sequence
+                   FROM pi_task_attempt_session_dispose_acceptances accepted
+                   JOIN pi_task_attempt_session_dispose_deliveries delivery
+                     ON delivery.actor_attempt_id = accepted.actor_attempt_id
+                  WHERE delivery.pi_session_id = $1
+                 UNION ALL SELECT protocol_sequence FROM pi_task_attempt_session_dispose_usage_receipts WHERE pi_session_id = $1
+                 UNION ALL SELECT protocol_sequence FROM pi_task_attempt_session_dispose_usage_failures WHERE pi_session_id = $1
+                 UNION ALL SELECT disposed_sequence FROM pi_task_attempt_session_dispose_receipts WHERE pi_session_id = $1
+             ) AS task_protocol_sequences",
+            [pi_session_id],
+            |row| row.get(0),
+        )
+        .map_err(|_| Rejection::PiTaskAttemptUsageNotMonotonic)
+}
+
+fn task_attempt_usage_failure_freeze_reason(
+    failure: PiTaskAttemptUsageFailure,
+) -> BudgetFreezeReason {
+    match failure {
+        PiTaskAttemptUsageFailure::Unknown(
+            PiTaskAttemptUsageUnknownReason::MissingFinalUsageSnapshot,
+        ) => BudgetFreezeReason::Unknown(CostUnknownReason::ProviderDidNotReport),
+        PiTaskAttemptUsageFailure::Unknown(
+            PiTaskAttemptUsageUnknownReason::BoundaryStreamInterrupted,
+        ) => BudgetFreezeReason::Unknown(CostUnknownReason::AdapterStreamInterrupted),
+        PiTaskAttemptUsageFailure::Unknown(
+            PiTaskAttemptUsageUnknownReason::TerminalEvidenceMissing,
+        ) => BudgetFreezeReason::Unknown(CostUnknownReason::ReconciliationMismatch),
+        PiTaskAttemptUsageFailure::Unavailable(_) => {
+            BudgetFreezeReason::Unavailable(CostUnavailableReason::AdapterAccountingUnavailable)
+        }
+    }
+}
+
+fn sql_pi_task_attempt_usage_failure(
+    failure: PiTaskAttemptUsageFailure,
+) -> (i64, Option<i64>, Option<i64>) {
+    match failure {
+        PiTaskAttemptUsageFailure::Unknown(reason) => (1, Some(reason as i64), None),
+        PiTaskAttemptUsageFailure::Unavailable(reason) => (2, None, Some(reason as i64)),
+    }
+}
+
+fn sql_pi_task_attempt_terminal_evidence(
+    evidence: PiTaskAttemptTerminalEvidence,
+) -> (i64, Option<i64>) {
+    match evidence {
+        PiTaskAttemptTerminalEvidence::ObservedAssistant {
+            agent_settled_sequence,
+            ..
+        } => (1, Some(agent_settled_sequence.value())),
+        PiTaskAttemptTerminalEvidence::UnavailableAssistant { .. } => (2, None),
+    }
+}
+
+/// M6 task-prompt authority is scoped to an actor lifetime.  Unlike an Office
+/// turn, there is no reusable session or second prompt after this admission.
+fn authorize_pi_task_attempt_prompt(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    input: PiTaskAttemptPromptAuthorizationInput<'_>,
+) -> Result<EventBody, Rejection> {
+    let PiTaskAttemptPromptAuthorizationInput {
+        expected_generation,
+        actor_attempt_id,
+        correlation_identity,
+        prompt_content_object_id,
+        prompt_digest,
+        frontier_event_id,
+    } = input;
+    let (
+        attempt_state,
+        cycle,
+        reservation,
+        profile,
+        pi_session,
+        child,
+        child_state,
+        protocol_state,
+    ) = pi_task_attempt_binding(transaction, actor_attempt_id)?;
+    let cycle_id =
+        OperatingCycleId::try_from(cycle).map_err(|_| Rejection::PiTaskAttemptAuthorityMissing)?;
+    let cycle = cycle_for_generation(transaction, cycle_id, expected_generation)?;
+    if attempt_state != ActorAttemptState::Running as i64
+        || cycle.state != OperatingCycleState::Running
+        || child_state != ChildProcessState::Running as i64
+        || protocol_state != PiChildSessionState::SessionReady as i64
+        || active_cancellation_for_cycle(transaction, cycle_id)?.is_some()
+        || !pi_task_attempt_profile_is_eligible(transaction, cycle_id, profile)?
+    {
+        return Err(Rejection::PiTaskAttemptAuthorityMissing);
+    }
+    let reservation_id = BudgetReservationId::try_from(reservation)
+        .map_err(|_| Rejection::PiTaskAttemptAuthorityMissing)?;
+    let (state, charged): (i64, i64) = transaction
+        .query_row(
+            "SELECT reservation_state, charged_micros FROM budget_reservations
+             WHERE budget_reservation_id = $1",
+            [reservation],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(|_| Rejection::ReservationNotActive)?;
+    if state != BudgetReservationState::Reserved as i64 {
+        return Err(Rejection::ReservationNotActive);
+    }
+    let latest_usage: i64 = transaction
+        .query_row(
+            "SELECT COALESCE(MAX(cumulative_ceiling_micros), 0)
+             FROM pi_task_attempt_usage_receipts WHERE pi_session_id = $1",
+            [pi_session],
+            |row| row.get(0),
+        )
+        .map_err(|_| Rejection::PiTaskAttemptUsageNotMonotonic)?;
+    if latest_usage != charged {
+        return Err(Rejection::PiTaskAttemptUsageNotMonotonic);
+    }
+    let current_frontier: Option<i64> = transaction
+        .query_row(
+            "SELECT event_id FROM events ORDER BY event_sequence DESC LIMIT 1",
+            params![],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|_| Rejection::PiTaskAttemptAuthorityMissing)?;
+    if current_frontier != Some(frontier_event_id.value()) {
+        return Err(Rejection::StaleAdmissionGeneration);
+    }
+    let content_digest: Option<Vec<u8>> = transaction
+        .query_row(
+            "SELECT seal.digest FROM content_objects object
+             JOIN content_seal_receipts seal
+               ON seal.content_seal_receipt_id = object.content_seal_receipt_id
+             WHERE object.content_object_id = $1",
+            [prompt_content_object_id.value()],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|_| Rejection::PiTaskAttemptPromptBindingMismatch)?;
+    if content_digest.as_deref() != Some(prompt_digest.as_bytes().as_slice()) {
+        return Err(Rejection::PiTaskAttemptPromptBindingMismatch);
+    }
+    transaction.execute(
+        "INSERT INTO pi_task_attempt_prompt_authorizations(actor_attempt_id, native_child_id, pi_session_id, budget_reservation_id, correlation_identity, prompt_content_object_id, prompt_digest, frontier_event_id, admission_generation, authorized_by_command_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+        params![actor_attempt_id.value(), child, pi_session, reservation, correlation_identity.as_str(), prompt_content_object_id.value(), prompt_digest.as_bytes().as_slice(), frontier_event_id.value(), cycle.generation.value(), command_row_id],
+    ).map_err(|_| Rejection::PiTaskAttemptAuthorityMissing)?;
+    Ok(EventBody::PiTaskAttemptPromptAuthorized {
+        pi_task_attempt_prompt_authorization_id: id_from_returned_identity(transaction)?,
+        actor_attempt_id,
+        native_child_id: NativeChildId::try_from(child)
+            .map_err(|_| Rejection::PiTaskAttemptAuthorityMissing)?,
+        correlation_identity: correlation_identity.clone(),
+        budget_reservation_id: reservation_id,
+    })
+}
+
+fn record_pi_task_attempt_prompt_delivery(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    actor_attempt_id: ActorAttemptId,
+    correlation_identity: &PiCorrelationIdentity,
+    prompt_digest: Blake3Digest,
+) -> Result<EventBody, Rejection> {
+    let authorization: Option<i64> = transaction
+        .query_row(
+            "SELECT pi_task_attempt_prompt_authorization_id
+         FROM pi_task_attempt_prompt_authorizations
+         WHERE actor_attempt_id = $1 AND correlation_identity = $2 AND prompt_digest = $3",
+            params![
+                actor_attempt_id.value(),
+                correlation_identity.as_str(),
+                prompt_digest.as_bytes().as_slice()
+            ],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|_| Rejection::PiTaskAttemptPromptBindingMismatch)?;
+    let authorization = PiTaskAttemptPromptAuthorizationId::try_from(
+        authorization.ok_or(Rejection::PiTaskAttemptPromptBindingMismatch)?,
+    )
+    .map_err(|_| Rejection::PiTaskAttemptPromptBindingMismatch)?;
+    transaction.execute(
+        "INSERT INTO pi_task_attempt_prompt_deliveries(actor_attempt_id, pi_task_attempt_prompt_authorization_id, correlation_identity, prompt_digest, delivered_by_command_id)
+         VALUES ($1, $2, $3, $4, $5)",
+        params![actor_attempt_id.value(), authorization.value(), correlation_identity.as_str(), prompt_digest.as_bytes().as_slice(), command_row_id],
+    ).map_err(|_| Rejection::PiTaskAttemptPromptBindingMismatch)?;
+    Ok(EventBody::PiTaskAttemptPromptDelivered {
+        actor_attempt_id,
+        correlation_identity: correlation_identity.clone(),
+    })
+}
+
+fn record_pi_task_attempt_prompt_accepted(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    actor_attempt_id: ActorAttemptId,
+    correlation_identity: &PiCorrelationIdentity,
+    command_result_sequence: PiProtocolSequence,
+) -> Result<EventBody, Rejection> {
+    let authorization: Option<(i64, i64)> = transaction.query_row(
+        "SELECT delivery.pi_task_attempt_prompt_authorization_id, prompt_authorization.pi_session_id
+         FROM pi_task_attempt_prompt_deliveries delivery
+         JOIN pi_task_attempt_prompt_authorizations prompt_authorization
+           ON prompt_authorization.pi_task_attempt_prompt_authorization_id = delivery.pi_task_attempt_prompt_authorization_id
+         WHERE delivery.actor_attempt_id = $1 AND prompt_authorization.correlation_identity = $2",
+        params![actor_attempt_id.value(), correlation_identity.as_str()],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    ).optional().map_err(|_| Rejection::PiTaskAttemptPromptBindingMismatch)?;
+    let (authorization, session) =
+        authorization.ok_or(Rejection::PiTaskAttemptPromptBindingMismatch)?;
+    if pi_task_attempt_session_max_sequence(transaction, session)?
+        .is_some_and(|previous| command_result_sequence.value() <= previous)
+    {
+        return Err(Rejection::PiTaskAttemptUsageNotMonotonic);
+    }
+    transaction.execute(
+        "INSERT INTO pi_task_attempt_prompt_acceptances(actor_attempt_id, pi_task_attempt_prompt_authorization_id, command_result_sequence, accepted_by_command_id)
+         VALUES ($1, $2, $3, $4)",
+        params![actor_attempt_id.value(), authorization, command_result_sequence.value(), command_row_id],
+    ).map_err(|_| Rejection::PiTaskAttemptPromptBindingMismatch)?;
+    Ok(EventBody::PiTaskAttemptPromptAccepted {
+        actor_attempt_id,
+        correlation_identity: correlation_identity.clone(),
+        command_result_sequence,
+    })
+}
+
+fn record_pi_task_attempt_usage(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    actor_attempt_id: ActorAttemptId,
+    correlation_identity: &PiCorrelationIdentity,
+    protocol_sequence: PiProtocolSequence,
+    usage: PiCumulativeUsage,
+) -> Result<EventBody, Rejection> {
+    if pi_task_attempt_has_terminal_receipt(transaction, actor_attempt_id)? {
+        return Err(Rejection::PiTaskAttemptTerminalAlreadyRecorded);
+    }
+    if !usage.is_internally_consistent() {
+        return Err(Rejection::PiTaskAttemptUsageNotMonotonic);
+    }
+    let binding: Option<(i64, i64)> = transaction.query_row(
+        "SELECT prompt_authorization.pi_task_attempt_prompt_authorization_id, prompt_authorization.pi_session_id
+         FROM pi_task_attempt_prompt_authorizations prompt_authorization
+         JOIN pi_task_attempt_prompt_acceptances accepted
+           ON accepted.pi_task_attempt_prompt_authorization_id = prompt_authorization.pi_task_attempt_prompt_authorization_id
+         WHERE prompt_authorization.actor_attempt_id = $1 AND prompt_authorization.correlation_identity = $2",
+        params![actor_attempt_id.value(), correlation_identity.as_str()],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    ).optional().map_err(|_| Rejection::PiTaskAttemptPromptBindingMismatch)?;
+    let (authorization, session) = binding.ok_or(Rejection::PiTaskAttemptPromptBindingMismatch)?;
+    if pi_task_attempt_session_max_sequence(transaction, session)?
+        .is_some_and(|previous| protocol_sequence.value() <= previous)
+    {
+        return Err(Rejection::PiTaskAttemptUsageNotMonotonic);
+    }
+    let failure_exists: i64 = transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM pi_task_attempt_usage_failures WHERE pi_session_id = $1)",
+            [session],
+            |row| row.get(0),
+        )
+        .map_err(|_| Rejection::PiTaskAttemptUsageNotMonotonic)?;
+    if failure_exists != 0 {
+        return Err(Rejection::PiTaskAttemptUsageAlreadyFrozen);
+    }
+    let prior: Option<PiTaskAttemptUsageSqlRow> = transaction.query_row(
+        "SELECT input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
+                provider_cost_binary64, cumulative_ceiling_micros, protocol_sequence
+         FROM pi_task_attempt_usage_receipts WHERE pi_session_id = $1
+         ORDER BY protocol_sequence DESC LIMIT 1",
+        [session],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?)),
+    ).optional().map_err(|_| Rejection::PiTaskAttemptUsageNotMonotonic)?;
+    if let Some(prior) = prior {
+        let previous = pi_cumulative_usage_from_sql(
+            prior.0, prior.1, prior.2, prior.3, prior.4, &prior.5, prior.6,
+        )
+        .map_err(|_| Rejection::PiTaskAttemptUsageNotMonotonic)?;
+        if protocol_sequence.value() <= prior.7
+            || usage.input_tokens < previous.input_tokens
+            || usage.output_tokens < previous.output_tokens
+            || usage.cache_read_tokens < previous.cache_read_tokens
+            || usage.cache_write_tokens < previous.cache_write_tokens
+            || usage.total_tokens < previous.total_tokens
+            || usage.provider_cost < previous.provider_cost
+            || usage.ceiling_micro_usd < previous.ceiling_micro_usd
+        {
+            return Err(Rejection::PiTaskAttemptUsageNotMonotonic);
+        }
+    }
+    transaction.execute(
+        "INSERT INTO pi_task_attempt_usage_receipts(actor_attempt_id, pi_task_attempt_prompt_authorization_id, pi_session_id, correlation_identity, protocol_sequence, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, total_tokens, provider_cost_binary64, cumulative_ceiling_micros, recorded_by_command_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
+        params![actor_attempt_id.value(), authorization, session, correlation_identity.as_str(), protocol_sequence.value(), usage.input_tokens.value(), usage.output_tokens.value(), usage.cache_read_tokens.value(), usage.cache_write_tokens.value(), usage.total_tokens.value(), usage.provider_cost.as_big_endian_bytes().as_slice(), usage.ceiling_micro_usd.value(), command_row_id],
+    ).map_err(|_| Rejection::PiTaskAttemptUsageNotMonotonic)?;
+    Ok(EventBody::PiTaskAttemptUsageRecorded {
+        pi_task_attempt_usage_receipt_id: id_from_returned_identity(transaction)?,
+        actor_attempt_id,
+        protocol_sequence,
+        cumulative_micro_usd: usage.ceiling_micro_usd,
+    })
+}
+
+fn record_pi_task_attempt_usage_failure(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    actor_attempt_id: ActorAttemptId,
+    correlation_identity: &PiCorrelationIdentity,
+    protocol_sequence: PiProtocolSequence,
+    failure: PiTaskAttemptUsageFailure,
+) -> Result<EventBody, Rejection> {
+    if pi_task_attempt_has_terminal_receipt(transaction, actor_attempt_id)? {
+        return Err(Rejection::PiTaskAttemptTerminalAlreadyRecorded);
+    }
+    let (
+        attempt_state,
+        cycle,
+        reservation,
+        _profile,
+        session,
+        _child,
+        _child_state,
+        _protocol_state,
+    ) = pi_task_attempt_binding(transaction, actor_attempt_id)?;
+    if attempt_state != ActorAttemptState::Running as i64 {
+        return Err(Rejection::PiTaskAttemptAuthorityMissing);
+    }
+    let accepted: Option<i64> = transaction.query_row(
+        "SELECT accepted.command_result_sequence
+         FROM pi_task_attempt_prompt_authorizations prompt_authorization
+         JOIN pi_task_attempt_prompt_acceptances accepted
+           ON accepted.pi_task_attempt_prompt_authorization_id = prompt_authorization.pi_task_attempt_prompt_authorization_id
+         WHERE prompt_authorization.actor_attempt_id = $1 AND prompt_authorization.correlation_identity = $2",
+        params![actor_attempt_id.value(), correlation_identity.as_str()], |row| row.get(0),
+    ).optional().map_err(|_| Rejection::PiTaskAttemptPromptBindingMismatch)?;
+    let accepted = accepted.ok_or(Rejection::PiTaskAttemptPromptBindingMismatch)?;
+    if protocol_sequence.value() <= accepted
+        || pi_task_attempt_session_max_sequence(transaction, session)?
+            .is_some_and(|previous| protocol_sequence.value() <= previous)
+    {
+        return Err(Rejection::PiTaskAttemptUsageNotMonotonic);
+    }
+    let reservation_id =
+        BudgetReservationId::try_from(reservation).map_err(|_| Rejection::ReservationNotActive)?;
+    let cycle_id = OperatingCycleId::try_from(cycle).map_err(|_| Rejection::SubjectNotFound)?;
+    let (amount, charged, state): (i64, i64, i64) = transaction.query_row(
+        "SELECT amount_micros, charged_micros, reservation_state FROM budget_reservations WHERE budget_reservation_id = $1",
+        [reservation], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    ).map_err(|_| Rejection::ReservationNotActive)?;
+    if state != BudgetReservationState::Reserved as i64 || amount < charged {
+        return Err(Rejection::ReservationNotActive);
+    }
+    let frozen = freeze_budget_admission(
+        transaction,
+        command_row_id,
+        reservation_id,
+        cycle_id,
+        UsdMicros::try_from(amount - charged).map_err(|_| Rejection::ReservationNotActive)?,
+        task_attempt_usage_failure_freeze_reason(failure),
+    )?;
+    let (cancellation_request_id, postmortem_id) = match frozen {
+        EventBody::BudgetAdmissionFrozen {
+            cancellation_request_id,
+            postmortem_id,
+            ..
+        } => (cancellation_request_id, postmortem_id),
+        _ => return Err(Rejection::PiTaskAttemptAuthorityMissing),
+    };
+    let authorization: i64 = transaction.query_row(
+        "SELECT pi_task_attempt_prompt_authorization_id FROM pi_task_attempt_prompt_authorizations
+         WHERE actor_attempt_id = $1 AND correlation_identity = $2",
+        params![actor_attempt_id.value(), correlation_identity.as_str()], |row| row.get(0),
+    ).map_err(|_| Rejection::PiTaskAttemptPromptBindingMismatch)?;
+    let (kind, unknown, unavailable) = sql_pi_task_attempt_usage_failure(failure);
+    transaction.execute(
+        "INSERT INTO pi_task_attempt_usage_failures(actor_attempt_id, pi_task_attempt_prompt_authorization_id, pi_session_id, correlation_identity, protocol_sequence, failure_kind, unknown_reason, unavailable_reason, budget_reservation_id, cancellation_request_id, cost_postmortem_id, recorded_by_command_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+        params![actor_attempt_id.value(), authorization, session, correlation_identity.as_str(), protocol_sequence.value(), kind, unknown, unavailable, reservation, cancellation_request_id.value(), postmortem_id.value(), command_row_id],
+    ).map_err(|_| Rejection::PiTaskAttemptAuthorityMissing)?;
+    Ok(EventBody::PiTaskAttemptUsageFrozen {
+        actor_attempt_id,
+        budget_reservation_id: reservation_id,
+        cancellation_request_id,
+        postmortem_id,
+        failure,
+    })
+}
+
+fn record_pi_task_attempt_terminal(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    input: PiTaskAttemptTerminalInput<'_>,
+) -> Result<EventBody, Rejection> {
+    let PiTaskAttemptTerminalInput {
+        actor_attempt_id,
+        correlation_identity,
+        terminal_evidence,
+        settled_sequence,
+        disposition,
+        assistant_outcome,
+        transcript_disposition,
+    } = input;
+    if pi_task_attempt_has_terminal_receipt(transaction, actor_attempt_id)? {
+        return Err(Rejection::PiTaskAttemptTerminalAlreadyRecorded);
+    }
+    let final_accounting_sequence = terminal_evidence.final_accounting_sequence();
+    if !disposition.accepts(assistant_outcome)
+        || !terminal_evidence.accepts(assistant_outcome)
+        || final_accounting_sequence.value().checked_add(1) != Some(settled_sequence.value())
+    {
+        return Err(Rejection::PiTaskAttemptTerminalEvidenceMissing);
+    }
+    let binding: Option<(i64, i64, i64, i64)> = transaction.query_row(
+        "SELECT prompt_authorization.pi_task_attempt_prompt_authorization_id, prompt_authorization.native_child_id,
+                prompt_authorization.pi_session_id, accepted.command_result_sequence
+         FROM pi_task_attempt_prompt_authorizations prompt_authorization
+         JOIN pi_task_attempt_prompt_acceptances accepted
+           ON accepted.pi_task_attempt_prompt_authorization_id = prompt_authorization.pi_task_attempt_prompt_authorization_id
+         WHERE prompt_authorization.actor_attempt_id = $1 AND prompt_authorization.correlation_identity = $2",
+        params![actor_attempt_id.value(), correlation_identity.as_str()],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    ).optional().map_err(|_| Rejection::PiTaskAttemptTerminalEvidenceMissing)?;
+    let (authorization, child, session, accepted_sequence) =
+        binding.ok_or(Rejection::PiTaskAttemptTerminalEvidenceMissing)?;
+    let first_terminal_sequence = terminal_evidence
+        .agent_settled_sequence()
+        .unwrap_or(final_accounting_sequence);
+    if first_terminal_sequence.value() <= accepted_sequence {
+        return Err(Rejection::PiTaskAttemptTerminalEvidenceMissing);
+    }
+    let usage: Option<i64> = transaction
+        .query_row(
+            "SELECT pi_task_attempt_usage_receipt_id FROM pi_task_attempt_usage_receipts
+         WHERE actor_attempt_id = $1 AND pi_task_attempt_prompt_authorization_id = $2
+           AND correlation_identity = $3 AND protocol_sequence = $4",
+            params![
+                actor_attempt_id.value(),
+                authorization,
+                correlation_identity.as_str(),
+                final_accounting_sequence.value()
+            ],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|_| Rejection::PiTaskAttemptTerminalEvidenceMissing)?;
+    let failure: Option<i64> = transaction
+        .query_row(
+            "SELECT pi_task_attempt_usage_failure_id FROM pi_task_attempt_usage_failures
+         WHERE actor_attempt_id = $1 AND pi_task_attempt_prompt_authorization_id = $2
+           AND correlation_identity = $3 AND protocol_sequence = $4",
+            params![
+                actor_attempt_id.value(),
+                authorization,
+                correlation_identity.as_str(),
+                final_accounting_sequence.value()
+            ],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|_| Rejection::PiTaskAttemptTerminalEvidenceMissing)?;
+    if usage.is_some() == failure.is_some()
+        || matches!(
+            terminal_evidence,
+            PiTaskAttemptTerminalEvidence::UnavailableAssistant { .. }
+        ) && usage.is_none()
+    {
+        return Err(Rejection::PiTaskAttemptTerminalEvidenceMissing);
+    }
+    let (evidence_kind, agent_settled_sequence) =
+        sql_pi_task_attempt_terminal_evidence(terminal_evidence);
+    transaction.execute(
+        "INSERT INTO pi_task_attempt_terminal_receipts(actor_attempt_id, pi_task_attempt_prompt_authorization_id, native_child_id, pi_session_id, correlation_identity, terminal_evidence_kind, agent_settled_sequence, final_accounting_sequence, settled_sequence, final_usage_receipt_id, final_usage_failure_id, disposition, assistant_outcome, transcript_disposition, recorded_by_command_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)",
+        params![actor_attempt_id.value(), authorization, child, session, correlation_identity.as_str(), evidence_kind, agent_settled_sequence, final_accounting_sequence.value(), settled_sequence.value(), usage, failure, disposition as i64, assistant_outcome as i64, transcript_disposition as i64, command_row_id],
+    ).map_err(|_| Rejection::PiTaskAttemptTerminalEvidenceMissing)?;
+    Ok(EventBody::PiTaskAttemptTerminalRecorded {
+        pi_task_attempt_terminal_receipt_id: id_from_returned_identity(transaction)?,
+        actor_attempt_id,
+        disposition,
+        assistant_outcome,
+    })
+}
+
+fn require_pi_task_attempt_dispose_authorization_generation(
+    transaction: &Transaction<'_>,
+    expected_generation: ExpectedGeneration,
+    actor_attempt_id: ActorAttemptId,
+) -> Result<(), Rejection> {
+    let authorized_generation: i64 = transaction
+        .query_row(
+            "SELECT authorized_generation FROM pi_task_attempt_session_dispose_authorizations
+         WHERE actor_attempt_id = $1",
+            [actor_attempt_id.value()],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|_| Rejection::PiTaskAttemptSessionDisposeBindingMismatch)?
+        .ok_or(Rejection::PiTaskAttemptSessionDisposeBindingMismatch)?;
+    match expected_generation {
+        ExpectedGeneration::Exact(generation) if generation.value() == authorized_generation => {
+            Ok(())
+        }
+        ExpectedGeneration::Exact(_) => Err(Rejection::StaleAdmissionGeneration),
+        ExpectedGeneration::NotApplicable => Err(Rejection::InvalidExpectedGeneration),
+    }
+}
+
+fn authorize_pi_task_attempt_session_dispose(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    actor_attempt_id: ActorAttemptId,
+    correlation_identity: &PiCorrelationIdentity,
+) -> Result<EventBody, Rejection> {
+    let (attempt_state, cycle, _reservation, _profile, session, child, child_state, protocol_state) =
+        pi_task_attempt_binding(transaction, actor_attempt_id)?;
+    let cycle_id = OperatingCycleId::try_from(cycle)
+        .map_err(|_| Rejection::PiTaskAttemptSessionDisposeBindingMismatch)?;
+    let cycle = cycle_for_generation(transaction, cycle_id, expected_generation)?;
+    if attempt_state != ActorAttemptState::Running as i64
+        || child_state != ChildProcessState::Running as i64
+        || protocol_state != PiChildSessionState::SessionReady as i64
+        || !pi_task_attempt_has_terminal_receipt(transaction, actor_attempt_id)?
+    {
+        return Err(Rejection::PiTaskAttemptSessionDisposeBindingMismatch);
+    }
+    let correlation_already_used: i64 = transaction
+        .query_row(
+            "SELECT EXISTS(
+             SELECT 1 FROM pi_task_attempt_prompt_authorizations
+              WHERE pi_session_id = $1 AND correlation_identity = $2
+             UNION ALL
+             SELECT 1 FROM pi_task_attempt_session_dispose_authorizations
+              WHERE pi_session_id = $1 AND correlation_identity = $2
+         )",
+            params![session, correlation_identity.as_str()],
+            |row| row.get(0),
+        )
+        .map_err(|_| Rejection::PiTaskAttemptSessionDisposeBindingMismatch)?;
+    if correlation_already_used != 0 {
+        return Err(Rejection::PiTaskAttemptSessionDisposeBindingMismatch);
+    }
+    transaction.execute(
+        "INSERT INTO pi_task_attempt_session_dispose_authorizations(actor_attempt_id, native_child_id, pi_session_id, correlation_identity, authorized_generation, authorized_by_command_id)
+         VALUES ($1, $2, $3, $4, $5, $6)",
+        params![actor_attempt_id.value(), child, session, correlation_identity.as_str(), cycle.generation.value(), command_row_id],
+    ).map_err(|_| Rejection::PiTaskAttemptSessionDisposeBindingMismatch)?;
+    Ok(EventBody::PiTaskAttemptSessionDisposeAuthorized {
+        actor_attempt_id,
+        native_child_id: NativeChildId::try_from(child)
+            .map_err(|_| Rejection::PiTaskAttemptSessionDisposeBindingMismatch)?,
+        correlation_identity: correlation_identity.clone(),
+        authorized_generation: cycle.generation,
+    })
+}
+
+fn record_pi_task_attempt_session_dispose_delivery(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    actor_attempt_id: ActorAttemptId,
+    correlation_identity: &PiCorrelationIdentity,
+) -> Result<EventBody, Rejection> {
+    require_pi_task_attempt_dispose_authorization_generation(
+        transaction,
+        expected_generation,
+        actor_attempt_id,
+    )?;
+    let binding: Option<(i64, i64)> = transaction
+        .query_row(
+            "SELECT native_child_id, pi_session_id
+         FROM pi_task_attempt_session_dispose_authorizations
+         WHERE actor_attempt_id = $1 AND correlation_identity = $2",
+            params![actor_attempt_id.value(), correlation_identity.as_str()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(|_| Rejection::PiTaskAttemptSessionDisposeBindingMismatch)?;
+    let (child, session) = binding.ok_or(Rejection::PiTaskAttemptSessionDisposeBindingMismatch)?;
+    transaction.execute(
+        "INSERT INTO pi_task_attempt_session_dispose_deliveries(actor_attempt_id, native_child_id, pi_session_id, correlation_identity, delivered_by_command_id)
+         VALUES ($1, $2, $3, $4, $5)",
+        params![actor_attempt_id.value(), child, session, correlation_identity.as_str(), command_row_id],
+    ).map_err(|_| Rejection::PiTaskAttemptSessionDisposeBindingMismatch)?;
+    Ok(EventBody::PiTaskAttemptSessionDisposeDelivered {
+        actor_attempt_id,
+        native_child_id: NativeChildId::try_from(child)
+            .map_err(|_| Rejection::PiTaskAttemptSessionDisposeBindingMismatch)?,
+        correlation_identity: correlation_identity.clone(),
+    })
+}
+
+fn record_pi_task_attempt_session_dispose_accepted(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    actor_attempt_id: ActorAttemptId,
+    correlation_identity: &PiCorrelationIdentity,
+    command_result_sequence: PiProtocolSequence,
+) -> Result<EventBody, Rejection> {
+    require_pi_task_attempt_dispose_authorization_generation(
+        transaction,
+        expected_generation,
+        actor_attempt_id,
+    )?;
+    let session: Option<i64> = transaction
+        .query_row(
+            "SELECT pi_session_id FROM pi_task_attempt_session_dispose_deliveries
+         WHERE actor_attempt_id = $1 AND correlation_identity = $2",
+            params![actor_attempt_id.value(), correlation_identity.as_str()],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|_| Rejection::PiTaskAttemptSessionDisposeBindingMismatch)?;
+    let session = session.ok_or(Rejection::PiTaskAttemptSessionDisposeBindingMismatch)?;
+    if pi_task_attempt_session_max_sequence(transaction, session)?
+        .is_some_and(|previous| command_result_sequence.value() <= previous)
+    {
+        return Err(Rejection::PiTaskAttemptUsageNotMonotonic);
+    }
+    transaction.execute(
+        "INSERT INTO pi_task_attempt_session_dispose_acceptances(actor_attempt_id, command_result_sequence, accepted_by_command_id)
+         VALUES ($1, $2, $3)",
+        params![actor_attempt_id.value(), command_result_sequence.value(), command_row_id],
+    ).map_err(|_| Rejection::PiTaskAttemptSessionDisposeBindingMismatch)?;
+    Ok(EventBody::PiTaskAttemptSessionDisposeAccepted {
+        actor_attempt_id,
+        correlation_identity: correlation_identity.clone(),
+        command_result_sequence,
+    })
+}
+
+fn task_attempt_dispose_usage_binding(
+    transaction: &Transaction<'_>,
+    actor_attempt_id: ActorAttemptId,
+    correlation_identity: &PiCorrelationIdentity,
+) -> Result<(i64, i64), Rejection> {
+    transaction
+        .query_row(
+            "SELECT delivery.pi_session_id, accepted.command_result_sequence
+         FROM pi_task_attempt_session_dispose_deliveries delivery
+         JOIN pi_task_attempt_session_dispose_acceptances accepted
+           ON accepted.actor_attempt_id = delivery.actor_attempt_id
+         WHERE delivery.actor_attempt_id = $1 AND delivery.correlation_identity = $2",
+            params![actor_attempt_id.value(), correlation_identity.as_str()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(|_| Rejection::PiTaskAttemptSessionDisposeBindingMismatch)?
+        .ok_or(Rejection::PiTaskAttemptSessionDisposeBindingMismatch)
+}
+
+fn task_attempt_prior_usage(
+    transaction: &Transaction<'_>,
+    pi_session_id: i64,
+) -> Result<Option<PiTaskAttemptUsageSqlRow>, Rejection> {
+    transaction.query_row(
+        "SELECT input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
+                provider_cost_binary64, cumulative_ceiling_micros, protocol_sequence
+         FROM pi_task_attempt_usage_receipts WHERE pi_session_id = $1
+         ORDER BY protocol_sequence DESC LIMIT 1",
+        [pi_session_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?)),
+    ).optional().map_err(|_| Rejection::PiTaskAttemptUsageNotMonotonic)
+}
+
+fn require_task_attempt_usage_extends(
+    transaction: &Transaction<'_>,
+    pi_session_id: i64,
+    protocol_sequence: PiProtocolSequence,
+    usage: PiCumulativeUsage,
+) -> Result<(), Rejection> {
+    if !usage.is_internally_consistent()
+        || pi_task_attempt_session_max_sequence(transaction, pi_session_id)?
+            .is_some_and(|previous| protocol_sequence.value() <= previous)
+    {
+        return Err(Rejection::PiTaskAttemptUsageNotMonotonic);
+    }
+    if let Some(prior) = task_attempt_prior_usage(transaction, pi_session_id)? {
+        let prior = pi_cumulative_usage_from_sql(
+            prior.0, prior.1, prior.2, prior.3, prior.4, &prior.5, prior.6,
+        )
+        .map_err(|_| Rejection::PiTaskAttemptUsageNotMonotonic)?;
+        if usage.input_tokens < prior.input_tokens
+            || usage.output_tokens < prior.output_tokens
+            || usage.cache_read_tokens < prior.cache_read_tokens
+            || usage.cache_write_tokens < prior.cache_write_tokens
+            || usage.total_tokens < prior.total_tokens
+            || usage.provider_cost < prior.provider_cost
+            || usage.ceiling_micro_usd < prior.ceiling_micro_usd
+        {
+            return Err(Rejection::PiTaskAttemptUsageNotMonotonic);
+        }
+    }
+    Ok(())
+}
+
+fn record_pi_task_attempt_session_dispose_usage(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    actor_attempt_id: ActorAttemptId,
+    correlation_identity: &PiCorrelationIdentity,
+    protocol_sequence: PiProtocolSequence,
+    usage: PiCumulativeUsage,
+) -> Result<EventBody, Rejection> {
+    require_pi_task_attempt_dispose_authorization_generation(
+        transaction,
+        expected_generation,
+        actor_attempt_id,
+    )?;
+    let (session, accepted) =
+        task_attempt_dispose_usage_binding(transaction, actor_attempt_id, correlation_identity)?;
+    if protocol_sequence.value() <= accepted {
+        return Err(Rejection::PiTaskAttemptUsageNotMonotonic);
+    }
+    let frozen: i64 = transaction.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pi_task_attempt_usage_failures WHERE pi_session_id = $1
+                       UNION ALL SELECT 1 FROM pi_task_attempt_session_dispose_usage_failures WHERE pi_session_id = $1)",
+        [session], |row| row.get(0),
+    ).map_err(|_| Rejection::PiTaskAttemptUsageNotMonotonic)?;
+    if frozen != 0 {
+        return Err(Rejection::PiTaskAttemptUsageAlreadyFrozen);
+    }
+    require_task_attempt_usage_extends(transaction, session, protocol_sequence, usage)?;
+    transaction.execute(
+        "INSERT INTO pi_task_attempt_session_dispose_usage_receipts(actor_attempt_id, pi_session_id, correlation_identity, protocol_sequence, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, total_tokens, provider_cost_binary64, cumulative_ceiling_micros, recorded_by_command_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+        params![actor_attempt_id.value(), session, correlation_identity.as_str(), protocol_sequence.value(), usage.input_tokens.value(), usage.output_tokens.value(), usage.cache_read_tokens.value(), usage.cache_write_tokens.value(), usage.total_tokens.value(), usage.provider_cost.as_big_endian_bytes().as_slice(), usage.ceiling_micro_usd.value(), command_row_id],
+    ).map_err(|_| Rejection::PiTaskAttemptSessionDisposeBindingMismatch)?;
+    Ok(EventBody::PiTaskAttemptSessionDisposeUsageRecorded {
+        actor_attempt_id,
+        protocol_sequence,
+        cumulative_micro_usd: usage.ceiling_micro_usd,
+    })
+}
+
+fn record_pi_task_attempt_session_dispose_usage_failure(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    actor_attempt_id: ActorAttemptId,
+    correlation_identity: &PiCorrelationIdentity,
+    protocol_sequence: PiProtocolSequence,
+    failure: PiTaskAttemptUsageFailure,
+) -> Result<EventBody, Rejection> {
+    require_pi_task_attempt_dispose_authorization_generation(
+        transaction,
+        expected_generation,
+        actor_attempt_id,
+    )?;
+    let (session, accepted) =
+        task_attempt_dispose_usage_binding(transaction, actor_attempt_id, correlation_identity)?;
+    if protocol_sequence.value() <= accepted
+        || pi_task_attempt_session_max_sequence(transaction, session)?
+            .is_some_and(|previous| protocol_sequence.value() <= previous)
+    {
+        return Err(Rejection::PiTaskAttemptUsageNotMonotonic);
+    }
+    let (
+        _attempt_state,
+        cycle,
+        reservation,
+        _profile,
+        _binding_session,
+        _child,
+        _child_state,
+        _protocol_state,
+    ) = pi_task_attempt_binding(transaction, actor_attempt_id)?;
+    let reservation_id =
+        BudgetReservationId::try_from(reservation).map_err(|_| Rejection::ReservationNotActive)?;
+    let cycle_id = OperatingCycleId::try_from(cycle).map_err(|_| Rejection::SubjectNotFound)?;
+    let (amount, charged, state): (i64, i64, i64) = transaction.query_row(
+        "SELECT amount_micros, charged_micros, reservation_state FROM budget_reservations WHERE budget_reservation_id = $1",
+        [reservation], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    ).map_err(|_| Rejection::ReservationNotActive)?;
+    if state != BudgetReservationState::Reserved as i64 || amount < charged {
+        return Err(Rejection::ReservationNotActive);
+    }
+    let frozen = freeze_budget_admission(
+        transaction,
+        command_row_id,
+        reservation_id,
+        cycle_id,
+        UsdMicros::try_from(amount - charged).map_err(|_| Rejection::ReservationNotActive)?,
+        task_attempt_usage_failure_freeze_reason(failure),
+    )?;
+    let (cancellation_request_id, postmortem_id) = match frozen {
+        EventBody::BudgetAdmissionFrozen {
+            cancellation_request_id,
+            postmortem_id,
+            ..
+        } => (cancellation_request_id, postmortem_id),
+        _ => return Err(Rejection::PiTaskAttemptAuthorityMissing),
+    };
+    let (kind, unknown, unavailable) = sql_pi_task_attempt_usage_failure(failure);
+    transaction.execute(
+        "INSERT INTO pi_task_attempt_session_dispose_usage_failures(actor_attempt_id, pi_session_id, correlation_identity, protocol_sequence, failure_kind, unknown_reason, unavailable_reason, budget_reservation_id, cancellation_request_id, cost_postmortem_id, recorded_by_command_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+        params![actor_attempt_id.value(), session, correlation_identity.as_str(), protocol_sequence.value(), kind, unknown, unavailable, reservation, cancellation_request_id.value(), postmortem_id.value(), command_row_id],
+    ).map_err(|_| Rejection::PiTaskAttemptAuthorityMissing)?;
+    Ok(EventBody::PiTaskAttemptSessionDisposeUsageFrozen {
+        actor_attempt_id,
+        budget_reservation_id: reservation_id,
+        cancellation_request_id,
+        postmortem_id,
+        failure,
+    })
+}
+
+fn task_attempt_transcript_values(
+    receipt: &PiTaskAttemptSessionTranscriptReceipt,
+) -> (
+    i64,
+    &str,
+    Option<Vec<u8>>,
+    Option<i64>,
+    Option<i64>,
+    Option<Vec<u8>>,
+) {
+    match receipt {
+        PiTaskAttemptSessionTranscriptReceipt::Materialized {
+            session_file,
+            session_file_digest,
+            transcript_content_object_id,
+            first_user_prompt,
+        } => {
+            let (kind, digest) = match first_user_prompt {
+                PiTaskAttemptFirstUserPromptReceipt::Absent => (1, None),
+                PiTaskAttemptFirstUserPromptReceipt::Verified { digest } => {
+                    (2, Some(digest.as_bytes().to_vec()))
+                }
+            };
+            (
+                1,
+                session_file.as_str(),
+                Some(session_file_digest.as_bytes().to_vec()),
+                Some(transcript_content_object_id.value()),
+                Some(kind),
+                digest,
+            )
+        }
+        PiTaskAttemptSessionTranscriptReceipt::UnmaterializedNoPrompt { session_file } => {
+            (2, session_file.as_str(), None, None, None, None)
+        }
+    }
+}
+
+fn reconcile_task_attempt_reservation(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    reservation_id: BudgetReservationId,
+    observed: UsdMicros,
+) -> Result<PiTaskAttemptSessionDisposeBudgetDisposition, Rejection> {
+    let (cycle, amount, charged, state): (i64, i64, i64, i64) = transaction
+        .query_row(
+            "SELECT operating_cycle_id, amount_micros, charged_micros, reservation_state
+         FROM budget_reservations WHERE budget_reservation_id = $1",
+            [reservation_id.value()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .map_err(|_| Rejection::ReservationNotActive)?;
+    let cycle_id =
+        OperatingCycleId::try_from(cycle).map_err(|_| Rejection::ReservationNotActive)?;
+    if state != BudgetReservationState::Reserved as i64
+        || observed.value() < charged
+        || amount < charged
+    {
+        return Err(Rejection::PiTaskAttemptNotReconciled);
+    }
+    if observed.value() > amount {
+        let frozen = freeze_budget_admission(
+            transaction,
+            command_row_id,
+            reservation_id,
+            cycle_id,
+            UsdMicros::try_from(amount - charged).map_err(|_| Rejection::ReservationNotActive)?,
+            BudgetFreezeReason::KnownOverrun {
+                observed,
+                reserved: UsdMicros::try_from(amount - charged)
+                    .map_err(|_| Rejection::ReservationNotActive)?,
+            },
+        )?;
+        return match frozen {
+            EventBody::BudgetAdmissionFrozen {
+                cancellation_request_id,
+                postmortem_id,
+                ..
+            } => Ok(PiTaskAttemptSessionDisposeBudgetDisposition::Frozen {
+                cancellation_request_id,
+                postmortem_id,
+            }),
+            _ => Err(Rejection::PiTaskAttemptNotReconciled),
+        };
+    }
+    let delta = observed.value() - charged;
+    let mut statement = transaction
+        .prepare(
+            "SELECT budget_envelope_id, amount_micros FROM budget_reservation_charges
+         WHERE budget_reservation_id = $1 ORDER BY budget_envelope_id",
+        )
+        .map_err(|_| Rejection::ReservationNotActive)?;
+    let charges = statement
+        .query_map([reservation_id.value()], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+        })
+        .map_err(|_| Rejection::ReservationNotActive)?;
+    for charge in charges {
+        let (envelope, released) = charge.map_err(|_| Rejection::ReservationNotActive)?;
+        transaction.execute(
+            "UPDATE budget_envelopes SET reserved_micros = reserved_micros - $1, spent_micros = spent_micros + $2
+             WHERE budget_envelope_id = $3",
+            params![released, delta, envelope],
+        ).map_err(|_| Rejection::BudgetCeilingExceeded)?;
+    }
+    transaction.execute(
+        "UPDATE budget_reservations SET reservation_state = $1, charged_micros = $2, reconciled_by_command_id = $3
+         WHERE budget_reservation_id = $4",
+        params![BudgetReservationState::Reconciled as i64, observed.value(), command_row_id, reservation_id.value()],
+    ).map_err(|_| Rejection::ReservationNotActive)?;
+    Ok(PiTaskAttemptSessionDisposeBudgetDisposition::Reconciled {
+        observed_cumulative_micro_usd: observed,
+    })
+}
+
+fn record_pi_task_attempt_session_disposed(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    actor_attempt_id: ActorAttemptId,
+    correlation_identity: &PiCorrelationIdentity,
+    disposed_sequence: PiProtocolSequence,
+    transcript_receipt: &PiTaskAttemptSessionTranscriptReceipt,
+) -> Result<EventBody, Rejection> {
+    require_pi_task_attempt_dispose_authorization_generation(
+        transaction,
+        expected_generation,
+        actor_attempt_id,
+    )?;
+    let row: Option<PiTaskAttemptSessionDisposeTerminalSqlRow> = transaction.query_row(
+        "SELECT delivery.native_child_id, delivery.pi_session_id, delivery.correlation_identity,
+                accepted.command_result_sequence, usage.protocol_sequence,
+                usage.input_tokens, usage.output_tokens, usage.cache_read_tokens,
+                usage.cache_write_tokens, usage.total_tokens, usage.provider_cost_binary64,
+                usage.cumulative_ceiling_micros, reservation.budget_reservation_id,
+                attempt.operating_cycle_id
+         FROM pi_task_attempt_session_dispose_deliveries delivery
+         JOIN pi_task_attempt_session_dispose_acceptances accepted ON accepted.actor_attempt_id = delivery.actor_attempt_id
+         JOIN pi_task_attempt_session_dispose_usage_receipts usage ON usage.actor_attempt_id = delivery.actor_attempt_id
+         JOIN attempts attempt ON attempt.actor_attempt_id = delivery.actor_attempt_id
+         JOIN attempt_budget_reservations reservation ON reservation.actor_attempt_id = attempt.actor_attempt_id
+         WHERE delivery.actor_attempt_id = $1",
+        [actor_attempt_id.value()],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?, row.get(10)?, row.get(11)?, row.get(12)?, row.get(13)?)),
+    ).optional().map_err(|_| Rejection::PiTaskAttemptSessionDisposeReceiptMissing)?;
+    let row = row.ok_or(Rejection::PiTaskAttemptSessionDisposeReceiptMissing)?;
+    if row.2 != correlation_identity.as_str()
+        || disposed_sequence.value() <= row.3
+        || disposed_sequence.value() <= row.4
+        || pi_task_attempt_session_max_sequence(transaction, row.1)?
+            .is_some_and(|previous| disposed_sequence.value() <= previous)
+    {
+        return Err(Rejection::PiTaskAttemptSessionDisposeReceiptMissing);
+    }
+    let usage = pi_cumulative_usage_from_sql(row.5, row.6, row.7, row.8, row.9, &row.10, row.11)
+        .map_err(|_| Rejection::PiTaskAttemptSessionDisposeReceiptMissing)?;
+    let reservation_id = BudgetReservationId::try_from(row.12)
+        .map_err(|_| Rejection::PiTaskAttemptSessionDisposeReceiptMissing)?;
+    let prompt_digest: Option<Vec<u8>> = transaction.query_row(
+        "SELECT prompt_digest FROM pi_task_attempt_prompt_authorizations WHERE actor_attempt_id = $1",
+        [actor_attempt_id.value()], |row| row.get(0),
+    ).optional().map_err(|_| Rejection::PiTaskAttemptSessionDisposeReceiptMissing)?;
+    if let PiTaskAttemptSessionTranscriptReceipt::Materialized {
+        first_user_prompt: PiTaskAttemptFirstUserPromptReceipt::Verified { digest },
+        ..
+    } = transcript_receipt
+        && prompt_digest.as_deref() != Some(digest.as_bytes().as_slice())
+    {
+        return Err(Rejection::PiTaskAttemptSessionDisposeReceiptMissing);
+    }
+    let budget_disposition = reconcile_task_attempt_reservation(
+        transaction,
+        command_row_id,
+        reservation_id,
+        usage.ceiling_micro_usd,
+    )?;
+    let (
+        transcript_kind,
+        session_file,
+        session_file_digest,
+        transcript_object,
+        prompt_kind,
+        prompt_digest,
+    ) = task_attempt_transcript_values(transcript_receipt);
+    let (budget_kind, cancellation_request, postmortem) = match budget_disposition {
+        PiTaskAttemptSessionDisposeBudgetDisposition::Reconciled { .. } => (1, None, None),
+        PiTaskAttemptSessionDisposeBudgetDisposition::Frozen {
+            cancellation_request_id,
+            postmortem_id,
+        } => (
+            2,
+            Some(cancellation_request_id.value()),
+            Some(postmortem_id.value()),
+        ),
+    };
+    transaction.execute(
+        "INSERT INTO pi_task_attempt_session_dispose_receipts(actor_attempt_id, native_child_id, pi_session_id, correlation_identity, disposed_sequence, transcript_kind, session_file, session_file_digest, transcript_content_object_id, first_user_prompt_kind, first_user_prompt_digest, budget_disposition_kind, cancellation_request_id, cost_postmortem_id, recorded_by_command_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)",
+        params![actor_attempt_id.value(), row.0, row.1, correlation_identity.as_str(), disposed_sequence.value(), transcript_kind, session_file, session_file_digest, transcript_object, prompt_kind, prompt_digest, budget_kind, cancellation_request, postmortem, command_row_id],
+    ).map_err(|_| Rejection::PiTaskAttemptSessionDisposeReceiptMissing)?;
+    Ok(EventBody::PiTaskAttemptSessionDisposed {
+        pi_task_attempt_session_dispose_receipt_id: id_from_returned_identity(transaction)?,
+        actor_attempt_id,
+        budget_reservation_id: reservation_id,
+        observed_cumulative_micro_usd: usage.ceiling_micro_usd,
+        budget_disposition,
+    })
+}
+
 /// Resolves the one supervised Pi child and parent reservation which are
 /// structurally bound to an Office session. Dispose is intentionally not a
 /// generic child terminal shortcut: it can begin only after the session is
@@ -5005,6 +6476,22 @@ fn sql_pi_office_session_dispose_budget_disposition(
     match disposition {
         PiOfficeSessionDisposeBudgetDisposition::Reconciled { .. } => (1, None, None),
         PiOfficeSessionDisposeBudgetDisposition::Frozen {
+            cancellation_request_id,
+            postmortem_id,
+        } => (
+            2,
+            Some(cancellation_request_id.value()),
+            Some(postmortem_id.value()),
+        ),
+    }
+}
+
+fn sql_pi_task_attempt_session_dispose_budget_disposition(
+    disposition: PiTaskAttemptSessionDisposeBudgetDisposition,
+) -> (i64, Option<i64>, Option<i64>) {
+    match disposition {
+        PiTaskAttemptSessionDisposeBudgetDisposition::Reconciled { .. } => (1, None, None),
+        PiTaskAttemptSessionDisposeBudgetDisposition::Frozen {
             cancellation_request_id,
             postmortem_id,
         } => (
@@ -12316,6 +13803,119 @@ fn request_fingerprint(request: &CommandRequest) -> Blake3Digest {
             put_i64(&mut bytes, disposed_sequence.value());
             put_pi_office_session_transcript_receipt(&mut bytes, transcript_receipt);
         }
+        CommandBody::AuthorizePiTaskAttemptPrompt {
+            actor_attempt_id,
+            correlation_identity,
+            prompt_content_object_id,
+            prompt_digest,
+            frontier_event_id,
+        } => {
+            put_i64(&mut bytes, actor_attempt_id.value());
+            put_bytes(&mut bytes, correlation_identity.as_str().as_bytes());
+            put_i64(&mut bytes, prompt_content_object_id.value());
+            put_bytes(&mut bytes, prompt_digest.as_bytes().as_slice());
+            put_i64(&mut bytes, frontier_event_id.value());
+        }
+        CommandBody::RecordPiTaskAttemptPromptDelivery {
+            actor_attempt_id,
+            correlation_identity,
+            prompt_digest,
+        } => {
+            put_i64(&mut bytes, actor_attempt_id.value());
+            put_bytes(&mut bytes, correlation_identity.as_str().as_bytes());
+            put_bytes(&mut bytes, prompt_digest.as_bytes().as_slice());
+        }
+        CommandBody::RecordPiTaskAttemptPromptAccepted {
+            actor_attempt_id,
+            correlation_identity,
+            command_result_sequence,
+        } => {
+            put_i64(&mut bytes, actor_attempt_id.value());
+            put_bytes(&mut bytes, correlation_identity.as_str().as_bytes());
+            put_i64(&mut bytes, command_result_sequence.value());
+        }
+        CommandBody::RecordPiTaskAttemptUsage {
+            actor_attempt_id,
+            correlation_identity,
+            protocol_sequence,
+            usage,
+        }
+        | CommandBody::RecordPiTaskAttemptSessionDisposeUsage {
+            actor_attempt_id,
+            correlation_identity,
+            protocol_sequence,
+            usage,
+        } => {
+            put_i64(&mut bytes, actor_attempt_id.value());
+            put_bytes(&mut bytes, correlation_identity.as_str().as_bytes());
+            put_i64(&mut bytes, protocol_sequence.value());
+            put_pi_cumulative_usage(&mut bytes, *usage);
+        }
+        CommandBody::RecordPiTaskAttemptUsageFailure {
+            actor_attempt_id,
+            correlation_identity,
+            protocol_sequence,
+            failure,
+        }
+        | CommandBody::RecordPiTaskAttemptSessionDisposeUsageFailure {
+            actor_attempt_id,
+            correlation_identity,
+            protocol_sequence,
+            failure,
+        } => {
+            put_i64(&mut bytes, actor_attempt_id.value());
+            put_bytes(&mut bytes, correlation_identity.as_str().as_bytes());
+            put_i64(&mut bytes, protocol_sequence.value());
+            put_pi_task_attempt_usage_failure(&mut bytes, *failure);
+        }
+        CommandBody::RecordPiTaskAttemptTerminal {
+            actor_attempt_id,
+            correlation_identity,
+            terminal_evidence,
+            settled_sequence,
+            disposition,
+            assistant_outcome,
+            transcript_disposition,
+        } => {
+            put_i64(&mut bytes, actor_attempt_id.value());
+            put_bytes(&mut bytes, correlation_identity.as_str().as_bytes());
+            put_pi_task_attempt_terminal_evidence(&mut bytes, *terminal_evidence);
+            put_i64(&mut bytes, settled_sequence.value());
+            put_i64(&mut bytes, *disposition as i64);
+            put_i64(&mut bytes, *assistant_outcome as i64);
+            put_i64(&mut bytes, *transcript_disposition as i64);
+        }
+        CommandBody::AuthorizePiTaskAttemptSessionDispose {
+            actor_attempt_id,
+            correlation_identity,
+        }
+        | CommandBody::RecordPiTaskAttemptSessionDisposeDelivery {
+            actor_attempt_id,
+            correlation_identity,
+        } => {
+            put_i64(&mut bytes, actor_attempt_id.value());
+            put_bytes(&mut bytes, correlation_identity.as_str().as_bytes());
+        }
+        CommandBody::RecordPiTaskAttemptSessionDisposeAccepted {
+            actor_attempt_id,
+            correlation_identity,
+            command_result_sequence,
+        } => {
+            put_i64(&mut bytes, actor_attempt_id.value());
+            put_bytes(&mut bytes, correlation_identity.as_str().as_bytes());
+            put_i64(&mut bytes, command_result_sequence.value());
+        }
+        CommandBody::RecordPiTaskAttemptSessionDisposed {
+            actor_attempt_id,
+            correlation_identity,
+            disposed_sequence,
+            transcript_receipt,
+        } => {
+            put_i64(&mut bytes, actor_attempt_id.value());
+            put_bytes(&mut bytes, correlation_identity.as_str().as_bytes());
+            put_i64(&mut bytes, disposed_sequence.value());
+            put_pi_task_attempt_session_transcript_receipt(&mut bytes, transcript_receipt);
+        }
         CommandBody::StudyTransition { command } => {
             crate::study::append_command_fingerprint(&mut bytes, command);
         }
@@ -13058,6 +14658,137 @@ fn event_fingerprint(event_id: EventId, command_id: &CommandId, body: &EventBody
             put_i64(&mut bytes, observed_cumulative_micro_usd.value());
             put_pi_office_session_dispose_budget_disposition(&mut bytes, *budget_disposition);
         }
+        EventBody::PiTaskAttemptPromptAuthorized {
+            pi_task_attempt_prompt_authorization_id,
+            actor_attempt_id,
+            native_child_id,
+            correlation_identity,
+            budget_reservation_id,
+        } => {
+            put_i64(&mut bytes, pi_task_attempt_prompt_authorization_id.value());
+            put_i64(&mut bytes, actor_attempt_id.value());
+            put_i64(&mut bytes, native_child_id.value());
+            put_bytes(&mut bytes, correlation_identity.as_str().as_bytes());
+            put_i64(&mut bytes, budget_reservation_id.value());
+        }
+        EventBody::PiTaskAttemptPromptDelivered {
+            actor_attempt_id,
+            correlation_identity,
+        } => {
+            put_i64(&mut bytes, actor_attempt_id.value());
+            put_bytes(&mut bytes, correlation_identity.as_str().as_bytes());
+        }
+        EventBody::PiTaskAttemptPromptAccepted {
+            actor_attempt_id,
+            correlation_identity,
+            command_result_sequence,
+        } => {
+            put_i64(&mut bytes, actor_attempt_id.value());
+            put_bytes(&mut bytes, correlation_identity.as_str().as_bytes());
+            put_i64(&mut bytes, command_result_sequence.value());
+        }
+        EventBody::PiTaskAttemptUsageRecorded {
+            pi_task_attempt_usage_receipt_id,
+            actor_attempt_id,
+            protocol_sequence,
+            cumulative_micro_usd,
+        } => {
+            put_i64(&mut bytes, pi_task_attempt_usage_receipt_id.value());
+            put_i64(&mut bytes, actor_attempt_id.value());
+            put_i64(&mut bytes, protocol_sequence.value());
+            put_i64(&mut bytes, cumulative_micro_usd.value());
+        }
+        EventBody::PiTaskAttemptUsageFrozen {
+            actor_attempt_id,
+            budget_reservation_id,
+            cancellation_request_id,
+            postmortem_id,
+            failure,
+        } => {
+            put_i64(&mut bytes, actor_attempt_id.value());
+            put_i64(&mut bytes, budget_reservation_id.value());
+            put_i64(&mut bytes, cancellation_request_id.value());
+            put_i64(&mut bytes, postmortem_id.value());
+            put_pi_task_attempt_usage_failure(&mut bytes, *failure);
+        }
+        EventBody::PiTaskAttemptTerminalRecorded {
+            pi_task_attempt_terminal_receipt_id,
+            actor_attempt_id,
+            disposition,
+            assistant_outcome,
+        } => {
+            put_i64(&mut bytes, pi_task_attempt_terminal_receipt_id.value());
+            put_i64(&mut bytes, actor_attempt_id.value());
+            put_i64(&mut bytes, *disposition as i64);
+            put_i64(&mut bytes, *assistant_outcome as i64);
+        }
+        EventBody::PiTaskAttemptSessionDisposeAuthorized {
+            actor_attempt_id,
+            native_child_id,
+            correlation_identity,
+            authorized_generation,
+        } => {
+            put_i64(&mut bytes, actor_attempt_id.value());
+            put_i64(&mut bytes, native_child_id.value());
+            put_bytes(&mut bytes, correlation_identity.as_str().as_bytes());
+            put_i64(&mut bytes, authorized_generation.value());
+        }
+        EventBody::PiTaskAttemptSessionDisposeDelivered {
+            actor_attempt_id,
+            native_child_id,
+            correlation_identity,
+        } => {
+            put_i64(&mut bytes, actor_attempt_id.value());
+            put_i64(&mut bytes, native_child_id.value());
+            put_bytes(&mut bytes, correlation_identity.as_str().as_bytes());
+        }
+        EventBody::PiTaskAttemptSessionDisposeAccepted {
+            actor_attempt_id,
+            correlation_identity,
+            command_result_sequence,
+        } => {
+            put_i64(&mut bytes, actor_attempt_id.value());
+            put_bytes(&mut bytes, correlation_identity.as_str().as_bytes());
+            put_i64(&mut bytes, command_result_sequence.value());
+        }
+        EventBody::PiTaskAttemptSessionDisposeUsageRecorded {
+            actor_attempt_id,
+            protocol_sequence,
+            cumulative_micro_usd,
+        } => {
+            put_i64(&mut bytes, actor_attempt_id.value());
+            put_i64(&mut bytes, protocol_sequence.value());
+            put_i64(&mut bytes, cumulative_micro_usd.value());
+        }
+        EventBody::PiTaskAttemptSessionDisposeUsageFrozen {
+            actor_attempt_id,
+            budget_reservation_id,
+            cancellation_request_id,
+            postmortem_id,
+            failure,
+        } => {
+            put_i64(&mut bytes, actor_attempt_id.value());
+            put_i64(&mut bytes, budget_reservation_id.value());
+            put_i64(&mut bytes, cancellation_request_id.value());
+            put_i64(&mut bytes, postmortem_id.value());
+            put_pi_task_attempt_usage_failure(&mut bytes, *failure);
+        }
+        EventBody::PiTaskAttemptSessionDisposed {
+            pi_task_attempt_session_dispose_receipt_id,
+            actor_attempt_id,
+            budget_reservation_id,
+            observed_cumulative_micro_usd,
+            budget_disposition,
+        } => {
+            put_i64(
+                &mut bytes,
+                pi_task_attempt_session_dispose_receipt_id.value(),
+            );
+            put_i64(&mut bytes, actor_attempt_id.value());
+            put_i64(&mut bytes, budget_reservation_id.value());
+            put_i64(&mut bytes, observed_cumulative_micro_usd.value());
+            put_pi_task_attempt_session_dispose_budget_disposition(&mut bytes, *budget_disposition);
+        }
         EventBody::StudyTransition { event } => {
             crate::study::append_event_fingerprint(&mut bytes, event);
         }
@@ -13107,6 +14838,19 @@ fn put_pi_office_turn_usage_failure(bytes: &mut Vec<u8>, failure: PiOfficeTurnUs
     }
 }
 
+fn put_pi_task_attempt_usage_failure(bytes: &mut Vec<u8>, failure: PiTaskAttemptUsageFailure) {
+    match failure {
+        PiTaskAttemptUsageFailure::Unknown(reason) => {
+            put_i64(bytes, 1);
+            put_i64(bytes, reason as i64);
+        }
+        PiTaskAttemptUsageFailure::Unavailable(reason) => {
+            put_i64(bytes, 2);
+            put_i64(bytes, reason as i64);
+        }
+    }
+}
+
 fn put_pi_office_session_transcript_receipt(
     bytes: &mut Vec<u8>,
     receipt: &PiOfficeSessionTranscriptReceipt,
@@ -13137,6 +14881,36 @@ fn put_pi_office_session_transcript_receipt(
     }
 }
 
+fn put_pi_task_attempt_session_transcript_receipt(
+    bytes: &mut Vec<u8>,
+    receipt: &PiTaskAttemptSessionTranscriptReceipt,
+) {
+    match receipt {
+        PiTaskAttemptSessionTranscriptReceipt::Materialized {
+            session_file,
+            session_file_digest,
+            transcript_content_object_id,
+            first_user_prompt,
+        } => {
+            put_i64(bytes, 1);
+            put_bytes(bytes, session_file.as_str().as_bytes());
+            put_bytes(bytes, session_file_digest.as_bytes().as_slice());
+            put_i64(bytes, transcript_content_object_id.value());
+            match first_user_prompt {
+                PiTaskAttemptFirstUserPromptReceipt::Absent => put_i64(bytes, 1),
+                PiTaskAttemptFirstUserPromptReceipt::Verified { digest } => {
+                    put_i64(bytes, 2);
+                    put_bytes(bytes, digest.as_bytes().as_slice());
+                }
+            }
+        }
+        PiTaskAttemptSessionTranscriptReceipt::UnmaterializedNoPrompt { session_file } => {
+            put_i64(bytes, 2);
+            put_bytes(bytes, session_file.as_str().as_bytes());
+        }
+    }
+}
+
 fn put_pi_office_session_dispose_budget_disposition(
     bytes: &mut Vec<u8>,
     disposition: PiOfficeSessionDisposeBudgetDisposition,
@@ -13149,6 +14923,28 @@ fn put_pi_office_session_dispose_budget_disposition(
             put_i64(bytes, observed_cumulative_micro_usd.value());
         }
         PiOfficeSessionDisposeBudgetDisposition::Frozen {
+            cancellation_request_id,
+            postmortem_id,
+        } => {
+            put_i64(bytes, 2);
+            put_i64(bytes, cancellation_request_id.value());
+            put_i64(bytes, postmortem_id.value());
+        }
+    }
+}
+
+fn put_pi_task_attempt_session_dispose_budget_disposition(
+    bytes: &mut Vec<u8>,
+    disposition: PiTaskAttemptSessionDisposeBudgetDisposition,
+) {
+    match disposition {
+        PiTaskAttemptSessionDisposeBudgetDisposition::Reconciled {
+            observed_cumulative_micro_usd,
+        } => {
+            put_i64(bytes, 1);
+            put_i64(bytes, observed_cumulative_micro_usd.value());
+        }
+        PiTaskAttemptSessionDisposeBudgetDisposition::Frozen {
             cancellation_request_id,
             postmortem_id,
         } => {
@@ -13194,6 +14990,28 @@ fn put_pi_office_turn_terminal_evidence(
             put_i64(bytes, final_accounting_sequence.value());
         }
         PiOfficeTurnTerminalEvidence::UnavailableAssistant {
+            final_known_usage_sequence,
+        } => {
+            put_i64(bytes, 2);
+            put_i64(bytes, final_known_usage_sequence.value());
+        }
+    }
+}
+
+fn put_pi_task_attempt_terminal_evidence(
+    bytes: &mut Vec<u8>,
+    evidence: PiTaskAttemptTerminalEvidence,
+) {
+    match evidence {
+        PiTaskAttemptTerminalEvidence::ObservedAssistant {
+            agent_settled_sequence,
+            final_accounting_sequence,
+        } => {
+            put_i64(bytes, 1);
+            put_i64(bytes, agent_settled_sequence.value());
+            put_i64(bytes, final_accounting_sequence.value());
+        }
+        PiTaskAttemptTerminalEvidence::UnavailableAssistant {
             final_known_usage_sequence,
         } => {
             put_i64(bytes, 2);
@@ -13565,6 +15383,151 @@ fn insert_command_body(
                 "INSERT INTO command_record_pi_office_session_disposed VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
                 params![command_row_id, session_id.value(), correlation_identity.as_str(), disposed_sequence.value(), kind, session_file, digest, content, first_kind, first_digest],
             )?;
+        }
+        CommandBody::AuthorizePiTaskAttemptPrompt {
+            actor_attempt_id,
+            correlation_identity,
+            prompt_content_object_id,
+            prompt_digest,
+            frontier_event_id,
+        } => {
+            transaction.execute("INSERT INTO command_authorize_pi_task_attempt_prompt VALUES ($1, $2, $3, $4, $5, $6)", params![command_row_id, actor_attempt_id.value(), correlation_identity.as_str(), prompt_content_object_id.value(), prompt_digest.as_bytes().as_slice(), frontier_event_id.value()])?;
+        }
+        CommandBody::RecordPiTaskAttemptPromptDelivery {
+            actor_attempt_id,
+            correlation_identity,
+            prompt_digest,
+        } => {
+            transaction.execute("INSERT INTO command_record_pi_task_attempt_prompt_delivery VALUES ($1, $2, $3, $4)", params![command_row_id, actor_attempt_id.value(), correlation_identity.as_str(), prompt_digest.as_bytes().as_slice()])?;
+        }
+        CommandBody::RecordPiTaskAttemptPromptAccepted {
+            actor_attempt_id,
+            correlation_identity,
+            command_result_sequence,
+        } => {
+            transaction.execute("INSERT INTO command_record_pi_task_attempt_prompt_accepted VALUES ($1, $2, $3, $4)", params![command_row_id, actor_attempt_id.value(), correlation_identity.as_str(), command_result_sequence.value()])?;
+        }
+        CommandBody::RecordPiTaskAttemptUsage {
+            actor_attempt_id,
+            correlation_identity,
+            protocol_sequence,
+            usage,
+        }
+        | CommandBody::RecordPiTaskAttemptSessionDisposeUsage {
+            actor_attempt_id,
+            correlation_identity,
+            protocol_sequence,
+            usage,
+        } => {
+            let table = if matches!(body, CommandBody::RecordPiTaskAttemptUsage { .. }) {
+                "command_record_pi_task_attempt_usage"
+            } else {
+                "command_record_pi_task_attempt_session_dispose_usage"
+            };
+            transaction.execute(
+                &format!(
+                    "INSERT INTO {table} VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"
+                ),
+                params![
+                    command_row_id,
+                    actor_attempt_id.value(),
+                    correlation_identity.as_str(),
+                    protocol_sequence.value(),
+                    usage.input_tokens.value(),
+                    usage.output_tokens.value(),
+                    usage.cache_read_tokens.value(),
+                    usage.cache_write_tokens.value(),
+                    usage.total_tokens.value(),
+                    usage.provider_cost.as_big_endian_bytes().as_slice(),
+                    usage.ceiling_micro_usd.value()
+                ],
+            )?;
+        }
+        CommandBody::RecordPiTaskAttemptUsageFailure {
+            actor_attempt_id,
+            correlation_identity,
+            protocol_sequence,
+            failure,
+        }
+        | CommandBody::RecordPiTaskAttemptSessionDisposeUsageFailure {
+            actor_attempt_id,
+            correlation_identity,
+            protocol_sequence,
+            failure,
+        } => {
+            let (kind, unknown, unavailable) = sql_pi_task_attempt_usage_failure(*failure);
+            let table = if matches!(body, CommandBody::RecordPiTaskAttemptUsageFailure { .. }) {
+                "command_record_pi_task_attempt_usage_failure"
+            } else {
+                "command_record_pi_task_attempt_session_dispose_usage_failure"
+            };
+            transaction.execute(
+                &format!("INSERT INTO {table} VALUES ($1, $2, $3, $4, $5, $6, $7)"),
+                params![
+                    command_row_id,
+                    actor_attempt_id.value(),
+                    correlation_identity.as_str(),
+                    protocol_sequence.value(),
+                    kind,
+                    unknown,
+                    unavailable
+                ],
+            )?;
+        }
+        CommandBody::RecordPiTaskAttemptTerminal {
+            actor_attempt_id,
+            correlation_identity,
+            terminal_evidence,
+            settled_sequence,
+            disposition,
+            assistant_outcome,
+            transcript_disposition,
+        } => {
+            let (evidence_kind, agent_settled_sequence) =
+                sql_pi_task_attempt_terminal_evidence(*terminal_evidence);
+            transaction.execute("INSERT INTO command_record_pi_task_attempt_terminal VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)", params![command_row_id, actor_attempt_id.value(), correlation_identity.as_str(), evidence_kind, agent_settled_sequence, terminal_evidence.final_accounting_sequence().value(), settled_sequence.value(), *disposition as i64, *assistant_outcome as i64, *transcript_disposition as i64])?;
+        }
+        CommandBody::AuthorizePiTaskAttemptSessionDispose {
+            actor_attempt_id,
+            correlation_identity,
+        }
+        | CommandBody::RecordPiTaskAttemptSessionDisposeDelivery {
+            actor_attempt_id,
+            correlation_identity,
+        } => {
+            let table = if matches!(
+                body,
+                CommandBody::AuthorizePiTaskAttemptSessionDispose { .. }
+            ) {
+                "command_authorize_pi_task_attempt_session_dispose"
+            } else {
+                "command_record_pi_task_attempt_session_dispose_delivery"
+            };
+            transaction.execute(
+                &format!("INSERT INTO {table} VALUES ($1, $2, $3)"),
+                params![
+                    command_row_id,
+                    actor_attempt_id.value(),
+                    correlation_identity.as_str()
+                ],
+            )?;
+        }
+        CommandBody::RecordPiTaskAttemptSessionDisposeAccepted {
+            actor_attempt_id,
+            correlation_identity,
+            command_result_sequence,
+        } => {
+            transaction.execute("INSERT INTO command_record_pi_task_attempt_session_dispose_accepted VALUES ($1, $2, $3, $4)", params![command_row_id, actor_attempt_id.value(), correlation_identity.as_str(), command_result_sequence.value()])?;
+        }
+        CommandBody::RecordPiTaskAttemptSessionDisposed {
+            actor_attempt_id,
+            correlation_identity,
+            disposed_sequence,
+            transcript_receipt,
+        } => {
+            let (kind, session_file, digest, content, first_kind, first_digest) =
+                task_attempt_transcript_values(transcript_receipt);
+            transaction.execute("INSERT INTO command_record_pi_task_attempt_session_disposed VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)", params![command_row_id, actor_attempt_id.value(), correlation_identity.as_str(), disposed_sequence.value(), kind, session_file, digest, content, first_kind, first_digest])?;
         }
         CommandBody::StudyTransition { command } => {
             crate::study::insert_command_body(transaction, command_row_id, command)?;
@@ -15576,6 +17539,137 @@ fn insert_event_body(
                 params![event_id.value(), pi_office_session_dispose_receipt_id.value(), session_id.value(), budget_reservation_id.value(), observed_cumulative_micro_usd.value(), kind, cancellation_request_id, postmortem_id],
             )?;
         }
+        EventBody::PiTaskAttemptPromptAuthorized {
+            pi_task_attempt_prompt_authorization_id,
+            actor_attempt_id,
+            native_child_id,
+            correlation_identity,
+            budget_reservation_id,
+        } => {
+            transaction.execute("INSERT INTO event_pi_task_attempt_prompt_authorized VALUES ($1, $2, $3, $4, $5, $6)", params![event_id.value(), pi_task_attempt_prompt_authorization_id.value(), actor_attempt_id.value(), native_child_id.value(), correlation_identity.as_str(), budget_reservation_id.value()])?;
+        }
+        EventBody::PiTaskAttemptPromptDelivered {
+            actor_attempt_id,
+            correlation_identity,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_pi_task_attempt_prompt_delivered VALUES ($1, $2, $3)",
+                params![
+                    event_id.value(),
+                    actor_attempt_id.value(),
+                    correlation_identity.as_str()
+                ],
+            )?;
+        }
+        EventBody::PiTaskAttemptPromptAccepted {
+            actor_attempt_id,
+            correlation_identity,
+            command_result_sequence,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_pi_task_attempt_prompt_accepted VALUES ($1, $2, $3, $4)",
+                params![
+                    event_id.value(),
+                    actor_attempt_id.value(),
+                    correlation_identity.as_str(),
+                    command_result_sequence.value()
+                ],
+            )?;
+        }
+        EventBody::PiTaskAttemptUsageRecorded {
+            pi_task_attempt_usage_receipt_id,
+            actor_attempt_id,
+            protocol_sequence,
+            cumulative_micro_usd,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_pi_task_attempt_usage_recorded VALUES ($1, $2, $3, $4, $5)",
+                params![
+                    event_id.value(),
+                    pi_task_attempt_usage_receipt_id.value(),
+                    actor_attempt_id.value(),
+                    protocol_sequence.value(),
+                    cumulative_micro_usd.value()
+                ],
+            )?;
+        }
+        EventBody::PiTaskAttemptUsageFrozen {
+            actor_attempt_id,
+            budget_reservation_id,
+            cancellation_request_id,
+            postmortem_id,
+            failure,
+        } => {
+            let (kind, unknown, unavailable) = sql_pi_task_attempt_usage_failure(*failure);
+            transaction.execute("INSERT INTO event_pi_task_attempt_usage_frozen VALUES ($1, $2, $3, $4, $5, $6, $7, $8)", params![event_id.value(), actor_attempt_id.value(), budget_reservation_id.value(), cancellation_request_id.value(), postmortem_id.value(), kind, unknown, unavailable])?;
+        }
+        EventBody::PiTaskAttemptTerminalRecorded {
+            pi_task_attempt_terminal_receipt_id,
+            actor_attempt_id,
+            disposition,
+            assistant_outcome,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_pi_task_attempt_terminal_recorded VALUES ($1, $2, $3, $4, $5)",
+                params![
+                    event_id.value(),
+                    pi_task_attempt_terminal_receipt_id.value(),
+                    actor_attempt_id.value(),
+                    *disposition as i64,
+                    *assistant_outcome as i64
+                ],
+            )?;
+        }
+        EventBody::PiTaskAttemptSessionDisposeAuthorized {
+            actor_attempt_id,
+            native_child_id,
+            correlation_identity,
+            authorized_generation,
+        } => {
+            transaction.execute("INSERT INTO event_pi_task_attempt_session_dispose_authorized VALUES ($1, $2, $3, $4, $5)", params![event_id.value(), actor_attempt_id.value(), native_child_id.value(), correlation_identity.as_str(), authorized_generation.value()])?;
+        }
+        EventBody::PiTaskAttemptSessionDisposeDelivered {
+            actor_attempt_id,
+            native_child_id,
+            correlation_identity,
+        } => {
+            transaction.execute("INSERT INTO event_pi_task_attempt_session_dispose_delivered VALUES ($1, $2, $3, $4)", params![event_id.value(), actor_attempt_id.value(), native_child_id.value(), correlation_identity.as_str()])?;
+        }
+        EventBody::PiTaskAttemptSessionDisposeAccepted {
+            actor_attempt_id,
+            correlation_identity,
+            command_result_sequence,
+        } => {
+            transaction.execute("INSERT INTO event_pi_task_attempt_session_dispose_accepted VALUES ($1, $2, $3, $4)", params![event_id.value(), actor_attempt_id.value(), correlation_identity.as_str(), command_result_sequence.value()])?;
+        }
+        EventBody::PiTaskAttemptSessionDisposeUsageRecorded {
+            actor_attempt_id,
+            protocol_sequence,
+            cumulative_micro_usd,
+        } => {
+            transaction.execute("INSERT INTO event_pi_task_attempt_session_dispose_usage_recorded VALUES ($1, $2, $3, $4)", params![event_id.value(), actor_attempt_id.value(), protocol_sequence.value(), cumulative_micro_usd.value()])?;
+        }
+        EventBody::PiTaskAttemptSessionDisposeUsageFrozen {
+            actor_attempt_id,
+            budget_reservation_id,
+            cancellation_request_id,
+            postmortem_id,
+            failure,
+        } => {
+            let (kind, unknown, unavailable) = sql_pi_task_attempt_usage_failure(*failure);
+            transaction.execute("INSERT INTO event_pi_task_attempt_session_dispose_usage_frozen VALUES ($1, $2, $3, $4, $5, $6, $7, $8)", params![event_id.value(), actor_attempt_id.value(), budget_reservation_id.value(), cancellation_request_id.value(), postmortem_id.value(), kind, unknown, unavailable])?;
+        }
+        EventBody::PiTaskAttemptSessionDisposed {
+            pi_task_attempt_session_dispose_receipt_id,
+            actor_attempt_id,
+            budget_reservation_id,
+            observed_cumulative_micro_usd,
+            budget_disposition,
+        } => {
+            let (kind, cancellation_request_id, postmortem_id) =
+                sql_pi_task_attempt_session_dispose_budget_disposition(*budget_disposition);
+            transaction.execute("INSERT INTO event_pi_task_attempt_session_disposed VALUES ($1, $2, $3, $4, $5, $6, $7, $8)", params![event_id.value(), pi_task_attempt_session_dispose_receipt_id.value(), actor_attempt_id.value(), budget_reservation_id.value(), observed_cumulative_micro_usd.value(), kind, cancellation_request_id, postmortem_id])?;
+        }
         EventBody::StudyTransition { event } => {
             crate::study::insert_event_body(transaction, event_id.value(), event)?;
         }
@@ -16724,6 +18818,162 @@ fn decode_event_body(
                 )?,
             }
         }
+        EventKind::PiTaskAttemptPromptAuthorized => {
+            let row: (i64, i64, i64, String, i64) = connection.query_row(
+                "SELECT pi_task_attempt_prompt_authorization_id, actor_attempt_id, native_child_id, correlation_identity, budget_reservation_id FROM event_pi_task_attempt_prompt_authorized WHERE event_id = $1",
+                [event_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            ).optional()?.ok_or(StoreError::LedgerCorruption("missing task prompt authorization event body"))?;
+            EventBody::PiTaskAttemptPromptAuthorized {
+                pi_task_attempt_prompt_authorization_id:
+                    PiTaskAttemptPromptAuthorizationId::try_from(row.0)
+                        .map_err(|_| StoreError::InvalidStoredValue)?,
+                actor_attempt_id: ActorAttemptId::try_from(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                native_child_id: NativeChildId::try_from(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                correlation_identity: PiCorrelationIdentity::parse(row.3)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                budget_reservation_id: BudgetReservationId::try_from(row.4)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        EventKind::PiTaskAttemptPromptDelivered => {
+            let row: (i64, String) = connection.query_row("SELECT actor_attempt_id, correlation_identity FROM event_pi_task_attempt_prompt_delivered WHERE event_id = $1", [event_id], |row| Ok((row.get(0)?, row.get(1)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing task prompt delivery event body"))?;
+            EventBody::PiTaskAttemptPromptDelivered {
+                actor_attempt_id: ActorAttemptId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                correlation_identity: PiCorrelationIdentity::parse(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        EventKind::PiTaskAttemptPromptAccepted => {
+            let row: (i64, String, i64) = connection.query_row("SELECT actor_attempt_id, correlation_identity, command_result_sequence FROM event_pi_task_attempt_prompt_accepted WHERE event_id = $1", [event_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing task prompt acceptance event body"))?;
+            EventBody::PiTaskAttemptPromptAccepted {
+                actor_attempt_id: ActorAttemptId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                correlation_identity: PiCorrelationIdentity::parse(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                command_result_sequence: PiProtocolSequence::try_from(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        EventKind::PiTaskAttemptUsageRecorded => {
+            let row: (i64, i64, i64, i64) = connection.query_row("SELECT pi_task_attempt_usage_receipt_id, actor_attempt_id, protocol_sequence, cumulative_ceiling_micros FROM event_pi_task_attempt_usage_recorded WHERE event_id = $1", [event_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing task usage event body"))?;
+            EventBody::PiTaskAttemptUsageRecorded {
+                pi_task_attempt_usage_receipt_id: PiTaskAttemptUsageReceiptId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                actor_attempt_id: ActorAttemptId::try_from(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                protocol_sequence: PiProtocolSequence::try_from(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                cumulative_micro_usd: UsdMicros::try_from(row.3)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        EventKind::PiTaskAttemptUsageFrozen => {
+            let row: (i64, i64, i64, i64, i64, Option<i64>, Option<i64>) = connection.query_row("SELECT actor_attempt_id, budget_reservation_id, cancellation_request_id, cost_postmortem_id, failure_kind, unknown_reason, unavailable_reason FROM event_pi_task_attempt_usage_frozen WHERE event_id = $1", [event_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing task usage freeze event body"))?;
+            EventBody::PiTaskAttemptUsageFrozen {
+                actor_attempt_id: ActorAttemptId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                budget_reservation_id: BudgetReservationId::try_from(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                cancellation_request_id: CancellationRequestId::try_from(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                postmortem_id: CostPostmortemId::try_from(row.3)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                failure: pi_task_attempt_usage_failure_from_sql(row.4, row.5, row.6)?,
+            }
+        }
+        EventKind::PiTaskAttemptTerminalRecorded => {
+            let row: (i64, i64, i64, i64) = connection.query_row("SELECT pi_task_attempt_terminal_receipt_id, actor_attempt_id, disposition, assistant_outcome FROM event_pi_task_attempt_terminal_recorded WHERE event_id = $1", [event_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing task terminal event body"))?;
+            EventBody::PiTaskAttemptTerminalRecorded {
+                pi_task_attempt_terminal_receipt_id: PiTaskAttemptTerminalReceiptId::try_from(
+                    row.0,
+                )
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+                actor_attempt_id: ActorAttemptId::try_from(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                disposition: pi_task_attempt_disposition_from_i64(row.2)?,
+                assistant_outcome: pi_task_attempt_assistant_outcome_from_i64(row.3)?,
+            }
+        }
+        EventKind::PiTaskAttemptSessionDisposeAuthorized => {
+            let row: (i64, i64, String, i64) = connection.query_row("SELECT actor_attempt_id, native_child_id, correlation_identity, authorized_generation FROM event_pi_task_attempt_session_dispose_authorized WHERE event_id = $1", [event_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing task dispose authorization event body"))?;
+            EventBody::PiTaskAttemptSessionDisposeAuthorized {
+                actor_attempt_id: ActorAttemptId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                native_child_id: NativeChildId::try_from(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                correlation_identity: PiCorrelationIdentity::parse(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                authorized_generation: AdmissionGeneration::try_from(row.3)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        EventKind::PiTaskAttemptSessionDisposeDelivered => {
+            let row: (i64, i64, String) = connection.query_row("SELECT actor_attempt_id, native_child_id, correlation_identity FROM event_pi_task_attempt_session_dispose_delivered WHERE event_id = $1", [event_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing task dispose delivery event body"))?;
+            EventBody::PiTaskAttemptSessionDisposeDelivered {
+                actor_attempt_id: ActorAttemptId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                native_child_id: NativeChildId::try_from(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                correlation_identity: PiCorrelationIdentity::parse(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        EventKind::PiTaskAttemptSessionDisposeAccepted => {
+            let row: (i64, String, i64) = connection.query_row("SELECT actor_attempt_id, correlation_identity, command_result_sequence FROM event_pi_task_attempt_session_dispose_accepted WHERE event_id = $1", [event_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing task dispose acceptance event body"))?;
+            EventBody::PiTaskAttemptSessionDisposeAccepted {
+                actor_attempt_id: ActorAttemptId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                correlation_identity: PiCorrelationIdentity::parse(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                command_result_sequence: PiProtocolSequence::try_from(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        EventKind::PiTaskAttemptSessionDisposeUsageRecorded => {
+            let row: (i64, i64, i64) = connection.query_row("SELECT actor_attempt_id, protocol_sequence, cumulative_ceiling_micros FROM event_pi_task_attempt_session_dispose_usage_recorded WHERE event_id = $1", [event_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing task dispose usage event body"))?;
+            EventBody::PiTaskAttemptSessionDisposeUsageRecorded {
+                actor_attempt_id: ActorAttemptId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                protocol_sequence: PiProtocolSequence::try_from(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                cumulative_micro_usd: UsdMicros::try_from(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        EventKind::PiTaskAttemptSessionDisposeUsageFrozen => {
+            let row: (i64, i64, i64, i64, i64, Option<i64>, Option<i64>) = connection.query_row("SELECT actor_attempt_id, budget_reservation_id, cancellation_request_id, cost_postmortem_id, failure_kind, unknown_reason, unavailable_reason FROM event_pi_task_attempt_session_dispose_usage_frozen WHERE event_id = $1", [event_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing task dispose usage freeze event body"))?;
+            EventBody::PiTaskAttemptSessionDisposeUsageFrozen {
+                actor_attempt_id: ActorAttemptId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                budget_reservation_id: BudgetReservationId::try_from(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                cancellation_request_id: CancellationRequestId::try_from(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                postmortem_id: CostPostmortemId::try_from(row.3)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                failure: pi_task_attempt_usage_failure_from_sql(row.4, row.5, row.6)?,
+            }
+        }
+        EventKind::PiTaskAttemptSessionDisposed => {
+            let row: (i64, i64, i64, i64, i64, Option<i64>, Option<i64>) = connection.query_row("SELECT pi_task_attempt_session_dispose_receipt_id, actor_attempt_id, budget_reservation_id, observed_cumulative_micros, budget_disposition_kind, cancellation_request_id, cost_postmortem_id FROM event_pi_task_attempt_session_disposed WHERE event_id = $1", [event_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing task disposed event body"))?;
+            EventBody::PiTaskAttemptSessionDisposed {
+                pi_task_attempt_session_dispose_receipt_id:
+                    PiTaskAttemptSessionDisposeReceiptId::try_from(row.0)
+                        .map_err(|_| StoreError::InvalidStoredValue)?,
+                actor_attempt_id: ActorAttemptId::try_from(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                budget_reservation_id: BudgetReservationId::try_from(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                observed_cumulative_micro_usd: UsdMicros::try_from(row.3)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                budget_disposition: pi_task_attempt_session_dispose_budget_disposition_from_sql(
+                    row.4, row.3, row.5, row.6,
+                )?,
+            }
+        }
         EventKind::StudyTransition => EventBody::StudyTransition {
             event: crate::study::decode_event_body(connection, event_id)?,
         },
@@ -16995,7 +19245,7 @@ fn replay_command_requests(
     Ok(commands)
 }
 
-const MATERIALIZED_TABLES: [&str; 119] = [
+const MATERIALIZED_TABLES: [&str; 134] = [
     "principals",
     "societies",
     "office_contracts",
@@ -17093,10 +19343,24 @@ const MATERIALIZED_TABLES: [&str; 119] = [
     "pi_office_session_dispose_usage_receipts",
     "pi_office_session_dispose_usage_failures",
     "pi_office_session_dispose_receipts",
+    "pi_task_attempt_prompt_authorizations",
+    "pi_task_attempt_prompt_deliveries",
+    "pi_task_attempt_prompt_acceptances",
+    "pi_task_attempt_usage_receipts",
+    "pi_task_attempt_usage_failures",
+    "pi_task_attempt_terminal_receipts",
+    "pi_task_attempt_session_dispose_authorizations",
+    "pi_task_attempt_session_dispose_deliveries",
+    "pi_task_attempt_session_dispose_acceptances",
+    "pi_task_attempt_session_dispose_usage_receipts",
+    "pi_task_attempt_session_dispose_usage_failures",
+    "pi_task_attempt_session_dispose_receipts",
     "study_protocol_revisions",
     "study_world_revisions",
     "study_measurement_revisions",
     "study_institution_revisions",
+    "study_runs",
+    "study_run_pairs",
     "study_population_snapshots",
     "study_episodes",
     "study_episode_successor_populations",
@@ -17107,6 +19371,7 @@ const MATERIALIZED_TABLES: [&str; 119] = [
     "study_actor_obligations",
     "study_actor_occurrences",
     "study_actor_runtime_bindings",
+    "study_actor_task_attempt_recovery_settlements",
     "study_frozen_forum_heads",
     "study_forum_exposures",
     "study_forum_messages",
@@ -18493,6 +20758,168 @@ fn decode_command_body(
                 )?,
             }
         }
+        CommandKind::AuthorizePiTaskAttemptPrompt => {
+            let row: (i64, String, i64, Vec<u8>, i64) = connection.query_row("SELECT actor_attempt_id, correlation_identity, prompt_content_object_id, prompt_digest, frontier_event_id FROM command_authorize_pi_task_attempt_prompt WHERE command_row_id = $1", [command_row_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing task prompt authorization command body"))?;
+            CommandBody::AuthorizePiTaskAttemptPrompt {
+                actor_attempt_id: ActorAttemptId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                correlation_identity: PiCorrelationIdentity::parse(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                prompt_content_object_id: ContentObjectId::try_from(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                prompt_digest: digest_from_stored_bytes(&row.3)?,
+                frontier_event_id: EventId::try_from(row.4)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::RecordPiTaskAttemptPromptDelivery => {
+            let row: (i64, String, Vec<u8>) = connection.query_row("SELECT actor_attempt_id, correlation_identity, prompt_digest FROM command_record_pi_task_attempt_prompt_delivery WHERE command_row_id = $1", [command_row_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing task prompt delivery command body"))?;
+            CommandBody::RecordPiTaskAttemptPromptDelivery {
+                actor_attempt_id: ActorAttemptId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                correlation_identity: PiCorrelationIdentity::parse(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                prompt_digest: digest_from_stored_bytes(&row.2)?,
+            }
+        }
+        CommandKind::RecordPiTaskAttemptPromptAccepted => {
+            let row: (i64, String, i64) = connection.query_row("SELECT actor_attempt_id, correlation_identity, command_result_sequence FROM command_record_pi_task_attempt_prompt_accepted WHERE command_row_id = $1", [command_row_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing task prompt acceptance command body"))?;
+            CommandBody::RecordPiTaskAttemptPromptAccepted {
+                actor_attempt_id: ActorAttemptId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                correlation_identity: PiCorrelationIdentity::parse(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                command_result_sequence: PiProtocolSequence::try_from(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::RecordPiTaskAttemptUsage
+        | CommandKind::RecordPiTaskAttemptSessionDisposeUsage => {
+            let table = if kind == CommandKind::RecordPiTaskAttemptUsage {
+                "command_record_pi_task_attempt_usage"
+            } else {
+                "command_record_pi_task_attempt_session_dispose_usage"
+            };
+            let row: (i64, String, i64, i64, i64, i64, i64, i64, Vec<u8>, i64) = connection.query_row(&format!("SELECT actor_attempt_id, correlation_identity, protocol_sequence, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, total_tokens, provider_cost_binary64, cumulative_ceiling_micros FROM {table} WHERE command_row_id = $1"), [command_row_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?,row.get(7)?,row.get(8)?,row.get(9)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing task usage command body"))?;
+            let actor_attempt_id =
+                ActorAttemptId::try_from(row.0).map_err(|_| StoreError::InvalidStoredValue)?;
+            let correlation_identity =
+                PiCorrelationIdentity::parse(row.1).map_err(|_| StoreError::InvalidStoredValue)?;
+            let protocol_sequence =
+                PiProtocolSequence::try_from(row.2).map_err(|_| StoreError::InvalidStoredValue)?;
+            let usage =
+                pi_cumulative_usage_from_sql(row.3, row.4, row.5, row.6, row.7, &row.8, row.9)?;
+            if kind == CommandKind::RecordPiTaskAttemptUsage {
+                CommandBody::RecordPiTaskAttemptUsage {
+                    actor_attempt_id,
+                    correlation_identity,
+                    protocol_sequence,
+                    usage,
+                }
+            } else {
+                CommandBody::RecordPiTaskAttemptSessionDisposeUsage {
+                    actor_attempt_id,
+                    correlation_identity,
+                    protocol_sequence,
+                    usage,
+                }
+            }
+        }
+        CommandKind::RecordPiTaskAttemptUsageFailure
+        | CommandKind::RecordPiTaskAttemptSessionDisposeUsageFailure => {
+            let table = if kind == CommandKind::RecordPiTaskAttemptUsageFailure {
+                "command_record_pi_task_attempt_usage_failure"
+            } else {
+                "command_record_pi_task_attempt_session_dispose_usage_failure"
+            };
+            let row: (i64, String, i64, i64, Option<i64>, Option<i64>) = connection.query_row(&format!("SELECT actor_attempt_id, correlation_identity, protocol_sequence, failure_kind, unknown_reason, unavailable_reason FROM {table} WHERE command_row_id = $1"), [command_row_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing task usage failure command body"))?;
+            let actor_attempt_id =
+                ActorAttemptId::try_from(row.0).map_err(|_| StoreError::InvalidStoredValue)?;
+            let correlation_identity =
+                PiCorrelationIdentity::parse(row.1).map_err(|_| StoreError::InvalidStoredValue)?;
+            let protocol_sequence =
+                PiProtocolSequence::try_from(row.2).map_err(|_| StoreError::InvalidStoredValue)?;
+            let failure = pi_task_attempt_usage_failure_from_sql(row.3, row.4, row.5)?;
+            if kind == CommandKind::RecordPiTaskAttemptUsageFailure {
+                CommandBody::RecordPiTaskAttemptUsageFailure {
+                    actor_attempt_id,
+                    correlation_identity,
+                    protocol_sequence,
+                    failure,
+                }
+            } else {
+                CommandBody::RecordPiTaskAttemptSessionDisposeUsageFailure {
+                    actor_attempt_id,
+                    correlation_identity,
+                    protocol_sequence,
+                    failure,
+                }
+            }
+        }
+        CommandKind::RecordPiTaskAttemptTerminal => {
+            let row: (i64, String, i64, Option<i64>, i64, i64, i64, i64, i64) = connection.query_row("SELECT actor_attempt_id, correlation_identity, terminal_evidence_kind, agent_settled_sequence, final_accounting_sequence, settled_sequence, disposition, assistant_outcome, transcript_disposition FROM command_record_pi_task_attempt_terminal WHERE command_row_id = $1", [command_row_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?,row.get(7)?,row.get(8)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing task terminal command body"))?;
+            CommandBody::RecordPiTaskAttemptTerminal {
+                actor_attempt_id: ActorAttemptId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                correlation_identity: PiCorrelationIdentity::parse(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                terminal_evidence: pi_task_attempt_terminal_evidence_from_sql(row.2, row.3, row.4)?,
+                settled_sequence: PiProtocolSequence::try_from(row.5)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                disposition: pi_task_attempt_disposition_from_i64(row.6)?,
+                assistant_outcome: pi_task_attempt_assistant_outcome_from_i64(row.7)?,
+                transcript_disposition: pi_task_attempt_transcript_disposition_from_i64(row.8)?,
+            }
+        }
+        CommandKind::AuthorizePiTaskAttemptSessionDispose
+        | CommandKind::RecordPiTaskAttemptSessionDisposeDelivery => {
+            let table = if kind == CommandKind::AuthorizePiTaskAttemptSessionDispose {
+                "command_authorize_pi_task_attempt_session_dispose"
+            } else {
+                "command_record_pi_task_attempt_session_dispose_delivery"
+            };
+            let row: (i64, String) = connection.query_row(&format!("SELECT actor_attempt_id, correlation_identity FROM {table} WHERE command_row_id = $1"), [command_row_id], |row| Ok((row.get(0)?,row.get(1)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing task dispose command body"))?;
+            let actor_attempt_id =
+                ActorAttemptId::try_from(row.0).map_err(|_| StoreError::InvalidStoredValue)?;
+            let correlation_identity =
+                PiCorrelationIdentity::parse(row.1).map_err(|_| StoreError::InvalidStoredValue)?;
+            if kind == CommandKind::AuthorizePiTaskAttemptSessionDispose {
+                CommandBody::AuthorizePiTaskAttemptSessionDispose {
+                    actor_attempt_id,
+                    correlation_identity,
+                }
+            } else {
+                CommandBody::RecordPiTaskAttemptSessionDisposeDelivery {
+                    actor_attempt_id,
+                    correlation_identity,
+                }
+            }
+        }
+        CommandKind::RecordPiTaskAttemptSessionDisposeAccepted => {
+            let row: (i64, String, i64) = connection.query_row("SELECT actor_attempt_id, correlation_identity, command_result_sequence FROM command_record_pi_task_attempt_session_dispose_accepted WHERE command_row_id = $1", [command_row_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing task dispose acceptance command body"))?;
+            CommandBody::RecordPiTaskAttemptSessionDisposeAccepted {
+                actor_attempt_id: ActorAttemptId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                correlation_identity: PiCorrelationIdentity::parse(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                command_result_sequence: PiProtocolSequence::try_from(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::RecordPiTaskAttemptSessionDisposed => {
+            let row: (i64, String, i64, i64, String, Option<Vec<u8>>, Option<i64>, Option<i64>, Option<Vec<u8>>) = connection.query_row("SELECT actor_attempt_id, correlation_identity, disposed_sequence, transcript_kind, session_file, session_file_digest, transcript_content_object_id, first_user_prompt_kind, first_user_prompt_digest FROM command_record_pi_task_attempt_session_disposed WHERE command_row_id = $1", [command_row_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?,row.get(7)?,row.get(8)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing task disposed command body"))?;
+            CommandBody::RecordPiTaskAttemptSessionDisposed {
+                actor_attempt_id: ActorAttemptId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                correlation_identity: PiCorrelationIdentity::parse(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                disposed_sequence: PiProtocolSequence::try_from(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                transcript_receipt: pi_task_attempt_session_transcript_receipt_from_sql(
+                    row.3, row.4, row.5, row.6, row.7, row.8,
+                )?,
+            }
+        }
         CommandKind::StudyTransition => CommandBody::StudyTransition {
             command: crate::study::decode_command_body(connection, command_row_id)?,
         },
@@ -18855,26 +21282,37 @@ fn verify_graph_revision_bodies(connection: &Connection) -> Result<(), StoreErro
     Ok(())
 }
 
-/// The table names are compiled constants, never protocol input. Counting all
-/// closed body tables makes an inserted second body as corrupt as a missing or
-/// mismatched body instead of silently trusting the discriminant.
+/// The table names are compiled constants, never protocol input. One static
+/// `UNION ALL` round trip checks every closed body table, so an inserted second
+/// body remains as corrupt as a missing or mismatched body without issuing
+/// roughly one hundred PostgreSQL requests for every ledger row during replay.
 fn verify_exact_named_body(
     connection: &Connection,
     row_id: i64,
     expected_table: &str,
     tables: &[&str],
 ) -> Result<(), StoreError> {
+    let mut query = String::new();
+    for (index, table) in tables.iter().enumerate() {
+        if index != 0 {
+            query.push_str(" UNION ALL ");
+        }
+        query.push_str("SELECT '");
+        query.push_str(table);
+        query.push_str("' AS body_table FROM ");
+        query.push_str(table);
+        query.push_str(" WHERE ");
+        query.push_str(body_key_column(table));
+        query.push_str(" = $1");
+    }
+    let mut statement = connection.prepare(&query)?;
+    let rows = statement.query_map([row_id], |row| row.get::<_, String>(0))?;
     let mut body_count = 0_i64;
     let mut expected_present = false;
-    for table in tables {
-        let query = format!(
-            "SELECT COUNT(*) FROM {table} WHERE {} = $1",
-            body_key_column(table)
-        );
-        let count: i64 = connection.query_row(&query, [row_id], |row| row.get(0))?;
-        body_count += count;
-        if *table == expected_table {
-            expected_present = count == 1;
+    for table in rows {
+        body_count += 1;
+        if table? == expected_table {
+            expected_present = true;
         }
     }
     if body_count != 1 || !expected_present {
@@ -19003,6 +21441,18 @@ fn command_kind_from_i64(value: i64) -> Result<CommandKind, StoreError> {
         99 => Ok(CommandKind::RecordDeterministicEvaluatorNativeChildSpawn),
         100 => Ok(CommandKind::RegisterDeterministicEvaluatorForensicManifest),
         101 => Ok(CommandKind::StudyTransition),
+        102 => Ok(CommandKind::AuthorizePiTaskAttemptPrompt),
+        103 => Ok(CommandKind::RecordPiTaskAttemptPromptDelivery),
+        104 => Ok(CommandKind::RecordPiTaskAttemptPromptAccepted),
+        105 => Ok(CommandKind::RecordPiTaskAttemptUsage),
+        106 => Ok(CommandKind::RecordPiTaskAttemptUsageFailure),
+        107 => Ok(CommandKind::RecordPiTaskAttemptTerminal),
+        108 => Ok(CommandKind::AuthorizePiTaskAttemptSessionDispose),
+        109 => Ok(CommandKind::RecordPiTaskAttemptSessionDisposeDelivery),
+        110 => Ok(CommandKind::RecordPiTaskAttemptSessionDisposeAccepted),
+        111 => Ok(CommandKind::RecordPiTaskAttemptSessionDisposeUsage),
+        112 => Ok(CommandKind::RecordPiTaskAttemptSessionDisposeUsageFailure),
+        113 => Ok(CommandKind::RecordPiTaskAttemptSessionDisposed),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }
@@ -19110,6 +21560,18 @@ fn capability_from_i64(value: i64) -> Result<Capability, StoreError> {
         99 => Ok(Capability::RecordDeterministicEvaluatorNativeChildSpawn),
         100 => Ok(Capability::RegisterDeterministicEvaluatorForensicManifest),
         101 => Ok(Capability::RunStudyTransition),
+        102 => Ok(Capability::AuthorizePiTaskAttemptPrompt),
+        103 => Ok(Capability::RecordPiTaskAttemptPromptDelivery),
+        104 => Ok(Capability::RecordPiTaskAttemptPromptAccepted),
+        105 => Ok(Capability::RecordPiTaskAttemptUsage),
+        106 => Ok(Capability::RecordPiTaskAttemptUsageFailure),
+        107 => Ok(Capability::RecordPiTaskAttemptTerminal),
+        108 => Ok(Capability::AuthorizePiTaskAttemptSessionDispose),
+        109 => Ok(Capability::RecordPiTaskAttemptSessionDisposeDelivery),
+        110 => Ok(Capability::RecordPiTaskAttemptSessionDisposeAccepted),
+        111 => Ok(Capability::RecordPiTaskAttemptSessionDisposeUsage),
+        112 => Ok(Capability::RecordPiTaskAttemptSessionDisposeUsageFailure),
+        113 => Ok(Capability::RecordPiTaskAttemptSessionDisposed),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }
@@ -19208,6 +21670,20 @@ fn pi_office_turn_disposition_from_i64(value: i64) -> Result<PiOfficeTurnDisposi
     }
 }
 
+fn pi_task_attempt_disposition_from_i64(
+    value: i64,
+) -> Result<PiTaskAttemptDisposition, StoreError> {
+    match value {
+        1 => Ok(PiTaskAttemptDisposition::Completed),
+        2 => Ok(PiTaskAttemptDisposition::Length),
+        3 => Ok(PiTaskAttemptDisposition::Error),
+        4 => Ok(PiTaskAttemptDisposition::Aborted),
+        5 => Ok(PiTaskAttemptDisposition::Failed),
+        6 => Ok(PiTaskAttemptDisposition::ProtocolFailed),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+
 fn pi_office_turn_assistant_outcome_from_i64(
     value: i64,
 ) -> Result<PiOfficeTurnAssistantOutcome, StoreError> {
@@ -19218,6 +21694,20 @@ fn pi_office_turn_assistant_outcome_from_i64(
         4 => Ok(PiOfficeTurnAssistantOutcome::ObservedAborted),
         5 => Ok(PiOfficeTurnAssistantOutcome::SdkPromiseRejected),
         6 => Ok(PiOfficeTurnAssistantOutcome::MissingFinalAssistantOutcome),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+
+fn pi_task_attempt_assistant_outcome_from_i64(
+    value: i64,
+) -> Result<PiTaskAttemptAssistantOutcome, StoreError> {
+    match value {
+        1 => Ok(PiTaskAttemptAssistantOutcome::ObservedStop),
+        2 => Ok(PiTaskAttemptAssistantOutcome::ObservedLength),
+        3 => Ok(PiTaskAttemptAssistantOutcome::ObservedError),
+        4 => Ok(PiTaskAttemptAssistantOutcome::ObservedAborted),
+        5 => Ok(PiTaskAttemptAssistantOutcome::SdkPromiseRejected),
+        6 => Ok(PiTaskAttemptAssistantOutcome::MissingFinalAssistantOutcome),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }
@@ -19242,11 +21732,40 @@ fn pi_office_turn_terminal_evidence_from_sql(
     }
 }
 
+fn pi_task_attempt_terminal_evidence_from_sql(
+    kind: i64,
+    agent_settled_sequence: Option<i64>,
+    final_accounting_sequence: i64,
+) -> Result<PiTaskAttemptTerminalEvidence, StoreError> {
+    let final_accounting_sequence = PiProtocolSequence::try_from(final_accounting_sequence)
+        .map_err(|_| StoreError::InvalidStoredValue)?;
+    match (kind, agent_settled_sequence) {
+        (1, Some(agent_settled_sequence)) => Ok(PiTaskAttemptTerminalEvidence::ObservedAssistant {
+            agent_settled_sequence: PiProtocolSequence::try_from(agent_settled_sequence)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+            final_accounting_sequence,
+        }),
+        (2, None) => Ok(PiTaskAttemptTerminalEvidence::UnavailableAssistant {
+            final_known_usage_sequence: final_accounting_sequence,
+        }),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+
 fn pi_office_turn_transcript_disposition_from_i64(
     value: i64,
 ) -> Result<PiOfficeTurnTranscriptDisposition, StoreError> {
     match value {
         1 => Ok(PiOfficeTurnTranscriptDisposition::DeferredUntilOfficeSessionDispose),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+
+fn pi_task_attempt_transcript_disposition_from_i64(
+    value: i64,
+) -> Result<PiTaskAttemptTranscriptDisposition, StoreError> {
+    match value {
+        1 => Ok(PiTaskAttemptTranscriptDisposition::DeferredUntilTaskAttemptSessionDispose),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }
@@ -19274,6 +21793,34 @@ fn pi_office_turn_usage_failure_from_sql(
         )),
         (2, None, Some(3)) => Ok(PiOfficeTurnUsageFailure::Unavailable(
             PiOfficeTurnUsageUnavailableReason::UsageInconsistent,
+        )),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+
+fn pi_task_attempt_usage_failure_from_sql(
+    kind: i64,
+    unknown: Option<i64>,
+    unavailable: Option<i64>,
+) -> Result<PiTaskAttemptUsageFailure, StoreError> {
+    match (kind, unknown, unavailable) {
+        (1, Some(1), None) => Ok(PiTaskAttemptUsageFailure::Unknown(
+            PiTaskAttemptUsageUnknownReason::MissingFinalUsageSnapshot,
+        )),
+        (1, Some(2), None) => Ok(PiTaskAttemptUsageFailure::Unknown(
+            PiTaskAttemptUsageUnknownReason::BoundaryStreamInterrupted,
+        )),
+        (1, Some(3), None) => Ok(PiTaskAttemptUsageFailure::Unknown(
+            PiTaskAttemptUsageUnknownReason::TerminalEvidenceMissing,
+        )),
+        (2, None, Some(1)) => Ok(PiTaskAttemptUsageFailure::Unavailable(
+            PiTaskAttemptUsageUnavailableReason::InvalidSdkUsage,
+        )),
+        (2, None, Some(2)) => Ok(PiTaskAttemptUsageFailure::Unavailable(
+            PiTaskAttemptUsageUnavailableReason::UsageRegressed,
+        )),
+        (2, None, Some(3)) => Ok(PiTaskAttemptUsageFailure::Unavailable(
+            PiTaskAttemptUsageUnavailableReason::UsageInconsistent,
         )),
         _ => Err(StoreError::InvalidStoredValue),
     }
@@ -19323,6 +21870,50 @@ fn pi_office_session_transcript_receipt_from_sql(
     }
 }
 
+fn pi_task_attempt_session_transcript_receipt_from_sql(
+    transcript_kind: i64,
+    session_file: String,
+    session_file_digest: Option<Vec<u8>>,
+    transcript_content_object_id: Option<i64>,
+    first_user_prompt_kind: Option<i64>,
+    first_user_prompt_digest: Option<Vec<u8>>,
+) -> Result<PiTaskAttemptSessionTranscriptReceipt, StoreError> {
+    let session_file = CanonicalPiSessionTranscriptPath::parse(session_file)
+        .map_err(|_| StoreError::InvalidStoredValue)?;
+    match (
+        transcript_kind,
+        session_file_digest,
+        transcript_content_object_id,
+        first_user_prompt_kind,
+        first_user_prompt_digest,
+    ) {
+        (1, Some(session_file_digest), Some(content_object_id), Some(1), None) => {
+            Ok(PiTaskAttemptSessionTranscriptReceipt::Materialized {
+                session_file,
+                session_file_digest: digest_from_stored_bytes(&session_file_digest)?,
+                transcript_content_object_id: ContentObjectId::try_from(content_object_id)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                first_user_prompt: PiTaskAttemptFirstUserPromptReceipt::Absent,
+            })
+        }
+        (1, Some(session_file_digest), Some(content_object_id), Some(2), Some(prompt_digest)) => {
+            Ok(PiTaskAttemptSessionTranscriptReceipt::Materialized {
+                session_file,
+                session_file_digest: digest_from_stored_bytes(&session_file_digest)?,
+                transcript_content_object_id: ContentObjectId::try_from(content_object_id)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                first_user_prompt: PiTaskAttemptFirstUserPromptReceipt::Verified {
+                    digest: digest_from_stored_bytes(&prompt_digest)?,
+                },
+            })
+        }
+        (2, None, None, None, None) => {
+            Ok(PiTaskAttemptSessionTranscriptReceipt::UnmaterializedNoPrompt { session_file })
+        }
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+
 fn pi_office_session_dispose_budget_disposition_from_sql(
     kind: i64,
     observed: i64,
@@ -19336,6 +21927,29 @@ fn pi_office_session_dispose_budget_disposition_from_sql(
         }),
         (2, Some(cancellation_request_id), Some(postmortem_id)) => {
             Ok(PiOfficeSessionDisposeBudgetDisposition::Frozen {
+                cancellation_request_id: CancellationRequestId::try_from(cancellation_request_id)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                postmortem_id: CostPostmortemId::try_from(postmortem_id)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            })
+        }
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+
+fn pi_task_attempt_session_dispose_budget_disposition_from_sql(
+    kind: i64,
+    observed: i64,
+    cancellation_request_id: Option<i64>,
+    postmortem_id: Option<i64>,
+) -> Result<PiTaskAttemptSessionDisposeBudgetDisposition, StoreError> {
+    match (kind, cancellation_request_id, postmortem_id) {
+        (1, None, None) => Ok(PiTaskAttemptSessionDisposeBudgetDisposition::Reconciled {
+            observed_cumulative_micro_usd: UsdMicros::try_from(observed)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+        }),
+        (2, Some(cancellation_request_id), Some(postmortem_id)) => {
+            Ok(PiTaskAttemptSessionDisposeBudgetDisposition::Frozen {
                 cancellation_request_id: CancellationRequestId::try_from(cancellation_request_id)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
                 postmortem_id: CostPostmortemId::try_from(postmortem_id)
@@ -19475,6 +22089,18 @@ fn event_kind_from_i64(value: i64) -> Result<EventKind, StoreError> {
         93 => Ok(EventKind::DeterministicEvaluatorNativeChildSpawnRecorded),
         94 => Ok(EventKind::DeterministicEvaluatorForensicManifestRegistered),
         95 => Ok(EventKind::StudyTransition),
+        96 => Ok(EventKind::PiTaskAttemptPromptAuthorized),
+        97 => Ok(EventKind::PiTaskAttemptPromptDelivered),
+        98 => Ok(EventKind::PiTaskAttemptPromptAccepted),
+        99 => Ok(EventKind::PiTaskAttemptUsageRecorded),
+        100 => Ok(EventKind::PiTaskAttemptUsageFrozen),
+        101 => Ok(EventKind::PiTaskAttemptTerminalRecorded),
+        102 => Ok(EventKind::PiTaskAttemptSessionDisposeAuthorized),
+        103 => Ok(EventKind::PiTaskAttemptSessionDisposeDelivered),
+        104 => Ok(EventKind::PiTaskAttemptSessionDisposeAccepted),
+        105 => Ok(EventKind::PiTaskAttemptSessionDisposeUsageRecorded),
+        106 => Ok(EventKind::PiTaskAttemptSessionDisposeUsageFrozen),
+        107 => Ok(EventKind::PiTaskAttemptSessionDisposed),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }

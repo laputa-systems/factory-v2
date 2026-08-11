@@ -21,7 +21,7 @@ use society_kernel::{
     NorthStarBoundaryCommitmentQuestion, NorthStarChangeQuestion,
     NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet, NorthStarRevisitQuestion,
     OperatingCycleId, OperatingCycleTreatment, PrincipalDisplayName, PrincipalId, SocietyName,
-    UsdMicros,
+    StudyPairId, StudyRunId, UsdMicros,
 };
 use societyctl::{SocietyctlClient, SocietyctlError, SupervisorClient};
 use societyd::protocol::{
@@ -172,6 +172,32 @@ fn stop(shutdown: ShutdownHandle, join: JoinHandle<Result<(), DaemonError>>) {
 
 fn correlation(value: u64) -> CorrelationId {
     CorrelationId::new(value).unwrap()
+}
+
+#[test]
+fn public_study_observation_queries_are_read_only_and_report_absence() {
+    let root = temporary_runtime_root("public-study-observations");
+    let (client, _supervisor, shutdown, join, _socket_path, _) = start(&root, FaultInjection::None);
+
+    assert_eq!(
+        client
+            .study_pair_observation(correlation(70), StudyPairId::new(1).unwrap())
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        client
+            .study_run_observation(correlation(71), StudyRunId::new(1).unwrap())
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        client.status(correlation(72)).unwrap(),
+        DaemonStatus::FreshServing { command_count: 0 }
+    );
+
+    stop(shutdown, join);
+    fs::remove_dir_all(root).unwrap();
 }
 
 fn command(

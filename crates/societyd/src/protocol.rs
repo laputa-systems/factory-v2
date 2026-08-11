@@ -16,11 +16,18 @@ use society_kernel::{
     NorthStarBoundaryCommitmentQuestion, NorthStarChangeQuestion,
     NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet, NorthStarRevisitQuestion,
     OfficeTurnPurpose, OperatingCycleId, OperatingCycleTreatment, PrincipalDisplayName,
-    PrincipalId, Rejection, RootAuthorityOfficeSessionId, SocietyName, UsdMicros,
+    PrincipalId, Rejection, RootAuthorityOfficeSessionId, SocietyName, StudyEpisodeId,
+    StudyEpisodeObservation, StudyEpisodeState, StudyInstitutionRevisionId,
+    StudyMeasurementObservation, StudyMeasurementRevisionId, StudyMeasurementSlot,
+    StudyMeasurementSlotCount, StudyMeasurementStatus, StudyPairId, StudyPairObservation,
+    StudyPopulationSnapshotId, StudyProtocolRevisionId, StudyRunId, StudyRunLifecycleState,
+    StudyRunObservation, StudyRunPairCount, StudyRunPairOrdinal,
+    StudyRunPairRegistrationObservation, StudyRunRegisteredPairCount, StudyTreatment,
+    StudyWorldRevisionId, UsdMicros,
 };
 use thiserror::Error;
 
-pub const PROTOCOL_VERSION: u16 = 6;
+pub const PROTOCOL_VERSION: u16 = 8;
 pub const MAX_FRAME_BYTES: usize = 64 * 1024;
 
 // Request discriminants are intentionally partitioned by transport. A raw
@@ -28,6 +35,9 @@ pub const MAX_FRAME_BYTES: usize = 64 * 1024;
 // command-shaped body could be considered.
 const PUBLIC_RECEIPT_TAG: u8 = 0x21;
 const PUBLIC_STATUS_TAG: u8 = 0x22;
+const PUBLIC_STUDY_PAIR_OBSERVATION_TAG: u8 = 0x23;
+const PUBLIC_STUDY_RUN_OBSERVATION_TAG: u8 = 0x24;
+const PUBLIC_STUDY_RUN_PAIR_REGISTRATION_TAG: u8 = 0x25;
 const SUPERVISOR_EXECUTE_TAG: u8 = 0x41;
 const SUPERVISOR_RECEIPT_TAG: u8 = 0x42;
 const SUPERVISOR_STATUS_TAG: u8 = 0x43;
@@ -245,6 +255,19 @@ pub enum PublicRequest {
     Status {
         correlation: CorrelationId,
     },
+    StudyPairObservation {
+        correlation: CorrelationId,
+        pair_id: StudyPairId,
+    },
+    StudyRunObservation {
+        correlation: CorrelationId,
+        study_run_id: StudyRunId,
+    },
+    StudyRunPairRegistration {
+        correlation: CorrelationId,
+        study_run_id: StudyRunId,
+        pair_ordinal: StudyRunPairOrdinal,
+    },
 }
 
 /// Closed command/query protocol carried only over the anonymous inherited
@@ -303,6 +326,34 @@ pub enum DaemonStatus {
     RecoveryFenced { command_count: i64 },
 }
 
+/// Bounded run-level facts returned by the named monitor. Pair registrations
+/// are deliberately read one ordinal at a time: a valid generic run can hold
+/// 10,000 pairs, which must not overflow the fixed 64 KiB wire frame.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StudyRunSummary {
+    pub study_run_id: StudyRunId,
+    pub protocol_revision_id: StudyProtocolRevisionId,
+    pub plan_content_object_id: society_kernel::ContentObjectId,
+    pub plan_digest: Blake3Digest,
+    pub pair_count: StudyRunPairCount,
+    pub registered_pair_count: StudyRunRegisteredPairCount,
+    pub lifecycle_state: StudyRunLifecycleState,
+}
+
+impl From<&StudyRunObservation> for StudyRunSummary {
+    fn from(study_run: &StudyRunObservation) -> Self {
+        Self {
+            study_run_id: study_run.study_run_id,
+            protocol_revision_id: study_run.protocol_revision_id,
+            plan_content_object_id: study_run.plan_content_object_id,
+            plan_digest: study_run.plan_digest,
+            pair_count: study_run.pair_count,
+            registered_pair_count: study_run.registered_pair_count,
+            lifecycle_state: study_run.lifecycle_state,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
 pub enum ProtocolErrorCode {
@@ -330,6 +381,18 @@ pub enum Response {
     Status {
         correlation: CorrelationId,
         status: DaemonStatus,
+    },
+    StudyPairObservation {
+        correlation: CorrelationId,
+        pair: Option<StudyPairObservation>,
+    },
+    StudyRunSummary {
+        correlation: CorrelationId,
+        study_run: Option<StudyRunSummary>,
+    },
+    StudyRunPairRegistration {
+        correlation: CorrelationId,
+        registration: Option<StudyRunPairRegistrationObservation>,
     },
     ActiveCapabilityGrant {
         correlation: CorrelationId,
@@ -392,6 +455,32 @@ pub fn write_public_request(
             put_u8(&mut payload, PUBLIC_STATUS_TAG);
             put_correlation(&mut payload, *correlation);
         }
+        PublicRequest::StudyPairObservation {
+            correlation,
+            pair_id,
+        } => {
+            put_u8(&mut payload, PUBLIC_STUDY_PAIR_OBSERVATION_TAG);
+            put_correlation(&mut payload, *correlation);
+            put_i64(&mut payload, pair_id.value());
+        }
+        PublicRequest::StudyRunObservation {
+            correlation,
+            study_run_id,
+        } => {
+            put_u8(&mut payload, PUBLIC_STUDY_RUN_OBSERVATION_TAG);
+            put_correlation(&mut payload, *correlation);
+            put_i64(&mut payload, study_run_id.value());
+        }
+        PublicRequest::StudyRunPairRegistration {
+            correlation,
+            study_run_id,
+            pair_ordinal,
+        } => {
+            put_u8(&mut payload, PUBLIC_STUDY_RUN_PAIR_REGISTRATION_TAG);
+            put_correlation(&mut payload, *correlation);
+            put_i64(&mut payload, study_run_id.value());
+            put_u16(&mut payload, pair_ordinal.value());
+        }
     }
     write_frame(writer, &payload)
 }
@@ -411,6 +500,22 @@ pub fn read_public_request(reader: &mut impl Read) -> Result<PublicRequest, Wire
             command_id: parse_command_id(cursor.string(128)?)?,
         },
         PUBLIC_STATUS_TAG => PublicRequest::Status { correlation },
+        PUBLIC_STUDY_PAIR_OBSERVATION_TAG => PublicRequest::StudyPairObservation {
+            correlation,
+            pair_id: StudyPairId::try_from(cursor.i64()?).map_err(|_| WireError::InvalidValue)?,
+        },
+        PUBLIC_STUDY_RUN_OBSERVATION_TAG => PublicRequest::StudyRunObservation {
+            correlation,
+            study_run_id: StudyRunId::try_from(cursor.i64()?)
+                .map_err(|_| WireError::InvalidValue)?,
+        },
+        PUBLIC_STUDY_RUN_PAIR_REGISTRATION_TAG => PublicRequest::StudyRunPairRegistration {
+            correlation,
+            study_run_id: StudyRunId::try_from(cursor.i64()?)
+                .map_err(|_| WireError::InvalidValue)?,
+            pair_ordinal: StudyRunPairOrdinal::try_from(i64::from(cursor.u16()?))
+                .map_err(|_| WireError::InvalidValue)?,
+        },
         _ => return Err(WireError::UnknownTag),
     };
     cursor.finish()?;
@@ -535,6 +640,45 @@ pub fn write_response(writer: &mut impl Write, response: &Response) -> Result<()
                 }
             }
         }
+        Response::StudyPairObservation { correlation, pair } => {
+            put_u8(&mut payload, 6);
+            put_correlation(&mut payload, *correlation);
+            match pair {
+                Some(pair) => {
+                    put_bool(&mut payload, true);
+                    encode_study_pair_observation(&mut payload, pair)?;
+                }
+                None => put_bool(&mut payload, false),
+            }
+        }
+        Response::StudyRunSummary {
+            correlation,
+            study_run,
+        } => {
+            put_u8(&mut payload, 7);
+            put_correlation(&mut payload, *correlation);
+            match study_run {
+                Some(study_run) => {
+                    put_bool(&mut payload, true);
+                    encode_study_run_summary(&mut payload, study_run);
+                }
+                None => put_bool(&mut payload, false),
+            }
+        }
+        Response::StudyRunPairRegistration {
+            correlation,
+            registration,
+        } => {
+            put_u8(&mut payload, 8);
+            put_correlation(&mut payload, *correlation);
+            match registration {
+                Some(registration) => {
+                    put_bool(&mut payload, true);
+                    encode_study_run_pair_registration(&mut payload, *registration);
+                }
+                None => put_bool(&mut payload, false),
+            }
+        }
         Response::Error { correlation, code } => {
             put_u8(&mut payload, 4);
             put_correlation(&mut payload, *correlation);
@@ -606,6 +750,27 @@ pub fn read_response(reader: &mut impl Read) -> Result<Response, WireError> {
                     CapabilityGrantId::try_from(cursor.i64()?)
                         .map_err(|_| WireError::InvalidValue)?,
                 ),
+                false => None,
+            },
+        },
+        6 => Response::StudyPairObservation {
+            correlation,
+            pair: match cursor.bool()? {
+                true => Some(decode_study_pair_observation(&mut cursor)?),
+                false => None,
+            },
+        },
+        7 => Response::StudyRunSummary {
+            correlation,
+            study_run: match cursor.bool()? {
+                true => Some(decode_study_run_summary(&mut cursor)?),
+                false => None,
+            },
+        },
+        8 => Response::StudyRunPairRegistration {
+            correlation,
+            registration: match cursor.bool()? {
+                true => Some(decode_study_run_pair_registration(&mut cursor)?),
                 false => None,
             },
         },
@@ -949,6 +1114,252 @@ fn decode_receipt(cursor: &mut Cursor<'_>) -> Result<CommandReceiptView, WireErr
     }
 }
 
+// Study observations are deliberately encoded as their fixed normalized
+// projection rather than as a database-shaped row set or an application JSON
+// document. This gives analysis clients the exact durable facts needed to
+// qualify a paired result while leaving application measurement semantics in
+// the sealed revision that names each slot.
+fn encode_study_pair_observation(
+    bytes: &mut Vec<u8>,
+    pair: &StudyPairObservation,
+) -> Result<(), WireError> {
+    put_i64(bytes, pair.pair_id.value());
+    encode_study_episode_observation(bytes, &pair.retained)?;
+    encode_study_episode_observation(bytes, &pair.reset)
+}
+
+fn decode_study_pair_observation(
+    cursor: &mut Cursor<'_>,
+) -> Result<StudyPairObservation, WireError> {
+    Ok(StudyPairObservation {
+        pair_id: study_pair_id(cursor.i64()?)?,
+        retained: decode_study_episode_observation(cursor)?,
+        reset: decode_study_episode_observation(cursor)?,
+    })
+}
+
+fn encode_study_episode_observation(
+    bytes: &mut Vec<u8>,
+    episode: &StudyEpisodeObservation,
+) -> Result<(), WireError> {
+    put_i64(bytes, episode.episode_id.value());
+    put_i64(bytes, episode.protocol_revision_id.value());
+    put_i64(bytes, episode.world_revision_id.value());
+    put_i64(bytes, episode.measurement_revision_id.value());
+    put_u8(bytes, episode.measurement_slot_count.value());
+    put_i64(bytes, episode.institution_revision_id.value());
+    put_i64(bytes, episode.source_population_snapshot_id.value());
+    put_optional_i64(
+        bytes,
+        episode
+            .successor_population_snapshot_id
+            .map(StudyPopulationSnapshotId::value),
+    );
+    put_digest(bytes, episode.randomization_digest);
+    put_u8(bytes, episode.treatment as u8);
+    put_u8(bytes, episode.lifecycle_state as u8);
+    put_i64(bytes, episode.source_actor_obligations);
+    put_i64(bytes, episode.source_terminal_actor_obligations);
+    put_i64(bytes, episode.successor_actor_obligations);
+    put_i64(bytes, episode.successor_terminal_actor_obligations);
+    put_i64(bytes, episode.failed_actor_obligations);
+    put_i64(bytes, episode.runtime_bindings);
+    put_i64(bytes, episode.reconciled_runtime_bindings);
+    put_optional_i64(bytes, episode.frozen_forum_head);
+    put_i64(bytes, episode.forum_messages);
+    put_i64(bytes, episode.forum_reads);
+    put_i64(bytes, episode.forum_returned_bytes);
+    put_i64(bytes, episode.decisions);
+    put_optional_digest(bytes, episode.ground_truth_reveal_digest);
+    put_u8(
+        bytes,
+        u8::try_from(episode.measurements.len()).map_err(|_| WireError::InvalidValue)?,
+    );
+    for measurement in &episode.measurements {
+        encode_study_measurement_observation(bytes, measurement);
+    }
+    Ok(())
+}
+
+fn decode_study_episode_observation(
+    cursor: &mut Cursor<'_>,
+) -> Result<StudyEpisodeObservation, WireError> {
+    let episode = StudyEpisodeObservation {
+        episode_id: study_episode_id(cursor.i64()?)?,
+        protocol_revision_id: StudyProtocolRevisionId::try_from(cursor.i64()?)
+            .map_err(|_| WireError::InvalidValue)?,
+        world_revision_id: StudyWorldRevisionId::try_from(cursor.i64()?)
+            .map_err(|_| WireError::InvalidValue)?,
+        measurement_revision_id: StudyMeasurementRevisionId::try_from(cursor.i64()?)
+            .map_err(|_| WireError::InvalidValue)?,
+        measurement_slot_count: StudyMeasurementSlotCount::try_from(i64::from(cursor.u8()?))
+            .map_err(|_| WireError::InvalidValue)?,
+        institution_revision_id: StudyInstitutionRevisionId::try_from(cursor.i64()?)
+            .map_err(|_| WireError::InvalidValue)?,
+        source_population_snapshot_id: StudyPopulationSnapshotId::try_from(cursor.i64()?)
+            .map_err(|_| WireError::InvalidValue)?,
+        successor_population_snapshot_id: cursor
+            .optional_i64()?
+            .map(StudyPopulationSnapshotId::try_from)
+            .transpose()
+            .map_err(|_| WireError::InvalidValue)?,
+        randomization_digest: cursor.digest()?,
+        treatment: study_treatment(cursor.u8()?)?,
+        lifecycle_state: study_episode_state(cursor.u8()?)?,
+        source_actor_obligations: cursor.i64()?,
+        source_terminal_actor_obligations: cursor.i64()?,
+        successor_actor_obligations: cursor.i64()?,
+        successor_terminal_actor_obligations: cursor.i64()?,
+        failed_actor_obligations: cursor.i64()?,
+        runtime_bindings: cursor.i64()?,
+        reconciled_runtime_bindings: cursor.i64()?,
+        frozen_forum_head: cursor.optional_i64()?,
+        forum_messages: cursor.i64()?,
+        forum_reads: cursor.i64()?,
+        forum_returned_bytes: cursor.i64()?,
+        decisions: cursor.i64()?,
+        ground_truth_reveal_digest: cursor.optional_digest()?,
+        measurements: Vec::new(),
+    };
+    let measurement_count = cursor.u8()?;
+    if measurement_count > episode.measurement_slot_count.value() {
+        return Err(WireError::InvalidValue);
+    }
+    let mut measurements = Vec::with_capacity(usize::from(measurement_count));
+    for _ in 0..measurement_count {
+        measurements.push(decode_study_measurement_observation(cursor)?);
+    }
+    Ok(StudyEpisodeObservation {
+        measurements,
+        ..episode
+    })
+}
+
+fn encode_study_measurement_observation(
+    bytes: &mut Vec<u8>,
+    measurement: &StudyMeasurementObservation,
+) {
+    put_u8(bytes, measurement.measurement_slot.value());
+    put_u8(bytes, measurement.status as u8);
+    put_optional_i64(bytes, measurement.value);
+    put_optional_digest(bytes, measurement.value_digest);
+    put_optional_digest(bytes, measurement.reason_digest);
+}
+
+fn decode_study_measurement_observation(
+    cursor: &mut Cursor<'_>,
+) -> Result<StudyMeasurementObservation, WireError> {
+    Ok(StudyMeasurementObservation {
+        measurement_slot: StudyMeasurementSlot::try_from(i64::from(cursor.u8()?))
+            .map_err(|_| WireError::InvalidValue)?,
+        status: study_measurement_status(cursor.u8()?)?,
+        value: cursor.optional_i64()?,
+        value_digest: cursor.optional_digest()?,
+        reason_digest: cursor.optional_digest()?,
+    })
+}
+
+fn encode_study_run_summary(bytes: &mut Vec<u8>, study_run: &StudyRunSummary) {
+    put_i64(bytes, study_run.study_run_id.value());
+    put_i64(bytes, study_run.protocol_revision_id.value());
+    put_i64(bytes, study_run.plan_content_object_id.value());
+    put_digest(bytes, study_run.plan_digest);
+    put_u16(bytes, study_run.pair_count.value());
+    put_u16(bytes, study_run.registered_pair_count.value());
+    put_u8(bytes, study_run.lifecycle_state as u8);
+}
+
+fn decode_study_run_summary(cursor: &mut Cursor<'_>) -> Result<StudyRunSummary, WireError> {
+    let study_run_id = StudyRunId::try_from(cursor.i64()?).map_err(|_| WireError::InvalidValue)?;
+    let protocol_revision_id =
+        StudyProtocolRevisionId::try_from(cursor.i64()?).map_err(|_| WireError::InvalidValue)?;
+    let plan_content_object_id = society_kernel::ContentObjectId::try_from(cursor.i64()?)
+        .map_err(|_| WireError::InvalidValue)?;
+    let plan_digest = cursor.digest()?;
+    let pair_count = StudyRunPairCount::try_from(i64::from(cursor.u16()?))
+        .map_err(|_| WireError::InvalidValue)?;
+    let registered_pair_count = StudyRunRegisteredPairCount::try_from(i64::from(cursor.u16()?))
+        .map_err(|_| WireError::InvalidValue)?;
+    let lifecycle_state = study_run_lifecycle_state(cursor.u8()?)?;
+    Ok(StudyRunSummary {
+        study_run_id,
+        protocol_revision_id,
+        plan_content_object_id,
+        plan_digest,
+        pair_count,
+        registered_pair_count,
+        lifecycle_state,
+    })
+}
+
+fn encode_study_run_pair_registration(
+    bytes: &mut Vec<u8>,
+    registration: StudyRunPairRegistrationObservation,
+) {
+    put_u16(bytes, registration.pair_ordinal.value());
+    put_i64(bytes, registration.pair_id.value());
+    put_digest(bytes, registration.randomization_digest);
+}
+
+fn decode_study_run_pair_registration(
+    cursor: &mut Cursor<'_>,
+) -> Result<StudyRunPairRegistrationObservation, WireError> {
+    Ok(StudyRunPairRegistrationObservation {
+        pair_ordinal: StudyRunPairOrdinal::try_from(i64::from(cursor.u16()?))
+            .map_err(|_| WireError::InvalidValue)?,
+        pair_id: study_pair_id(cursor.i64()?)?,
+        randomization_digest: cursor.digest()?,
+    })
+}
+
+fn study_pair_id(value: i64) -> Result<StudyPairId, WireError> {
+    StudyPairId::try_from(value).map_err(|_| WireError::InvalidValue)
+}
+
+fn study_episode_id(value: i64) -> Result<StudyEpisodeId, WireError> {
+    StudyEpisodeId::try_from(value).map_err(|_| WireError::InvalidValue)
+}
+
+fn study_treatment(value: u8) -> Result<StudyTreatment, WireError> {
+    match value {
+        1 => Ok(StudyTreatment::Retained),
+        2 => Ok(StudyTreatment::Reset),
+        _ => Err(WireError::InvalidValue),
+    }
+}
+
+fn study_episode_state(value: u8) -> Result<StudyEpisodeState, WireError> {
+    match value {
+        1 => Ok(StudyEpisodeState::Admitted),
+        2 => Ok(StudyEpisodeState::SourceActive),
+        3 => Ok(StudyEpisodeState::SourceReconciled),
+        4 => Ok(StudyEpisodeState::SuccessorAdmitted),
+        5 => Ok(StudyEpisodeState::CorrectionReleased),
+        6 => Ok(StudyEpisodeState::SuccessorActive),
+        7 => Ok(StudyEpisodeState::Closed),
+        _ => Err(WireError::InvalidValue),
+    }
+}
+
+fn study_measurement_status(value: u8) -> Result<StudyMeasurementStatus, WireError> {
+    match value {
+        1 => Ok(StudyMeasurementStatus::Observed),
+        2 => Ok(StudyMeasurementStatus::Unavailable),
+        3 => Ok(StudyMeasurementStatus::Invalidated),
+        _ => Err(WireError::InvalidValue),
+    }
+}
+
+fn study_run_lifecycle_state(value: u8) -> Result<StudyRunLifecycleState, WireError> {
+    match value {
+        1 => Ok(StudyRunLifecycleState::Pairing),
+        2 => Ok(StudyRunLifecycleState::Ready),
+        3 => Ok(StudyRunLifecycleState::Running),
+        4 => Ok(StudyRunLifecycleState::Completed),
+        _ => Err(WireError::InvalidValue),
+    }
+}
+
 fn put_correlation(bytes: &mut Vec<u8>, correlation: CorrelationId) {
     bytes.extend_from_slice(&correlation.value().to_be_bytes());
 }
@@ -979,6 +1390,30 @@ fn put_u16(bytes: &mut Vec<u8>, value: u16) {
 
 fn put_i64(bytes: &mut Vec<u8>, value: i64) {
     bytes.extend_from_slice(&value.to_be_bytes());
+}
+
+fn put_optional_i64(bytes: &mut Vec<u8>, value: Option<i64>) {
+    match value {
+        Some(value) => {
+            put_bool(bytes, true);
+            put_i64(bytes, value);
+        }
+        None => put_bool(bytes, false),
+    }
+}
+
+fn put_digest(bytes: &mut Vec<u8>, digest: Blake3Digest) {
+    bytes.extend_from_slice(&digest.as_bytes());
+}
+
+fn put_optional_digest(bytes: &mut Vec<u8>, digest: Option<Blake3Digest>) {
+    match digest {
+        Some(digest) => {
+            put_bool(bytes, true);
+            put_digest(bytes, digest);
+        }
+        None => put_bool(bytes, false),
+    }
 }
 
 struct Cursor<'a> {
@@ -1039,6 +1474,24 @@ impl<'a> Cursor<'a> {
         self.take(32)?
             .try_into()
             .map_err(|_| WireError::MissingField)
+    }
+
+    fn digest(&mut self) -> Result<Blake3Digest, WireError> {
+        Ok(Blake3Digest::from_bytes(self.array_32()?))
+    }
+
+    fn optional_i64(&mut self) -> Result<Option<i64>, WireError> {
+        match self.bool()? {
+            true => Ok(Some(self.i64()?)),
+            false => Ok(None),
+        }
+    }
+
+    fn optional_digest(&mut self) -> Result<Option<Blake3Digest>, WireError> {
+        match self.bool()? {
+            true => Ok(Some(self.digest()?)),
+            false => Ok(None),
+        }
     }
 
     fn string(&mut self, maximum: usize) -> Result<String, WireError> {
@@ -1303,6 +1756,158 @@ mod tests {
         let mut framed = Vec::new();
         write_frame(&mut framed, payload).expect("the bounded test frame must encode");
         framed
+    }
+
+    fn sample_episode(episode_id: i64, treatment: StudyTreatment) -> StudyEpisodeObservation {
+        StudyEpisodeObservation {
+            episode_id: StudyEpisodeId::new(episode_id)
+                .expect("the fixed positive episode identity is valid"),
+            protocol_revision_id: StudyProtocolRevisionId::new(11)
+                .expect("the fixed positive protocol identity is valid"),
+            world_revision_id: StudyWorldRevisionId::new(12)
+                .expect("the fixed positive world identity is valid"),
+            measurement_revision_id: StudyMeasurementRevisionId::new(13)
+                .expect("the fixed positive measurement identity is valid"),
+            measurement_slot_count: StudyMeasurementSlotCount::new(2)
+                .expect("the fixed measurement slot count is valid"),
+            institution_revision_id: StudyInstitutionRevisionId::new(14)
+                .expect("the fixed positive institution identity is valid"),
+            source_population_snapshot_id: StudyPopulationSnapshotId::new(15)
+                .expect("the fixed positive source population identity is valid"),
+            successor_population_snapshot_id: Some(
+                StudyPopulationSnapshotId::new(16)
+                    .expect("the fixed positive successor population identity is valid"),
+            ),
+            randomization_digest: Blake3Digest::of_bytes(b"wire-randomization"),
+            treatment,
+            lifecycle_state: StudyEpisodeState::Closed,
+            source_actor_obligations: 8,
+            source_terminal_actor_obligations: 8,
+            successor_actor_obligations: 8,
+            successor_terminal_actor_obligations: 8,
+            failed_actor_obligations: 0,
+            runtime_bindings: 16,
+            reconciled_runtime_bindings: 16,
+            frozen_forum_head: Some(17),
+            forum_messages: 16,
+            forum_reads: 32,
+            forum_returned_bytes: 9_000,
+            decisions: 16,
+            ground_truth_reveal_digest: Some(Blake3Digest::of_bytes(b"wire-ground-truth")),
+            measurements: vec![
+                StudyMeasurementObservation {
+                    measurement_slot: StudyMeasurementSlot::new(1)
+                        .expect("the fixed first slot is valid"),
+                    status: StudyMeasurementStatus::Observed,
+                    value: Some(42),
+                    value_digest: Some(Blake3Digest::of_bytes(b"wire-observed-value")),
+                    reason_digest: None,
+                },
+                StudyMeasurementObservation {
+                    measurement_slot: StudyMeasurementSlot::new(2)
+                        .expect("the fixed second slot is valid"),
+                    status: StudyMeasurementStatus::Unavailable,
+                    value: None,
+                    value_digest: None,
+                    reason_digest: Some(Blake3Digest::of_bytes(b"wire-unavailable-reason")),
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn public_study_observation_queries_round_trip_as_closed_normalized_values() {
+        let correlation = CorrelationId::new(73).expect("the fixed correlation is valid");
+        for request in [
+            PublicRequest::StudyPairObservation {
+                correlation,
+                pair_id: StudyPairId::new(31).expect("the fixed pair identity is valid"),
+            },
+            PublicRequest::StudyRunObservation {
+                correlation,
+                study_run_id: StudyRunId::new(32).expect("the fixed run identity is valid"),
+            },
+            PublicRequest::StudyRunPairRegistration {
+                correlation,
+                study_run_id: StudyRunId::new(32).expect("the fixed run identity is valid"),
+                pair_ordinal: StudyRunPairOrdinal::new(1).expect("the fixed pair ordinal is valid"),
+            },
+        ] {
+            let mut encoded = Vec::new();
+            write_public_request(&mut encoded, &request)
+                .expect("the closed study query must encode");
+            assert_eq!(
+                read_public_request(&mut encoded.as_slice())
+                    .expect("the closed study query must decode"),
+                request
+            );
+        }
+
+        let pair = StudyPairObservation {
+            pair_id: StudyPairId::new(31).expect("the fixed pair identity is valid"),
+            retained: sample_episode(41, StudyTreatment::Retained),
+            reset: sample_episode(42, StudyTreatment::Reset),
+        };
+        let study_run = StudyRunObservation {
+            study_run_id: StudyRunId::new(32).expect("the fixed run identity is valid"),
+            protocol_revision_id: StudyProtocolRevisionId::new(11)
+                .expect("the fixed protocol identity is valid"),
+            plan_content_object_id: society_kernel::ContentObjectId::new(33)
+                .expect("the fixed plan object identity is valid"),
+            plan_digest: Blake3Digest::of_bytes(b"wire-plan"),
+            pair_count: StudyRunPairCount::new(1).expect("the fixed pair count is valid"),
+            registered_pair_count: StudyRunRegisteredPairCount::new(1)
+                .expect("the fixed registered count is valid"),
+            lifecycle_state: StudyRunLifecycleState::Completed,
+            pairs: vec![StudyRunPairRegistrationObservation {
+                pair_ordinal: StudyRunPairOrdinal::new(1).expect("the fixed pair ordinal is valid"),
+                pair_id: pair.pair_id,
+                randomization_digest: Blake3Digest::of_bytes(b"wire-randomization"),
+            }],
+        };
+        for response in [
+            Response::StudyPairObservation {
+                correlation,
+                pair: Some(pair),
+            },
+            Response::StudyRunSummary {
+                correlation,
+                study_run: Some(StudyRunSummary::from(&study_run)),
+            },
+            Response::StudyRunPairRegistration {
+                correlation,
+                registration: Some(study_run.pairs[0]),
+            },
+        ] {
+            let mut encoded = Vec::new();
+            write_response(&mut encoded, &response)
+                .expect("the closed study observation must encode");
+            assert_eq!(
+                read_response(&mut encoded.as_slice())
+                    .expect("the closed study observation must decode"),
+                response
+            );
+        }
+
+        let maximum_run_summary = StudyRunSummary {
+            pair_count: StudyRunPairCount::new(10_000)
+                .expect("the generic maximum pair count is valid"),
+            registered_pair_count: StudyRunRegisteredPairCount::new(10_000)
+                .expect("the generic maximum registered count is valid"),
+            ..StudyRunSummary::from(&study_run)
+        };
+        let response = Response::StudyRunSummary {
+            correlation,
+            study_run: Some(maximum_run_summary),
+        };
+        let mut encoded = Vec::new();
+        write_response(&mut encoded, &response)
+            .expect("a maximum-pair run summary must remain within one frame");
+        assert!(encoded.len() < MAX_FRAME_BYTES);
+        assert_eq!(
+            read_response(&mut encoded.as_slice()).expect("the maximum-pair summary must decode"),
+            response
+        );
     }
 
     #[test]

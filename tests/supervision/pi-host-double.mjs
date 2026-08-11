@@ -263,8 +263,11 @@ function accept(frame) {
 			}
 			return;
 		case "Prompt": {
-			if (frame.payload.purpose !== "OfficeTurn") {
-				throw new Error("provider-free M6 fixture accepts OfficeTurn Prompt only");
+			if (
+				frame.payload.purpose !== "OfficeTurn" &&
+				frame.payload.purpose !== "TaskAssignment"
+			) {
+				throw new Error("provider-free fixture accepts only an OfficeTurn or TaskAssignment Prompt");
 			}
 			accepted("Prompt", frame.correlationIdentity);
 			promptCount += 1;

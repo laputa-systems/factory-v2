@@ -174,14 +174,54 @@ excludes an occurrence only through a named pre-registered rule.
 - `ForumAttentionCost`: returned Forum bytes, actor turns, and runtime cost.
 
 Every measurement has `Observed`, `Unavailable`, or `Invalidated`. No missing
-value defaults to zero or a favorable outcome.
+value defaults to zero or a favorable outcome. The current analysis revision
+seals eleven ordered slots: the nine semantic/outcome and attention measures
+listed above, plus `OperationalCostMicroUsd` and
+`AmortizedInstitutionalCostMicroUsd`. A provider-free run records both cost
+slots as `Unavailable`; a live run must record provider-backed values or a
+specific unavailable/invalidated reason before closure.
 
 ## Analysis
 
 The engineering acceptance run proves exact paired execution over deterministic
 fixtures and makes no statistical claim. The first live scientific run
 pre-registers independent world seeds, pair count, exclusion rules, estimand,
-and precision before inspecting results.
+and precision before inspecting results. The application analysis contract
+names these fields as `PreregisteredAnalysisPlan`: its estimand is
+retained-minus-reset, its initial exclusion policy is metricwise complete-case,
+and each of the eleven metrics carries an integer-unit maximum 95% interval
+half-width target. A planned artifact must validate its pair identities and
+kernel-derived persisted randomization/world-seed provenance against that plan
+before rendering.
+
+The live admission counterpart is `LiveRunDescriptor` plus `LiveRunPlan` in
+the application harness. The descriptor is sealed from the canonical world
+fixture and carries the exact eight-seat source/successor role contracts,
+private-view and prompt digests, F0 contract, correction/world/evidence/truth
+identities, baseline identities, and fixed budgets. The plan adds independent
+pair IDs and seed digests and seals the pre-registered precision targets. Its
+canonical bytes and digest are an opaque application admission for a generic
+daemon; the daemon does not need CL-001 vocabulary or a database connection.
+The generic ledger now records that sealed plan by immutable content identity
+and digest, then registers the finite ordinal matched-pair set against its
+already-admitted retained/reset episodes. This is a recovery and provenance
+anchor only: it does not yet cause actors to be scheduled or make the paid
+adapter smoke into a CL-001 run.
+
+The application-owned `PairChoreography` expands each admitted seed into the
+two treatment arms, and `LiveRunDescriptor::actor_prompt` constructs the
+digest-bound F0 awareness, role fragment, private view, and exposure frontier
+for one task assignment. `PairStateRecord` keeps source freeze, successor
+exposure, and the one atomic correction release as explicit paired barriers;
+it contains no daemon or provider state and does not itself execute an actor.
+
+For a completed future run, the application retrieves the run registration and
+each normalized pair from the daemon's read-only `societyctl` monitor surface.
+`LiveRunPlan::analysis_artifact_from_study_run` first checks the run's sealed
+plan digest, then checks ordinal registration, generic pair identities, and
+pre-registered seed digests before it permits planned retained-minus-reset
+analysis. This is an analysis access path, not a direct database boundary or
+an execution scheduler.
 
 Report raw arm values, the paired retained-minus-reset difference, missingness,
 and confidence interval. Report both operational and amortized institutional

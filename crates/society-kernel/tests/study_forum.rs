@@ -16,8 +16,10 @@ use society_kernel::{
     NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet, NorthStarRevisitQuestion,
     PrincipalId, Rejection, StoreError, StudyBudgetUnits, StudyCommand, StudyDecisionBody,
     StudyEpisodeId, StudyEvent, StudyGroundTruthReveal, StudyMeasurementSlot,
-    StudyMeasurementStatus, StudyPopulationPhase, StudyRoleOrdinal, StudyTransitionDisposition,
-    StudyTreatment, forum_f0_awareness_digest, forum_f0_tool_contract_digest,
+    StudyMeasurementSlotCount, StudyMeasurementStatus, StudyPopulationPhase, StudyRoleOrdinal,
+    StudyRunLifecycleState, StudyRunPairCount, StudyRunPairOrdinal, StudyRunRegisteredPairCount,
+    StudyTransitionDisposition, StudyTreatment, forum_f0_awareness_digest,
+    forum_f0_tool_contract_digest,
 };
 
 fn application_mission() -> ApplicationMissionInput {
@@ -205,6 +207,7 @@ fn event_id(event: StudyEvent) -> i64 {
             population_snapshot_id,
         } => population_snapshot_id.value(),
         StudyEvent::EpisodeAdmitted { episode_id } => episode_id.value(),
+        StudyEvent::StudyRunStarted { study_run_id } => study_run_id.value(),
         unexpected => panic!("unexpected study admission event: {unexpected:?}"),
     }
 }
@@ -270,6 +273,7 @@ fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
         StudyCommand::AdmitMeasurementRevision {
             protocol_revision_id: protocol,
             analysis_digest: Blake3Digest::of_bytes(b"analysis-v1"),
+            measurement_slot_count: StudyMeasurementSlotCount::new(3).unwrap(),
         },
     )))
     .unwrap();
@@ -445,6 +449,158 @@ fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
         StudyEvent::MatchedPairAdmitted { pair_id } => pair_id,
         unexpected => panic!("unexpected event: {unexpected:?}"),
     };
+
+    // A run retains only the sealed plan identity, digest, and finite paired
+    // execution set. Its contents remain application-owned immutable bytes.
+    let plan_bytes = b"opaque-correction-latency-run-plan-v1";
+    let plan_content_object_id = register_forum_rendering(&mut store, "study-run-plan", plan_bytes);
+    assert_eq!(
+        rejected_study(
+            &mut store,
+            &mut ordinal,
+            StudyCommand::AdmitStudyRun {
+                protocol_revision_id: protocol,
+                plan_content_object_id,
+                plan_digest: Blake3Digest::of_bytes(b"wrong-run-plan-digest"),
+                pair_count: StudyRunPairCount::new(1).unwrap(),
+            },
+        ),
+        Rejection::InvalidLifecycleTransition
+    );
+    let study_run_id = match submit_study(
+        &mut store,
+        &mut ordinal,
+        StudyCommand::AdmitStudyRun {
+            protocol_revision_id: protocol,
+            plan_content_object_id,
+            plan_digest: Blake3Digest::of_bytes(plan_bytes),
+            pair_count: StudyRunPairCount::new(1).unwrap(),
+        },
+    ) {
+        StudyEvent::StudyRunAdmitted {
+            study_run_id,
+            protocol_revision_id,
+            plan_content_object_id: observed_plan_content_object_id,
+            plan_digest,
+            pair_count,
+        } => {
+            assert_eq!(protocol_revision_id, protocol);
+            assert_eq!(observed_plan_content_object_id, plan_content_object_id);
+            assert_eq!(plan_digest, Blake3Digest::of_bytes(plan_bytes));
+            assert_eq!(pair_count, StudyRunPairCount::new(1).unwrap());
+            study_run_id
+        }
+        unexpected => panic!("unexpected event: {unexpected:?}"),
+    };
+    let pairing_run = store.study_run_observation(study_run_id).unwrap();
+    assert_eq!(pairing_run.lifecycle_state, StudyRunLifecycleState::Pairing);
+    assert_eq!(pairing_run.pairs.len(), 0);
+    assert_eq!(
+        pairing_run.registered_pair_count,
+        StudyRunRegisteredPairCount::new(0).unwrap()
+    );
+    assert_eq!(
+        store
+            .study_run_pair_registration(study_run_id, StudyRunPairOrdinal::new(1).unwrap())
+            .unwrap(),
+        None
+    );
+    let registered = submit_study(
+        &mut store,
+        &mut ordinal,
+        StudyCommand::RegisterStudyRunPair {
+            study_run_id,
+            pair_ordinal: StudyRunPairOrdinal::new(1).unwrap(),
+            pair_id: pair,
+            randomization_digest: randomization,
+        },
+    );
+    assert!(matches!(
+        registered,
+        StudyEvent::StudyRunPairRegistered {
+            lifecycle_state: StudyRunLifecycleState::Ready,
+            ..
+        }
+    ));
+    let run = store.study_run_observation(study_run_id).unwrap();
+    assert_eq!(run.protocol_revision_id, protocol);
+    assert_eq!(run.plan_content_object_id, plan_content_object_id);
+    assert_eq!(run.plan_digest, Blake3Digest::of_bytes(plan_bytes));
+    assert_eq!(run.pair_count, StudyRunPairCount::new(1).unwrap());
+    assert_eq!(
+        run.registered_pair_count,
+        StudyRunRegisteredPairCount::new(1).unwrap()
+    );
+    assert_eq!(run.lifecycle_state, StudyRunLifecycleState::Ready);
+    assert_eq!(run.pairs.len(), 1);
+    assert_eq!(
+        run.pairs[0].pair_ordinal,
+        StudyRunPairOrdinal::new(1).unwrap()
+    );
+    assert_eq!(run.pairs[0].pair_id, pair);
+    assert_eq!(run.pairs[0].randomization_digest, randomization);
+    let registration = store
+        .study_run_pair_registration(study_run_id, StudyRunPairOrdinal::new(1).unwrap())
+        .unwrap()
+        .expect("the registered ordinal must be queryable without loading the run");
+    assert_eq!(registration.pair_id, pair);
+    assert_eq!(registration.randomization_digest, randomization);
+    let start_command_id = CommandId::parse("study-run-start-once").unwrap();
+    let started = store
+        .execute_study_transition(
+            start_command_id.clone(),
+            StudyCommand::StartStudyRun { study_run_id },
+        )
+        .unwrap();
+    assert!(!started.idempotent);
+    assert_eq!(
+        started.disposition,
+        StudyTransitionDisposition::Accepted(StudyEvent::StudyRunStarted { study_run_id })
+    );
+    assert_eq!(
+        store
+            .study_run_observation(study_run_id)
+            .unwrap()
+            .lifecycle_state,
+        StudyRunLifecycleState::Running
+    );
+    let retried = store
+        .execute_study_transition(
+            start_command_id,
+            StudyCommand::StartStudyRun { study_run_id },
+        )
+        .unwrap();
+    assert!(retried.idempotent);
+    assert_eq!(retried.disposition, started.disposition);
+    assert_eq!(
+        rejected_study(
+            &mut store,
+            &mut ordinal,
+            StudyCommand::StartStudyRun { study_run_id },
+        ),
+        Rejection::InvalidLifecycleTransition
+    );
+    assert_eq!(
+        rejected_study(
+            &mut store,
+            &mut ordinal,
+            StudyCommand::RegisterStudyRunPair {
+                study_run_id,
+                pair_ordinal: StudyRunPairOrdinal::new(1).unwrap(),
+                pair_id: pair,
+                randomization_digest: randomization,
+            },
+        ),
+        Rejection::InvalidLifecycleTransition
+    );
+    assert_eq!(
+        rejected_study(
+            &mut store,
+            &mut ordinal,
+            StudyCommand::CompleteStudyRun { study_run_id },
+        ),
+        Rejection::InvalidLifecycleTransition
+    );
 
     let retained_forum = match submit_study(
         &mut store,
@@ -785,6 +941,39 @@ fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
         source_role,
         reset_successor_population,
     );
+    let retained_obligations = store.study_actor_obligation_observations(retained).unwrap();
+    assert_eq!(retained_obligations.len(), 2);
+    assert_eq!(
+        retained_obligations
+            .iter()
+            .map(|obligation| (obligation.phase, obligation.role.value()))
+            .collect::<Vec<_>>(),
+        vec![
+            (StudyPopulationPhase::Source, 1),
+            (StudyPopulationPhase::Successor, 1),
+        ]
+    );
+    assert_eq!(retained_obligations[0].obligation_id, retained_source);
+    assert_eq!(retained_obligations[1].obligation_id, retained_successor);
+    assert_eq!(retained_obligations[0].population_snapshot_id, population);
+    assert_eq!(
+        retained_obligations[1].population_snapshot_id,
+        retained_successor_population
+    );
+    assert_eq!(
+        retained_obligations[0].lifecycle_state,
+        society_kernel::StudyActorObligationState::Completed
+    );
+    assert_eq!(retained_obligations[0].prompt_digest, prompt);
+    assert_eq!(retained_obligations[0].tool_digest, tools);
+    assert_eq!(retained_obligations[0].budget.value(), 3);
+    assert_eq!(retained_obligations[0].charged_budget.value(), 2);
+    assert_eq!(retained_obligations[0].reads_used, 0);
+    assert_eq!(retained_obligations[0].posts_used, 1);
+    assert!(matches!(
+        store.study_actor_obligation_observations(StudyEpisodeId::new(999).unwrap()),
+        Err(StoreError::StudyEpisodeNotFound(episode)) if episode == StudyEpisodeId::new(999).unwrap()
+    ));
     submit_study(
         &mut store,
         &mut ordinal,
@@ -1021,6 +1210,16 @@ fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
                 reason_digest: Some(Blake3Digest::of_bytes(b"runtime-cost-unavailable")),
             },
         );
+        assert_eq!(
+            rejected_study(
+                &mut store,
+                &mut ordinal,
+                StudyCommand::CloseEpisode {
+                    episode_id: episode
+                },
+            ),
+            Rejection::InvalidLifecycleTransition
+        );
         submit_study(
             &mut store,
             &mut ordinal,
@@ -1033,6 +1232,21 @@ fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
                 reason_digest: Some(Blake3Digest::of_bytes(b"invalidated-control")),
             },
         );
+        assert_eq!(
+            rejected_study(
+                &mut store,
+                &mut ordinal,
+                StudyCommand::RecordMeasurementResult {
+                    episode_id: episode,
+                    measurement_slot: StudyMeasurementSlot::new(4).unwrap(),
+                    status: StudyMeasurementStatus::Invalidated,
+                    value: None,
+                    value_digest: None,
+                    reason_digest: Some(Blake3Digest::of_bytes(b"outside-plan")),
+                },
+            ),
+            Rejection::InvalidLifecycleTransition
+        );
         submit_study(
             &mut store,
             &mut ordinal,
@@ -1041,6 +1255,68 @@ fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
             },
         );
     }
+
+    let completion_command_id = CommandId::parse("study-run-complete-once").unwrap();
+    let completed = store
+        .execute_study_transition(
+            completion_command_id.clone(),
+            StudyCommand::CompleteStudyRun { study_run_id },
+        )
+        .unwrap();
+    assert_eq!(
+        completed.disposition,
+        StudyTransitionDisposition::Accepted(StudyEvent::StudyRunCompleted { study_run_id })
+    );
+    assert_eq!(
+        store
+            .study_run_observation(study_run_id)
+            .unwrap()
+            .lifecycle_state,
+        StudyRunLifecycleState::Completed
+    );
+    let completion_retry = store
+        .execute_study_transition(
+            completion_command_id,
+            StudyCommand::CompleteStudyRun { study_run_id },
+        )
+        .unwrap();
+    assert!(completion_retry.idempotent);
+    assert_eq!(completion_retry.disposition, completed.disposition);
+
+    let observation = store.study_pair_observation(pair).unwrap();
+    assert_eq!(observation.pair_id, pair);
+    assert_eq!(observation.retained.episode_id, retained);
+    assert_eq!(observation.reset.episode_id, reset);
+    assert_eq!(observation.retained.treatment, StudyTreatment::Retained);
+    assert_eq!(observation.reset.treatment, StudyTreatment::Reset);
+    assert_eq!(
+        observation.retained.lifecycle_state,
+        society_kernel::StudyEpisodeState::Closed
+    );
+    assert_eq!(
+        observation.reset.lifecycle_state,
+        society_kernel::StudyEpisodeState::Closed
+    );
+    assert_eq!(observation.retained.source_actor_obligations, 1);
+    assert_eq!(observation.retained.source_terminal_actor_obligations, 1);
+    assert_eq!(observation.retained.successor_actor_obligations, 1);
+    assert_eq!(observation.retained.successor_terminal_actor_obligations, 1);
+    assert_eq!(observation.retained.failed_actor_obligations, 0);
+    assert_eq!(observation.retained.forum_reads, 1);
+    assert_eq!(observation.retained.decisions, 1);
+    assert_eq!(observation.retained.measurements.len(), 3);
+    assert!(matches!(
+        observation.retained.measurements[0].status,
+        StudyMeasurementStatus::Observed
+    ));
+    assert!(matches!(
+        observation.retained.measurements[1].status,
+        StudyMeasurementStatus::Unavailable
+    ));
+    assert!(matches!(
+        observation.retained.measurements[2].status,
+        StudyMeasurementStatus::Invalidated
+    ));
 
     let idempotent = store
         .execute_study_transition(

@@ -93,6 +93,15 @@ identifier!(PiOfficeTurnUsageReceiptId);
 identifier!(PiOfficeTurnUsageFailureId);
 identifier!(PiOfficeTurnTerminalReceiptId);
 identifier!(PiOfficeSessionDisposeReceiptId);
+// A replaceable actor's one-shot Pi prompt is a distinct custody contract
+// from a Root Authority Office turn. Keeping separate identities prevents a
+// scheduler from borrowing Office authority or silently treating one actor
+// attempt as a reusable Office session.
+identifier!(PiTaskAttemptPromptAuthorizationId);
+identifier!(PiTaskAttemptUsageReceiptId);
+identifier!(PiTaskAttemptUsageFailureId);
+identifier!(PiTaskAttemptTerminalReceiptId);
+identifier!(PiTaskAttemptSessionDisposeReceiptId);
 identifier!(PiProtocolSequence);
 identifier!(CancellationPropagationId);
 identifier!(CancellationPropagationTargetId);
@@ -926,6 +935,21 @@ pub enum Capability {
     /// nested study command has its own normalized named body and cannot carry
     /// application JSON or a generic metadata payload.
     RunStudyTransition = 101,
+    /// The replaceable-actor counterpart of an Office Prompt.  It is a
+    /// distinct authority because a task attempt cannot borrow an Office
+    /// turn's durable jurisdiction or reuse its session lifetime.
+    AuthorizePiTaskAttemptPrompt = 102,
+    RecordPiTaskAttemptPromptDelivery = 103,
+    RecordPiTaskAttemptPromptAccepted = 104,
+    RecordPiTaskAttemptUsage = 105,
+    RecordPiTaskAttemptUsageFailure = 106,
+    RecordPiTaskAttemptTerminal = 107,
+    AuthorizePiTaskAttemptSessionDispose = 108,
+    RecordPiTaskAttemptSessionDisposeDelivery = 109,
+    RecordPiTaskAttemptSessionDisposeAccepted = 110,
+    RecordPiTaskAttemptSessionDisposeUsage = 111,
+    RecordPiTaskAttemptSessionDisposeUsageFailure = 112,
+    RecordPiTaskAttemptSessionDisposed = 113,
 }
 
 impl Capability {
@@ -987,7 +1011,7 @@ impl Capability {
         Self::FinalizeDeterministicExperiment,
     ];
 
-    pub const KERNEL_SERVICE: [Self; 50] = [
+    pub const KERNEL_SERVICE: [Self; 62] = [
         Self::RecordCycleDrained,
         Self::RecordOfficeSessionReady,
         Self::SettleOfficeTurn,
@@ -1038,6 +1062,18 @@ impl Capability {
         Self::RecordDeterministicEvaluatorNativeChildSpawn,
         Self::RegisterDeterministicEvaluatorForensicManifest,
         Self::RunStudyTransition,
+        Self::AuthorizePiTaskAttemptPrompt,
+        Self::RecordPiTaskAttemptPromptDelivery,
+        Self::RecordPiTaskAttemptPromptAccepted,
+        Self::RecordPiTaskAttemptUsage,
+        Self::RecordPiTaskAttemptUsageFailure,
+        Self::RecordPiTaskAttemptTerminal,
+        Self::AuthorizePiTaskAttemptSessionDispose,
+        Self::RecordPiTaskAttemptSessionDisposeDelivery,
+        Self::RecordPiTaskAttemptSessionDisposeAccepted,
+        Self::RecordPiTaskAttemptSessionDisposeUsage,
+        Self::RecordPiTaskAttemptSessionDisposeUsageFailure,
+        Self::RecordPiTaskAttemptSessionDisposed,
     ];
 
     pub const fn requires_consumption(self) -> bool {
@@ -1607,6 +1643,182 @@ pub enum PiOfficeTurnUsageUnavailableReason {
 pub enum PiOfficeTurnUsageFailure {
     Unknown(PiOfficeTurnUsageUnknownReason),
     Unavailable(PiOfficeTurnUsageUnavailableReason),
+}
+
+/// Closed normalization of the terminal result of a replaceable actor's
+/// single `TaskAssignment` prompt.  CL-001 needs this separate from Office
+/// turns because an actor attempt must not become a reusable institutional
+/// session after it has spoken, read, or posted.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum PiTaskAttemptDisposition {
+    Completed = 1,
+    Length = 2,
+    Error = 3,
+    Aborted = 4,
+    Failed = 5,
+    ProtocolFailed = 6,
+}
+
+/// The peer-observed assistant outcome paired with one exact task-prompt
+/// disposition.  These values are not a claim that the task's application
+/// obligation succeeded; that remains an independently admitted transition.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum PiTaskAttemptAssistantOutcome {
+    ObservedStop = 1,
+    ObservedLength = 2,
+    ObservedError = 3,
+    ObservedAborted = 4,
+    SdkPromiseRejected = 5,
+    MissingFinalAssistantOutcome = 6,
+}
+
+/// The two permitted terminal sequence topologies for a task prompt. An
+/// observed assistant requires `agent_settled`; a rejected SDK promise may
+/// have no agent lifecycle and instead ends at a prompt-correlated final
+/// known usage fact immediately before `Settled`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PiTaskAttemptTerminalEvidence {
+    ObservedAssistant {
+        agent_settled_sequence: PiProtocolSequence,
+        final_accounting_sequence: PiProtocolSequence,
+    },
+    UnavailableAssistant {
+        final_known_usage_sequence: PiProtocolSequence,
+    },
+}
+
+impl PiTaskAttemptTerminalEvidence {
+    pub const fn final_accounting_sequence(self) -> PiProtocolSequence {
+        match self {
+            Self::ObservedAssistant {
+                final_accounting_sequence,
+                ..
+            }
+            | Self::UnavailableAssistant {
+                final_known_usage_sequence: final_accounting_sequence,
+            } => final_accounting_sequence,
+        }
+    }
+
+    pub const fn agent_settled_sequence(self) -> Option<PiProtocolSequence> {
+        match self {
+            Self::ObservedAssistant {
+                agent_settled_sequence,
+                ..
+            } => Some(agent_settled_sequence),
+            Self::UnavailableAssistant { .. } => None,
+        }
+    }
+
+    pub const fn accepts(self, outcome: PiTaskAttemptAssistantOutcome) -> bool {
+        matches!(
+            (self, outcome),
+            (
+                Self::ObservedAssistant { .. },
+                PiTaskAttemptAssistantOutcome::ObservedStop
+                    | PiTaskAttemptAssistantOutcome::ObservedLength
+                    | PiTaskAttemptAssistantOutcome::ObservedError
+                    | PiTaskAttemptAssistantOutcome::ObservedAborted
+            ) | (
+                Self::UnavailableAssistant { .. },
+                PiTaskAttemptAssistantOutcome::SdkPromiseRejected
+                    | PiTaskAttemptAssistantOutcome::MissingFinalAssistantOutcome
+            )
+        )
+    }
+}
+
+impl PiTaskAttemptDisposition {
+    pub const fn accepts(self, outcome: PiTaskAttemptAssistantOutcome) -> bool {
+        matches!(
+            (self, outcome),
+            (Self::Completed, PiTaskAttemptAssistantOutcome::ObservedStop)
+                | (Self::Length, PiTaskAttemptAssistantOutcome::ObservedLength)
+                | (Self::Error, PiTaskAttemptAssistantOutcome::ObservedError)
+                | (
+                    Self::Aborted,
+                    PiTaskAttemptAssistantOutcome::ObservedAborted
+                )
+                | (
+                    Self::Failed,
+                    PiTaskAttemptAssistantOutcome::SdkPromiseRejected
+                )
+                | (
+                    Self::ProtocolFailed,
+                    PiTaskAttemptAssistantOutcome::MissingFinalAssistantOutcome
+                )
+        )
+    }
+}
+
+/// A task transcript cannot be attached to its prompt terminal receipt: the
+/// Pi host flushes it only after `Dispose`. The explicit deferral prevents a
+/// terminal actor observation from manufacturing private transcript custody.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum PiTaskAttemptTranscriptDisposition {
+    DeferredUntilTaskAttemptSessionDispose = 1,
+}
+
+/// The exact outcome when a trusted task session is disposed. A verified
+/// first-user prompt binds the transcript to its earlier task-prompt digest;
+/// an unmaterialized transcript remains an explicit closed alternative.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PiTaskAttemptFirstUserPromptReceipt {
+    Absent,
+    Verified { digest: Blake3Digest },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PiTaskAttemptSessionTranscriptReceipt {
+    Materialized {
+        session_file: CanonicalPiSessionTranscriptPath,
+        session_file_digest: Blake3Digest,
+        transcript_content_object_id: ContentObjectId,
+        first_user_prompt: PiTaskAttemptFirstUserPromptReceipt,
+    },
+    UnmaterializedNoPrompt {
+        session_file: CanonicalPiSessionTranscriptPath,
+    },
+}
+
+/// How the actor attempt's exact reservation closed after a peer-valid task
+/// Dispose receipt. A usage failure freezes the budget and requires the
+/// existing cancellation/postmortem path; it is never converted to a zero
+/// provider cost.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PiTaskAttemptSessionDisposeBudgetDisposition {
+    Reconciled {
+        observed_cumulative_micro_usd: UsdMicros,
+    },
+    Frozen {
+        cancellation_request_id: CancellationRequestId,
+        postmortem_id: CostPostmortemId,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum PiTaskAttemptUsageUnknownReason {
+    MissingFinalUsageSnapshot = 1,
+    BoundaryStreamInterrupted = 2,
+    TerminalEvidenceMissing = 3,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i64)]
+pub enum PiTaskAttemptUsageUnavailableReason {
+    InvalidSdkUsage = 1,
+    UsageRegressed = 2,
+    UsageInconsistent = 3,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PiTaskAttemptUsageFailure {
+    Unknown(PiTaskAttemptUsageUnknownReason),
+    Unavailable(PiTaskAttemptUsageUnavailableReason),
 }
 
 impl ChildProcessState {
@@ -2669,6 +2881,79 @@ pub enum CommandBody {
         disposed_sequence: PiProtocolSequence,
         transcript_receipt: PiOfficeSessionTranscriptReceipt,
     },
+    /// Final kernel authority for the one `TaskAssignment` prompt allowed on
+    /// an actor attempt's Pi session. The content object is sealed before the
+    /// host pipe is touched, and the frontier prevents a task prompt from
+    /// being retroactively attached to a newer institutional state.
+    AuthorizePiTaskAttemptPrompt {
+        actor_attempt_id: ActorAttemptId,
+        correlation_identity: PiCorrelationIdentity,
+        prompt_content_object_id: ContentObjectId,
+        prompt_digest: Blake3Digest,
+        frontier_event_id: EventId,
+    },
+    RecordPiTaskAttemptPromptDelivery {
+        actor_attempt_id: ActorAttemptId,
+        correlation_identity: PiCorrelationIdentity,
+        prompt_digest: Blake3Digest,
+    },
+    RecordPiTaskAttemptPromptAccepted {
+        actor_attempt_id: ActorAttemptId,
+        correlation_identity: PiCorrelationIdentity,
+        command_result_sequence: PiProtocolSequence,
+    },
+    RecordPiTaskAttemptUsage {
+        actor_attempt_id: ActorAttemptId,
+        correlation_identity: PiCorrelationIdentity,
+        protocol_sequence: PiProtocolSequence,
+        usage: PiCumulativeUsage,
+    },
+    RecordPiTaskAttemptUsageFailure {
+        actor_attempt_id: ActorAttemptId,
+        correlation_identity: PiCorrelationIdentity,
+        protocol_sequence: PiProtocolSequence,
+        failure: PiTaskAttemptUsageFailure,
+    },
+    RecordPiTaskAttemptTerminal {
+        actor_attempt_id: ActorAttemptId,
+        correlation_identity: PiCorrelationIdentity,
+        terminal_evidence: PiTaskAttemptTerminalEvidence,
+        settled_sequence: PiProtocolSequence,
+        disposition: PiTaskAttemptDisposition,
+        assistant_outcome: PiTaskAttemptAssistantOutcome,
+        transcript_disposition: PiTaskAttemptTranscriptDisposition,
+    },
+    AuthorizePiTaskAttemptSessionDispose {
+        actor_attempt_id: ActorAttemptId,
+        correlation_identity: PiCorrelationIdentity,
+    },
+    RecordPiTaskAttemptSessionDisposeDelivery {
+        actor_attempt_id: ActorAttemptId,
+        correlation_identity: PiCorrelationIdentity,
+    },
+    RecordPiTaskAttemptSessionDisposeAccepted {
+        actor_attempt_id: ActorAttemptId,
+        correlation_identity: PiCorrelationIdentity,
+        command_result_sequence: PiProtocolSequence,
+    },
+    RecordPiTaskAttemptSessionDisposeUsage {
+        actor_attempt_id: ActorAttemptId,
+        correlation_identity: PiCorrelationIdentity,
+        protocol_sequence: PiProtocolSequence,
+        usage: PiCumulativeUsage,
+    },
+    RecordPiTaskAttemptSessionDisposeUsageFailure {
+        actor_attempt_id: ActorAttemptId,
+        correlation_identity: PiCorrelationIdentity,
+        protocol_sequence: PiProtocolSequence,
+        failure: PiTaskAttemptUsageFailure,
+    },
+    RecordPiTaskAttemptSessionDisposed {
+        actor_attempt_id: ActorAttemptId,
+        correlation_identity: PiCorrelationIdentity,
+        disposed_sequence: PiProtocolSequence,
+        transcript_receipt: PiTaskAttemptSessionTranscriptReceipt,
+    },
     StudyTransition {
         command: crate::StudyCommand,
     },
@@ -2813,6 +3098,36 @@ impl CommandBody {
             Self::RecordPiOfficeSessionDisposed { .. } => {
                 CommandKind::RecordPiOfficeSessionDisposed
             }
+            Self::AuthorizePiTaskAttemptPrompt { .. } => CommandKind::AuthorizePiTaskAttemptPrompt,
+            Self::RecordPiTaskAttemptPromptDelivery { .. } => {
+                CommandKind::RecordPiTaskAttemptPromptDelivery
+            }
+            Self::RecordPiTaskAttemptPromptAccepted { .. } => {
+                CommandKind::RecordPiTaskAttemptPromptAccepted
+            }
+            Self::RecordPiTaskAttemptUsage { .. } => CommandKind::RecordPiTaskAttemptUsage,
+            Self::RecordPiTaskAttemptUsageFailure { .. } => {
+                CommandKind::RecordPiTaskAttemptUsageFailure
+            }
+            Self::RecordPiTaskAttemptTerminal { .. } => CommandKind::RecordPiTaskAttemptTerminal,
+            Self::AuthorizePiTaskAttemptSessionDispose { .. } => {
+                CommandKind::AuthorizePiTaskAttemptSessionDispose
+            }
+            Self::RecordPiTaskAttemptSessionDisposeDelivery { .. } => {
+                CommandKind::RecordPiTaskAttemptSessionDisposeDelivery
+            }
+            Self::RecordPiTaskAttemptSessionDisposeAccepted { .. } => {
+                CommandKind::RecordPiTaskAttemptSessionDisposeAccepted
+            }
+            Self::RecordPiTaskAttemptSessionDisposeUsage { .. } => {
+                CommandKind::RecordPiTaskAttemptSessionDisposeUsage
+            }
+            Self::RecordPiTaskAttemptSessionDisposeUsageFailure { .. } => {
+                CommandKind::RecordPiTaskAttemptSessionDisposeUsageFailure
+            }
+            Self::RecordPiTaskAttemptSessionDisposed { .. } => {
+                CommandKind::RecordPiTaskAttemptSessionDisposed
+            }
             Self::StudyTransition { .. } => CommandKind::StudyTransition,
         }
     }
@@ -2951,6 +3266,36 @@ impl CommandBody {
                 Capability::RecordPiOfficeSessionDisposeUsageFailure
             }
             Self::RecordPiOfficeSessionDisposed { .. } => Capability::RecordPiOfficeSessionDisposed,
+            Self::AuthorizePiTaskAttemptPrompt { .. } => Capability::AuthorizePiTaskAttemptPrompt,
+            Self::RecordPiTaskAttemptPromptDelivery { .. } => {
+                Capability::RecordPiTaskAttemptPromptDelivery
+            }
+            Self::RecordPiTaskAttemptPromptAccepted { .. } => {
+                Capability::RecordPiTaskAttemptPromptAccepted
+            }
+            Self::RecordPiTaskAttemptUsage { .. } => Capability::RecordPiTaskAttemptUsage,
+            Self::RecordPiTaskAttemptUsageFailure { .. } => {
+                Capability::RecordPiTaskAttemptUsageFailure
+            }
+            Self::RecordPiTaskAttemptTerminal { .. } => Capability::RecordPiTaskAttemptTerminal,
+            Self::AuthorizePiTaskAttemptSessionDispose { .. } => {
+                Capability::AuthorizePiTaskAttemptSessionDispose
+            }
+            Self::RecordPiTaskAttemptSessionDisposeDelivery { .. } => {
+                Capability::RecordPiTaskAttemptSessionDisposeDelivery
+            }
+            Self::RecordPiTaskAttemptSessionDisposeAccepted { .. } => {
+                Capability::RecordPiTaskAttemptSessionDisposeAccepted
+            }
+            Self::RecordPiTaskAttemptSessionDisposeUsage { .. } => {
+                Capability::RecordPiTaskAttemptSessionDisposeUsage
+            }
+            Self::RecordPiTaskAttemptSessionDisposeUsageFailure { .. } => {
+                Capability::RecordPiTaskAttemptSessionDisposeUsageFailure
+            }
+            Self::RecordPiTaskAttemptSessionDisposed { .. } => {
+                Capability::RecordPiTaskAttemptSessionDisposed
+            }
             Self::StudyTransition { .. } => Capability::RunStudyTransition,
         }
     }
@@ -3060,6 +3405,18 @@ pub enum CommandKind {
     RecordDeterministicEvaluatorNativeChildSpawn = 99,
     RegisterDeterministicEvaluatorForensicManifest = 100,
     StudyTransition = 101,
+    AuthorizePiTaskAttemptPrompt = 102,
+    RecordPiTaskAttemptPromptDelivery = 103,
+    RecordPiTaskAttemptPromptAccepted = 104,
+    RecordPiTaskAttemptUsage = 105,
+    RecordPiTaskAttemptUsageFailure = 106,
+    RecordPiTaskAttemptTerminal = 107,
+    AuthorizePiTaskAttemptSessionDispose = 108,
+    RecordPiTaskAttemptSessionDisposeDelivery = 109,
+    RecordPiTaskAttemptSessionDisposeAccepted = 110,
+    RecordPiTaskAttemptSessionDisposeUsage = 111,
+    RecordPiTaskAttemptSessionDisposeUsageFailure = 112,
+    RecordPiTaskAttemptSessionDisposed = 113,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -3186,6 +3543,15 @@ closed_rejection_codes! {
     PiOfficeSessionDisposeUsageNotMonotonic = 60,
     PiOfficeSessionDisposeReceiptMissing = 61,
     MissionSourceContentNotSealed = 62,
+    PiTaskAttemptAuthorityMissing = 63,
+    PiTaskAttemptPromptBindingMismatch = 64,
+    PiTaskAttemptUsageNotMonotonic = 65,
+    PiTaskAttemptTerminalEvidenceMissing = 66,
+    PiTaskAttemptNotReconciled = 67,
+    PiTaskAttemptTerminalAlreadyRecorded = 68,
+    PiTaskAttemptUsageAlreadyFrozen = 69,
+    PiTaskAttemptSessionDisposeBindingMismatch = 70,
+    PiTaskAttemptSessionDisposeReceiptMissing = 71,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -3613,6 +3979,76 @@ pub enum EventBody {
         observed_cumulative_micro_usd: UsdMicros,
         budget_disposition: PiOfficeSessionDisposeBudgetDisposition,
     },
+    PiTaskAttemptPromptAuthorized {
+        pi_task_attempt_prompt_authorization_id: PiTaskAttemptPromptAuthorizationId,
+        actor_attempt_id: ActorAttemptId,
+        native_child_id: NativeChildId,
+        correlation_identity: PiCorrelationIdentity,
+        budget_reservation_id: BudgetReservationId,
+    },
+    PiTaskAttemptPromptDelivered {
+        actor_attempt_id: ActorAttemptId,
+        correlation_identity: PiCorrelationIdentity,
+    },
+    PiTaskAttemptPromptAccepted {
+        actor_attempt_id: ActorAttemptId,
+        correlation_identity: PiCorrelationIdentity,
+        command_result_sequence: PiProtocolSequence,
+    },
+    PiTaskAttemptUsageRecorded {
+        pi_task_attempt_usage_receipt_id: PiTaskAttemptUsageReceiptId,
+        actor_attempt_id: ActorAttemptId,
+        protocol_sequence: PiProtocolSequence,
+        cumulative_micro_usd: UsdMicros,
+    },
+    PiTaskAttemptUsageFrozen {
+        actor_attempt_id: ActorAttemptId,
+        budget_reservation_id: BudgetReservationId,
+        cancellation_request_id: CancellationRequestId,
+        postmortem_id: CostPostmortemId,
+        failure: PiTaskAttemptUsageFailure,
+    },
+    PiTaskAttemptTerminalRecorded {
+        pi_task_attempt_terminal_receipt_id: PiTaskAttemptTerminalReceiptId,
+        actor_attempt_id: ActorAttemptId,
+        disposition: PiTaskAttemptDisposition,
+        assistant_outcome: PiTaskAttemptAssistantOutcome,
+    },
+    PiTaskAttemptSessionDisposeAuthorized {
+        actor_attempt_id: ActorAttemptId,
+        native_child_id: NativeChildId,
+        correlation_identity: PiCorrelationIdentity,
+        authorized_generation: AdmissionGeneration,
+    },
+    PiTaskAttemptSessionDisposeDelivered {
+        actor_attempt_id: ActorAttemptId,
+        native_child_id: NativeChildId,
+        correlation_identity: PiCorrelationIdentity,
+    },
+    PiTaskAttemptSessionDisposeAccepted {
+        actor_attempt_id: ActorAttemptId,
+        correlation_identity: PiCorrelationIdentity,
+        command_result_sequence: PiProtocolSequence,
+    },
+    PiTaskAttemptSessionDisposeUsageRecorded {
+        actor_attempt_id: ActorAttemptId,
+        protocol_sequence: PiProtocolSequence,
+        cumulative_micro_usd: UsdMicros,
+    },
+    PiTaskAttemptSessionDisposeUsageFrozen {
+        actor_attempt_id: ActorAttemptId,
+        budget_reservation_id: BudgetReservationId,
+        cancellation_request_id: CancellationRequestId,
+        postmortem_id: CostPostmortemId,
+        failure: PiTaskAttemptUsageFailure,
+    },
+    PiTaskAttemptSessionDisposed {
+        pi_task_attempt_session_dispose_receipt_id: PiTaskAttemptSessionDisposeReceiptId,
+        actor_attempt_id: ActorAttemptId,
+        budget_reservation_id: BudgetReservationId,
+        observed_cumulative_micro_usd: UsdMicros,
+        budget_disposition: PiTaskAttemptSessionDisposeBudgetDisposition,
+    },
     StudyTransition {
         event: crate::StudyEvent,
     },
@@ -3716,6 +4152,18 @@ pub enum EventKind {
     DeterministicEvaluatorNativeChildSpawnRecorded = 93,
     DeterministicEvaluatorForensicManifestRegistered = 94,
     StudyTransition = 95,
+    PiTaskAttemptPromptAuthorized = 96,
+    PiTaskAttemptPromptDelivered = 97,
+    PiTaskAttemptPromptAccepted = 98,
+    PiTaskAttemptUsageRecorded = 99,
+    PiTaskAttemptUsageFrozen = 100,
+    PiTaskAttemptTerminalRecorded = 101,
+    PiTaskAttemptSessionDisposeAuthorized = 102,
+    PiTaskAttemptSessionDisposeDelivered = 103,
+    PiTaskAttemptSessionDisposeAccepted = 104,
+    PiTaskAttemptSessionDisposeUsageRecorded = 105,
+    PiTaskAttemptSessionDisposeUsageFrozen = 106,
+    PiTaskAttemptSessionDisposed = 107,
 }
 
 impl EventBody {
@@ -3851,6 +4299,28 @@ impl EventBody {
                 EventKind::PiOfficeSessionDisposeUsageFrozen
             }
             Self::PiOfficeSessionDisposed { .. } => EventKind::PiOfficeSessionDisposed,
+            Self::PiTaskAttemptPromptAuthorized { .. } => EventKind::PiTaskAttemptPromptAuthorized,
+            Self::PiTaskAttemptPromptDelivered { .. } => EventKind::PiTaskAttemptPromptDelivered,
+            Self::PiTaskAttemptPromptAccepted { .. } => EventKind::PiTaskAttemptPromptAccepted,
+            Self::PiTaskAttemptUsageRecorded { .. } => EventKind::PiTaskAttemptUsageRecorded,
+            Self::PiTaskAttemptUsageFrozen { .. } => EventKind::PiTaskAttemptUsageFrozen,
+            Self::PiTaskAttemptTerminalRecorded { .. } => EventKind::PiTaskAttemptTerminalRecorded,
+            Self::PiTaskAttemptSessionDisposeAuthorized { .. } => {
+                EventKind::PiTaskAttemptSessionDisposeAuthorized
+            }
+            Self::PiTaskAttemptSessionDisposeDelivered { .. } => {
+                EventKind::PiTaskAttemptSessionDisposeDelivered
+            }
+            Self::PiTaskAttemptSessionDisposeAccepted { .. } => {
+                EventKind::PiTaskAttemptSessionDisposeAccepted
+            }
+            Self::PiTaskAttemptSessionDisposeUsageRecorded { .. } => {
+                EventKind::PiTaskAttemptSessionDisposeUsageRecorded
+            }
+            Self::PiTaskAttemptSessionDisposeUsageFrozen { .. } => {
+                EventKind::PiTaskAttemptSessionDisposeUsageFrozen
+            }
+            Self::PiTaskAttemptSessionDisposed { .. } => EventKind::PiTaskAttemptSessionDisposed,
             Self::StudyTransition { .. } => EventKind::StudyTransition,
         }
     }

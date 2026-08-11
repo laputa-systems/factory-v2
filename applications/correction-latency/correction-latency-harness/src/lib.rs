@@ -7,39 +7,60 @@
 //! Forum tool transitions submitted through the generic service custody.
 
 use std::{
-    fmt,
-    fs,
+    fmt, fs,
     path::PathBuf,
     sync::atomic::{AtomicU64, Ordering},
 };
 
 use correction_latency_world::{
+    ActorPopulationPhase, BinaryOutcome, RoleMessageKind, WorldFixture,
     canonical_role_prompt_revision_digest, canonical_role_specifications,
-    canonical_role_topology_digest, ActorPopulationPhase, BinaryOutcome, RoleMessageKind,
-    WorldFixture,
+    canonical_role_topology_digest,
 };
 use society_content::{ContentObjectStore, ContentSealLimit, ContentStoreRoot};
 use society_kernel::{
     ApplicationIdentity, ApplicationMissionInput, ApplicationName, ApplicationRevisionId,
     ApplicationRevisionOrdinal, Blake3Digest, Capability, CommandBody, CommandDisposition,
-    CommandId, CommandRequest, ExpectedGeneration, ForumMessageBody, ForumMessageId,
-    ForumMessageKind, ForumPostBudget, ForumReadBudget, ForumThreadId, ForumThreadTitle,
-    ContentIdentityState, ContentObjectId, KernelStore,
-    MissionPrinciple, MissionPrincipleKind, MissionPrincipleText, MissionPrinciples,
-    MissionStatement, NorthStarBoundaryCommitmentQuestion, NorthStarChangeQuestion,
-    NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet, NorthStarRevisitQuestion,
-    PrincipalId, Rejection, StoreError, StudyActorObligationId, StudyBudgetUnits, StudyCommand,
-    StudyDecisionBody, StudyEpisodeId, StudyEvent, StudyMeasurementSlot,
-    StudyMeasurementStatus, StudyPopulationPhase, StudyProtocolRevisionId, StudyRoleOrdinal,
-    StudyPopulationSnapshotId, StudyGroundTruthReveal, StudyTransitionDisposition, StudyTreatment,
+    CommandId, CommandRequest, ContentIdentityState, ContentObjectId, ExpectedGeneration,
+    ForumMessageBody, ForumMessageId, ForumMessageKind, ForumPostBudget, ForumReadBudget,
+    ForumThreadId, ForumThreadTitle, KernelStore, MissionPrinciple, MissionPrincipleKind,
+    MissionPrincipleText, MissionPrinciples, MissionStatement, NorthStarBoundaryCommitmentQuestion,
+    NorthStarChangeQuestion, NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet,
+    NorthStarRevisitQuestion, PrincipalId, Rejection, StoreError, StudyActorObligationId,
+    StudyBudgetUnits, StudyCommand, StudyDecisionBody, StudyEpisodeId, StudyEvent,
+    StudyGroundTruthReveal, StudyMeasurementSlot, StudyMeasurementSlotCount,
+    StudyMeasurementStatus, StudyPopulationPhase, StudyPopulationSnapshotId,
+    StudyProtocolRevisionId, StudyRoleOrdinal, StudyTransitionDisposition, StudyTreatment,
     forum_f0_awareness_digest, forum_f0_tool_contract_digest,
+};
+
+mod analysis;
+mod choreography;
+mod live_plan;
+
+pub use analysis::{
+    ANALYSIS_REVISION, AnalysisArtifact, AnalysisEstimand, AnalysisExclusionPolicy,
+    AnalysisInputError, AnalysisPairId, ArmAnalysisObservation, Cl001Metric, MetricSummary,
+    PairObservation, PairProvenance, PrecisionTarget, PreregisteredAnalysisPlan,
+};
+pub use choreography::{
+    ActorPromptMaterial, ArmChoreography, ArmLifecycle, ArmStateRecord, CHOREOGRAPHY_REVISION,
+    ChoreographyError, ForumExposure, PairChoreography, PairOutcome, PairStateRecord,
+    PrivateViewMaterial,
+};
+pub use live_plan::{
+    ANALYSIS_CONTRACT_BYTES, ActorPolicyIdentity, ActorSeatContract, BaselineKind,
+    Cl001ActorPolicyIdentity, Cl001LiveRunDescriptor, Cl001LiveRunPlan, Cl001PairSeed,
+    Cl001TreatmentArm, FORUM_CHARTER_BYTES, INSTITUTION_BYTES, LIVE_PLAN_REVISION, LivePlanError,
+    LiveRunDescriptor, LiveRunPlan, POPULATION_BYTES, PROTOCOL_BYTES, PairSeed, PopulationPhase,
+    ResourceBudgetContract, TreatmentArm,
 };
 
 const POPULATION_SIZE: u8 = 8;
 const ACTOR_BUDGET_UNITS: i64 = 2;
 const EPISODE_BUDGET_UNITS: i64 = (POPULATION_SIZE as i64) * ACTOR_BUDGET_UNITS * 2;
 const FORUM_READ_BUDGET: i64 = 4;
-const MEASUREMENTS_PER_ARM: i64 = 9;
+const MEASUREMENTS_PER_ARM: i64 = 11;
 static NEXT_TEST_CONTENT_ROOT_ID: AtomicU64 = AtomicU64::new(1);
 
 /// A report value that preserves unavailable and invalidated outcomes instead
@@ -98,6 +119,13 @@ pub struct ArmReport {
     pub forum_attention_bytes: MeasurementOutcome,
     pub forum_attention_turns: MeasurementOutcome,
     pub forum_attention_runtime_micros: MeasurementOutcome,
+    /// Provider-backed cost in integer micro-USD.  The deterministic fixture
+    /// reports this as unavailable rather than fabricating a zero bill.
+    pub operational_cost_microusd: MeasurementOutcome,
+    /// Cost of producing and maintaining retained institutional state,
+    /// charged over the declared amortization interval.  CL-001's provider-
+    /// free fixture has no such monetary observation.
+    pub amortized_institutional_cost_microusd: MeasurementOutcome,
 }
 
 /// A named provider-free control run. It retains the exact observation
@@ -124,6 +152,9 @@ pub struct PairedReport {
     pub unstructured_baseline: BaselineReport,
     pub ground_truth_reveal_digest: Blake3Digest,
     pub replay_materialized_state_digest: Blake3Digest,
+    /// Application-owned metric map derived from the kernel's read-only
+    /// persisted pair query, rather than copied from this presentation report.
+    pub persisted_pair: PairObservation,
 }
 
 /// A monetary status that does not turn a provider-free execution into a
@@ -197,9 +228,8 @@ impl PairedReport {
             total_forum_reads,
             total_forum_read_bytes,
             total_study_budget_units,
-            rejected_control_probes: i64::from(
-                self.source_authority_rejected_after_replacement,
-            ) + i64::from(self.reset_history_read_rejected),
+            rejected_control_probes: i64::from(self.source_authority_rejected_after_replacement)
+                + i64::from(self.reset_history_read_rejected),
             measurements_recorded: MEASUREMENTS_PER_ARM * 2,
             isolated_baseline: self.isolated_baseline.clone(),
             unstructured_baseline: self.unstructured_baseline.clone(),
@@ -210,6 +240,14 @@ impl PairedReport {
             ground_truth_reveal_digest: self.ground_truth_reveal_digest,
             replay_materialized_state_digest: self.replay_materialized_state_digest,
         }
+    }
+
+    /// Build the analysis artifact from the persisted study-pair boundary.
+    /// This is the path a live runner uses after it has collected closed pairs;
+    /// it makes the raw ledger results, not this report's convenience fields,
+    /// the analysis source of record.
+    pub fn persisted_analysis_artifact(&self) -> Result<AnalysisArtifact, AnalysisInputError> {
+        AnalysisArtifact::from_pairs(vec![self.persisted_pair.clone()])
     }
 }
 
@@ -233,7 +271,11 @@ impl fmt::Display for WorldSimulationSummary {
             self.total_actor_obligations
         )?;
         writeln!(formatter, "  forum_posts: {}", self.total_forum_posts)?;
-        writeln!(formatter, "  accepted_forum_reads: {}", self.total_forum_reads)?;
+        writeln!(
+            formatter,
+            "  accepted_forum_reads: {}",
+            self.total_forum_reads
+        )?;
         writeln!(
             formatter,
             "  forum_read_bytes: {}",
@@ -317,7 +359,11 @@ fn write_arm_report(
         "  study_budget_units: {}",
         report.activity.study_budget_units
     )?;
-    writeln!(formatter, "  frozen_forum_head: {}", report.frozen_forum_head)?;
+    writeln!(
+        formatter,
+        "  frozen_forum_head: {}",
+        report.frozen_forum_head
+    )?;
     writeln!(
         formatter,
         "  correction_digest: {:?}",
@@ -363,6 +409,16 @@ fn write_arm_report(
         formatter,
         "forum_attention_runtime_micros",
         &report.forum_attention_runtime_micros,
+    )?;
+    write_measurement(
+        formatter,
+        "operational_cost_microusd",
+        &report.operational_cost_microusd,
+    )?;
+    write_measurement(
+        formatter,
+        "amortized_institutional_cost_microusd",
+        &report.amortized_institutional_cost_microusd,
     )
 }
 
@@ -408,6 +464,7 @@ fn write_measurement(
 pub enum HarnessError {
     Store(StoreError),
     Rejected(Rejection),
+    Analysis(AnalysisInputError),
     UnexpectedEvent(&'static str),
     WorldEvaluation,
 }
@@ -419,6 +476,7 @@ impl fmt::Display for HarnessError {
             Self::Rejected(rejection) => {
                 write!(formatter, "study transition rejected: {rejection:?}")
             }
+            Self::Analysis(error) => write!(formatter, "CL-001 analysis input rejected: {error}"),
             Self::UnexpectedEvent(expected) => {
                 write!(formatter, "unexpected study event; expected {expected}")
             }
@@ -434,6 +492,12 @@ impl std::error::Error for HarnessError {}
 impl From<StoreError> for HarnessError {
     fn from(value: StoreError) -> Self {
         Self::Store(value)
+    }
+}
+
+impl From<AnalysisInputError> for HarnessError {
+    fn from(value: AnalysisInputError) -> Self {
+        Self::Analysis(value)
     }
 }
 
@@ -722,16 +786,16 @@ pub fn run_provider_free_pair() -> Result<PairedReport, HarnessError> {
         forum_contract,
     )?;
     let reset_history_read_rejection = rejected(
-            &mut store,
-            &mut sequence,
-            StudyCommand::ReadForum {
-                obligation_id: reset.successor_obligations[0],
-                first_message_ordinal: 1,
-                through_message_ordinal: reset.frozen_head,
-                rendered_content_object_id: ContentObjectId::new(1)
-                    .ok_or(HarnessError::UnexpectedEvent("mission content object"))?,
-            },
-        )?;
+        &mut store,
+        &mut sequence,
+        StudyCommand::ReadForum {
+            obligation_id: reset.successor_obligations[0],
+            first_message_ordinal: 1,
+            through_message_ordinal: reset.frozen_head,
+            rendered_content_object_id: ContentObjectId::new(1)
+                .ok_or(HarnessError::UnexpectedEvent("mission content object"))?,
+        },
+    )?;
     let reset_history_read_rejected = matches!(
         reset_history_read_rejection,
         // Before atomic correction release neither treatment can consume
@@ -808,6 +872,8 @@ pub fn run_provider_free_pair() -> Result<PairedReport, HarnessError> {
         StudyTreatment::Reset,
         &ground_truth_reveal,
     )?;
+    let persisted_pair =
+        PairObservation::from_persisted_study_pair(&store.study_pair_observation(pair_id)?)?;
     store.replay_ledger()?;
     let replay_materialized_state_digest = store.validate_replayed_materialized_state()?;
     let retained_latency = observed_value(&retained_report.correction_adoption_latency);
@@ -823,6 +889,7 @@ pub fn run_provider_free_pair() -> Result<PairedReport, HarnessError> {
         unstructured_baseline,
         ground_truth_reveal_digest: ground_truth_reveal.digest(),
         replay_materialized_state_digest,
+        persisted_pair,
     })
 }
 
@@ -1004,6 +1071,10 @@ fn admit_shared_revisions(
         StudyCommand::AdmitMeasurementRevision {
             protocol_revision_id: protocol,
             analysis_digest: Blake3Digest::of_bytes(b"cl-001|analysis|v1"),
+            measurement_slot_count: StudyMeasurementSlotCount::new(
+                u8::try_from(MEASUREMENTS_PER_ARM).expect("CL-001 measurement count fits in u8"),
+            )
+            .expect("CL-001 measurement count is admitted"),
         },
     )? {
         StudyEvent::MeasurementRevisionAdmitted {
@@ -1167,7 +1238,9 @@ fn admit_actor(
     let specification = canonical_role_specifications()
         .into_iter()
         .find(|specification| specification.ordinal().value() == role)
-        .ok_or(HarnessError::UnexpectedEvent("canonical role specification"))?;
+        .ok_or(HarnessError::UnexpectedEvent(
+            "canonical role specification",
+        ))?;
     // The role fragment is part of the sealed actor-policy revision; this
     // per-occurrence private-view digest binds the exact card or Forum view
     // allocated to this particular disposable role seat.
@@ -1504,7 +1577,9 @@ fn run_successor_population(
         )
         .map_err(|_| HarnessError::UnexpectedEvent("successor decision output"))?
         .decision()
-        .ok_or(HarnessError::UnexpectedEvent("successor decision observation"))?
+        .ok_or(HarnessError::UnexpectedEvent(
+            "successor decision observation",
+        ))?
         .clone();
     arm.final_decision_sequence = Some(*sequence);
     arm.final_decision = Some(decision.outcome());
@@ -1550,12 +1625,16 @@ fn close_and_measure(
             if reveal_digest == ground_truth_reveal.digest() => {}
         _ => return Err(HarnessError::UnexpectedEvent("GroundTruthRevealed")),
     }
-    let correction_release_sequence = arm
-        .correction_release_sequence
-        .ok_or(HarnessError::UnexpectedEvent("correction release occurrence"))?;
-    let first_corrected_statement_step = arm
-        .first_corrected_statement_step
-        .ok_or(HarnessError::UnexpectedEvent("corrected statement occurrence"))?;
+    let correction_release_sequence =
+        arm.correction_release_sequence
+            .ok_or(HarnessError::UnexpectedEvent(
+                "correction release occurrence",
+            ))?;
+    let first_corrected_statement_step =
+        arm.first_corrected_statement_step
+            .ok_or(HarnessError::UnexpectedEvent(
+                "corrected statement occurrence",
+            ))?;
     let adoption_steps = first_corrected_statement_step;
     let final_decision = arm
         .final_decision
@@ -1571,8 +1650,14 @@ fn close_and_measure(
         "CorrectionAdoptionLatency",
         &[correction_digest],
         &[
-            ("correction_release_command", i64::from(correction_release_sequence)),
-            ("first_corrected_statement_arm_step", first_corrected_statement_step),
+            (
+                "correction_release_command",
+                i64::from(correction_release_sequence),
+            ),
+            (
+                "first_corrected_statement_arm_step",
+                first_corrected_statement_step,
+            ),
         ],
     );
     let correctness = observed_from_raw(
@@ -1602,8 +1687,14 @@ fn close_and_measure(
             "DissentSurvival",
             &[],
             &[
-                ("source_challenge_present", i64::from(arm.source_challenge_message_id.is_some())),
-                ("retained_successor_consulted", i64::from(arm.dissent_consulted)),
+                (
+                    "source_challenge_present",
+                    i64::from(arm.source_challenge_message_id.is_some()),
+                ),
+                (
+                    "retained_successor_consulted",
+                    i64::from(arm.dissent_consulted),
+                ),
             ],
         ),
         StudyTreatment::Reset => MeasurementOutcome::Unavailable {
@@ -1618,7 +1709,10 @@ fn close_and_measure(
         &[],
         &[
             ("visible_pre_replacement_messages", arm.frozen_head),
-            ("successor_history_references", arm.successor_history_references),
+            (
+                "successor_history_references",
+                arm.successor_history_references,
+            ),
         ],
     );
     let attention_bytes = observed_from_raw(
@@ -1641,6 +1735,13 @@ fn close_and_measure(
         &[],
         &[("provider_free_runtime_micros", 0)],
     );
+    let provider_free_cost = || MeasurementOutcome::Unavailable {
+        reason_digest: Blake3Digest::of_bytes(
+            b"cl-001|cost|provider-free-deterministic-fixture|not-applicable",
+        ),
+    };
+    let operational_cost_microusd = provider_free_cost();
+    let amortized_institutional_cost_microusd = provider_free_cost();
     record_measurements(
         store,
         sequence,
@@ -1655,6 +1756,8 @@ fn close_and_measure(
             attention_bytes,
             attention_turns,
             attention_runtime_micros,
+            operational_cost_microusd,
+            amortized_institutional_cost_microusd,
         ],
     )?;
     let source_actor_obligations = i64::try_from(arm.source_obligations.len())
@@ -1705,6 +1808,8 @@ fn close_and_measure(
         forum_attention_bytes: attention_bytes,
         forum_attention_turns: attention_turns,
         forum_attention_runtime_micros: attention_runtime_micros,
+        operational_cost_microusd,
+        amortized_institutional_cost_microusd,
     })
 }
 
@@ -1721,9 +1826,15 @@ fn record_measurements(
         )
         .ok_or(HarnessError::UnexpectedEvent("measurement slot"))?;
         let (status, value, value_digest, reason_digest) = match outcome {
-            MeasurementOutcome::Observed { value, value_digest } => {
-                (StudyMeasurementStatus::Observed, Some(*value), Some(*value_digest), None)
-            }
+            MeasurementOutcome::Observed {
+                value,
+                value_digest,
+            } => (
+                StudyMeasurementStatus::Observed,
+                Some(*value),
+                Some(*value_digest),
+                None,
+            ),
             MeasurementOutcome::Unavailable { reason_digest } => (
                 StudyMeasurementStatus::Unavailable,
                 None,
@@ -1866,11 +1977,7 @@ fn observed_from_raw(
     }
 }
 
-fn digest_fields(
-    domain: &str,
-    digests: &[Blake3Digest],
-    values: &[(&str, i64)],
-) -> Blake3Digest {
+fn digest_fields(domain: &str, digests: &[Blake3Digest], values: &[(&str, i64)]) -> Blake3Digest {
     let mut bytes = Vec::with_capacity(64 + digests.len() * 32 + values.len() * 24);
     bytes.extend_from_slice(domain.as_bytes());
     bytes.push(0);
@@ -1886,9 +1993,7 @@ fn digest_fields(
     Blake3Digest::of_bytes(&bytes)
 }
 
-fn run_baselines(
-    fixture: &WorldFixture,
-) -> Result<(BaselineReport, BaselineReport), HarnessError> {
+fn run_baselines(fixture: &WorldFixture) -> Result<(BaselineReport, BaselineReport), HarnessError> {
     let specifications = canonical_role_specifications();
     let decision_specification = specifications[usize::from(POPULATION_SIZE - 1)];
     let decision_view = decision_specification
@@ -1910,7 +2015,9 @@ fn run_baselines(
         .deterministic_output(ActorPopulationPhase::Source, &decision_view, None)
         .map_err(|_| HarnessError::UnexpectedEvent("isolated decision output"))?
         .decision()
-        .ok_or(HarnessError::UnexpectedEvent("isolated decision occurrence"))?
+        .ok_or(HarnessError::UnexpectedEvent(
+            "isolated decision occurrence",
+        ))?
         .outcome();
     let isolated_correct = fixture
         .analysis_evaluator()
@@ -1941,7 +2048,9 @@ fn run_baselines(
         )
         .map_err(|_| HarnessError::UnexpectedEvent("unstructured decision output"))?
         .decision()
-        .ok_or(HarnessError::UnexpectedEvent("unstructured decision occurrence"))?
+        .ok_or(HarnessError::UnexpectedEvent(
+            "unstructured decision occurrence",
+        ))?
         .outcome();
     let unstructured_correct = fixture
         .analysis_evaluator()
@@ -1971,7 +2080,10 @@ fn run_baselines(
                 i64::from(unstructured_correct),
                 "BaselineFinalDecisionCorrect",
                 &[fixture.identity(), fixture.correction_package().digest()],
-                &[("unstructured_decision", i64::from(unstructured_decision.bit()))],
+                &[(
+                    "unstructured_decision",
+                    i64::from(unstructured_decision.bit()),
+                )],
             ),
             actor_turns: observed_from_raw(
                 i64::from(POPULATION_SIZE),
@@ -2003,7 +2115,9 @@ mod tests {
         assert!(first.reset_history_read_rejected);
         assert_eq!(
             first.ground_truth_reveal_digest,
-            WorldFixture::canonical().analysis_ground_truth_reveal().digest(),
+            WorldFixture::canonical()
+                .analysis_ground_truth_reveal()
+                .digest(),
             "the report names the exact reveal committed before actors ran"
         );
         assert_eq!(
@@ -2065,6 +2179,17 @@ mod tests {
             first.reset.dissent_survival,
             MeasurementOutcome::Unavailable { .. }
         ));
+        let persisted = first
+            .persisted_analysis_artifact()
+            .expect("closed persisted pair must produce a CL-001 artifact");
+        assert_eq!(persisted.pairs.len(), 1);
+        assert_eq!(persisted.pairs[0].pair_id.as_str(), "study-pair-1");
+        assert!(matches!(
+            persisted.pairs[0]
+                .retained
+                .value(Cl001Metric::FinalDecisionCorrect),
+            MeasurementOutcome::Observed { value: 1, .. }
+        ));
     }
 
     #[test]
@@ -2082,7 +2207,7 @@ mod tests {
         assert_eq!(summary.total_forum_reads, 30);
         assert_eq!(summary.total_study_budget_units, 64);
         assert_eq!(summary.rejected_control_probes, 2);
-        assert_eq!(summary.measurements_recorded, 18);
+        assert_eq!(summary.measurements_recorded, 22);
         assert_eq!(summary.retained.activity.source_forum_posts, 8);
         assert_eq!(summary.retained.activity.correction_forum_posts, 1);
         assert_eq!(summary.retained.activity.successor_forum_posts, 8);

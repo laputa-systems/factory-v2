@@ -17,7 +17,7 @@ use std::{
 
 use society_content::ContentSealLimit;
 use society_kernel::{
-    AdmissionGeneration, Blake3Digest as KernelDigest, BudgetReservationId,
+    ActorAttemptId, AdmissionGeneration, Blake3Digest as KernelDigest, BudgetReservationId,
     CanonicalPiSessionTranscriptPath, CanonicalWorkspacePath, Capability, ChildStreamKind,
     ChildStreamSealCompleteness, CommandBody, CommandDisposition, CommandId, CommandRequest,
     ContentObjectId, DirectChildWaitStatus, EventBody, EventId, ExecutionProfileId,
@@ -28,10 +28,12 @@ use society_kernel::{
     PiOfficeSessionTranscriptReceipt, PiOfficeTurnAssistantOutcome, PiOfficeTurnDisposition,
     PiOfficeTurnTerminalEvidence, PiOfficeTurnTranscriptDisposition, PiOfficeTurnUsageFailure,
     PiOfficeTurnUsageUnavailableReason, PiOfficeTurnUsageUnknownReason, PiProtocolSequence,
-    PiTokenCount, PrincipalId, ProcessExitCode, ProcessGroupLiveness as KernelLiveness,
-    ProcessSignalNumber, ProviderCostBinary64, RootAuthorityOfficeSessionId,
-    SpawnNonce as KernelSpawnNonce, SupervisedChildIdentity, SupervisorEpochId,
-    SupervisorEpochIdentity,
+    PiTaskAttemptAssistantOutcome, PiTaskAttemptDisposition, PiTaskAttemptTerminalEvidence,
+    PiTaskAttemptTranscriptDisposition, PiTaskAttemptUsageFailure,
+    PiTaskAttemptUsageUnavailableReason, PiTaskAttemptUsageUnknownReason, PiTokenCount,
+    PrincipalId, ProcessExitCode, ProcessGroupLiveness as KernelLiveness, ProcessSignalNumber,
+    ProviderCostBinary64, RootAuthorityOfficeSessionId, SpawnNonce as KernelSpawnNonce,
+    SupervisedChildIdentity, SupervisorEpochId, SupervisorEpochIdentity,
 };
 use society_pi::{
     AbsolutePath, AssistantStopReason, BoundarySequence, CommandName, CommandResult,
@@ -59,6 +61,8 @@ use crate::{
 const COMMAND_PREFIX: &str = "pi-execution-v1/";
 const OFFICE_TURN_COMMAND_PREFIX: &str = "pi-office-turn-v1/";
 const OFFICE_SESSION_DISPOSE_COMMAND_PREFIX: &str = "pi-office-session-dispose-v1/";
+const TASK_ATTEMPT_PROMPT_COMMAND_PREFIX: &str = "pi-task-attempt-prompt-v1/";
+const TASK_ATTEMPT_SESSION_DISPOSE_COMMAND_PREFIX: &str = "pi-task-attempt-session-dispose-v1/";
 const MAX_OPERATION_LABEL_BYTES: usize = 36;
 
 #[cfg(feature = "test-support")]
@@ -168,6 +172,64 @@ enum PiOfficeTurnCommand {
     Settle,
 }
 
+/// Retry-stable command slots for the one TaskAssignment Prompt belonging to
+/// one replaceable actor attempt. A task cannot reuse the Office-turn command
+/// namespace: that would permit a root-authority session to collide with a
+/// disposable actor's prompt by textual operation label alone.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PiTaskAttemptPromptCommand {
+    AuthorizePrompt,
+    RecordPromptDelivery,
+    RecordPromptAccepted,
+    RecordKnownUsage { sequence: PiProtocolSequence },
+    RecordUsageFailure { sequence: PiProtocolSequence },
+    RecordTerminal,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PiTaskAttemptSessionDisposeCommand {
+    Authorize,
+    RecordDelivery,
+    RecordAccepted,
+    RecordKnownUsage { sequence: PiProtocolSequence },
+    RecordUsageFailure { sequence: PiProtocolSequence },
+    RecordDisposed,
+}
+
+impl std::fmt::Display for PiTaskAttemptSessionDisposeCommand {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Authorize => formatter.write_str("authorize"),
+            Self::RecordDelivery => formatter.write_str("record-delivery"),
+            Self::RecordAccepted => formatter.write_str("record-accepted"),
+            Self::RecordKnownUsage { sequence } => {
+                write!(formatter, "record-known-usage-{}", sequence.value())
+            }
+            Self::RecordUsageFailure { sequence } => {
+                write!(formatter, "record-usage-failure-{}", sequence.value())
+            }
+            Self::RecordDisposed => formatter.write_str("record-disposed"),
+        }
+    }
+}
+
+impl std::fmt::Display for PiTaskAttemptPromptCommand {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AuthorizePrompt => formatter.write_str("authorize-prompt"),
+            Self::RecordPromptDelivery => formatter.write_str("record-prompt-delivery"),
+            Self::RecordPromptAccepted => formatter.write_str("record-prompt-accepted"),
+            Self::RecordKnownUsage { sequence } => {
+                write!(formatter, "record-known-usage-{}", sequence.value())
+            }
+            Self::RecordUsageFailure { sequence } => {
+                write!(formatter, "record-usage-failure-{}", sequence.value())
+            }
+            Self::RecordTerminal => formatter.write_str("record-terminal"),
+        }
+    }
+}
+
 impl std::fmt::Display for PiOfficeTurnCommand {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -204,6 +266,65 @@ impl PiOfficeTurnOperationId {
 
     fn command_id(&self, command: PiOfficeTurnCommand) -> Result<CommandId, PiExecutionError> {
         CommandId::parse(format!("{OFFICE_TURN_COMMAND_PREFIX}{}/{command}", self.0))
+            .map_err(|_| PiExecutionError::InvalidOperationIdentity)
+    }
+}
+
+/// Opaque resident identity for the single task Prompt receipt chain. It
+/// shares the established operation-label grammar but derives command IDs in
+/// a distinct namespace so retries cannot splice task and Office evidence.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct PiTaskAttemptPromptOperationId(String);
+
+impl PiTaskAttemptPromptOperationId {
+    pub(crate) fn parse(value: impl Into<String>) -> Result<Self, PiExecutionError> {
+        let value = value.into();
+        let _ = PiExecutionOperationId::parse(value.clone())?;
+        Ok(Self(value))
+    }
+
+    fn command_id(
+        &self,
+        command: PiTaskAttemptPromptCommand,
+    ) -> Result<CommandId, PiExecutionError> {
+        CommandId::parse(format!(
+            "{TASK_ATTEMPT_PROMPT_COMMAND_PREFIX}{}/{command}",
+            self.0
+        ))
+        .map_err(|_| PiExecutionError::InvalidOperationIdentity)
+    }
+}
+
+/// The task session's closing receipt chain has its own operation identity:
+/// a transcript close must not replay as a task Prompt even for an identical
+/// actor-attempt label.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct PiTaskAttemptSessionDisposeOperationId(String);
+
+impl PiTaskAttemptSessionDisposeOperationId {
+    pub(crate) fn parse(value: impl Into<String>) -> Result<Self, PiExecutionError> {
+        let value = value.into();
+        let _ = PiExecutionOperationId::parse(value.clone())?;
+        Ok(Self(value))
+    }
+
+    fn command_id(
+        &self,
+        command: PiTaskAttemptSessionDisposeCommand,
+    ) -> Result<CommandId, PiExecutionError> {
+        CommandId::parse(format!(
+            "{TASK_ATTEMPT_SESSION_DISPOSE_COMMAND_PREFIX}{}/{command}",
+            self.0
+        ))
+        .map_err(|_| PiExecutionError::InvalidOperationIdentity)
+    }
+
+    fn transcript_content_operation(
+        &self,
+        digest: KernelDigest,
+    ) -> Result<ContentSealOperationId, PiExecutionError> {
+        let label = format!("pi-task-dispose-transcript-{}", self.0);
+        ContentSealOperationId::parse(label, digest)
             .map_err(|_| PiExecutionError::InvalidOperationIdentity)
     }
 }
@@ -292,7 +413,7 @@ const fn stream_seal_command(stream: ChildStreamKind) -> PiExecutionCommand {
     }
 }
 
-/// Inputs already selected by trusted scheduling.  The execution driver does
+/// Inputs already selected by trusted scheduling. The execution driver does
 /// not discover a model, owner, capability, workspace, or command identity.
 /// It merely turns this exact Office admission into a child receipt chain.
 #[derive(Clone, Debug)]
@@ -300,6 +421,24 @@ pub(crate) struct OfficePiExecutionStart {
     pub(crate) operation: PiExecutionOperationId,
     pub(crate) operating_cycle_id: society_kernel::OperatingCycleId,
     pub(crate) office_session_id: RootAuthorityOfficeSessionId,
+    pub(crate) budget_reservation_id: BudgetReservationId,
+    pub(crate) execution_profile_id: ExecutionProfileId,
+    pub(crate) expected_generation: AdmissionGeneration,
+    pub(crate) supervisor_epoch_id: SupervisorEpochId,
+    pub(crate) supervisor_epoch_identity: SupervisorEpochIdentity,
+    pub(crate) spawn_request: PiSpawnRequest,
+}
+
+/// Inputs already selected by trusted scheduling for one replaceable actor
+/// attempt. This is deliberately a separate type from
+/// [`OfficePiExecutionStart`]: an actor child is owned by an `ActorAttempt`,
+/// uses a `TaskAttempt` Pi session, and has no Office session or turn
+/// authority to borrow.
+#[derive(Clone, Debug)]
+pub(crate) struct TaskAttemptPiExecutionStart {
+    pub(crate) operation: PiExecutionOperationId,
+    pub(crate) operating_cycle_id: society_kernel::OperatingCycleId,
+    pub(crate) actor_attempt_id: ActorAttemptId,
     pub(crate) budget_reservation_id: BudgetReservationId,
     pub(crate) execution_profile_id: ExecutionProfileId,
     pub(crate) expected_generation: AdmissionGeneration,
@@ -347,6 +486,31 @@ enum OfficePiExecutionPhase {
     Reconciled,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TaskAttemptPiExecutionPhase {
+    SpawnRegistered,
+    PostSpawnSetupContained,
+    BoundaryContainmentRequired,
+    AdapterReadyRecorded,
+    CreateAuthorized,
+    CreateDelivered,
+    SessionReadyRecorded,
+    TaskPromptDeliveryPending,
+    TaskPromptActive,
+    /// Accounting could not be observed. The kernel freezes the exact
+    /// reservation and the resident contains the child rather than treating
+    /// missing usage as free or attempting disposal without a terminal.
+    TaskPromptTerminalBlocked,
+    TaskPromptTerminalRecorded,
+    DisposeDeliveryPending,
+    DisposeRequested,
+    Disposed,
+    DirectChildReapRecorded,
+    LingeringCleanupRecorded,
+    AwaitingLingeringGroupAbsence,
+    Reconciled,
+}
+
 /// The daemon-private handle for exactly one registered Office child.  It has
 /// no constructor outside the pre-spawn-to-registration transition.
 #[derive(Clone, Debug)]
@@ -367,6 +531,204 @@ pub(crate) struct OfficePiExecutionChild {
     create_correlation: PiCorrelationIdentity,
     create_request_digest: KernelDigest,
     phase: OfficePiExecutionPhase,
+}
+
+/// Daemon-private custody for exactly one registered TaskAttempt child. The
+/// type has no Office identity and its lifecycle has no Office-ready or
+/// Office-turn phase; those are distinct root-authority capabilities.
+#[derive(Clone, Debug)]
+pub(crate) struct TaskAttemptPiExecutionChild {
+    operation: PiExecutionOperationId,
+    supervised_child_id: SupervisedChildId,
+    child_process_id: NativeChildId,
+    native_child_spawn_admission_id: NativeChildSpawnAdmissionId,
+    actor_attempt_id: ActorAttemptId,
+    workspace_directory: AbsolutePath,
+    session_directory: AbsolutePath,
+    pi_session_identity: PiBoundarySessionIdentity,
+    spawn_nonce: KernelSpawnNonce,
+    expected_generation: AdmissionGeneration,
+    create_correlation: PiCorrelationIdentity,
+    create_request_digest: KernelDigest,
+    phase: TaskAttemptPiExecutionPhase,
+}
+
+/// Exact byte-bearing TaskAssignment prompt. The caller must arrange normal
+/// content sealing/registration before this crosses the process boundary;
+/// this type only proves that the physical prompt bytes match that digest.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct SealedTaskAttemptPrompt {
+    text: String,
+    digest: KernelDigest,
+}
+
+impl SealedTaskAttemptPrompt {
+    pub(crate) fn new(text: String, digest: KernelDigest) -> Result<Self, PiExecutionError> {
+        if text.is_empty() || KernelDigest::of_bytes(text.as_bytes()) != digest {
+            return Err(PiExecutionError::PromptContentDigestMismatch);
+        }
+        Ok(Self { text, digest })
+    }
+}
+
+/// Inputs selected by trusted scheduling for the one actor-local Prompt. The
+/// actor attempt and child come from the registered TaskAttempt handle, while
+/// the application-owned prompt bytes have already entered immutable content
+/// custody. No Office identity or synthetic-world field may enter here.
+#[derive(Clone, Debug)]
+pub(crate) struct TaskAttemptPiPromptStart {
+    pub(crate) operation: PiTaskAttemptPromptOperationId,
+    pub(crate) correlation_identity: PiCorrelationIdentity,
+    pub(crate) prompt_content_object_id: ContentObjectId,
+    pub(crate) prompt: SealedTaskAttemptPrompt,
+    pub(crate) frontier_event_id: EventId,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TaskAttemptPiPromptPhase {
+    PromptDeliveryPending,
+    AwaitingPromptAcceptance,
+    AwaitingTerminalEvidence,
+    UsageFrozen,
+    TerminalRecorded,
+}
+
+/// Daemon-private custody for exactly one task assignment. This represents
+/// runtime receipts only; the application still decides whether an actor's
+/// task obligation completed through a separate typed study transition.
+#[derive(Clone, Debug)]
+pub(crate) struct TaskAttemptPiPrompt {
+    operation: PiTaskAttemptPromptOperationId,
+    correlation_identity: PiCorrelationIdentity,
+    prompt_digest: KernelDigest,
+    phase: TaskAttemptPiPromptPhase,
+    accepted_sequence: Option<PiProtocolSequence>,
+    agent_settled_sequence: Option<PiProtocolSequence>,
+    latest_known_accounting_sequence: Option<PiProtocolSequence>,
+    final_accounting_sequence: Option<PiProtocolSequence>,
+}
+
+/// Trusted scheduling selects the correlation and retry-stable operation
+/// identity for the one close control. The child carries the immutable actor
+/// attempt and session identities; a caller cannot replace either at dispose
+/// time.
+#[derive(Clone, Debug)]
+pub(crate) struct TaskAttemptPiSessionDisposeStart {
+    pub(crate) operation: PiTaskAttemptSessionDisposeOperationId,
+    pub(crate) correlation_identity: PiCorrelationIdentity,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TaskAttemptPiSessionDisposePhase {
+    DeliveryPending,
+    AwaitingAcceptance,
+    AwaitingFinalAccounting,
+    AwaitingDisposed,
+    UsageFrozen,
+    Disposed,
+}
+
+/// Daemon-private state of the task session close. The exact child generation
+/// is frozen from native admission; a later cycle change cannot silently
+/// authorize a different actor session close.
+#[derive(Clone, Debug)]
+pub(crate) struct TaskAttemptPiSessionDispose {
+    operation: PiTaskAttemptSessionDisposeOperationId,
+    correlation_identity: PiCorrelationIdentity,
+    expected_generation: AdmissionGeneration,
+    phase: TaskAttemptPiSessionDisposePhase,
+    accepted_sequence: Option<PiProtocolSequence>,
+    final_accounting_sequence: Option<PiProtocolSequence>,
+}
+
+/// A task session shares the same physically verified transcript byte custody
+/// as an Office session, but its terminal receipt is translated into the
+/// separate task domain before it reaches the kernel.
+impl VerifiedPiSessionTranscript {
+    fn task_kernel_receipt_with_content(
+        &self,
+        sealed_content: Option<ContentObjectRegistration>,
+    ) -> Result<society_kernel::PiTaskAttemptSessionTranscriptReceipt, PiExecutionError> {
+        match self {
+            Self::Materialized(request) => {
+                let sealed_content =
+                    sealed_content.ok_or(PiExecutionError::TranscriptContentMissing)?;
+                if sealed_content.digest != request.session_file_digest {
+                    return Err(PiExecutionError::TranscriptDigestMismatch);
+                }
+                let first_user_prompt = match request.first_user_prompt {
+                    PiOfficeSessionFirstUserPromptReceipt::Absent => {
+                        society_kernel::PiTaskAttemptFirstUserPromptReceipt::Absent
+                    }
+                    PiOfficeSessionFirstUserPromptReceipt::Verified { digest } => {
+                        society_kernel::PiTaskAttemptFirstUserPromptReceipt::Verified { digest }
+                    }
+                };
+                Ok(
+                    society_kernel::PiTaskAttemptSessionTranscriptReceipt::Materialized {
+                        session_file: request.session_file.clone(),
+                        session_file_digest: request.session_file_digest,
+                        transcript_content_object_id: sealed_content.content_object_id,
+                        first_user_prompt,
+                    },
+                )
+            }
+            Self::UnmaterializedNoPrompt { session_file } => {
+                if sealed_content.is_some() {
+                    return Err(PiExecutionError::TranscriptContentUnexpected);
+                }
+                Ok(
+                    society_kernel::PiTaskAttemptSessionTranscriptReceipt::UnmaterializedNoPrompt {
+                        session_file: session_file.clone(),
+                    },
+                )
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct VerifiedTaskAttemptSessionDisposeTerminal {
+    transcript: VerifiedPiSessionTranscript,
+    disposed_sequence: PiProtocolSequence,
+}
+
+impl VerifiedTaskAttemptSessionDisposeTerminal {
+    pub(crate) fn transcript(&self) -> &VerifiedPiSessionTranscript {
+        &self.transcript
+    }
+
+    pub(crate) const fn disposed_sequence(&self) -> PiProtocolSequence {
+        self.disposed_sequence
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum TaskAttemptPiSessionDisposeOutput {
+    DeliveryRecorded,
+    Accepted,
+    KnownUsageRecorded,
+    UsageFrozen,
+    TranscriptReady(Box<VerifiedTaskAttemptSessionDisposeTerminal>),
+    Disposed,
+}
+
+/// One peer-projected task-Prompt fact. Forum calls stay explicit so the
+/// resident can perform the existing obligation-scoped tool transition before
+/// returning a result to the host; no actor output is recast as task success.
+#[derive(Clone, Debug)]
+pub(crate) enum TaskAttemptPiPromptOutput {
+    ControlInterleaving,
+    PromptAccepted,
+    ForumToolCall {
+        correlation_identity: CorrelationIdentity,
+        tool_call_identity: society_pi::ToolCallIdentity,
+        tool_name: society_pi::ForumToolName,
+        args: society_pi::SdkJsonValue,
+    },
+    KnownUsageRecorded,
+    UsageFrozen,
+    TerminalRecorded,
 }
 
 /// Exact byte-bearing Office prompt which was already physically sealed and
@@ -645,20 +1007,26 @@ impl Eq for OfficePiTurnOutput {}
 /// a restart remains RecoveryFenced because no later process can attach to
 /// this unregistered native identity.
 #[derive(Debug)]
-pub(crate) struct UnregisteredOfficePiChild {
+pub(crate) struct UnregisteredPiChild {
     supervised_child_id: SupervisedChildId,
     native_child_spawn_admission_id: NativeChildSpawnAdmissionId,
-    phase: UnregisteredOfficePiChildPhase,
+    phase: UnregisteredPiChildPhase,
     transient_completion: Option<SupervisionReceipt>,
 }
 
+// Kept as a source-compatible alias for the daemon's existing containment
+// import. The custody object itself is owner-neutral and carries no Office
+// identity, so TaskAttempt and Office admissions share the same unresolved
+// native-child safety path.
+pub(crate) type UnregisteredOfficePiChild = UnregisteredPiChild;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum UnregisteredOfficePiChildPhase {
+enum UnregisteredPiChildPhase {
     ContainmentRequired,
     PhysicallyReaped,
 }
 
-impl UnregisteredOfficePiChild {
+impl UnregisteredPiChild {
     pub(crate) fn native_child_spawn_admission_id(&self) -> NativeChildSpawnAdmissionId {
         self.native_child_spawn_admission_id
     }
@@ -693,7 +1061,24 @@ pub(crate) enum OfficePiSpawnRegistration {
         // successful registration should not carry the transient supervisor
         // receipt buffer required only when the kernel rejected its first
         // child receipt.
-        child: Box<UnregisteredOfficePiChild>,
+        child: Box<UnregisteredPiChild>,
+        failure: PiExecutionError,
+    },
+}
+
+#[derive(Debug)]
+pub(crate) enum TaskAttemptPiSpawnRegistration {
+    Ready(TaskAttemptPiExecutionChild),
+    PostSpawnSetupContained {
+        child: TaskAttemptPiExecutionChild,
+        failure: PostSpawnSetupFailure,
+    },
+    RegisteredBoundaryContained {
+        child: TaskAttemptPiExecutionChild,
+        failure: SupervisionError,
+    },
+    RegistrationUnresolved {
+        child: Box<UnregisteredPiChild>,
         failure: PiExecutionError,
     },
 }
@@ -735,6 +1120,53 @@ impl OfficePiExecutionChild {
                 "awaiting_lingering_group_absence"
             }
             OfficePiExecutionPhase::Reconciled => "reconciled",
+        }
+    }
+}
+
+impl TaskAttemptPiExecutionChild {
+    pub(crate) fn child_process_id(&self) -> NativeChildId {
+        self.child_process_id
+    }
+
+    pub(crate) fn native_child_spawn_admission_id(&self) -> NativeChildSpawnAdmissionId {
+        self.native_child_spawn_admission_id
+    }
+
+    pub(crate) fn actor_attempt_id(&self) -> ActorAttemptId {
+        self.actor_attempt_id
+    }
+
+    pub(crate) fn phase(&self) -> &'static str {
+        match self.phase {
+            TaskAttemptPiExecutionPhase::SpawnRegistered => "spawn_registered",
+            TaskAttemptPiExecutionPhase::PostSpawnSetupContained => "post_spawn_setup_contained",
+            TaskAttemptPiExecutionPhase::BoundaryContainmentRequired => {
+                "boundary_containment_required"
+            }
+            TaskAttemptPiExecutionPhase::AdapterReadyRecorded => "adapter_ready_recorded",
+            TaskAttemptPiExecutionPhase::CreateAuthorized => "create_authorized",
+            TaskAttemptPiExecutionPhase::CreateDelivered => "create_delivered",
+            TaskAttemptPiExecutionPhase::SessionReadyRecorded => "session_ready_recorded",
+            TaskAttemptPiExecutionPhase::TaskPromptDeliveryPending => {
+                "task_prompt_delivery_pending"
+            }
+            TaskAttemptPiExecutionPhase::TaskPromptActive => "task_prompt_active",
+            TaskAttemptPiExecutionPhase::TaskPromptTerminalBlocked => {
+                "task_prompt_terminal_blocked"
+            }
+            TaskAttemptPiExecutionPhase::TaskPromptTerminalRecorded => {
+                "task_prompt_terminal_recorded"
+            }
+            TaskAttemptPiExecutionPhase::DisposeDeliveryPending => "dispose_delivery_pending",
+            TaskAttemptPiExecutionPhase::DisposeRequested => "dispose_requested",
+            TaskAttemptPiExecutionPhase::Disposed => "disposed",
+            TaskAttemptPiExecutionPhase::DirectChildReapRecorded => "direct_child_reap_recorded",
+            TaskAttemptPiExecutionPhase::LingeringCleanupRecorded => "lingering_cleanup_recorded",
+            TaskAttemptPiExecutionPhase::AwaitingLingeringGroupAbsence => {
+                "awaiting_lingering_group_absence"
+            }
+            TaskAttemptPiExecutionPhase::Reconciled => "reconciled",
         }
     }
 }
@@ -1048,6 +1480,1605 @@ impl PiExecutionDriver {
         }
     }
 
+    /// Opens the native child bridge for one replaceable actor. This path is
+    /// intentionally parallel to the root-authority Office path but has a
+    /// closed, non-interchangeable owner and session kind. In particular it
+    /// never creates an Office session or an Office-ready receipt.
+    pub(crate) fn admit_task_attempt_spawn_and_register(
+        &mut self,
+        store: &mut KernelStore,
+        start: TaskAttemptPiExecutionStart,
+    ) -> Result<TaskAttemptPiSpawnRegistration, PiExecutionError> {
+        if start.spawn_request.create_session.session_kind != SessionKind::TaskAttempt {
+            return Err(PiExecutionError::TaskAttemptSessionKindRequired);
+        }
+        self.supervisor
+            .preflight_spawn(&start.spawn_request)
+            .map_err(PiExecutionError::Supervision)?;
+        let expected_generation = ExpectedGeneration::Exact(start.expected_generation);
+        let workspace_id = kernel_workspace_identity(&start.spawn_request)?;
+        let workspace_path = kernel_workspace_path(&start.spawn_request)?;
+        let pi_session_identity = kernel_session_identity(&start.spawn_request.session_identity)?;
+        let spawn_nonce = kernel_spawn_nonce(&start.spawn_request.spawn_nonce)?;
+        let create_correlation =
+            kernel_correlation(&start.spawn_request.create_correlation_identity)?;
+        let create_request_digest = canonical_create_request_digest(&start.spawn_request)?;
+
+        let admitted = execute_kernel_command(
+            store,
+            &start.operation,
+            PiExecutionCommand::AdmitSpawn,
+            Capability::AdmitPiChildSpawn,
+            expected_generation,
+            CommandBody::AdmitPiChildSpawn {
+                operating_cycle_id: start.operating_cycle_id,
+                owner: PiChildOwner::ActorAttempt(start.actor_attempt_id),
+                budget_reservation_id: start.budget_reservation_id,
+                execution_profile_id: start.execution_profile_id,
+                native_workspace_id: workspace_id,
+                canonical_workspace_path: workspace_path,
+                supervisor_epoch_id: start.supervisor_epoch_id,
+                supervisor_epoch_identity: start.supervisor_epoch_identity.clone(),
+                pi_session_identity: pi_session_identity.clone(),
+                spawn_nonce: spawn_nonce.clone(),
+            },
+        )?;
+        let admission_id = match admitted {
+            EventBody::PiChildSpawnAdmitted {
+                native_child_spawn_admission_id,
+                owner: PiChildOwner::ActorAttempt(actor_attempt_id),
+                budget_reservation_id,
+            } if actor_attempt_id == start.actor_attempt_id
+                && budget_reservation_id == start.budget_reservation_id =>
+            {
+                native_child_spawn_admission_id
+            }
+            _ => return Err(PiExecutionError::UnexpectedKernelEvent),
+        };
+
+        #[cfg(feature = "test-support")]
+        if let Some(callback) = self.after_spawn_admission_for_test.take() {
+            callback(store, start.operating_cycle_id);
+        }
+
+        let spawned = match self.supervisor.spawn_native(start.spawn_request.clone()) {
+            Ok(facts) => facts,
+            Err(spawn_error) => {
+                if let Some(reason) = proven_not_spawned_reason(&spawn_error) {
+                    let current_generation = store
+                        .current_operating_cycle_admission_generation(start.operating_cycle_id)?;
+                    execute_kernel_command(
+                        store,
+                        &start.operation,
+                        PiExecutionCommand::RecordNotSpawned,
+                        Capability::RecordNativeChildNotSpawned,
+                        ExpectedGeneration::Exact(current_generation),
+                        CommandBody::RecordNativeChildNotSpawned {
+                            native_child_spawn_admission_id: admission_id,
+                            reason,
+                        },
+                    )?;
+                }
+                return Err(PiExecutionError::Supervision(spawn_error));
+            }
+        };
+        let (child_identity, direct_child_pid, process_group_id) = match (
+            kernel_child_identity(&spawned.child_process_id),
+            kernel_child_pid(spawned.host_process_id.value()),
+            kernel_process_group_id(spawned.process_group_id.value()),
+        ) {
+            (Ok(child_identity), Ok(direct_child_pid), Ok(process_group_id)) => {
+                (child_identity, direct_child_pid, process_group_id)
+            }
+            (child_identity, direct_child_pid, process_group_id) => {
+                let failure = match child_identity {
+                    Err(error) => error,
+                    Ok(_) => match direct_child_pid {
+                        Err(error) => error,
+                        Ok(_) => match process_group_id {
+                            Err(error) => error,
+                            Ok(_) => unreachable!("successful conversion tuple was matched above"),
+                        },
+                    },
+                };
+                return Ok(self.unresolved_task_attempt_registration(
+                    spawned.child_process_id,
+                    admission_id,
+                    failure,
+                ));
+            }
+        };
+        let registration_generation =
+            match store.current_operating_cycle_admission_generation(start.operating_cycle_id) {
+                Ok(generation) => generation,
+                Err(error) => {
+                    return Ok(self.unresolved_task_attempt_registration(
+                        spawned.child_process_id,
+                        admission_id,
+                        PiExecutionError::Kernel(error),
+                    ));
+                }
+            };
+        #[cfg(feature = "test-support")]
+        let injected_registration_failure = self.inert_registration_rejection_for_test.take();
+        #[cfg(not(feature = "test-support"))]
+        let injected_registration_failure: Option<society_kernel::Rejection> = None;
+        let registered = match injected_registration_failure {
+            Some(rejection) => Err(PiExecutionError::KernelCommandRejected {
+                capability: Capability::RecordInertChildSpawn,
+                rejection,
+            }),
+            None => execute_kernel_command(
+                store,
+                &start.operation,
+                PiExecutionCommand::RecordInertSpawn,
+                Capability::RecordInertChildSpawn,
+                ExpectedGeneration::Exact(registration_generation),
+                CommandBody::RecordInertChildSpawn {
+                    native_child_spawn_admission_id: admission_id,
+                    child_identity,
+                    direct_child_pid,
+                    process_group_id,
+                },
+            ),
+        };
+        let registered = match registered {
+            Ok(event) => event,
+            Err(error) => {
+                return Ok(self.unresolved_task_attempt_registration(
+                    spawned.child_process_id,
+                    admission_id,
+                    error,
+                ));
+            }
+        };
+        let child_process_id = match registered {
+            EventBody::InertPiChildSpawnRecorded {
+                native_child_id: child_process_id,
+                native_child_spawn_admission_id,
+            } if native_child_spawn_admission_id == admission_id => child_process_id,
+            _ => {
+                return Ok(self.unresolved_task_attempt_registration(
+                    spawned.child_process_id,
+                    admission_id,
+                    PiExecutionError::UnexpectedKernelEvent,
+                ));
+            }
+        };
+        let mut child = TaskAttemptPiExecutionChild {
+            operation: start.operation,
+            supervised_child_id: spawned.child_process_id,
+            child_process_id,
+            native_child_spawn_admission_id: admission_id,
+            actor_attempt_id: start.actor_attempt_id,
+            workspace_directory: start.spawn_request.workspace.directory().clone(),
+            session_directory: start.spawn_request.create_session.session_directory.clone(),
+            pi_session_identity,
+            spawn_nonce,
+            expected_generation: registration_generation,
+            create_correlation,
+            create_request_digest,
+            phase: TaskAttemptPiExecutionPhase::SpawnRegistered,
+        };
+        match self
+            .supervisor
+            .finish_inert_setup(&child.supervised_child_id, MonotonicTick::ZERO)
+        {
+            Ok(()) => Ok(TaskAttemptPiSpawnRegistration::Ready(child)),
+            Err(SupervisionError::PostSpawnSetup(failure)) => {
+                child.phase = TaskAttemptPiExecutionPhase::PostSpawnSetupContained;
+                Ok(TaskAttemptPiSpawnRegistration::PostSpawnSetupContained { child, failure })
+            }
+            Err(error) => {
+                child.phase = TaskAttemptPiExecutionPhase::BoundaryContainmentRequired;
+                self.contain(&child.supervised_child_id, MonotonicTick::ZERO);
+                Ok(
+                    TaskAttemptPiSpawnRegistration::RegisteredBoundaryContained {
+                        child,
+                        failure: error,
+                    },
+                )
+            }
+        }
+    }
+
+    fn unresolved_task_attempt_registration(
+        &mut self,
+        supervised_child_id: SupervisedChildId,
+        native_child_spawn_admission_id: NativeChildSpawnAdmissionId,
+        failure: PiExecutionError,
+    ) -> TaskAttemptPiSpawnRegistration {
+        self.contain(&supervised_child_id, MonotonicTick::ZERO);
+        TaskAttemptPiSpawnRegistration::RegistrationUnresolved {
+            child: Box::new(UnregisteredPiChild {
+                supervised_child_id,
+                native_child_spawn_admission_id,
+                phase: UnregisteredPiChildPhase::ContainmentRequired,
+                transient_completion: None,
+            }),
+            failure,
+        }
+    }
+
+    pub(crate) fn drive_task_attempt_boundary_containment(
+        &mut self,
+        child: &TaskAttemptPiExecutionChild,
+        now: MonotonicTick,
+    ) -> Result<(), PiExecutionError> {
+        if !matches!(
+            child.phase,
+            TaskAttemptPiExecutionPhase::PostSpawnSetupContained
+                | TaskAttemptPiExecutionPhase::BoundaryContainmentRequired
+        ) {
+            return Err(PiExecutionError::InvalidLifecycle);
+        }
+        self.supervisor
+            .drive_cancellation_without_reap(&child.supervised_child_id, now)
+            .map_err(PiExecutionError::Supervision)?;
+        Ok(())
+    }
+
+    pub(crate) fn observe_task_attempt_adapter_ready(
+        &mut self,
+        store: &mut KernelStore,
+        child: &mut TaskAttemptPiExecutionChild,
+        now: MonotonicTick,
+        deadline: HandshakeDeadline,
+    ) -> Result<bool, PiExecutionError> {
+        if child.phase != TaskAttemptPiExecutionPhase::SpawnRegistered {
+            return Err(PiExecutionError::InvalidLifecycle);
+        }
+        let facts = match self.supervisor.observe_adapter_ready_at(
+            &child.supervised_child_id,
+            now,
+            deadline,
+        ) {
+            Ok(None) => return Ok(false),
+            Ok(Some(facts)) => facts,
+            Err(error) => {
+                self.begin_task_attempt_boundary_containment(child, now);
+                return Err(PiExecutionError::Supervision(error));
+            }
+        };
+        if verify_task_attempt_adapter_facts(child, &facts).is_err() {
+            self.begin_task_attempt_boundary_containment(child, now);
+            return Err(PiExecutionError::AdapterFactMismatch);
+        }
+        if let Err(error) = execute_kernel_command(
+            store,
+            &child.operation,
+            PiExecutionCommand::RecordAdapterReady,
+            Capability::RecordPiAdapterReady,
+            ExpectedGeneration::Exact(child.expected_generation),
+            CommandBody::RecordPiAdapterReady {
+                native_child_id: child.child_process_id,
+                pi_session_identity: child.pi_session_identity.clone(),
+                spawn_nonce: child.spawn_nonce.clone(),
+            },
+        ) {
+            self.begin_task_attempt_boundary_containment(child, now);
+            return Err(error);
+        }
+        child.phase = TaskAttemptPiExecutionPhase::AdapterReadyRecorded;
+        Ok(true)
+    }
+
+    pub(crate) fn authorize_and_begin_task_attempt_create(
+        &mut self,
+        store: &mut KernelStore,
+        child: &mut TaskAttemptPiExecutionChild,
+        now: MonotonicTick,
+        deadline: ControlWriteDeadline,
+    ) -> Result<ControlWriteProgress, PiExecutionError> {
+        if child.phase != TaskAttemptPiExecutionPhase::AdapterReadyRecorded {
+            return Err(PiExecutionError::InvalidLifecycle);
+        }
+        let mut gate = KernelCreateAuthorizationGate::new(
+            store,
+            &child.operation,
+            child.child_process_id,
+            child.expected_generation,
+            &child.create_correlation,
+            child.create_request_digest,
+        );
+        let progress = self.supervisor.send_create_session(
+            &child.supervised_child_id,
+            &mut gate,
+            now,
+            deadline,
+        );
+        if let Err(error) = gate.finish() {
+            self.begin_task_attempt_boundary_containment(child, now);
+            return Err(error);
+        }
+        child.phase = TaskAttemptPiExecutionPhase::CreateAuthorized;
+        let progress = match progress {
+            Ok(progress) => progress,
+            Err(error) => {
+                self.begin_task_attempt_boundary_containment(child, now);
+                return Err(PiExecutionError::Supervision(error));
+            }
+        };
+        if progress == ControlWriteProgress::Delivered {
+            self.record_task_attempt_create_delivery(store, child, now)?;
+        }
+        Ok(progress)
+    }
+
+    pub(crate) fn drive_task_attempt_create_delivery(
+        &mut self,
+        store: &mut KernelStore,
+        child: &mut TaskAttemptPiExecutionChild,
+        now: MonotonicTick,
+    ) -> Result<ControlWriteProgress, PiExecutionError> {
+        if child.phase != TaskAttemptPiExecutionPhase::CreateAuthorized {
+            return Err(PiExecutionError::InvalidLifecycle);
+        }
+        let progress = match self
+            .supervisor
+            .drive_control_write(&child.supervised_child_id, now)
+        {
+            Ok(progress) => progress,
+            Err(error) => {
+                self.begin_task_attempt_boundary_containment(child, now);
+                return Err(PiExecutionError::Supervision(error));
+            }
+        };
+        if progress == ControlWriteProgress::Delivered {
+            self.record_task_attempt_create_delivery(store, child, now)?;
+        }
+        Ok(progress)
+    }
+
+    /// Records the ordinary Pi SessionReady fact for a TaskAttempt. A task
+    /// has no Office-ready transition: once the peer handshake is accepted
+    /// and the direct child is still live, the scheduler owns the next actor
+    /// obligation transition.
+    pub(crate) fn observe_task_attempt_session_ready(
+        &mut self,
+        store: &mut KernelStore,
+        child: &mut TaskAttemptPiExecutionChild,
+        now: MonotonicTick,
+        deadline: HandshakeDeadline,
+    ) -> Result<bool, PiExecutionError> {
+        if child.phase != TaskAttemptPiExecutionPhase::CreateDelivered {
+            return Err(PiExecutionError::InvalidLifecycle);
+        }
+        let session_ready = match self.supervisor.observe_session_ready_at(
+            &child.supervised_child_id,
+            now,
+            deadline,
+        ) {
+            Ok(ready) => ready,
+            Err(error) => {
+                self.begin_task_attempt_boundary_containment(child, now);
+                return Err(PiExecutionError::Supervision(error));
+            }
+        };
+        if !session_ready {
+            return Ok(false);
+        }
+        if self
+            .supervisor
+            .poll_direct_child_reap_at(&child.supervised_child_id)
+            .map_err(PiExecutionError::Supervision)?
+            .is_some()
+        {
+            child.phase = TaskAttemptPiExecutionPhase::BoundaryContainmentRequired;
+            return Err(PiExecutionError::ExitedBeforeSessionReady);
+        }
+        let event = execute_kernel_command(
+            store,
+            &child.operation,
+            PiExecutionCommand::RecordSessionReady,
+            Capability::RecordPiSessionReady,
+            ExpectedGeneration::Exact(child.expected_generation),
+            CommandBody::RecordPiSessionReady {
+                native_child_id: child.child_process_id,
+                pi_session_identity: child.pi_session_identity.clone(),
+            },
+        );
+        match event {
+            Ok(EventBody::PiSessionReadyRecorded {
+                native_child_id, ..
+            }) if native_child_id == child.child_process_id => {
+                child.phase = TaskAttemptPiExecutionPhase::SessionReadyRecorded;
+                Ok(true)
+            }
+            Ok(_) => {
+                self.begin_task_attempt_boundary_containment(child, now);
+                Err(PiExecutionError::UnexpectedKernelEvent)
+            }
+            Err(error) => {
+                self.begin_task_attempt_boundary_containment(child, now);
+                Err(error)
+            }
+        }
+    }
+
+    fn record_task_attempt_create_delivery(
+        &mut self,
+        store: &mut KernelStore,
+        child: &mut TaskAttemptPiExecutionChild,
+        now: MonotonicTick,
+    ) -> Result<(), PiExecutionError> {
+        let event = execute_kernel_command(
+            store,
+            &child.operation,
+            PiExecutionCommand::RecordCreateDelivery,
+            Capability::RecordPiCreateSessionDelivery,
+            ExpectedGeneration::Exact(child.expected_generation),
+            CommandBody::RecordPiCreateSessionDelivery {
+                native_child_id: child.child_process_id,
+                correlation_identity: child.create_correlation.clone(),
+                create_request_digest: child.create_request_digest,
+            },
+        );
+        if let Err(error) = event {
+            self.begin_task_attempt_boundary_containment(child, now);
+            return Err(error);
+        }
+        child.phase = TaskAttemptPiExecutionPhase::CreateDelivered;
+        Ok(())
+    }
+
+    /// Admits the one actor-local `TaskAssignment` Prompt before its JSONL
+    /// frame enters the child pipe. A later retried operation retains the
+    /// same command slots and exact content digest; it cannot turn a fresh
+    /// task prompt into an implicit continuation of a replaced actor.
+    pub(crate) fn authorize_and_begin_task_attempt_prompt(
+        &mut self,
+        store: &mut KernelStore,
+        child: &mut TaskAttemptPiExecutionChild,
+        start: TaskAttemptPiPromptStart,
+        now: MonotonicTick,
+        deadline: ControlWriteDeadline,
+    ) -> Result<(TaskAttemptPiPrompt, ControlWriteProgress), PiExecutionError> {
+        if child.phase != TaskAttemptPiExecutionPhase::SessionReadyRecorded {
+            return Err(PiExecutionError::InvalidLifecycle);
+        }
+        let boundary_correlation = CorrelationIdentity::parse(start.correlation_identity.as_str())
+            .map_err(|_| PiExecutionError::IdentityConversion)?;
+        let authorized = execute_task_attempt_prompt_command(
+            store,
+            &start.operation,
+            PiTaskAttemptPromptCommand::AuthorizePrompt,
+            Capability::AuthorizePiTaskAttemptPrompt,
+            ExpectedGeneration::Exact(child.expected_generation),
+            CommandBody::AuthorizePiTaskAttemptPrompt {
+                actor_attempt_id: child.actor_attempt_id,
+                correlation_identity: start.correlation_identity.clone(),
+                prompt_content_object_id: start.prompt_content_object_id,
+                prompt_digest: start.prompt.digest,
+                frontier_event_id: start.frontier_event_id,
+            },
+        )?;
+        match authorized {
+            EventBody::PiTaskAttemptPromptAuthorized {
+                actor_attempt_id,
+                native_child_id,
+                correlation_identity,
+                ..
+            } if actor_attempt_id == child.actor_attempt_id
+                && native_child_id == child.child_process_id
+                && correlation_identity == start.correlation_identity => {}
+            _ => {
+                self.begin_task_attempt_boundary_containment(child, now);
+                return Err(PiExecutionError::UnexpectedKernelEvent);
+            }
+        }
+        let mut prompt = TaskAttemptPiPrompt {
+            operation: start.operation,
+            correlation_identity: start.correlation_identity,
+            prompt_digest: start.prompt.digest,
+            phase: TaskAttemptPiPromptPhase::PromptDeliveryPending,
+            accepted_sequence: None,
+            agent_settled_sequence: None,
+            latest_known_accounting_sequence: None,
+            final_accounting_sequence: None,
+        };
+        let progress = match self.supervisor.send_prompt(
+            &child.supervised_child_id,
+            boundary_correlation,
+            PromptPayload {
+                purpose: PromptPurpose::TaskAssignment,
+                text: start.prompt.text,
+            },
+            now,
+            deadline,
+        ) {
+            Ok(progress) => progress,
+            Err(error) => {
+                self.begin_task_attempt_boundary_containment(child, now);
+                return Err(PiExecutionError::Supervision(error));
+            }
+        };
+        child.phase = match progress {
+            ControlWriteProgress::Pending => TaskAttemptPiExecutionPhase::TaskPromptDeliveryPending,
+            ControlWriteProgress::Delivered => TaskAttemptPiExecutionPhase::TaskPromptActive,
+        };
+        if progress == ControlWriteProgress::Delivered {
+            self.record_task_attempt_prompt_delivery(store, child, &mut prompt, now)?;
+        }
+        Ok((prompt, progress))
+    }
+
+    /// Drains only the suffix of an already-authorized task Prompt. Until the
+    /// entire frame reaches the host, no output may be attributed to it.
+    pub(crate) fn drive_task_attempt_prompt_delivery(
+        &mut self,
+        store: &mut KernelStore,
+        child: &mut TaskAttemptPiExecutionChild,
+        prompt: &mut TaskAttemptPiPrompt,
+        now: MonotonicTick,
+    ) -> Result<ControlWriteProgress, PiExecutionError> {
+        if child.phase != TaskAttemptPiExecutionPhase::TaskPromptDeliveryPending
+            || prompt.phase != TaskAttemptPiPromptPhase::PromptDeliveryPending
+        {
+            return Err(PiExecutionError::InvalidLifecycle);
+        }
+        let progress = self
+            .supervisor
+            .drive_control_write(&child.supervised_child_id, now)
+            .map_err(|error| {
+                self.begin_task_attempt_boundary_containment(child, now);
+                PiExecutionError::Supervision(error)
+            })?;
+        if progress == ControlWriteProgress::Delivered {
+            child.phase = TaskAttemptPiExecutionPhase::TaskPromptActive;
+            self.record_task_attempt_prompt_delivery(store, child, prompt, now)?;
+        }
+        Ok(progress)
+    }
+
+    /// Projects one strict-schema peer frame into the named task receipt
+    /// chain. Forum calls remain a separate explicit output because their
+    /// application transition must commit before the daemon returns a tool
+    /// result to this actor.
+    pub(crate) fn observe_task_attempt_prompt_output(
+        &mut self,
+        store: &mut KernelStore,
+        child: &mut TaskAttemptPiExecutionChild,
+        prompt: &mut TaskAttemptPiPrompt,
+        now: MonotonicTick,
+    ) -> Result<Option<TaskAttemptPiPromptOutput>, PiExecutionError> {
+        if !matches!(
+            child.phase,
+            TaskAttemptPiExecutionPhase::TaskPromptActive
+                | TaskAttemptPiExecutionPhase::TaskPromptTerminalBlocked
+        ) {
+            return Err(PiExecutionError::InvalidLifecycle);
+        }
+        let output = match self
+            .supervisor
+            .observe_live_output_at(&child.supervised_child_id, now)
+        {
+            Ok(None) => return Ok(None),
+            Ok(Some(output)) => output,
+            Err(error) => {
+                self.begin_task_attempt_boundary_containment(child, now);
+                return Err(PiExecutionError::Supervision(error));
+            }
+        };
+        self.project_task_attempt_prompt_output(store, child, prompt, output, now)
+            .map(Some)
+    }
+
+    /// Sends one already-committed Forum receipt to a task actor. This is the
+    /// same bounded SDK control surface as an Office turn, but the task child
+    /// and task prompt phases stay disjoint so a tool result cannot revive an
+    /// actor after its terminal receipt.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn send_task_attempt_forum_tool_result(
+        &mut self,
+        child: &mut TaskAttemptPiExecutionChild,
+        prompt: &TaskAttemptPiPrompt,
+        tool_call_identity: society_pi::ToolCallIdentity,
+        result: society_pi::SdkJsonValue,
+        is_error: bool,
+        now: MonotonicTick,
+        deadline: ControlWriteDeadline,
+    ) -> Result<ControlWriteProgress, PiExecutionError> {
+        if child.phase != TaskAttemptPiExecutionPhase::TaskPromptActive
+            || prompt.phase != TaskAttemptPiPromptPhase::AwaitingTerminalEvidence
+        {
+            return Err(PiExecutionError::InvalidLifecycle);
+        }
+        let result_correlation_identity = CorrelationIdentity::parse(format!(
+            "forum-result-{}",
+            blake3::hash(tool_call_identity.as_str().as_bytes()).to_hex()
+        ))
+        .map_err(|_| PiExecutionError::IdentityConversion)?;
+        self.supervisor
+            .send_forum_tool_result(
+                &child.supervised_child_id,
+                result_correlation_identity,
+                tool_call_identity,
+                result,
+                is_error,
+                now,
+                deadline,
+            )
+            .map_err(|error| {
+                self.begin_task_attempt_boundary_containment(child, now);
+                PiExecutionError::Supervision(error)
+            })
+    }
+
+    pub(crate) fn drive_task_attempt_forum_tool_result_delivery(
+        &mut self,
+        child: &mut TaskAttemptPiExecutionChild,
+        now: MonotonicTick,
+    ) -> Result<ControlWriteProgress, PiExecutionError> {
+        if child.phase != TaskAttemptPiExecutionPhase::TaskPromptActive {
+            return Err(PiExecutionError::InvalidLifecycle);
+        }
+        self.supervisor
+            .drive_control_write(&child.supervised_child_id, now)
+            .map_err(|error| {
+                self.begin_task_attempt_boundary_containment(child, now);
+                PiExecutionError::Supervision(error)
+            })
+    }
+
+    fn record_task_attempt_prompt_delivery(
+        &mut self,
+        store: &mut KernelStore,
+        child: &mut TaskAttemptPiExecutionChild,
+        prompt: &mut TaskAttemptPiPrompt,
+        now: MonotonicTick,
+    ) -> Result<(), PiExecutionError> {
+        let event = execute_task_attempt_prompt_command(
+            store,
+            &prompt.operation,
+            PiTaskAttemptPromptCommand::RecordPromptDelivery,
+            Capability::RecordPiTaskAttemptPromptDelivery,
+            ExpectedGeneration::Exact(child.expected_generation),
+            CommandBody::RecordPiTaskAttemptPromptDelivery {
+                actor_attempt_id: child.actor_attempt_id,
+                correlation_identity: prompt.correlation_identity.clone(),
+                prompt_digest: prompt.prompt_digest,
+            },
+        );
+        match event {
+            Ok(EventBody::PiTaskAttemptPromptDelivered {
+                actor_attempt_id,
+                correlation_identity,
+            }) if actor_attempt_id == child.actor_attempt_id
+                && correlation_identity == prompt.correlation_identity =>
+            {
+                prompt.phase = TaskAttemptPiPromptPhase::AwaitingPromptAcceptance;
+                Ok(())
+            }
+            Ok(_) => {
+                self.begin_task_attempt_boundary_containment(child, now);
+                Err(PiExecutionError::UnexpectedKernelEvent)
+            }
+            Err(error) => {
+                self.begin_task_attempt_boundary_containment(child, now);
+                Err(error)
+            }
+        }
+    }
+
+    fn project_task_attempt_prompt_output(
+        &mut self,
+        store: &mut KernelStore,
+        child: &mut TaskAttemptPiExecutionChild,
+        prompt: &mut TaskAttemptPiPrompt,
+        output: SealedDecodedPeerFrame,
+        now: MonotonicTick,
+    ) -> Result<TaskAttemptPiPromptOutput, PiExecutionError> {
+        let sequence = kernel_protocol_sequence(output.frame().sequence)?;
+        let expected_correlation = CorrelationIdentity::parse(prompt.correlation_identity.as_str())
+            .map_err(|_| PiExecutionError::IdentityConversion)?;
+        if output.frame().correlation_identity.as_ref() != Some(&expected_correlation) {
+            if output.peer_became_fatal() {
+                self.begin_task_attempt_boundary_containment(child, now);
+            }
+            return Ok(TaskAttemptPiPromptOutput::ControlInterleaving);
+        }
+        if let PeerFrameValidation::Rejected(error) = output.validation() {
+            if matches!(
+                (&output.frame().event, error),
+                (
+                    OutboundEvent::Settled { .. },
+                    society_pi::PeerError::MissingTerminalEvidence
+                )
+            ) && prompt.final_accounting_sequence.is_none()
+            {
+                return self.record_task_attempt_usage_failure(
+                    store,
+                    child,
+                    prompt,
+                    sequence,
+                    PiTaskAttemptUsageFailure::Unknown(
+                        PiTaskAttemptUsageUnknownReason::MissingFinalUsageSnapshot,
+                    ),
+                    now,
+                );
+            }
+            self.begin_task_attempt_boundary_containment(child, now);
+            return Err(PiExecutionError::PeerFatalWithoutAccountingFact);
+        }
+        match (&output.frame().event, output.observation()) {
+            (
+                OutboundEvent::CommandResult(CommandResult::Accepted {
+                    command: CommandName::Prompt,
+                    ..
+                }),
+                None,
+            ) => {
+                if prompt.phase != TaskAttemptPiPromptPhase::AwaitingPromptAcceptance {
+                    self.begin_task_attempt_boundary_containment(child, now);
+                    return Err(PiExecutionError::PromptEvidenceOrder);
+                }
+                let event = execute_task_attempt_prompt_command(
+                    store,
+                    &prompt.operation,
+                    PiTaskAttemptPromptCommand::RecordPromptAccepted,
+                    Capability::RecordPiTaskAttemptPromptAccepted,
+                    ExpectedGeneration::Exact(child.expected_generation),
+                    CommandBody::RecordPiTaskAttemptPromptAccepted {
+                        actor_attempt_id: child.actor_attempt_id,
+                        correlation_identity: prompt.correlation_identity.clone(),
+                        command_result_sequence: sequence,
+                    },
+                );
+                match event {
+                    Ok(EventBody::PiTaskAttemptPromptAccepted {
+                        actor_attempt_id,
+                        correlation_identity,
+                        command_result_sequence,
+                    }) if actor_attempt_id == child.actor_attempt_id
+                        && correlation_identity == prompt.correlation_identity
+                        && command_result_sequence == sequence =>
+                    {
+                        prompt.accepted_sequence = Some(sequence);
+                        prompt.phase = TaskAttemptPiPromptPhase::AwaitingTerminalEvidence;
+                        Ok(TaskAttemptPiPromptOutput::PromptAccepted)
+                    }
+                    Ok(_) => {
+                        self.begin_task_attempt_boundary_containment(child, now);
+                        Err(PiExecutionError::UnexpectedKernelEvent)
+                    }
+                    Err(error) => {
+                        self.begin_task_attempt_boundary_containment(child, now);
+                        Err(error)
+                    }
+                }
+            }
+            (
+                OutboundEvent::CommandResult(CommandResult::Rejected {
+                    command: CommandName::Prompt,
+                    ..
+                }),
+                None,
+            ) => {
+                self.begin_task_attempt_boundary_containment(child, now);
+                Err(PiExecutionError::PromptRejectedByHost)
+            }
+            (
+                OutboundEvent::AgentEvent {
+                    agent_event: ProjectedAgentEvent::AgentSettled,
+                },
+                None,
+            ) => {
+                if prompt.phase != TaskAttemptPiPromptPhase::AwaitingTerminalEvidence
+                    || prompt
+                        .accepted_sequence
+                        .is_none_or(|accepted| sequence <= accepted)
+                {
+                    self.begin_task_attempt_boundary_containment(child, now);
+                    return Err(PiExecutionError::PromptEvidenceOrder);
+                }
+                prompt.agent_settled_sequence = Some(sequence);
+                Ok(TaskAttemptPiPromptOutput::ControlInterleaving)
+            }
+            (
+                OutboundEvent::ForumToolCall {
+                    tool_call_identity,
+                    tool_name,
+                    args,
+                },
+                Some(society_pi::PeerObservation::ForumToolCall {
+                    correlation_identity,
+                    tool_call_identity: observed_tool_call_identity,
+                    tool_name: observed_tool_name,
+                    args: observed_args,
+                }),
+            ) if correlation_identity.as_str() == prompt.correlation_identity.as_str()
+                && tool_call_identity == observed_tool_call_identity
+                && tool_name == observed_tool_name
+                && society_pi::sdk_json_values_equal(args, observed_args) =>
+            {
+                if prompt.phase != TaskAttemptPiPromptPhase::AwaitingTerminalEvidence {
+                    self.begin_task_attempt_boundary_containment(child, now);
+                    return Err(PiExecutionError::PromptEvidenceOrder);
+                }
+                Ok(TaskAttemptPiPromptOutput::ForumToolCall {
+                    correlation_identity: correlation_identity.clone(),
+                    tool_call_identity: tool_call_identity.clone(),
+                    tool_name: *tool_name,
+                    args: args.clone(),
+                })
+            }
+            (
+                OutboundEvent::UsageSnapshot {
+                    usage: UsageObservation::Known(totals),
+                },
+                _,
+            ) => {
+                if prompt
+                    .accepted_sequence
+                    .is_none_or(|accepted| sequence <= accepted)
+                {
+                    self.begin_task_attempt_boundary_containment(child, now);
+                    return Err(PiExecutionError::PromptEvidenceOrder);
+                }
+                let usage = kernel_cumulative_usage(totals)?;
+                let event = execute_task_attempt_prompt_command(
+                    store,
+                    &prompt.operation,
+                    PiTaskAttemptPromptCommand::RecordKnownUsage { sequence },
+                    Capability::RecordPiTaskAttemptUsage,
+                    ExpectedGeneration::Exact(child.expected_generation),
+                    CommandBody::RecordPiTaskAttemptUsage {
+                        actor_attempt_id: child.actor_attempt_id,
+                        correlation_identity: prompt.correlation_identity.clone(),
+                        protocol_sequence: sequence,
+                        usage,
+                    },
+                );
+                match event {
+                    Ok(EventBody::PiTaskAttemptUsageRecorded {
+                        actor_attempt_id,
+                        protocol_sequence,
+                        ..
+                    }) if actor_attempt_id == child.actor_attempt_id
+                        && protocol_sequence == sequence =>
+                    {
+                        prompt.latest_known_accounting_sequence = Some(sequence);
+                        if prompt
+                            .agent_settled_sequence
+                            .is_some_and(|settled| sequence > settled)
+                        {
+                            prompt.final_accounting_sequence = Some(sequence);
+                        }
+                        Ok(TaskAttemptPiPromptOutput::KnownUsageRecorded)
+                    }
+                    Ok(_) => {
+                        self.begin_task_attempt_boundary_containment(child, now);
+                        Err(PiExecutionError::UnexpectedKernelEvent)
+                    }
+                    Err(error) => {
+                        self.begin_task_attempt_boundary_containment(child, now);
+                        Err(error)
+                    }
+                }
+            }
+            (
+                OutboundEvent::UsageSnapshot {
+                    usage: UsageObservation::Unavailable(reason),
+                },
+                Some(society_pi::PeerObservation::UsageUnavailable { reason: observed }),
+            ) if reason == observed => self.record_task_attempt_usage_failure(
+                store,
+                child,
+                prompt,
+                sequence,
+                kernel_task_attempt_usage_failure(*reason),
+                now,
+            ),
+            (
+                OutboundEvent::Settled {
+                    classification,
+                    final_assistant_outcome,
+                },
+                Some(society_pi::PeerObservation::TurnSettled(receipt)),
+            ) => {
+                let peer_became_fatal = output.peer_became_fatal();
+                let result = self.record_task_attempt_terminal(
+                    store,
+                    child,
+                    prompt,
+                    sequence,
+                    *classification,
+                    final_assistant_outcome,
+                    receipt,
+                    now,
+                );
+                if peer_became_fatal {
+                    self.begin_task_attempt_boundary_containment(child, now);
+                }
+                result
+            }
+            (OutboundEvent::Fatal { .. }, _) => {
+                self.begin_task_attempt_boundary_containment(child, now);
+                Err(PiExecutionError::PeerFatalWithoutAccountingFact)
+            }
+            _ => {
+                if output.peer_became_fatal() {
+                    self.begin_task_attempt_boundary_containment(child, now);
+                    return Err(PiExecutionError::PeerFatalWithoutAccountingFact);
+                }
+                Ok(TaskAttemptPiPromptOutput::ControlInterleaving)
+            }
+        }
+    }
+
+    fn record_task_attempt_usage_failure(
+        &mut self,
+        store: &mut KernelStore,
+        child: &mut TaskAttemptPiExecutionChild,
+        prompt: &mut TaskAttemptPiPrompt,
+        protocol_sequence: PiProtocolSequence,
+        failure: PiTaskAttemptUsageFailure,
+        now: MonotonicTick,
+    ) -> Result<TaskAttemptPiPromptOutput, PiExecutionError> {
+        let missing_final_usage = matches!(
+            failure,
+            PiTaskAttemptUsageFailure::Unknown(
+                PiTaskAttemptUsageUnknownReason::MissingFinalUsageSnapshot
+            )
+        );
+        if prompt.phase != TaskAttemptPiPromptPhase::AwaitingTerminalEvidence
+            || prompt
+                .accepted_sequence
+                .is_none_or(|accepted| protocol_sequence <= accepted)
+            || (missing_final_usage
+                && prompt
+                    .agent_settled_sequence
+                    .is_none_or(|settled| protocol_sequence <= settled))
+        {
+            self.begin_task_attempt_boundary_containment(child, now);
+            return Err(PiExecutionError::PromptEvidenceOrder);
+        }
+        let event = execute_task_attempt_prompt_command(
+            store,
+            &prompt.operation,
+            PiTaskAttemptPromptCommand::RecordUsageFailure {
+                sequence: protocol_sequence,
+            },
+            Capability::RecordPiTaskAttemptUsageFailure,
+            ExpectedGeneration::Exact(child.expected_generation),
+            CommandBody::RecordPiTaskAttemptUsageFailure {
+                actor_attempt_id: child.actor_attempt_id,
+                correlation_identity: prompt.correlation_identity.clone(),
+                protocol_sequence,
+                failure,
+            },
+        );
+        match event {
+            Ok(EventBody::PiTaskAttemptUsageFrozen {
+                actor_attempt_id,
+                failure: observed_failure,
+                ..
+            }) if actor_attempt_id == child.actor_attempt_id && observed_failure == failure => {
+                prompt.final_accounting_sequence = Some(protocol_sequence);
+                prompt.phase = TaskAttemptPiPromptPhase::UsageFrozen;
+                child.phase = TaskAttemptPiExecutionPhase::TaskPromptTerminalBlocked;
+                self.begin_task_attempt_boundary_containment(child, now);
+                Ok(TaskAttemptPiPromptOutput::UsageFrozen)
+            }
+            Ok(_) => {
+                self.begin_task_attempt_boundary_containment(child, now);
+                Err(PiExecutionError::UnexpectedKernelEvent)
+            }
+            Err(error) => {
+                self.begin_task_attempt_boundary_containment(child, now);
+                Err(error)
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn record_task_attempt_terminal(
+        &mut self,
+        store: &mut KernelStore,
+        child: &mut TaskAttemptPiExecutionChild,
+        prompt: &mut TaskAttemptPiPrompt,
+        settled_sequence: PiProtocolSequence,
+        classification: SettledClassification,
+        final_assistant_outcome: &FinalAssistantOutcome,
+        receipt: &society_pi::TurnReceipt,
+        now: MonotonicTick,
+    ) -> Result<TaskAttemptPiPromptOutput, PiExecutionError> {
+        if prompt.phase != TaskAttemptPiPromptPhase::AwaitingTerminalEvidence
+            || receipt.correlation_identity.as_str() != prompt.correlation_identity.as_str()
+            || kernel_task_attempt_disposition(receipt.disposition)?
+                != kernel_task_attempt_disposition_from_settled(
+                    classification,
+                    final_assistant_outcome,
+                )?
+            || kernel_task_attempt_assistant_outcome(&receipt.final_assistant_outcome)?
+                != kernel_task_attempt_assistant_outcome(final_assistant_outcome)?
+        {
+            self.begin_task_attempt_boundary_containment(child, now);
+            return Err(PiExecutionError::PromptEvidenceOrder);
+        }
+        let disposition = kernel_task_attempt_disposition(receipt.disposition)?;
+        let assistant_outcome =
+            kernel_task_attempt_assistant_outcome(&receipt.final_assistant_outcome)?;
+        let terminal_evidence = match assistant_outcome {
+            PiTaskAttemptAssistantOutcome::ObservedStop
+            | PiTaskAttemptAssistantOutcome::ObservedLength
+            | PiTaskAttemptAssistantOutcome::ObservedError
+            | PiTaskAttemptAssistantOutcome::ObservedAborted => {
+                PiTaskAttemptTerminalEvidence::ObservedAssistant {
+                    agent_settled_sequence: prompt
+                        .agent_settled_sequence
+                        .ok_or(PiExecutionError::PromptTerminalEvidenceMissing)?,
+                    final_accounting_sequence: prompt
+                        .final_accounting_sequence
+                        .ok_or(PiExecutionError::PromptTerminalEvidenceMissing)?,
+                }
+            }
+            PiTaskAttemptAssistantOutcome::SdkPromiseRejected
+            | PiTaskAttemptAssistantOutcome::MissingFinalAssistantOutcome => {
+                PiTaskAttemptTerminalEvidence::UnavailableAssistant {
+                    final_known_usage_sequence: prompt
+                        .latest_known_accounting_sequence
+                        .ok_or(PiExecutionError::PromptTerminalEvidenceMissing)?,
+                }
+            }
+        };
+        if terminal_evidence
+            .final_accounting_sequence()
+            .value()
+            .checked_add(1)
+            != Some(settled_sequence.value())
+        {
+            self.begin_task_attempt_boundary_containment(child, now);
+            return Err(PiExecutionError::PromptEvidenceOrder);
+        }
+        let terminal = execute_task_attempt_prompt_command(
+            store,
+            &prompt.operation,
+            PiTaskAttemptPromptCommand::RecordTerminal,
+            Capability::RecordPiTaskAttemptTerminal,
+            ExpectedGeneration::Exact(child.expected_generation),
+            CommandBody::RecordPiTaskAttemptTerminal {
+                actor_attempt_id: child.actor_attempt_id,
+                correlation_identity: prompt.correlation_identity.clone(),
+                terminal_evidence,
+                settled_sequence,
+                disposition,
+                assistant_outcome,
+                transcript_disposition:
+                    PiTaskAttemptTranscriptDisposition::DeferredUntilTaskAttemptSessionDispose,
+            },
+        );
+        match terminal {
+            Ok(EventBody::PiTaskAttemptTerminalRecorded {
+                actor_attempt_id,
+                disposition: observed_disposition,
+                assistant_outcome: observed_outcome,
+                ..
+            }) if actor_attempt_id == child.actor_attempt_id
+                && observed_disposition == disposition
+                && observed_outcome == assistant_outcome =>
+            {
+                prompt.phase = TaskAttemptPiPromptPhase::TerminalRecorded;
+                child.phase = TaskAttemptPiExecutionPhase::TaskPromptTerminalRecorded;
+                Ok(TaskAttemptPiPromptOutput::TerminalRecorded)
+            }
+            Ok(_) => {
+                self.begin_task_attempt_boundary_containment(child, now);
+                Err(PiExecutionError::UnexpectedKernelEvent)
+            }
+            Err(error) => {
+                self.begin_task_attempt_boundary_containment(child, now);
+                Err(error)
+            }
+        }
+    }
+
+    /// Begins the one close control only after the actor's one task prompt
+    /// has a durable terminal receipt. A failed authorization writes no host
+    /// bytes, and an accepted authorization freezes the exact child/session
+    /// relation before the asynchronous control write begins.
+    pub(crate) fn begin_task_attempt_session_dispose(
+        &mut self,
+        store: &mut KernelStore,
+        child: &mut TaskAttemptPiExecutionChild,
+        start: TaskAttemptPiSessionDisposeStart,
+        now: MonotonicTick,
+        deadline: ControlWriteDeadline,
+    ) -> Result<(TaskAttemptPiSessionDispose, ControlWriteProgress), PiExecutionError> {
+        if child.phase != TaskAttemptPiExecutionPhase::TaskPromptTerminalRecorded {
+            return Err(PiExecutionError::InvalidLifecycle);
+        }
+        let correlation = CorrelationIdentity::parse(start.correlation_identity.as_str())
+            .map_err(|_| PiExecutionError::IdentityConversion)?;
+        let authorized = execute_task_attempt_session_dispose_command(
+            store,
+            &start.operation,
+            PiTaskAttemptSessionDisposeCommand::Authorize,
+            Capability::AuthorizePiTaskAttemptSessionDispose,
+            ExpectedGeneration::Exact(child.expected_generation),
+            CommandBody::AuthorizePiTaskAttemptSessionDispose {
+                actor_attempt_id: child.actor_attempt_id,
+                correlation_identity: start.correlation_identity.clone(),
+            },
+        )?;
+        match authorized {
+            EventBody::PiTaskAttemptSessionDisposeAuthorized {
+                actor_attempt_id,
+                native_child_id,
+                correlation_identity,
+                authorized_generation,
+            } if actor_attempt_id == child.actor_attempt_id
+                && native_child_id == child.child_process_id
+                && correlation_identity == start.correlation_identity
+                && authorized_generation == child.expected_generation => {}
+            _ => {
+                self.begin_task_attempt_boundary_containment(child, now);
+                return Err(PiExecutionError::UnexpectedKernelEvent);
+            }
+        }
+        let mut dispose = TaskAttemptPiSessionDispose {
+            operation: start.operation,
+            correlation_identity: start.correlation_identity,
+            expected_generation: child.expected_generation,
+            phase: TaskAttemptPiSessionDisposePhase::DeliveryPending,
+            accepted_sequence: None,
+            final_accounting_sequence: None,
+        };
+        let progress = match self.supervisor.send_dispose(
+            &child.supervised_child_id,
+            correlation,
+            society_pi::DisposeReason::CycleReconciliation,
+            now,
+            deadline,
+        ) {
+            Ok(progress) => progress,
+            Err(error) => {
+                self.begin_task_attempt_boundary_containment(child, now);
+                return Err(PiExecutionError::Supervision(error));
+            }
+        };
+        child.phase = match progress {
+            ControlWriteProgress::Pending => TaskAttemptPiExecutionPhase::DisposeDeliveryPending,
+            ControlWriteProgress::Delivered => TaskAttemptPiExecutionPhase::DisposeRequested,
+        };
+        if progress == ControlWriteProgress::Delivered {
+            self.record_task_attempt_session_dispose_delivery(store, child, &mut dispose, now)?;
+        }
+        Ok((dispose, progress))
+    }
+
+    pub(crate) fn drive_task_attempt_session_dispose_delivery(
+        &mut self,
+        store: &mut KernelStore,
+        child: &mut TaskAttemptPiExecutionChild,
+        dispose: &mut TaskAttemptPiSessionDispose,
+        now: MonotonicTick,
+    ) -> Result<ControlWriteProgress, PiExecutionError> {
+        if child.phase != TaskAttemptPiExecutionPhase::DisposeDeliveryPending
+            || dispose.phase != TaskAttemptPiSessionDisposePhase::DeliveryPending
+        {
+            return Err(PiExecutionError::InvalidLifecycle);
+        }
+        let progress = self
+            .supervisor
+            .drive_control_write(&child.supervised_child_id, now)
+            .map_err(|error| {
+                self.begin_task_attempt_boundary_containment(child, now);
+                PiExecutionError::Supervision(error)
+            })?;
+        if progress == ControlWriteProgress::Delivered {
+            child.phase = TaskAttemptPiExecutionPhase::DisposeRequested;
+            self.record_task_attempt_session_dispose_delivery(store, child, dispose, now)?;
+        }
+        Ok(progress)
+    }
+
+    fn record_task_attempt_session_dispose_delivery(
+        &mut self,
+        store: &mut KernelStore,
+        child: &mut TaskAttemptPiExecutionChild,
+        dispose: &mut TaskAttemptPiSessionDispose,
+        now: MonotonicTick,
+    ) -> Result<(), PiExecutionError> {
+        let event = execute_task_attempt_session_dispose_command(
+            store,
+            &dispose.operation,
+            PiTaskAttemptSessionDisposeCommand::RecordDelivery,
+            Capability::RecordPiTaskAttemptSessionDisposeDelivery,
+            ExpectedGeneration::Exact(dispose.expected_generation),
+            CommandBody::RecordPiTaskAttemptSessionDisposeDelivery {
+                actor_attempt_id: child.actor_attempt_id,
+                correlation_identity: dispose.correlation_identity.clone(),
+            },
+        );
+        match event {
+            Ok(EventBody::PiTaskAttemptSessionDisposeDelivered {
+                actor_attempt_id,
+                native_child_id,
+                correlation_identity,
+            }) if actor_attempt_id == child.actor_attempt_id
+                && native_child_id == child.child_process_id
+                && correlation_identity == dispose.correlation_identity =>
+            {
+                dispose.phase = TaskAttemptPiSessionDisposePhase::AwaitingAcceptance;
+                Ok(())
+            }
+            Ok(_) => {
+                self.begin_task_attempt_boundary_containment(child, now);
+                Err(PiExecutionError::UnexpectedKernelEvent)
+            }
+            Err(error) => {
+                self.begin_task_attempt_boundary_containment(child, now);
+                Err(error)
+            }
+        }
+    }
+
+    pub(crate) fn observe_task_attempt_session_dispose_output(
+        &mut self,
+        store: &mut KernelStore,
+        child: &mut TaskAttemptPiExecutionChild,
+        dispose: &mut TaskAttemptPiSessionDispose,
+        now: MonotonicTick,
+        deadline: HandshakeDeadline,
+        transcript_seal_limit: ContentSealLimit,
+    ) -> Result<Option<TaskAttemptPiSessionDisposeOutput>, PiExecutionError> {
+        if child.phase != TaskAttemptPiExecutionPhase::DisposeRequested
+            || !matches!(
+                dispose.phase,
+                TaskAttemptPiSessionDisposePhase::AwaitingAcceptance
+                    | TaskAttemptPiSessionDisposePhase::AwaitingFinalAccounting
+                    | TaskAttemptPiSessionDisposePhase::AwaitingDisposed
+            )
+        {
+            return Err(PiExecutionError::InvalidLifecycle);
+        }
+        let output = match self.supervisor.observe_disposal_output_at(
+            &child.supervised_child_id,
+            now,
+            deadline,
+        ) {
+            Ok(None) => return Ok(None),
+            Ok(Some(output)) => output,
+            Err(error) => {
+                self.begin_task_attempt_boundary_containment(child, now);
+                return Err(PiExecutionError::Supervision(error));
+            }
+        };
+        self.project_task_attempt_session_dispose_output(
+            store,
+            child,
+            dispose,
+            output,
+            now,
+            transcript_seal_limit,
+        )
+        .map(Some)
+    }
+
+    fn project_task_attempt_session_dispose_output(
+        &mut self,
+        store: &mut KernelStore,
+        child: &mut TaskAttemptPiExecutionChild,
+        dispose: &mut TaskAttemptPiSessionDispose,
+        output: SealedDecodedPeerFrame,
+        now: MonotonicTick,
+        transcript_seal_limit: ContentSealLimit,
+    ) -> Result<TaskAttemptPiSessionDisposeOutput, PiExecutionError> {
+        let sequence = kernel_protocol_sequence(output.frame().sequence)?;
+        let expected_correlation =
+            CorrelationIdentity::parse(dispose.correlation_identity.as_str())
+                .map_err(|_| PiExecutionError::IdentityConversion)?;
+        if output.frame().correlation_identity.as_ref() != Some(&expected_correlation) {
+            self.begin_task_attempt_boundary_containment(child, now);
+            return Err(PiExecutionError::DisposeEvidenceOrder);
+        }
+        if let PeerFrameValidation::Rejected(error) = output.validation() {
+            if matches!(
+                (&output.frame().event, error),
+                (
+                    OutboundEvent::Disposed { .. },
+                    society_pi::PeerError::MissingTerminalEvidence
+                )
+            ) && dispose.phase == TaskAttemptPiSessionDisposePhase::AwaitingFinalAccounting
+            {
+                return self.record_task_attempt_session_dispose_usage_failure(
+                    store,
+                    child,
+                    dispose,
+                    sequence,
+                    PiTaskAttemptUsageFailure::Unknown(
+                        PiTaskAttemptUsageUnknownReason::MissingFinalUsageSnapshot,
+                    ),
+                    now,
+                );
+            }
+            self.begin_task_attempt_boundary_containment(child, now);
+            return Err(PiExecutionError::PeerFatalWithoutAccountingFact);
+        }
+        match (&output.frame().event, output.observation()) {
+            (
+                OutboundEvent::CommandResult(CommandResult::Accepted {
+                    command: CommandName::Dispose,
+                    ..
+                }),
+                None,
+            ) => {
+                if dispose.phase != TaskAttemptPiSessionDisposePhase::AwaitingAcceptance {
+                    self.begin_task_attempt_boundary_containment(child, now);
+                    return Err(PiExecutionError::DisposeEvidenceOrder);
+                }
+                let event = execute_task_attempt_session_dispose_command(
+                    store,
+                    &dispose.operation,
+                    PiTaskAttemptSessionDisposeCommand::RecordAccepted,
+                    Capability::RecordPiTaskAttemptSessionDisposeAccepted,
+                    ExpectedGeneration::Exact(dispose.expected_generation),
+                    CommandBody::RecordPiTaskAttemptSessionDisposeAccepted {
+                        actor_attempt_id: child.actor_attempt_id,
+                        correlation_identity: dispose.correlation_identity.clone(),
+                        command_result_sequence: sequence,
+                    },
+                );
+                match event {
+                    Ok(EventBody::PiTaskAttemptSessionDisposeAccepted {
+                        actor_attempt_id,
+                        correlation_identity,
+                        command_result_sequence,
+                    }) if actor_attempt_id == child.actor_attempt_id
+                        && correlation_identity == dispose.correlation_identity
+                        && command_result_sequence == sequence =>
+                    {
+                        dispose.accepted_sequence = Some(sequence);
+                        dispose.phase = TaskAttemptPiSessionDisposePhase::AwaitingFinalAccounting;
+                        Ok(TaskAttemptPiSessionDisposeOutput::Accepted)
+                    }
+                    Ok(_) => {
+                        self.begin_task_attempt_boundary_containment(child, now);
+                        Err(PiExecutionError::UnexpectedKernelEvent)
+                    }
+                    Err(error) => {
+                        self.begin_task_attempt_boundary_containment(child, now);
+                        Err(error)
+                    }
+                }
+            }
+            (
+                OutboundEvent::CommandResult(CommandResult::Rejected {
+                    command: CommandName::Dispose,
+                    ..
+                }),
+                None,
+            ) => {
+                self.begin_task_attempt_boundary_containment(child, now);
+                Err(PiExecutionError::DisposeRejectedByHost)
+            }
+            (
+                OutboundEvent::UsageSnapshot {
+                    usage: UsageObservation::Known(totals),
+                },
+                _,
+            ) => {
+                if dispose.phase != TaskAttemptPiSessionDisposePhase::AwaitingFinalAccounting
+                    || dispose.accepted_sequence.is_none_or(|accepted| {
+                        accepted.value().checked_add(1) != Some(sequence.value())
+                    })
+                {
+                    self.begin_task_attempt_boundary_containment(child, now);
+                    return Err(PiExecutionError::DisposeEvidenceOrder);
+                }
+                let usage = kernel_cumulative_usage(totals)?;
+                let event = execute_task_attempt_session_dispose_command(
+                    store,
+                    &dispose.operation,
+                    PiTaskAttemptSessionDisposeCommand::RecordKnownUsage { sequence },
+                    Capability::RecordPiTaskAttemptSessionDisposeUsage,
+                    ExpectedGeneration::Exact(dispose.expected_generation),
+                    CommandBody::RecordPiTaskAttemptSessionDisposeUsage {
+                        actor_attempt_id: child.actor_attempt_id,
+                        correlation_identity: dispose.correlation_identity.clone(),
+                        protocol_sequence: sequence,
+                        usage,
+                    },
+                );
+                match event {
+                    Ok(EventBody::PiTaskAttemptSessionDisposeUsageRecorded {
+                        actor_attempt_id,
+                        protocol_sequence,
+                        ..
+                    }) if actor_attempt_id == child.actor_attempt_id
+                        && protocol_sequence == sequence =>
+                    {
+                        dispose.final_accounting_sequence = Some(sequence);
+                        dispose.phase = TaskAttemptPiSessionDisposePhase::AwaitingDisposed;
+                        Ok(TaskAttemptPiSessionDisposeOutput::KnownUsageRecorded)
+                    }
+                    Ok(_) => {
+                        self.begin_task_attempt_boundary_containment(child, now);
+                        Err(PiExecutionError::UnexpectedKernelEvent)
+                    }
+                    Err(error) => {
+                        self.begin_task_attempt_boundary_containment(child, now);
+                        Err(error)
+                    }
+                }
+            }
+            (
+                OutboundEvent::UsageSnapshot {
+                    usage: UsageObservation::Unavailable(reason),
+                },
+                Some(society_pi::PeerObservation::UsageUnavailable { reason: observed }),
+            ) if reason == observed => self.record_task_attempt_session_dispose_usage_failure(
+                store,
+                child,
+                dispose,
+                sequence,
+                kernel_task_attempt_usage_failure(*reason),
+                now,
+            ),
+            (
+                OutboundEvent::Disposed {
+                    transcript_flush_receipt,
+                },
+                Some(society_pi::PeerObservation::Disposed),
+            ) => {
+                if dispose.phase != TaskAttemptPiSessionDisposePhase::AwaitingDisposed
+                    || dispose
+                        .final_accounting_sequence
+                        .is_none_or(|usage| usage.value().checked_add(1) != Some(sequence.value()))
+                {
+                    self.begin_task_attempt_boundary_containment(child, now);
+                    return Err(PiExecutionError::DisposeEvidenceOrder);
+                }
+                let transcript = project_task_attempt_session_transcript(
+                    &dispose.operation,
+                    &child.workspace_directory,
+                    &child.session_directory,
+                    transcript_flush_receipt,
+                    transcript_seal_limit,
+                );
+                match transcript {
+                    Ok(transcript) => Ok(TaskAttemptPiSessionDisposeOutput::TranscriptReady(
+                        Box::new(VerifiedTaskAttemptSessionDisposeTerminal {
+                            transcript,
+                            disposed_sequence: sequence,
+                        }),
+                    )),
+                    Err(error) => {
+                        self.begin_task_attempt_boundary_containment(child, now);
+                        Err(error)
+                    }
+                }
+            }
+            (OutboundEvent::Fatal { .. }, _) => {
+                self.begin_task_attempt_boundary_containment(child, now);
+                Err(PiExecutionError::PeerFatalWithoutAccountingFact)
+            }
+            _ => {
+                self.begin_task_attempt_boundary_containment(child, now);
+                Err(PiExecutionError::DisposeEvidenceOrder)
+            }
+        }
+    }
+
+    fn record_task_attempt_session_dispose_usage_failure(
+        &mut self,
+        store: &mut KernelStore,
+        child: &mut TaskAttemptPiExecutionChild,
+        dispose: &mut TaskAttemptPiSessionDispose,
+        protocol_sequence: PiProtocolSequence,
+        failure: PiTaskAttemptUsageFailure,
+        now: MonotonicTick,
+    ) -> Result<TaskAttemptPiSessionDisposeOutput, PiExecutionError> {
+        if dispose.phase != TaskAttemptPiSessionDisposePhase::AwaitingFinalAccounting
+            || dispose.accepted_sequence.is_none_or(|accepted| {
+                accepted.value().checked_add(1) != Some(protocol_sequence.value())
+            })
+        {
+            self.begin_task_attempt_boundary_containment(child, now);
+            return Err(PiExecutionError::DisposeEvidenceOrder);
+        }
+        let event = execute_task_attempt_session_dispose_command(
+            store,
+            &dispose.operation,
+            PiTaskAttemptSessionDisposeCommand::RecordUsageFailure {
+                sequence: protocol_sequence,
+            },
+            Capability::RecordPiTaskAttemptSessionDisposeUsageFailure,
+            ExpectedGeneration::Exact(dispose.expected_generation),
+            CommandBody::RecordPiTaskAttemptSessionDisposeUsageFailure {
+                actor_attempt_id: child.actor_attempt_id,
+                correlation_identity: dispose.correlation_identity.clone(),
+                protocol_sequence,
+                failure,
+            },
+        );
+        match event {
+            Ok(EventBody::PiTaskAttemptSessionDisposeUsageFrozen {
+                actor_attempt_id,
+                failure: observed_failure,
+                ..
+            }) if actor_attempt_id == child.actor_attempt_id && observed_failure == failure => {
+                dispose.phase = TaskAttemptPiSessionDisposePhase::UsageFrozen;
+                self.begin_task_attempt_boundary_containment(child, now);
+                Ok(TaskAttemptPiSessionDisposeOutput::UsageFrozen)
+            }
+            Ok(_) => {
+                self.begin_task_attempt_boundary_containment(child, now);
+                Err(PiExecutionError::UnexpectedKernelEvent)
+            }
+            Err(error) => {
+                self.begin_task_attempt_boundary_containment(child, now);
+                Err(error)
+            }
+        }
+    }
+
+    /// Commits the task-domain transcript receipt after its materialized bytes
+    /// (if any) pass through the daemon's one physical content authority.
+    pub(crate) fn record_task_attempt_session_disposed(
+        &mut self,
+        store: &mut KernelStore,
+        child: &mut TaskAttemptPiExecutionChild,
+        dispose: &mut TaskAttemptPiSessionDispose,
+        terminal: &VerifiedTaskAttemptSessionDisposeTerminal,
+        sealed_content: Option<ContentObjectRegistration>,
+        now: MonotonicTick,
+    ) -> Result<TaskAttemptPiSessionDisposeOutput, PiExecutionError> {
+        if child.phase != TaskAttemptPiExecutionPhase::DisposeRequested
+            || dispose.phase != TaskAttemptPiSessionDisposePhase::AwaitingDisposed
+            || dispose.final_accounting_sequence.is_none_or(|usage| {
+                usage.value().checked_add(1) != Some(terminal.disposed_sequence.value())
+            })
+        {
+            self.begin_task_attempt_boundary_containment(child, now);
+            return Err(PiExecutionError::DisposeEvidenceOrder);
+        }
+        let transcript_receipt = terminal
+            .transcript
+            .task_kernel_receipt_with_content(sealed_content)?;
+        let event = execute_task_attempt_session_dispose_command(
+            store,
+            &dispose.operation,
+            PiTaskAttemptSessionDisposeCommand::RecordDisposed,
+            Capability::RecordPiTaskAttemptSessionDisposed,
+            ExpectedGeneration::Exact(dispose.expected_generation),
+            CommandBody::RecordPiTaskAttemptSessionDisposed {
+                actor_attempt_id: child.actor_attempt_id,
+                correlation_identity: dispose.correlation_identity.clone(),
+                disposed_sequence: terminal.disposed_sequence,
+                transcript_receipt,
+            },
+        );
+        match event {
+            Ok(EventBody::PiTaskAttemptSessionDisposed {
+                actor_attempt_id, ..
+            }) if actor_attempt_id == child.actor_attempt_id => {
+                dispose.phase = TaskAttemptPiSessionDisposePhase::Disposed;
+                child.phase = TaskAttemptPiExecutionPhase::Disposed;
+                Ok(TaskAttemptPiSessionDisposeOutput::Disposed)
+            }
+            Ok(_) => {
+                self.begin_task_attempt_boundary_containment(child, now);
+                Err(PiExecutionError::UnexpectedKernelEvent)
+            }
+            Err(error) => {
+                self.begin_task_attempt_boundary_containment(child, now);
+                Err(error)
+            }
+        }
+    }
+
+    fn begin_task_attempt_boundary_containment(
+        &mut self,
+        child: &mut TaskAttemptPiExecutionChild,
+        now: MonotonicTick,
+    ) {
+        child.phase = TaskAttemptPiExecutionPhase::BoundaryContainmentRequired;
+        self.contain(&child.supervised_child_id, now);
+    }
+
     /// Advances the fixed emergency deadlines for a registered child whose
     /// protocol, kernel receipt, or local setup boundary failed. The caller
     /// retains the same child handle and later reconciles its direct
@@ -1076,10 +3107,10 @@ impl PiExecutionDriver {
     /// wait, stream-seal, or finalization command can honestly name it.
     pub(crate) fn drive_unregistered_spawn_containment(
         &mut self,
-        child: &mut UnregisteredOfficePiChild,
+        child: &mut UnregisteredPiChild,
         now: MonotonicTick,
     ) -> Result<bool, PiExecutionError> {
-        if child.phase != UnregisteredOfficePiChildPhase::ContainmentRequired {
+        if child.phase != UnregisteredPiChildPhase::ContainmentRequired {
             return Err(PiExecutionError::InvalidLifecycle);
         }
         let receipt = self
@@ -1094,7 +3125,7 @@ impl PiExecutionDriver {
             .take_reaped_receipt(&child.supervised_child_id)
             .ok_or(PiExecutionError::ReapReceiptLost)?;
         child.transient_completion = Some(completion);
-        child.phase = UnregisteredOfficePiChildPhase::PhysicallyReaped;
+        child.phase = UnregisteredPiChildPhase::PhysicallyReaped;
         Ok(true)
     }
 
@@ -1158,7 +3189,14 @@ impl PiExecutionDriver {
         if child.phase != OfficePiExecutionPhase::AdapterReadyRecorded {
             return Err(PiExecutionError::InvalidLifecycle);
         }
-        let mut gate = KernelCreateAuthorizationGate::new(store, child);
+        let mut gate = KernelCreateAuthorizationGate::new(
+            store,
+            &child.operation,
+            child.child_process_id,
+            child.expected_generation,
+            &child.create_correlation,
+            child.create_request_digest,
+        );
         let progress = self.supervisor.send_create_session(
             &child.supervised_child_id,
             &mut gate,
@@ -2898,16 +4936,12 @@ impl PiExecutionDriver {
         child: &OfficePiExecutionChild,
         liveness: crate::supervision::ProcessGroupLiveness,
     ) -> Result<(), PiExecutionError> {
-        execute_kernel_command(
+        record_liveness_for_child(
             store,
             &child.operation,
-            PiExecutionCommand::RecordLiveness,
-            Capability::RecordChildProcessLiveness,
-            ExpectedGeneration::Exact(child.expected_generation),
-            CommandBody::RecordChildProcessLiveness {
-                native_child_id: child.child_process_id,
-                liveness: kernel_liveness(liveness),
-            },
+            child.child_process_id,
+            child.expected_generation,
+            liveness,
         )?;
         Ok(())
     }
@@ -2974,55 +5008,14 @@ impl PiExecutionDriver {
         signal: &crate::supervision::SignalReceipt,
         ordinal: usize,
     ) -> Result<(), PiExecutionError> {
-        // This bounded bridge does not yet execute a typed kernel cancellation
-        // propagation, so an SDK Abort control receipt has no valid durable
-        // command relation here. It must never be silently omitted.
-        if signal.action == SignalAction::AbortControl {
-            return Err(PiExecutionError::UnmodeledAbortControlReceipt);
-        }
-        let action = match signal.action {
-            SignalAction::Terminate => society_kernel::ProcessSignalAction::Terminate,
-            SignalAction::Kill => society_kernel::ProcessSignalAction::Kill,
-            SignalAction::LingeringGroupKill => {
-                society_kernel::ProcessSignalAction::LingeringGroupKill
-            }
-            SignalAction::AbortControl => unreachable!("checked above"),
-        };
-        let delivery = match signal.delivery {
-            SignalDelivery::TermSent
-            | SignalDelivery::KillSent
-            | SignalDelivery::LingeringGroupKillSent => {
-                society_kernel::ProcessSignalDelivery::Delivered
-            }
-            SignalDelivery::AbsentBeforeSignal => {
-                society_kernel::ProcessSignalDelivery::AbsentBeforeSignal
-            }
-            SignalDelivery::AbsentDuringSignal => {
-                society_kernel::ProcessSignalDelivery::AbsentDuringSignal
-            }
-            SignalDelivery::GroupInaccessible => {
-                society_kernel::ProcessSignalDelivery::Inaccessible
-            }
-            SignalDelivery::AbortControlWritten => {
-                return Err(PiExecutionError::UnmodeledAbortControlReceipt);
-            }
-        };
-        let command = PiExecutionCommand::RecordSignal { ordinal };
-        execute_kernel_command(
+        record_signal_receipt_for_child(
             store,
             &child.operation,
-            command,
-            Capability::RecordProcessSignalReceipt,
-            ExpectedGeneration::Exact(child.expected_generation),
-            CommandBody::RecordProcessSignalReceipt {
-                native_child_id: child.child_process_id,
-                action,
-                delivery,
-                observed_liveness: kernel_liveness(signal.group_liveness_after_attempt),
-                cause: society_kernel::ProcessSignalCause::AutomaticBoundaryContainment,
-            },
-        )?;
-        Ok(())
+            child.child_process_id,
+            child.expected_generation,
+            signal,
+            ordinal,
+        )
     }
 
     fn seal_stream(
@@ -3033,30 +5026,15 @@ impl PiExecutionDriver {
         stream_kind: ChildStreamKind,
         capture: &TransientStreamCapture,
     ) -> Result<(), PiExecutionError> {
-        let retained_bytes = capture.retained_bytes();
-        let operation = ContentSealOperationId::parse(
-            child
-                .operation
-                .content_label(child.child_process_id, stream_kind)?,
-            KernelDigest::of_bytes(retained_bytes),
-        )
-        .map_err(|_| PiExecutionError::InvalidOperationIdentity)?;
-        let registration = content.seal_and_register(store, &operation, retained_bytes)?;
-        execute_kernel_command(
+        seal_stream_for_child(
             store,
+            content,
             &child.operation,
-            stream_seal_command(stream_kind),
-            Capability::RecordChildStreamSeal,
-            ExpectedGeneration::Exact(child.expected_generation),
-            CommandBody::RecordChildStreamSeal {
-                native_child_id: child.child_process_id,
-                stream_kind,
-                full_observed_digest: kernel_digest_from_boundary(capture)?,
-                retained_content_object_id: registration.content_object_id,
-                completeness: kernel_stream_completeness(capture),
-            },
-        )?;
-        Ok(())
+            child.child_process_id,
+            child.expected_generation,
+            stream_kind,
+            capture,
+        )
     }
 
     fn begin_registered_boundary_containment(
@@ -3081,10 +5059,10 @@ impl PiExecutionDriver {
         // admission deliberately stays unresolved for recovery fencing.
         self.contain(&supervised_child_id, MonotonicTick::ZERO);
         OfficePiSpawnRegistration::RegistrationUnresolved {
-            child: Box::new(UnregisteredOfficePiChild {
+            child: Box::new(UnregisteredPiChild {
                 supervised_child_id,
                 native_child_spawn_admission_id,
-                phase: UnregisteredOfficePiChildPhase::ContainmentRequired,
+                phase: UnregisteredPiChildPhase::ContainmentRequired,
                 transient_completion: None,
             }),
             failure,
@@ -3098,6 +5076,352 @@ impl PiExecutionDriver {
     }
 }
 
+impl PiExecutionDriver {
+    // The task path uses the same low-level custody transitions as Office,
+    // but keeps the owner-specific handle and lifecycle separate.
+    fn record_task_attempt_pre_reap_signal_receipts(
+        &self,
+        store: &mut KernelStore,
+        child: &TaskAttemptPiExecutionChild,
+        direct_reap: &crate::supervision::DirectChildReapFacts,
+    ) -> Result<(), PiExecutionError> {
+        for (ordinal, signal) in direct_reap.prior_signal_receipts.iter().enumerate() {
+            if signal.action == SignalAction::LingeringGroupKill {
+                return Err(PiExecutionError::SignalReceiptOrderingRequiresTwoPhaseReap);
+            }
+            record_signal_receipt_for_child(
+                store,
+                &child.operation,
+                child.child_process_id,
+                child.expected_generation,
+                signal,
+                ordinal,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn record_task_attempt_direct_child_reap(
+        &self,
+        store: &mut KernelStore,
+        child: &TaskAttemptPiExecutionChild,
+        direct_reap: &crate::supervision::DirectChildReapFacts,
+    ) -> Result<(), PiExecutionError> {
+        if direct_reap.child_process_id != child.supervised_child_id {
+            return Err(PiExecutionError::ReceiptIdentityMismatch);
+        }
+        let liveness = kernel_liveness(direct_reap.group_liveness_after_direct_child_reap);
+        execute_kernel_command(
+            store,
+            &child.operation,
+            PiExecutionCommand::RecordReap,
+            Capability::RecordDirectChildReap,
+            ExpectedGeneration::Exact(child.expected_generation),
+            CommandBody::RecordDirectChildReap {
+                native_child_id: child.child_process_id,
+                wait_status: kernel_wait_status(direct_reap.status)?,
+                group_liveness_before_cleanup: liveness,
+                group_liveness_after_cleanup: liveness,
+            },
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn poll_task_attempt_reap_and_reconcile(
+        &mut self,
+        store: &mut KernelStore,
+        content: &ContentSealingAuthority,
+        child: &mut TaskAttemptPiExecutionChild,
+        now: MonotonicTick,
+    ) -> Result<bool, PiExecutionError> {
+        if child.phase == TaskAttemptPiExecutionPhase::Reconciled {
+            return Err(PiExecutionError::InvalidLifecycle);
+        }
+        let Some(direct_reap) = self
+            .supervisor
+            .poll_direct_child_reap_at(&child.supervised_child_id)
+            .map_err(PiExecutionError::Supervision)?
+        else {
+            return Ok(false);
+        };
+        if child.phase != TaskAttemptPiExecutionPhase::DirectChildReapRecorded
+            && child.phase != TaskAttemptPiExecutionPhase::LingeringCleanupRecorded
+            && child.phase != TaskAttemptPiExecutionPhase::AwaitingLingeringGroupAbsence
+        {
+            self.record_task_attempt_pre_reap_signal_receipts(store, child, &direct_reap)?;
+            self.record_task_attempt_direct_child_reap(store, child, &direct_reap)?;
+            if direct_reap.prior_signal_receipts.iter().any(|receipt| {
+                receipt.delivery == SignalDelivery::GroupInaccessible
+                    || receipt.group_liveness_after_attempt
+                        == crate::supervision::ProcessGroupLiveness::Inaccessible
+            }) {
+                return Err(PiExecutionError::AutomaticContainmentInaccessible);
+            }
+            if direct_reap.group_liveness_after_direct_child_reap
+                == crate::supervision::ProcessGroupLiveness::Inaccessible
+            {
+                return Err(PiExecutionError::LingeringGroupInaccessible);
+            }
+            child.phase = TaskAttemptPiExecutionPhase::DirectChildReapRecorded;
+        }
+
+        if child.phase == TaskAttemptPiExecutionPhase::DirectChildReapRecorded {
+            if let Some(signal) = self
+                .supervisor
+                .issue_lingering_group_cleanup(&child.supervised_child_id, now)
+                .map_err(PiExecutionError::Supervision)?
+            {
+                record_signal_receipt_for_child(
+                    store,
+                    &child.operation,
+                    child.child_process_id,
+                    child.expected_generation,
+                    &signal,
+                    2,
+                )?;
+                match signal.group_liveness_after_attempt {
+                    crate::supervision::ProcessGroupLiveness::Present => {
+                        child.phase = TaskAttemptPiExecutionPhase::AwaitingLingeringGroupAbsence;
+                        return Ok(false);
+                    }
+                    crate::supervision::ProcessGroupLiveness::Inaccessible => {
+                        return Err(PiExecutionError::LingeringGroupInaccessible);
+                    }
+                    crate::supervision::ProcessGroupLiveness::Absent => {}
+                }
+            }
+            child.phase = TaskAttemptPiExecutionPhase::LingeringCleanupRecorded;
+        }
+
+        let liveness = self
+            .supervisor
+            .observe_group_liveness(&child.supervised_child_id)
+            .map_err(PiExecutionError::Supervision)?;
+        match liveness {
+            crate::supervision::ProcessGroupLiveness::Present => {
+                if child.phase == TaskAttemptPiExecutionPhase::AwaitingLingeringGroupAbsence {
+                    return Ok(false);
+                }
+                record_liveness_for_child(
+                    store,
+                    &child.operation,
+                    child.child_process_id,
+                    child.expected_generation,
+                    liveness,
+                )?;
+                return Err(PiExecutionError::ProcessGroupIdentityRegressed);
+            }
+            crate::supervision::ProcessGroupLiveness::Inaccessible => {
+                record_liveness_for_child(
+                    store,
+                    &child.operation,
+                    child.child_process_id,
+                    child.expected_generation,
+                    liveness,
+                )?;
+                return Err(PiExecutionError::LingeringGroupInaccessible);
+            }
+            crate::supervision::ProcessGroupLiveness::Absent => {
+                record_liveness_for_child(
+                    store,
+                    &child.operation,
+                    child.child_process_id,
+                    child.expected_generation,
+                    liveness,
+                )?;
+            }
+        }
+        let receipt = self
+            .supervisor
+            .complete_deferred_reap_at(&child.supervised_child_id)
+            .map_err(PiExecutionError::Supervision)?;
+        seal_and_finalize_for_child(
+            store,
+            content,
+            &child.operation,
+            child.child_process_id,
+            child.expected_generation,
+            &child.supervised_child_id,
+            &receipt,
+        )?;
+        self.supervisor
+            .take_reaped_receipt(&child.supervised_child_id)
+            .ok_or(PiExecutionError::ReapReceiptLost)?;
+        child.phase = TaskAttemptPiExecutionPhase::Reconciled;
+        Ok(true)
+    }
+}
+
+fn record_signal_receipt_for_child(
+    store: &mut KernelStore,
+    operation: &PiExecutionOperationId,
+    child_process_id: NativeChildId,
+    expected_generation: AdmissionGeneration,
+    signal: &crate::supervision::SignalReceipt,
+    ordinal: usize,
+) -> Result<(), PiExecutionError> {
+    if signal.action == SignalAction::AbortControl {
+        return Err(PiExecutionError::UnmodeledAbortControlReceipt);
+    }
+    let action = match signal.action {
+        SignalAction::Terminate => society_kernel::ProcessSignalAction::Terminate,
+        SignalAction::Kill => society_kernel::ProcessSignalAction::Kill,
+        SignalAction::LingeringGroupKill => society_kernel::ProcessSignalAction::LingeringGroupKill,
+        SignalAction::AbortControl => unreachable!("checked above"),
+    };
+    let delivery = match signal.delivery {
+        SignalDelivery::TermSent
+        | SignalDelivery::KillSent
+        | SignalDelivery::LingeringGroupKillSent => {
+            society_kernel::ProcessSignalDelivery::Delivered
+        }
+        SignalDelivery::AbsentBeforeSignal => {
+            society_kernel::ProcessSignalDelivery::AbsentBeforeSignal
+        }
+        SignalDelivery::AbsentDuringSignal => {
+            society_kernel::ProcessSignalDelivery::AbsentDuringSignal
+        }
+        SignalDelivery::GroupInaccessible => society_kernel::ProcessSignalDelivery::Inaccessible,
+        SignalDelivery::AbortControlWritten => {
+            return Err(PiExecutionError::UnmodeledAbortControlReceipt);
+        }
+    };
+    execute_kernel_command(
+        store,
+        operation,
+        PiExecutionCommand::RecordSignal { ordinal },
+        Capability::RecordProcessSignalReceipt,
+        ExpectedGeneration::Exact(expected_generation),
+        CommandBody::RecordProcessSignalReceipt {
+            native_child_id: child_process_id,
+            action,
+            delivery,
+            observed_liveness: kernel_liveness(signal.group_liveness_after_attempt),
+            cause: society_kernel::ProcessSignalCause::AutomaticBoundaryContainment,
+        },
+    )?;
+    Ok(())
+}
+
+fn record_liveness_for_child(
+    store: &mut KernelStore,
+    operation: &PiExecutionOperationId,
+    child_process_id: NativeChildId,
+    expected_generation: AdmissionGeneration,
+    liveness: crate::supervision::ProcessGroupLiveness,
+) -> Result<(), PiExecutionError> {
+    execute_kernel_command(
+        store,
+        operation,
+        PiExecutionCommand::RecordLiveness,
+        Capability::RecordChildProcessLiveness,
+        ExpectedGeneration::Exact(expected_generation),
+        CommandBody::RecordChildProcessLiveness {
+            native_child_id: child_process_id,
+            liveness: kernel_liveness(liveness),
+        },
+    )?;
+    Ok(())
+}
+
+fn seal_stream_for_child(
+    store: &mut KernelStore,
+    content: &ContentSealingAuthority,
+    operation: &PiExecutionOperationId,
+    child_process_id: NativeChildId,
+    expected_generation: AdmissionGeneration,
+    stream_kind: ChildStreamKind,
+    capture: &TransientStreamCapture,
+) -> Result<(), PiExecutionError> {
+    let retained_bytes = capture.retained_bytes();
+    let content_operation = ContentSealOperationId::parse(
+        operation.content_label(child_process_id, stream_kind)?,
+        KernelDigest::of_bytes(retained_bytes),
+    )
+    .map_err(|_| PiExecutionError::InvalidOperationIdentity)?;
+    let registration = content.seal_and_register(store, &content_operation, retained_bytes)?;
+    execute_kernel_command(
+        store,
+        operation,
+        stream_seal_command(stream_kind),
+        Capability::RecordChildStreamSeal,
+        ExpectedGeneration::Exact(expected_generation),
+        CommandBody::RecordChildStreamSeal {
+            native_child_id: child_process_id,
+            stream_kind,
+            full_observed_digest: kernel_digest_from_boundary(capture)?,
+            retained_content_object_id: registration.content_object_id,
+            completeness: kernel_stream_completeness(capture),
+        },
+    )?;
+    Ok(())
+}
+
+fn seal_and_finalize_for_child(
+    store: &mut KernelStore,
+    content: &ContentSealingAuthority,
+    operation: &PiExecutionOperationId,
+    child_process_id: NativeChildId,
+    expected_generation: AdmissionGeneration,
+    supervised_child_id: &SupervisedChildId,
+    receipt: &SupervisionReceipt,
+) -> Result<(), PiExecutionError> {
+    if receipt.child_process_id != *supervised_child_id {
+        return Err(PiExecutionError::ReceiptIdentityMismatch);
+    }
+    let _reap = receipt
+        .reap
+        .as_ref()
+        .ok_or(PiExecutionError::MissingReapReceipt)?;
+    seal_stream_for_child(
+        store,
+        content,
+        operation,
+        child_process_id,
+        expected_generation,
+        ChildStreamKind::AdmittedControl,
+        &receipt.transient_evidence.admitted_control,
+    )?;
+    seal_stream_for_child(
+        store,
+        content,
+        operation,
+        child_process_id,
+        expected_generation,
+        ChildStreamKind::PhysicalStdin,
+        &receipt.transient_evidence.stdin,
+    )?;
+    seal_stream_for_child(
+        store,
+        content,
+        operation,
+        child_process_id,
+        expected_generation,
+        ChildStreamKind::Stdout,
+        &receipt.transient_evidence.stdout,
+    )?;
+    seal_stream_for_child(
+        store,
+        content,
+        operation,
+        child_process_id,
+        expected_generation,
+        ChildStreamKind::Stderr,
+        &receipt.transient_evidence.stderr,
+    )?;
+    execute_kernel_command(
+        store,
+        operation,
+        PiExecutionCommand::Finalize,
+        Capability::FinalizeChildProcess,
+        ExpectedGeneration::Exact(expected_generation),
+        CommandBody::FinalizeChildProcess {
+            native_child_id: child_process_id,
+        },
+    )?;
+    Ok(())
+}
+
 struct KernelCreateAuthorizationGate<'a> {
     store: &'a mut KernelStore,
     operation: &'a PiExecutionOperationId,
@@ -3109,14 +5433,21 @@ struct KernelCreateAuthorizationGate<'a> {
 }
 
 impl<'a> KernelCreateAuthorizationGate<'a> {
-    fn new(store: &'a mut KernelStore, child: &'a OfficePiExecutionChild) -> Self {
+    fn new(
+        store: &'a mut KernelStore,
+        operation: &'a PiExecutionOperationId,
+        child_process_id: NativeChildId,
+        expected_generation: AdmissionGeneration,
+        correlation: &'a PiCorrelationIdentity,
+        create_request_digest: KernelDigest,
+    ) -> Self {
         Self {
             store,
-            operation: &child.operation,
-            child_process_id: child.child_process_id,
-            expected_generation: child.expected_generation,
-            correlation: &child.create_correlation,
-            create_request_digest: child.create_request_digest,
+            operation,
+            child_process_id,
+            expected_generation,
+            correlation,
+            create_request_digest,
             outcome: None,
         }
     }
@@ -3193,6 +5524,71 @@ fn execute_office_turn_command(
     store: &mut KernelStore,
     operation: &PiOfficeTurnOperationId,
     command: PiOfficeTurnCommand,
+    capability: Capability,
+    expected_generation: ExpectedGeneration,
+    body: CommandBody,
+) -> Result<EventBody, PiExecutionError> {
+    let capability_grant_id = store
+        .active_capability_grant(PrincipalId::KERNEL, capability)?
+        .ok_or(PiExecutionError::KernelServiceCapabilityMissing { capability })?;
+    let receipt = store.execute(CommandRequest {
+        command_id: operation.command_id(command)?,
+        principal_id: PrincipalId::KERNEL,
+        capability_grant_id,
+        capability,
+        expected_generation,
+        body,
+    })?;
+    let event_id = match receipt.disposition {
+        CommandDisposition::Accepted(event_id) => event_id,
+        CommandDisposition::Rejected(rejection) => {
+            return Err(PiExecutionError::KernelCommandRejected {
+                capability,
+                rejection,
+            });
+        }
+    };
+    Ok(store.ledger_event(event_id)?.body)
+}
+
+/// Executes one retry-stable KERNEL-service command in the actor-local Prompt
+/// namespace. The namespace is deliberately distinct from Office turns even
+/// though both chains project the same Pi SDK frame vocabulary.
+fn execute_task_attempt_prompt_command(
+    store: &mut KernelStore,
+    operation: &PiTaskAttemptPromptOperationId,
+    command: PiTaskAttemptPromptCommand,
+    capability: Capability,
+    expected_generation: ExpectedGeneration,
+    body: CommandBody,
+) -> Result<EventBody, PiExecutionError> {
+    let capability_grant_id = store
+        .active_capability_grant(PrincipalId::KERNEL, capability)?
+        .ok_or(PiExecutionError::KernelServiceCapabilityMissing { capability })?;
+    let receipt = store.execute(CommandRequest {
+        command_id: operation.command_id(command)?,
+        principal_id: PrincipalId::KERNEL,
+        capability_grant_id,
+        capability,
+        expected_generation,
+        body,
+    })?;
+    let event_id = match receipt.disposition {
+        CommandDisposition::Accepted(event_id) => event_id,
+        CommandDisposition::Rejected(rejection) => {
+            return Err(PiExecutionError::KernelCommandRejected {
+                capability,
+                rejection,
+            });
+        }
+    };
+    Ok(store.ledger_event(event_id)?.body)
+}
+
+fn execute_task_attempt_session_dispose_command(
+    store: &mut KernelStore,
+    operation: &PiTaskAttemptSessionDisposeOperationId,
+    command: PiTaskAttemptSessionDisposeCommand,
     capability: Capability,
     expected_generation: ExpectedGeneration,
     body: CommandBody,
@@ -3310,6 +5706,23 @@ const fn kernel_usage_failure(reason: UsageUnavailableReason) -> PiOfficeTurnUsa
     PiOfficeTurnUsageFailure::Unavailable(reason)
 }
 
+const fn kernel_task_attempt_usage_failure(
+    reason: UsageUnavailableReason,
+) -> PiTaskAttemptUsageFailure {
+    let reason = match reason {
+        UsageUnavailableReason::InvalidSdkUsage => {
+            PiTaskAttemptUsageUnavailableReason::InvalidSdkUsage
+        }
+        UsageUnavailableReason::UsageRegressed => {
+            PiTaskAttemptUsageUnavailableReason::UsageRegressed
+        }
+        UsageUnavailableReason::UsageInconsistent => {
+            PiTaskAttemptUsageUnavailableReason::UsageInconsistent
+        }
+    };
+    PiTaskAttemptUsageFailure::Unavailable(reason)
+}
+
 fn kernel_turn_disposition(
     value: TurnDisposition,
 ) -> Result<PiOfficeTurnDisposition, PiExecutionError> {
@@ -3321,6 +5734,20 @@ fn kernel_turn_disposition(
         TurnDisposition::Aborted => Ok(PiOfficeTurnDisposition::Aborted),
         TurnDisposition::Failed => Ok(PiOfficeTurnDisposition::Failed),
         TurnDisposition::ProtocolFailed => Ok(PiOfficeTurnDisposition::ProtocolFailed),
+    }
+}
+
+fn kernel_task_attempt_disposition(
+    value: TurnDisposition,
+) -> Result<PiTaskAttemptDisposition, PiExecutionError> {
+    match value {
+        TurnDisposition::Pending => Err(PiExecutionError::PromptEvidenceOrder),
+        TurnDisposition::Completed => Ok(PiTaskAttemptDisposition::Completed),
+        TurnDisposition::Length => Ok(PiTaskAttemptDisposition::Length),
+        TurnDisposition::Error => Ok(PiTaskAttemptDisposition::Error),
+        TurnDisposition::Aborted => Ok(PiTaskAttemptDisposition::Aborted),
+        TurnDisposition::Failed => Ok(PiTaskAttemptDisposition::Failed),
+        TurnDisposition::ProtocolFailed => Ok(PiTaskAttemptDisposition::ProtocolFailed),
     }
 }
 
@@ -3369,6 +5796,51 @@ fn kernel_turn_disposition_from_settled(
     }
 }
 
+fn kernel_task_attempt_disposition_from_settled(
+    classification: SettledClassification,
+    outcome: &FinalAssistantOutcome,
+) -> Result<PiTaskAttemptDisposition, PiExecutionError> {
+    match (classification, outcome) {
+        (
+            SettledClassification::Completed,
+            FinalAssistantOutcome::Observed {
+                stop_reason: AssistantStopReason::Stop,
+            },
+        ) => Ok(PiTaskAttemptDisposition::Completed),
+        (
+            SettledClassification::Length,
+            FinalAssistantOutcome::Observed {
+                stop_reason: AssistantStopReason::Length,
+            },
+        ) => Ok(PiTaskAttemptDisposition::Length),
+        (
+            SettledClassification::Error,
+            FinalAssistantOutcome::Observed {
+                stop_reason: AssistantStopReason::Error,
+            },
+        ) => Ok(PiTaskAttemptDisposition::Error),
+        (
+            SettledClassification::Aborted,
+            FinalAssistantOutcome::Observed {
+                stop_reason: AssistantStopReason::Aborted | AssistantStopReason::Stop,
+            },
+        ) => Ok(PiTaskAttemptDisposition::Aborted),
+        (
+            SettledClassification::Failed,
+            FinalAssistantOutcome::Unavailable {
+                reason: society_pi::FinalAssistantUnavailableReason::SdkPromiseRejected,
+            },
+        ) => Ok(PiTaskAttemptDisposition::Failed),
+        (
+            SettledClassification::ProtocolFailed,
+            FinalAssistantOutcome::Unavailable {
+                reason: society_pi::FinalAssistantUnavailableReason::MissingFinalAssistantOutcome,
+            },
+        ) => Ok(PiTaskAttemptDisposition::ProtocolFailed),
+        _ => Err(PiExecutionError::PromptEvidenceOrder),
+    }
+}
+
 fn kernel_assistant_outcome(
     value: &FinalAssistantOutcome,
 ) -> Result<PiOfficeTurnAssistantOutcome, PiExecutionError> {
@@ -3391,6 +5863,31 @@ fn kernel_assistant_outcome(
         FinalAssistantOutcome::Unavailable {
             reason: society_pi::FinalAssistantUnavailableReason::MissingFinalAssistantOutcome,
         } => Ok(PiOfficeTurnAssistantOutcome::MissingFinalAssistantOutcome),
+    }
+}
+
+fn kernel_task_attempt_assistant_outcome(
+    value: &FinalAssistantOutcome,
+) -> Result<PiTaskAttemptAssistantOutcome, PiExecutionError> {
+    match value {
+        FinalAssistantOutcome::Observed {
+            stop_reason: AssistantStopReason::Stop,
+        } => Ok(PiTaskAttemptAssistantOutcome::ObservedStop),
+        FinalAssistantOutcome::Observed {
+            stop_reason: AssistantStopReason::Length,
+        } => Ok(PiTaskAttemptAssistantOutcome::ObservedLength),
+        FinalAssistantOutcome::Observed {
+            stop_reason: AssistantStopReason::Error,
+        } => Ok(PiTaskAttemptAssistantOutcome::ObservedError),
+        FinalAssistantOutcome::Observed {
+            stop_reason: AssistantStopReason::Aborted,
+        } => Ok(PiTaskAttemptAssistantOutcome::ObservedAborted),
+        FinalAssistantOutcome::Unavailable {
+            reason: society_pi::FinalAssistantUnavailableReason::SdkPromiseRejected,
+        } => Ok(PiTaskAttemptAssistantOutcome::SdkPromiseRejected),
+        FinalAssistantOutcome::Unavailable {
+            reason: society_pi::FinalAssistantUnavailableReason::MissingFinalAssistantOutcome,
+        } => Ok(PiTaskAttemptAssistantOutcome::MissingFinalAssistantOutcome),
     }
 }
 
@@ -3500,6 +5997,18 @@ fn verify_adapter_facts(
     Ok(())
 }
 
+fn verify_task_attempt_adapter_facts(
+    child: &TaskAttemptPiExecutionChild,
+    facts: &InertChildFacts,
+) -> Result<(), PiExecutionError> {
+    if facts.child_process_id != child.supervised_child_id
+        || kernel_session_identity(&facts.session_identity)? != child.pi_session_identity
+    {
+        return Err(PiExecutionError::AdapterFactMismatch);
+    }
+    Ok(())
+}
+
 fn kernel_liveness(value: crate::supervision::ProcessGroupLiveness) -> KernelLiveness {
     match value {
         crate::supervision::ProcessGroupLiveness::Present => KernelLiveness::Present,
@@ -3566,6 +6075,61 @@ fn kernel_digest_from_hex(text: &str) -> Result<KernelDigest, PiExecutionError> 
 /// the bytes.
 fn project_verified_session_transcript(
     operation: &PiOfficeSessionDisposeOperationId,
+    workspace_directory: &AbsolutePath,
+    session_directory: &AbsolutePath,
+    receipt: &TranscriptFlushReceiptV1,
+    seal_limit: ContentSealLimit,
+) -> Result<VerifiedPiSessionTranscript, PiExecutionError> {
+    match receipt {
+        TranscriptFlushReceiptV1::Materialized {
+            session_file,
+            session_file_blake3,
+            first_user_prompt,
+            ..
+        } => {
+            let session_file = canonical_transcript_path(session_file)?;
+            let expected_digest = kernel_digest_from_hex(session_file_blake3.as_str())?;
+            let bytes = read_verified_transcript_bytes(
+                workspace_directory,
+                session_directory,
+                session_file.as_str(),
+                seal_limit,
+            )?;
+            if KernelDigest::of_bytes(&bytes) != expected_digest {
+                return Err(PiExecutionError::TranscriptDigestMismatch);
+            }
+            let first_user_prompt = match first_user_prompt {
+                FirstUserPromptReceipt::Absent => PiOfficeSessionFirstUserPromptReceipt::Absent,
+                FirstUserPromptReceipt::Verified { digest } => {
+                    PiOfficeSessionFirstUserPromptReceipt::Verified {
+                        digest: kernel_digest_from_hex(digest.as_str())?,
+                    }
+                }
+            };
+            Ok(VerifiedPiSessionTranscript::Materialized(
+                VerifiedPiSessionTranscriptSealRequest {
+                    content_operation: operation.transcript_content_operation(expected_digest)?,
+                    session_file,
+                    session_file_digest: expected_digest,
+                    first_user_prompt,
+                    bytes,
+                },
+            ))
+        }
+        TranscriptFlushReceiptV1::UnmaterializedNoPrompt { session_file, .. } => {
+            Ok(VerifiedPiSessionTranscript::UnmaterializedNoPrompt {
+                session_file: canonical_transcript_path(session_file)?,
+            })
+        }
+    }
+}
+
+/// TaskAttempt counterpart of [`project_verified_session_transcript`]. The
+/// filesystem proof and received bytes are identical, but its content-seal
+/// operation is a separate task-disposal namespace so retrying one actor close
+/// can never reuse an Office transcript registration.
+fn project_task_attempt_session_transcript(
+    operation: &PiTaskAttemptSessionDisposeOperationId,
     workspace_directory: &AbsolutePath,
     session_directory: &AbsolutePath,
     receipt: &TranscriptFlushReceiptV1,
@@ -3808,6 +6372,8 @@ pub(crate) enum PiExecutionError {
     InvalidLifecycle,
     #[error("an Office Pi child requires the exact RootAuthorityOffice session kind")]
     OfficeSessionKindRequired,
+    #[error("a TaskAttempt Pi child requires the exact TaskAttempt session kind")]
+    TaskAttemptSessionKindRequired,
     #[error("the supplied Office prompt text is empty or differs from its sealed digest")]
     PromptContentDigestMismatch,
     #[error("validated Pi usage could not be represented by the exact kernel accounting types")]
@@ -3899,16 +6465,24 @@ mod tests {
 
     use society_content::{ContentSealLimit, ContentStoreRoot};
     use society_kernel::{
-        AdmissionGeneration, ApplicationIdentity, ApplicationMissionInput, ApplicationName,
-        ApplicationRevisionOrdinal, Blake3Digest as KernelDigest, BudgetReservationId, Capability,
-        CommandBody, CommandDisposition, CommandId, CommandRequest, ExpectedGeneration,
-        KernelStore, MissionPrinciple, MissionPrincipleKind, MissionPrincipleText,
-        MissionPrinciples, MissionStatement, NorthStarBoundaryCommitmentQuestion,
-        NorthStarChangeQuestion, NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet,
-        NorthStarRevisitQuestion, OfficeTurnId, OfficeTurnPurpose, OperatingCycleId,
-        OperatingCycleTreatment, PiProtocolSequence, PrincipalDisplayName, PrincipalId, Rejection,
+        ActorAttemptId, ActorConfigurationName, ActorConfigurationRevisionId, ActorInstanceId,
+        ActorModelPolicy, AdmissionGeneration, ApplicationIdentity, ApplicationMissionInput,
+        ApplicationName, ApplicationRevisionId, ApplicationRevisionOrdinal,
+        Blake3Digest as KernelDigest, BudgetReservationId, Capability, CommandBody,
+        CommandDisposition, CommandId, CommandRequest, ContextPackId, ContextPackPurpose,
+        DevelopmentalAttractor, ExpectedGeneration, KernelStore, MissionPrinciple,
+        MissionPrincipleKind, MissionPrincipleText, MissionPrinciples, MissionStatement,
+        NorthStarBoundaryCommitmentQuestion, NorthStarChangeQuestion,
+        NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet, NorthStarRevisitQuestion,
+        OfficeTurnId, OfficeTurnPurpose, OperatingCycleId, OperatingCycleTreatment,
+        PiCorrelationIdentity, PiProtocolSequence, PrincipalDisplayName, PrincipalId, ProjectId,
+        ProjectMilestoneName, ProjectName, ProjectNorthStarAlignment,
+        ProjectNorthStarBoundaryCommitmentAnswer, ProjectNorthStarChangeAnswer,
+        ProjectNorthStarImprovementEvidenceAnswer, ProjectNorthStarRevisitAnswer,
+        ProjectObjectiveText, ProjectState, ProjectStopConditionText, Rejection,
         RootAuthorityOfficeSessionId, SocietyName, SupervisorEpochId, SupervisorEpochIdentity,
-        UsdMicros,
+        TicketAcceptanceConditionText, TicketId, TicketTitle, UsdMicros, WorkAssignmentText,
+        WorkItemId, WorkItemKind,
     };
     #[cfg(feature = "test-support")]
     use society_kernel::{CancellationMode, CancellationPropagationId, CancellationRequestId};
@@ -3927,10 +6501,48 @@ mod tests {
         OfficePiExecutionStart, OfficePiSessionDisposeOutput, OfficePiSessionDisposeStart,
         OfficePiSpawnRegistration, OfficePiTurnOutput, OfficePiTurnStart, PiExecutionDriver,
         PiExecutionOperationId, PiOfficeSessionDisposeCommand, PiOfficeSessionDisposeOperationId,
-        PiOfficeTurnCommand, PiOfficeTurnOperationId, SealedOfficePrompt,
-        VerifiedPiSessionTranscript, project_verified_session_transcript,
-        read_verified_transcript_bytes,
+        PiOfficeTurnCommand, PiOfficeTurnOperationId, PiTaskAttemptPromptCommand,
+        PiTaskAttemptPromptOperationId, PiTaskAttemptSessionDisposeCommand,
+        PiTaskAttemptSessionDisposeOperationId, SealedOfficePrompt, SealedTaskAttemptPrompt,
+        TaskAttemptPiExecutionStart, TaskAttemptPiPromptOutput, TaskAttemptPiPromptStart,
+        TaskAttemptPiSessionDisposeOutput, TaskAttemptPiSessionDisposeStart,
+        TaskAttemptPiSpawnRegistration, VerifiedPiSessionTranscript,
+        project_verified_session_transcript, read_verified_transcript_bytes,
     };
+
+    #[test]
+    fn task_attempt_operation_namespaces_cannot_alias_office_receipts() {
+        let label = "same-operation-label";
+        let office = PiOfficeTurnOperationId::parse(label).unwrap();
+        let task_prompt = PiTaskAttemptPromptOperationId::parse(label).unwrap();
+        let task_dispose = PiTaskAttemptSessionDisposeOperationId::parse(label).unwrap();
+        assert_ne!(
+            office
+                .command_id(PiOfficeTurnCommand::AuthorizePrompt)
+                .unwrap(),
+            task_prompt
+                .command_id(PiTaskAttemptPromptCommand::AuthorizePrompt)
+                .unwrap()
+        );
+        assert_ne!(
+            task_prompt
+                .command_id(PiTaskAttemptPromptCommand::RecordTerminal)
+                .unwrap(),
+            task_dispose
+                .command_id(PiTaskAttemptSessionDisposeCommand::RecordDisposed)
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn sealed_task_assignment_rejects_digest_drift() {
+        let text = "only exact task assignment bytes may reach Pi".to_owned();
+        assert!(
+            SealedTaskAttemptPrompt::new(text.clone(), KernelDigest::of_bytes(text.as_bytes()),)
+                .is_ok()
+        );
+        assert!(SealedTaskAttemptPrompt::new(text, KernelDigest::of_bytes(b"different"),).is_err());
+    }
     use crate::{
         content::{ContentSealOperationId, ContentSealingAuthority},
         supervision::{
@@ -3939,6 +6551,313 @@ mod tests {
             QualifiedHostExecution, SupervisedChildId, VerifiedArtifact,
         },
     };
+
+    #[test]
+    fn task_attempt_path_rejects_root_office_session_before_admission() {
+        let fixture = NativeFixture::new("task-attempt-office-session");
+        let mut store = KernelStore::connect_test().unwrap();
+        let office = found_office_start(&mut store, &fixture, "task-attempt-office-session");
+        let mut driver = PiExecutionDriver::new();
+        let error = driver
+            .admit_task_attempt_spawn_and_register(
+                &mut store,
+                TaskAttemptPiExecutionStart {
+                    operation: PiExecutionOperationId::parse("task-attempt-office-session")
+                        .unwrap(),
+                    operating_cycle_id: office.cycle_id,
+                    actor_attempt_id: society_kernel::ActorAttemptId::new(1).unwrap(),
+                    budget_reservation_id: BudgetReservationId::new(1).unwrap(),
+                    execution_profile_id:
+                        society_kernel::ExecutionProfileId::DETERMINISTIC_PI_HOST_DOUBLE_V1,
+                    expected_generation: AdmissionGeneration::INITIAL,
+                    supervisor_epoch_id: SupervisorEpochId::new(1).unwrap(),
+                    supervisor_epoch_identity: office.epoch_identity,
+                    spawn_request: fixture.spawn_request(),
+                },
+            )
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            super::PiExecutionError::TaskAttemptSessionKindRequired
+        ));
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn task_attempt_path_rejects_non_running_actor_owner_before_native_spawn() {
+        let fixture = NativeFixture::new("task-attempt-invalid-owner");
+        let mut store = KernelStore::connect_test().unwrap();
+        let office = found_office_start(&mut store, &fixture, "task-attempt-invalid-owner");
+        let mut request = fixture.spawn_request();
+        request.create_session.session_kind = SessionKind::TaskAttempt;
+        let mut driver = PiExecutionDriver::new();
+        let error = driver
+            .admit_task_attempt_spawn_and_register(
+                &mut store,
+                TaskAttemptPiExecutionStart {
+                    operation: PiExecutionOperationId::parse("task-attempt-invalid-owner").unwrap(),
+                    operating_cycle_id: office.cycle_id,
+                    // No ActorAttempt with this identity is running. The
+                    // kernel must reject the closed ActorAttempt owner before
+                    // this bridge asks the supervisor to spawn anything.
+                    actor_attempt_id: society_kernel::ActorAttemptId::new(1).unwrap(),
+                    budget_reservation_id: BudgetReservationId::new(1).unwrap(),
+                    execution_profile_id:
+                        society_kernel::ExecutionProfileId::DETERMINISTIC_PI_HOST_DOUBLE_V1,
+                    expected_generation: AdmissionGeneration::INITIAL,
+                    supervisor_epoch_id: SupervisorEpochId::new(1).unwrap(),
+                    supervisor_epoch_identity: office.epoch_identity,
+                    spawn_request: request,
+                },
+            )
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            super::PiExecutionError::KernelCommandRejected {
+                capability: Capability::AdmitPiChildSpawn,
+                rejection: Rejection::ChildSpawnAdmissionInvalid,
+            }
+        ));
+        fixture.cleanup();
+    }
+
+    /// A TaskAttempt session must prove the same physical suffix as an Office
+    /// session without borrowing either Office identity or Office prompt
+    /// authority. This is intentionally a native-child regression rather than
+    /// a synthetic kernel receipt chain: it exercises the actual Create,
+    /// TaskAssignment, final accounting, transcript custody, Dispose, and
+    /// direct-child reconciliation boundaries an admitted live study runner
+    /// will rely on.
+    #[test]
+    fn task_attempt_native_child_runs_prompt_dispose_and_reconciles() {
+        let fixture = NativeFixture::new("task-attempt-full-lifecycle");
+        let mut store = KernelStore::connect_test().unwrap();
+        let office = found_office_start(&mut store, &fixture, "task-attempt-full-lifecycle");
+        let task = running_task_attempt(&mut store, &office);
+        let mut driver = PiExecutionDriver::new();
+        let start = TaskAttemptPiExecutionStart {
+            operation: PiExecutionOperationId::parse("task-attempt-full-lifecycle").unwrap(),
+            operating_cycle_id: office.cycle_id,
+            actor_attempt_id: task.actor_attempt_id,
+            budget_reservation_id: task.budget_reservation_id,
+            execution_profile_id:
+                society_kernel::ExecutionProfileId::DETERMINISTIC_PI_HOST_DOUBLE_V1,
+            expected_generation: AdmissionGeneration::INITIAL,
+            supervisor_epoch_id: SupervisorEpochId::new(1).unwrap(),
+            supervisor_epoch_identity: office.epoch_identity.clone(),
+            spawn_request: fixture.task_attempt_spawn_request(),
+        };
+        let mut child = match driver
+            .admit_task_attempt_spawn_and_register(&mut store, start)
+            .unwrap()
+        {
+            TaskAttemptPiSpawnRegistration::Ready(child) => child,
+            other => panic!("task fixture must start a registered child: {other:?}"),
+        };
+        assert_eq!(child.actor_attempt_id(), task.actor_attempt_id);
+        wait_for_task_attempt_adapter_ready(&mut driver, &mut store, &mut child);
+        let create_progress = driver
+            .authorize_and_begin_task_attempt_create(
+                &mut store,
+                &mut child,
+                MonotonicTick::from_milliseconds(1),
+                ControlWriteDeadline::at(MonotonicTick::from_milliseconds(1_000)),
+            )
+            .unwrap();
+        if create_progress == crate::supervision::ControlWriteProgress::Pending {
+            drive_task_attempt_create_until_delivered(
+                &mut driver,
+                &mut store,
+                &mut child,
+                2,
+                1_000,
+            );
+        }
+        wait_for_task_attempt_session_ready(&mut driver, &mut store, &mut child);
+
+        let prompt_text = "Complete one bounded disposable-actor task.";
+        let prompt_content = seal_prompt_content(
+            &mut store,
+            &fixture,
+            "task-attempt-full-prompt",
+            prompt_text,
+        );
+        // Prompt authorization binds the exact current accepted ledger
+        // frontier, which is the content-registration event just committed by
+        // `seal_prompt_content`; an earlier actor-start event would permit a
+        // stale prompt to overtake newly sealed content.
+        let prompt_content_operation =
+            ContentSealOperationId::parse("task-attempt-full-prompt", prompt_content.digest)
+                .unwrap();
+        let prompt_frontier_event_id = match store
+            .command_receipt(prompt_content_operation.register_content_object_command_id())
+            .unwrap()
+            .unwrap()
+            .disposition
+        {
+            CommandDisposition::Accepted(event_id) => event_id,
+            other => panic!("task prompt content must have a registration event: {other:?}"),
+        };
+        let (mut prompt, prompt_progress) = driver
+            .authorize_and_begin_task_attempt_prompt(
+                &mut store,
+                &mut child,
+                TaskAttemptPiPromptStart {
+                    operation: PiTaskAttemptPromptOperationId::parse("task-attempt-full-prompt")
+                        .unwrap(),
+                    correlation_identity: PiCorrelationIdentity::parse("task-attempt-full-prompt")
+                        .unwrap(),
+                    prompt_content_object_id: prompt_content.content_object_id,
+                    prompt: SealedTaskAttemptPrompt::new(
+                        prompt_text.to_owned(),
+                        prompt_content.digest,
+                    )
+                    .unwrap(),
+                    frontier_event_id: prompt_frontier_event_id,
+                },
+                MonotonicTick::from_milliseconds(1_001),
+                ControlWriteDeadline::at(MonotonicTick::from_milliseconds(2_000)),
+            )
+            .unwrap();
+        if prompt_progress == crate::supervision::ControlWriteProgress::Pending {
+            drive_task_attempt_prompt_until_delivered(
+                &mut driver,
+                &mut store,
+                &mut child,
+                &mut prompt,
+                1_002,
+                2_000,
+            );
+        }
+        let mut terminal_recorded = false;
+        for tick in 1_002..3_000 {
+            let Some(output) = driver
+                .observe_task_attempt_prompt_output(
+                    &mut store,
+                    &mut child,
+                    &mut prompt,
+                    MonotonicTick::from_milliseconds(tick),
+                )
+                .unwrap()
+            else {
+                thread::sleep(Duration::from_millis(1));
+                continue;
+            };
+            if matches!(output, TaskAttemptPiPromptOutput::TerminalRecorded) {
+                terminal_recorded = true;
+                break;
+            }
+        }
+        assert!(
+            terminal_recorded,
+            "TaskAssignment must reach a durable terminal receipt"
+        );
+        assert_eq!(child.phase(), "task_prompt_terminal_recorded");
+
+        let (mut dispose, dispose_progress) = driver
+            .begin_task_attempt_session_dispose(
+                &mut store,
+                &mut child,
+                TaskAttemptPiSessionDisposeStart {
+                    operation: PiTaskAttemptSessionDisposeOperationId::parse(
+                        "task-attempt-full-dispose",
+                    )
+                    .unwrap(),
+                    correlation_identity: PiCorrelationIdentity::parse("task-attempt-full-dispose")
+                        .unwrap(),
+                },
+                MonotonicTick::from_milliseconds(3_001),
+                ControlWriteDeadline::at(MonotonicTick::from_milliseconds(4_000)),
+            )
+            .unwrap();
+        if dispose_progress == crate::supervision::ControlWriteProgress::Pending {
+            drive_task_attempt_dispose_until_delivered(
+                &mut driver,
+                &mut store,
+                &mut child,
+                &mut dispose,
+                3_002,
+                4_000,
+            );
+        }
+        let transcript_content = ContentSealingAuthority::open(
+            ContentStoreRoot::parse(fixture.root.join("task-attempt-transcript-content")).unwrap(),
+            ContentSealLimit::new(4 * 1024 * 1024).unwrap(),
+        )
+        .unwrap();
+        let mut disposed = false;
+        for tick in 3_002..5_000 {
+            let Some(output) = driver
+                .observe_task_attempt_session_dispose_output(
+                    &mut store,
+                    &mut child,
+                    &mut dispose,
+                    MonotonicTick::from_milliseconds(tick),
+                    HandshakeDeadline::at(MonotonicTick::from_milliseconds(5_000)),
+                    ContentSealLimit::new(4 * 1024 * 1024).unwrap(),
+                )
+                .unwrap()
+            else {
+                thread::sleep(Duration::from_millis(1));
+                continue;
+            };
+            if let TaskAttemptPiSessionDisposeOutput::TranscriptReady(terminal) = output {
+                let sealed_content = match terminal.transcript() {
+                    VerifiedPiSessionTranscript::Materialized(request) => Some(
+                        transcript_content
+                            .seal_and_register(
+                                &mut store,
+                                request.content_operation(),
+                                request.bytes(),
+                            )
+                            .unwrap(),
+                    ),
+                    VerifiedPiSessionTranscript::UnmaterializedNoPrompt { .. } => {
+                        panic!("a completed TaskAssignment must materialize a transcript")
+                    }
+                };
+                assert!(matches!(
+                    driver
+                        .record_task_attempt_session_disposed(
+                            &mut store,
+                            &mut child,
+                            &mut dispose,
+                            &terminal,
+                            sealed_content,
+                            MonotonicTick::from_milliseconds(tick),
+                        )
+                        .unwrap(),
+                    TaskAttemptPiSessionDisposeOutput::Disposed
+                ));
+                disposed = true;
+                break;
+            }
+        }
+        assert!(
+            disposed,
+            "TaskAttempt disposal must commit after transcript custody"
+        );
+        assert_eq!(child.phase(), "disposed");
+        for tick in 5_000..6_000 {
+            if driver
+                .poll_task_attempt_reap_and_reconcile(
+                    &mut store,
+                    &transcript_content,
+                    &mut child,
+                    MonotonicTick::from_milliseconds(tick),
+                )
+                .unwrap()
+            {
+                break;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(child.phase(), "reconciled");
+        store.validate_replayed_materialized_state().unwrap();
+        drop(child);
+        drop(driver);
+        fixture.cleanup();
+    }
 
     static NEXT_TEMPORARY: AtomicU64 = AtomicU64::new(1);
     static PROCESS_PHYSICS_FIXTURE_GUARD: OnceLock<Mutex<()>> = OnceLock::new();
@@ -6835,10 +9754,138 @@ mod tests {
         panic!("direct child did not reach ordered reconciliation")
     }
 
+    fn wait_for_task_attempt_adapter_ready(
+        driver: &mut PiExecutionDriver,
+        store: &mut KernelStore,
+        child: &mut super::TaskAttemptPiExecutionChild,
+    ) {
+        for tick in 0..1_000 {
+            if driver
+                .observe_task_attempt_adapter_ready(
+                    store,
+                    child,
+                    MonotonicTick::from_milliseconds(tick),
+                    HandshakeDeadline::at(MonotonicTick::from_milliseconds(1_000)),
+                )
+                .unwrap()
+            {
+                return;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        panic!("provider-free host never reached TaskAttempt AdapterReady")
+    }
+
+    fn drive_task_attempt_create_until_delivered(
+        driver: &mut PiExecutionDriver,
+        store: &mut KernelStore,
+        child: &mut super::TaskAttemptPiExecutionChild,
+        first_tick: u64,
+        deadline_tick: u64,
+    ) {
+        for tick in first_tick..deadline_tick {
+            if driver
+                .drive_task_attempt_create_delivery(
+                    store,
+                    child,
+                    MonotonicTick::from_milliseconds(tick),
+                )
+                .unwrap()
+                == crate::supervision::ControlWriteProgress::Delivered
+            {
+                return;
+            }
+        }
+        panic!("provider-free TaskAttempt CreateSession frame did not reach stdin")
+    }
+
+    fn wait_for_task_attempt_session_ready(
+        driver: &mut PiExecutionDriver,
+        store: &mut KernelStore,
+        child: &mut super::TaskAttemptPiExecutionChild,
+    ) {
+        for tick in 2..1_000 {
+            if driver
+                .observe_task_attempt_session_ready(
+                    store,
+                    child,
+                    MonotonicTick::from_milliseconds(tick),
+                    HandshakeDeadline::at(MonotonicTick::from_milliseconds(1_000)),
+                )
+                .unwrap()
+            {
+                assert_eq!(child.phase(), "session_ready_recorded");
+                return;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        panic!("provider-free host never reached TaskAttempt SessionReady")
+    }
+
+    fn drive_task_attempt_prompt_until_delivered(
+        driver: &mut PiExecutionDriver,
+        store: &mut KernelStore,
+        child: &mut super::TaskAttemptPiExecutionChild,
+        prompt: &mut super::TaskAttemptPiPrompt,
+        first_tick: u64,
+        deadline_tick: u64,
+    ) {
+        for tick in first_tick..deadline_tick {
+            if driver
+                .drive_task_attempt_prompt_delivery(
+                    store,
+                    child,
+                    prompt,
+                    MonotonicTick::from_milliseconds(tick),
+                )
+                .unwrap()
+                == crate::supervision::ControlWriteProgress::Delivered
+            {
+                return;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        panic!("provider-free TaskAssignment Prompt did not reach a complete physical write")
+    }
+
+    fn drive_task_attempt_dispose_until_delivered(
+        driver: &mut PiExecutionDriver,
+        store: &mut KernelStore,
+        child: &mut super::TaskAttemptPiExecutionChild,
+        dispose: &mut super::TaskAttemptPiSessionDispose,
+        first_tick: u64,
+        deadline_tick: u64,
+    ) {
+        for tick in first_tick..deadline_tick {
+            if driver
+                .drive_task_attempt_session_dispose_delivery(
+                    store,
+                    child,
+                    dispose,
+                    MonotonicTick::from_milliseconds(tick),
+                )
+                .unwrap()
+                == crate::supervision::ControlWriteProgress::Delivered
+            {
+                return;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        panic!("provider-free TaskAttempt Dispose did not reach a complete physical write")
+    }
+
     struct OfficeStart {
         cycle_id: OperatingCycleId,
         session_id: RootAuthorityOfficeSessionId,
         epoch_identity: SupervisorEpochIdentity,
+    }
+
+    /// The exact M3 identities needed for an actor-owned Pi child. Keeping
+    /// the attempt and reservation together prevents the native TaskAttempt
+    /// regression from accidentally borrowing the Office session's budget.
+    struct RunningTaskAttempt {
+        actor_attempt_id: ActorAttemptId,
+        budget_reservation_id: BudgetReservationId,
     }
 
     fn office_bridge_application_mission() -> ApplicationMissionInput {
@@ -7011,6 +10058,206 @@ mod tests {
             cycle_id,
             session_id: RootAuthorityOfficeSessionId::new(1).unwrap(),
             epoch_identity,
+        }
+    }
+
+    fn running_task_attempt(store: &mut KernelStore, office: &OfficeStart) -> RunningTaskAttempt {
+        let root_authority = PrincipalId::new(3).unwrap();
+        let actor_principal = PrincipalId::new(4).unwrap();
+        let generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
+        let project_id = ProjectId::new(1).unwrap();
+        accepted(
+            store,
+            "task-live-create-project",
+            root_authority,
+            Capability::CreateProject,
+            generation,
+            CommandBody::CreateProject {
+                operating_cycle_id: office.cycle_id,
+                project_name: ProjectName::parse("Task lifecycle proof").unwrap(),
+                north_star_alignment: ProjectNorthStarAlignment {
+                    application_revision_id: ApplicationRevisionId::new(1).unwrap(),
+                    change_answer: ProjectNorthStarChangeAnswer::parse(
+                        "Prove one bounded task lifecycle.",
+                    )
+                    .unwrap(),
+                    improvement_evidence_answer: ProjectNorthStarImprovementEvidenceAnswer::parse(
+                        "A native-child replay must validate.",
+                    )
+                    .unwrap(),
+                    boundary_commitment_answer: ProjectNorthStarBoundaryCommitmentAnswer::parse(
+                        "Do not borrow Office authority.",
+                    )
+                    .unwrap(),
+                    revisit_answer: ProjectNorthStarRevisitAnswer::parse(
+                        "Review after the actor session closes.",
+                    )
+                    .unwrap(),
+                },
+            },
+        );
+        accepted(
+            store,
+            "task-live-challenge-project",
+            root_authority,
+            Capability::TransitionProject,
+            generation,
+            CommandBody::TransitionProject {
+                operating_cycle_id: office.cycle_id,
+                project_id,
+                target: ProjectState::Challenged,
+            },
+        );
+        accepted(
+            store,
+            "task-live-charter-project",
+            root_authority,
+            Capability::CharterProject,
+            generation,
+            CommandBody::CharterProject {
+                operating_cycle_id: office.cycle_id,
+                project_id,
+                objective: ProjectObjectiveText::parse("Exercise one bounded task attempt.")
+                    .unwrap(),
+                initial_milestone: ProjectMilestoneName::parse("Finish the task session").unwrap(),
+                stop_condition: ProjectStopConditionText::parse(
+                    "The native session is reconciled.",
+                )
+                .unwrap(),
+            },
+        );
+        accepted(
+            store,
+            "task-live-activate-project",
+            root_authority,
+            Capability::TransitionProject,
+            generation,
+            CommandBody::TransitionProject {
+                operating_cycle_id: office.cycle_id,
+                project_id,
+                target: ProjectState::Active,
+            },
+        );
+        accepted(
+            store,
+            "task-live-create-ticket",
+            root_authority,
+            Capability::CreateTicket,
+            generation,
+            CommandBody::CreateTicket {
+                operating_cycle_id: office.cycle_id,
+                project_id,
+                ticket_title: TicketTitle::parse("Run task actor").unwrap(),
+                acceptance_condition: TicketAcceptanceConditionText::parse(
+                    "The actor runtime is reconciled.",
+                )
+                .unwrap(),
+                prerequisite_ticket_id: None,
+            },
+        );
+        accepted(
+            store,
+            "task-live-register-config",
+            root_authority,
+            Capability::RegisterActorConfiguration,
+            ExpectedGeneration::NotApplicable,
+            CommandBody::RegisterActorConfiguration {
+                configuration_name: ActorConfigurationName::parse("task actor").unwrap(),
+                model_policy: ActorModelPolicy::PinnedDeepseekV4FlashHigh,
+                primary_attractor: DevelopmentalAttractor::Challenge,
+            },
+        );
+        accepted(
+            store,
+            "task-live-register-context",
+            root_authority,
+            Capability::RegisterContextPack,
+            generation,
+            CommandBody::RegisterContextPack {
+                operating_cycle_id: office.cycle_id,
+                purpose: ContextPackPurpose::TicketExecution,
+                rendering_digest: KernelDigest::of_bytes(b"task-live-context"),
+            },
+        );
+        accepted(
+            store,
+            "task-live-admit-actor",
+            root_authority,
+            Capability::AdmitActorInstance,
+            generation,
+            CommandBody::AdmitActorInstance {
+                operating_cycle_id: office.cycle_id,
+                actor_configuration_revision_id: ActorConfigurationRevisionId::new(1).unwrap(),
+                execution_profile_id:
+                    society_kernel::ExecutionProfileId::DETERMINISTIC_PI_HOST_DOUBLE_V1,
+                actor_display_name: PrincipalDisplayName::parse("task actor").unwrap(),
+            },
+        );
+        accepted(
+            store,
+            "task-live-admit-ticket",
+            root_authority,
+            Capability::AdmitTicket,
+            generation,
+            CommandBody::AdmitTicket {
+                operating_cycle_id: office.cycle_id,
+                ticket_id: TicketId::new(1).unwrap(),
+            },
+        );
+        accepted(
+            store,
+            "task-live-register-work",
+            root_authority,
+            Capability::RegisterWorkItem,
+            generation,
+            CommandBody::RegisterWorkItem {
+                operating_cycle_id: office.cycle_id,
+                ticket_id: TicketId::new(1).unwrap(),
+                actor_instance_id: ActorInstanceId::new(1).unwrap(),
+                context_pack_id: ContextPackId::new(1).unwrap(),
+                work_kind: WorkItemKind::TicketExecution,
+                adversarial_review_id: None,
+                assignment: WorkAssignmentText::parse("Run the bounded task actor.").unwrap(),
+            },
+        );
+        accepted(
+            store,
+            "task-live-claim-work",
+            actor_principal,
+            Capability::ClaimWorkItem,
+            generation,
+            CommandBody::ClaimWorkItem {
+                operating_cycle_id: office.cycle_id,
+                work_item_id: WorkItemId::new(1).unwrap(),
+            },
+        );
+        let capability = Capability::StartActorAttempt;
+        let receipt = store
+            .execute(CommandRequest {
+                command_id: CommandId::parse("task-live-start-attempt").unwrap(),
+                principal_id: root_authority,
+                capability_grant_id: store
+                    .active_capability_grant(root_authority, capability)
+                    .unwrap()
+                    .unwrap(),
+                capability,
+                expected_generation: generation,
+                body: CommandBody::StartActorAttempt {
+                    operating_cycle_id: office.cycle_id,
+                    work_item_id: WorkItemId::new(1).unwrap(),
+                    reservation_amount: UsdMicros::new(5_000).unwrap(),
+                },
+            })
+            .unwrap();
+        let CommandDisposition::Accepted(_) = receipt.disposition else {
+            panic!("task actor attempt must be admitted: {receipt:?}")
+        };
+        RunningTaskAttempt {
+            actor_attempt_id: ActorAttemptId::new(1).unwrap(),
+            // The founding helper reserved one Office budget first; this M3
+            // attempt owns the next reservation and the kernel checks that
+            // exact relation during TaskAttempt child admission.
+            budget_reservation_id: BudgetReservationId::new(2).unwrap(),
         }
     }
 
@@ -7434,6 +10681,15 @@ mod tests {
                     .unwrap(),
                 create_session: self.create.clone(),
             }
+        }
+
+        fn task_attempt_spawn_request(&self) -> PiSpawnRequest {
+            let mut request = self.spawn_request();
+            request.create_correlation_identity =
+                CorrelationIdentity::parse("create-task-attempt-bridge").unwrap();
+            request.create_session.session_kind = SessionKind::TaskAttempt;
+            request.create_session.tool_profile = ToolProfile::ForumIsolatedV1;
+            request
         }
 
         fn cleanup(self) {

@@ -12,7 +12,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use society_kernel::{Capability, CapabilityGrantId, PrincipalId};
+use society_kernel::{
+    Capability, CapabilityGrantId, PrincipalId, StudyPairId, StudyPairObservation, StudyRunId,
+    StudyRunObservation, StudyRunPairOrdinal, StudyRunPairRegistrationObservation,
+};
 use societyd::protocol::{
     self, ClientCommandRequest, CommandReceiptView, CorrelationId, DaemonStatus, ProtocolErrorCode,
     PublicRequest, Response, SupervisorRequest,
@@ -36,6 +39,8 @@ pub enum SocietyctlError {
     CorrelationMismatch,
     #[error("daemon returned an unexpected response variant")]
     UnexpectedResponse,
+    #[error("daemon omitted an ordinal registration named by a study-run summary")]
+    StudyRunRegistrationMissing,
     #[error("failed to contain an inherited supervisor descriptor: {0}")]
     AuthorityDescriptor(io::Error),
 }
@@ -82,6 +87,116 @@ impl SocietyctlClient {
                 code,
             } if received == correlation => Err(SocietyctlError::Daemon(code)),
             Response::Status { .. } | Response::Error { .. } => {
+                Err(SocietyctlError::CorrelationMismatch)
+            }
+            _ => Err(SocietyctlError::UnexpectedResponse),
+        }
+    }
+
+    /// Reads the normalized durable facts of one retained/reset pair through
+    /// the daemon. This never opens PostgreSQL from the client or returns
+    /// application-owned private content bytes.
+    pub fn study_pair_observation(
+        &self,
+        correlation: CorrelationId,
+        pair_id: StudyPairId,
+    ) -> Result<Option<StudyPairObservation>, SocietyctlError> {
+        match self.round_trip(PublicRequest::StudyPairObservation {
+            correlation,
+            pair_id,
+        })? {
+            Response::StudyPairObservation {
+                correlation: received,
+                pair,
+            } if received == correlation => Ok(pair),
+            Response::Error {
+                correlation: received,
+                code,
+            } if received == correlation => Err(SocietyctlError::Daemon(code)),
+            Response::StudyPairObservation { .. } | Response::Error { .. } => {
+                Err(SocietyctlError::CorrelationMismatch)
+            }
+            _ => Err(SocietyctlError::UnexpectedResponse),
+        }
+    }
+
+    /// Reads a finite admitted run's immutable plan identity and every
+    /// ordinal-ordered registered pair identity. The run summary is bounded;
+    /// registrations are fetched individually so a valid 10,000-pair run
+    /// never exceeds the daemon protocol's fixed frame limit. The plan bytes
+    /// remain in the content plane.
+    pub fn study_run_observation(
+        &self,
+        correlation: CorrelationId,
+        study_run_id: StudyRunId,
+    ) -> Result<Option<StudyRunObservation>, SocietyctlError> {
+        let summary = match self.round_trip(PublicRequest::StudyRunObservation {
+            correlation,
+            study_run_id,
+        })? {
+            Response::StudyRunSummary {
+                correlation: received,
+                study_run,
+            } if received == correlation => Ok(study_run),
+            Response::Error {
+                correlation: received,
+                code,
+            } if received == correlation => Err(SocietyctlError::Daemon(code)),
+            Response::StudyRunSummary { .. } | Response::Error { .. } => {
+                Err(SocietyctlError::CorrelationMismatch)
+            }
+            _ => Err(SocietyctlError::UnexpectedResponse),
+        }?;
+        let Some(summary) = summary else {
+            return Ok(None);
+        };
+        let mut pairs = Vec::with_capacity(usize::from(summary.registered_pair_count.value()));
+        for ordinal in 1..=summary.registered_pair_count.value() {
+            let pair_ordinal = StudyRunPairOrdinal::new(ordinal)
+                .expect("registered pair count is bounded by the domain type");
+            let registration = self
+                .study_run_pair_registration(correlation, study_run_id, pair_ordinal)?
+                .ok_or(SocietyctlError::StudyRunRegistrationMissing)?;
+            if registration.pair_ordinal != pair_ordinal {
+                return Err(SocietyctlError::UnexpectedResponse);
+            }
+            pairs.push(registration);
+        }
+        Ok(Some(StudyRunObservation {
+            study_run_id: summary.study_run_id,
+            protocol_revision_id: summary.protocol_revision_id,
+            plan_content_object_id: summary.plan_content_object_id,
+            plan_digest: summary.plan_digest,
+            pair_count: summary.pair_count,
+            registered_pair_count: summary.registered_pair_count,
+            lifecycle_state: summary.lifecycle_state,
+            pairs,
+        }))
+    }
+
+    /// Reads one exact ordinal registration from a study run. This is useful
+    /// to streaming analysis clients and is the bounded transport primitive
+    /// used by [`Self::study_run_observation`].
+    pub fn study_run_pair_registration(
+        &self,
+        correlation: CorrelationId,
+        study_run_id: StudyRunId,
+        pair_ordinal: StudyRunPairOrdinal,
+    ) -> Result<Option<StudyRunPairRegistrationObservation>, SocietyctlError> {
+        match self.round_trip(PublicRequest::StudyRunPairRegistration {
+            correlation,
+            study_run_id,
+            pair_ordinal,
+        })? {
+            Response::StudyRunPairRegistration {
+                correlation: received,
+                registration,
+            } if received == correlation => Ok(registration),
+            Response::Error {
+                correlation: received,
+                code,
+            } if received == correlation => Err(SocietyctlError::Daemon(code)),
+            Response::StudyRunPairRegistration { .. } | Response::Error { .. } => {
                 Err(SocietyctlError::CorrelationMismatch)
             }
             _ => Err(SocietyctlError::UnexpectedResponse),

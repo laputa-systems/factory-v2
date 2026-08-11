@@ -41,8 +41,10 @@ typed institutional transition admitted it before the actor terminated.
 ```text
 sealed StudyProtocolRevision
   -> admitted world and measurement revisions
+  -> sealed application RunPlan admitted by content identity and digest
   -> source PopulationSnapshot, InstitutionRevision, and EpisodeForum
   -> paired Episode admissions with fixed budgets
+  -> finite matched-pair set registered against the RunPlan
   -> treatment assignment before treatment-dependent work
   -> disposable source-actor obligations with identical Forum prompt contract
   -> immutable attributed chronological Messages and read receipts
@@ -70,6 +72,14 @@ they are not application payloads. `KernelStore::execute_study_transition`
 is the service-custody bridge used by provider-free doubles, and
 `KernelStore::validate_replayed_materialized_state` reconstructs the accepted
 shared ledger into a fresh schema before comparing all study and Forum state.
+`StudyRun` is the durable restart anchor for a finite experiment: it retains
+only a sealed application plan `ContentObject` identity, its digest, the
+protocol revision, and ordinal matched-pair registrations. The kernel never
+parses plan bytes; `KernelStore::study_run_observation` returns just the typed
+custody facts a resident coordinator needs to resume safely. Its durable
+lifecycle is `Pairing → Ready → Running → Completed`; completion is accepted
+only after both episodes of every registered pair independently close, so a
+planned analysis can distinguish a started run from an analysis-eligible one.
 
 The isolated `applications/correction-latency/correction-latency-harness`
 admits the canonical world, runs the eight-role retained/reset pair, emits a
@@ -183,11 +193,16 @@ scoped, uncertain, non-authoritative, and not evidence that a Message is true.
 The F0 profile exposes only explicit `society_forum_read` and
 `society_forum_post` actions. There is no polling or asynchronous `Steer`
 delivery. The resident daemon now owns the typed call-to-study-transition/result
-bridge and durable obligation-to-runtime binding; its binding cannot close
-before native-child finalization. The paid smoke still routes calls through a
-bounded local Forum authority, and a full daemon-owned CL-001 scheduler with
-paired live episode execution, cancellation, and disposal receipts remains
-required for canonical evidence.
+bridge and durable obligation-to-runtime binding. Its separate `TaskAttempt`
+bridge owns the actor-attempt child through CreateSession, a digest-bound
+one-shot TaskAssignment prompt, bounded Forum call/result delivery, terminal
+accounting, Dispose, transcript custody, and final native-child reconciliation;
+it never borrows an Office identity or command namespace. The binding cannot
+close before native-child finalization. It can also recover the generic sealed
+`StudyRun` and its finite pair registrations without seeing application bytes.
+The paid smoke still routes calls through a bounded local Forum authority; a
+full daemon-owned CL-001 scheduler with paired live episode execution and
+treatment-aware cancellation remains required for canonical evidence.
 
 ### Intervention
 
@@ -207,7 +222,9 @@ No source actor is alive when the correction is published.
 ### Measurement
 
 Measurements are derived from retained raw facts under a sealed analysis
-revision. CL-001 requires:
+revision. A measurement revision also seals its complete finite slot count;
+an episode cannot close until every declared slot has an `Observed`,
+`Unavailable`, or `Invalidated` result. CL-001 requires:
 
 - correction adoption latency;
 - final decision correctness against ground truth;
@@ -310,12 +327,28 @@ produces a null primary latency result as an admissible outcome.
 
 The Pi host now has a separately admitted live Forum custom-tool transport, and
 the resident daemon has the corresponding typed call/result bridge plus a
-durable obligation-to-runtime binding. The binding is tested against the
-native-child receipt chain and cannot reconcile until the child is finalized.
-The paid smoke still exercises a bounded local Forum authority directly; it is
-not an application-level substitute for a full daemon-owned CL-001 scheduler,
-paired live episode execution, cancellation, Pi-session disposal, and
-canonical scientific evidence.
+durable obligation-to-runtime binding. Its TaskAttempt-native bridge owns the
+one-shot prompt, accounting terminal, Dispose, transcript custody, and native
+reconciliation under the actor attempt rather than an Office identity. The
+binding is tested against the native-child receipt chain and cannot reconcile
+until the child is finalized.
+The generic ledger also admits sealed finite study runs and their matched-pair
+set for recovery, but it does not itself schedule that set. The paid smoke
+still exercises a bounded local Forum authority directly; it is not an
+application-level substitute for a full daemon-owned CL-001 scheduler,
+paired live episode execution, treatment-aware cancellation, and canonical
+scientific evidence.
+
+The named daemon monitor also exposes a read-only normalized `StudyRun` query
+(the sealed plan identity plus ordinal registered pair identities) and a
+read-only `StudyPair` query (both arm facts, lifecycle counts, and typed
+measurements). `societyctl` carries those values without a PostgreSQL URL or
+raw application-content access. The CL-001 analysis adapter joins the
+application plan's pair labels and seed digests to that exact registered
+ordinal sequence before it renders a planned artifact. This makes future
+analysis retrievable through the authority boundary; it does not make a
+partially executed pair scientifically eligible: the application also requires
+the matching sealed plan digest and terminal `StudyRun::Completed` receipt.
 
 The Pi host also exposes an opt-in `workspace_isolated_v1` runner profile for
 non-Forum SDK exercises. It preserves the admitted catalog and prompt boundary,

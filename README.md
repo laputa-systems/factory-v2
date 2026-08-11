@@ -46,10 +46,12 @@ The trusted-physics layer and one narrow provider-free experiment path are
 implemented today. `applications/correction-latency` executes a deterministic
 retained/reset Forum pair through the generic ledger and reports raw-derived
 measurements plus controls. The Pi host has the isolated Forum tool transport,
-and the resident daemon has the typed transition/result and native-child
-binding bridge. A full daemon-owned live scheduler and paired live episode
-runner remain; the next work is to close those named experimental boundaries,
-not to fill in a general-purpose swarm framework.
+and the resident daemon has the typed transition/result and TaskAttempt-native
+child/prompt/disposal bridge. The ledger also admits an opaque sealed run plan
+and its finite matched-pair set for restart-safe coordination. A full daemon-owned live
+scheduler and paired live episode runner remain; the next work is to close
+those named experimental boundaries, not to fill in a general-purpose swarm
+framework.
 
 For isolated SDK exercises, the Pi host also offers opt-in
 `workspace_isolated_v1`: canonical workspace-bound file tools, no shell or
@@ -66,6 +68,12 @@ is direct adapter qualification, not yet daemon-owned CL-001 custody or
 scientific evidence. Pass `PROVIDER` and `MODEL` to select the same admitted
 treatment for every actor; the default is the paid
 `openrouter/inclusionai/ling-2.6-flash` treatment for the first paid smoke.
+Each run retains a `qualification-artifact.json` in its printed run directory.
+That host-bound artifact carries a BLAKE3 digest and contains the exact actor
+usage/cost rows, Forum post bodies and read intervals, model/catalog identity,
+and explicit `absent` PostgreSQL/daemon and `not_executed` CL-001 lifecycle
+markers. It makes the smoke auditable without presenting its in-memory shared
+Forum as institutional evidence.
 The credential-free provider catalog, retaining DeepSeek alongside free Ling,
 Laguna, and paid Ling 2.6, is saved at
 `packages/society-pi-host/catalogs/openrouter-admitted-models-v1.json`.
@@ -91,9 +99,34 @@ Set `SOCIETY_DATABASE_SCHEMA` when the ledger lives in a private PostgreSQL
 schema; otherwise the daemon uses the database's default schema.
 
 The schema is a single authoritative fresh bootstrap from
-`schema/postgres/kernel.sql`. `societyd` connects to that schema,
+`schema/postgres/kernel.sql`. On a new, empty database, apply that bootstrap
+before starting the daemon (it is intentionally not an online migration):
+
+```sh
+if [ -n "${SOCIETY_DATABASE_SCHEMA:-}" ]; then
+  psql "$SOCIETY_DATABASE_URL" -v ON_ERROR_STOP=1 -c \
+    "CREATE SCHEMA IF NOT EXISTS \"$SOCIETY_DATABASE_SCHEMA\""
+  PGOPTIONS="-c search_path=$SOCIETY_DATABASE_SCHEMA" \
+    psql "$SOCIETY_DATABASE_URL" -v ON_ERROR_STOP=1 \
+      -f schema/postgres/kernel.sql
+else
+  psql "$SOCIETY_DATABASE_URL" -v ON_ERROR_STOP=1 \
+    -f schema/postgres/kernel.sql
+fi
+```
+
+The command is expected to run against an administrator-approved blank
+database; it does not import or transform the former SQLite database. Once
+bootstrapped, `societyd` connects to that schema,
 validates ledger replay before binding its socket, and holds a dedicated
 PostgreSQL advisory lock for its lifetime.
+The bootstrap also writes the exact schema identity as a PostgreSQL schema
+comment. `make postgres-test-ready` checks that identity before reusing either
+its public database or its template, so it rebuilds rather than silently
+testing against a stale schema with coincidentally matching table names.
+It intentionally does not delete active private test fixtures. When no
+Society test process is running, `make postgres-test-clean` removes stale
+`society_test_*` fixtures without force-disconnecting a concurrent process.
 The filesystem `societyd.lock` remains responsible only for the runtime root.
 
 For health and ownership diagnostics, query the selected database and inspect

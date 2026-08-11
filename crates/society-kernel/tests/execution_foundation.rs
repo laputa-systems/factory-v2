@@ -15,9 +15,9 @@ use society_kernel::{
     AdmissionGeneration, AdversarialReviewId, ApplicationIdentity, ApplicationMissionInput,
     ApplicationName, ApplicationRevisionId, ApplicationRevisionOrdinal, Blake3Digest,
     BudgetReservationId, CancellationMode, CancellationPropagationId, CancellationRequestId,
-    CanonicalWorkspacePath, Capability, ChildRecoveryObservation, ChildStreamKind,
-    ChildStreamSealCompleteness, CommandBody, CommandDisposition, CommandId, CommandReceipt,
-    CommandRequest, ContentObjectId, ContentSealReceiptId, ContextPackPurpose,
+    CanonicalPiSessionTranscriptPath, CanonicalWorkspacePath, Capability, ChildRecoveryObservation,
+    ChildStreamKind, ChildStreamSealCompleteness, CommandBody, CommandDisposition, CommandId,
+    CommandReceipt, CommandRequest, ContentObjectId, ContentSealReceiptId, ContextPackPurpose,
     DeterministicEvaluationReceiptId, DeterministicEvaluatorScheduleClaim,
     DeterministicEvaluatorScheduleClaimRequest, DeterministicExperimentId, DevelopmentalAttractor,
     DirectChildWaitStatus, EvaluatorRevisionId, EventBody, EventId, EvidenceApplicability,
@@ -30,16 +30,23 @@ use society_kernel::{
     NorthStarRevisitQuestion, OfficeTurnPurpose, OperatingCycleId, OperatingCycleTreatment,
     OutcomeObligationDisposition, OutcomeObligationId, OutcomeObligationText, OwnedProcessGroupId,
     PiAbortControlWriteOutcome, PiBoundarySessionIdentity, PiChildOwner, PiCorrelationIdentity,
-    PrincipalDisplayName, PrincipalId, ProcessExitCode, ProcessGroupLiveness, ProcessSignalAction,
-    ProcessSignalCause, ProcessSignalDelivery, ProjectId, ProjectMilestoneId, ProjectMilestoneName,
-    ProjectName, ProjectNorthStarAlignment, ProjectNorthStarBoundaryCommitmentAnswer,
+    PiCumulativeUsage, PiProtocolSequence, PiTaskAttemptAssistantOutcome, PiTaskAttemptDisposition,
+    PiTaskAttemptSessionTranscriptReceipt, PiTaskAttemptTerminalEvidence,
+    PiTaskAttemptTranscriptDisposition, PiTokenCount, PrincipalDisplayName, PrincipalId,
+    ProcessExitCode, ProcessGroupLiveness, ProcessSignalAction, ProcessSignalCause,
+    ProcessSignalDelivery, ProjectId, ProjectMilestoneId, ProjectMilestoneName, ProjectName,
+    ProjectNorthStarAlignment, ProjectNorthStarBoundaryCommitmentAnswer,
     ProjectNorthStarChangeAnswer, ProjectNorthStarImprovementEvidenceAnswer,
     ProjectNorthStarRevisitAnswer, ProjectObjectiveText, ProjectState, ProjectStopConditionText,
-    Rejection, RetentionAccessClass, ReviewChallengeId, ReviewChallengeSeverity,
-    ReviewDispositionKind, ReviewFailureHypothesis, ReviewResolutionKind, ReviewResponseText,
-    RootAuthorityOfficeSessionId, SocietyName, SpawnNonce, StoreError, SupervisedChildIdentity,
-    SupervisorEpochId, SupervisorEpochIdentity, TicketAcceptanceConditionText, TicketId,
-    TicketTitle, UsdMicros, WorkAssignmentText, WorkItemId, WorkItemKind, WorkLeaseId,
+    ProviderCostBinary64, Rejection, RetentionAccessClass, ReviewChallengeId,
+    ReviewChallengeSeverity, ReviewDispositionKind, ReviewFailureHypothesis, ReviewResolutionKind,
+    ReviewResponseText, RootAuthorityOfficeSessionId, SocietyName, SpawnNonce, StoreError,
+    StudyActorRuntimeBindingState, StudyActorRuntimeOwner, StudyBudgetUnits, StudyCommand,
+    StudyEvent, StudyPopulationPhase, StudyRoleOrdinal, StudyTransitionDisposition, StudyTreatment,
+    SupervisedChildIdentity, SupervisorEpochId, SupervisorEpochIdentity,
+    TicketAcceptanceConditionText, TicketId, TicketTitle, UsdMicros, WorkAssignmentText,
+    WorkItemId, WorkItemKind, WorkLeaseId, forum_f0_awareness_digest,
+    forum_f0_tool_contract_digest,
 };
 
 fn example_application_mission() -> ApplicationMissionInput {
@@ -130,6 +137,145 @@ fn accepted(
         "{command_id}: {receipt:?}"
     );
     receipt
+}
+
+fn accepted_study(store: &mut KernelStore, command_id: &str, command: StudyCommand) -> StudyEvent {
+    let receipt = store
+        .execute_study_transition(CommandId::parse(command_id).unwrap(), command)
+        .unwrap();
+    match receipt.disposition {
+        StudyTransitionDisposition::Accepted(event) => event,
+        StudyTransitionDisposition::Rejected(rejection) => {
+            panic!("{command_id}: study transition unexpectedly rejected: {rejection:?}")
+        }
+    }
+}
+
+/// Installs the smallest closed study surface needed to exercise a runtime
+/// binding.  The helper deliberately carries only sealed generic study IDs;
+/// the M3 project/ticket setup remains outside the study transition.
+fn minimal_study_obligation(
+    store: &mut KernelStore,
+    label: &str,
+) -> society_kernel::StudyActorObligationId {
+    let protocol = match accepted_study(
+        store,
+        &format!("{label}-protocol"),
+        StudyCommand::AdmitProtocolRevision {
+            application_revision_id: ApplicationRevisionId::new(1).unwrap(),
+            protocol_digest: Blake3Digest::of_bytes(format!("{label}-protocol").as_bytes()),
+            actor_policy_digest: Blake3Digest::of_bytes(format!("{label}-policy").as_bytes()),
+            forum_prompt_digest: forum_f0_awareness_digest(),
+            forum_tool_digest: forum_f0_tool_contract_digest(),
+            evidence_digest: Blake3Digest::of_bytes(format!("{label}-evidence").as_bytes()),
+            ground_truth_commitment_digest: Blake3Digest::of_bytes(
+                format!("{label}-truth").as_bytes(),
+            ),
+            correction_digest: Blake3Digest::of_bytes(format!("{label}-correction").as_bytes()),
+            topology_digest: Blake3Digest::of_bytes(format!("{label}-topology").as_bytes()),
+            episode_budget: StudyBudgetUnits::new(10).unwrap(),
+        },
+    ) {
+        StudyEvent::ProtocolRevisionAdmitted {
+            protocol_revision_id,
+        } => protocol_revision_id,
+        other => panic!("unexpected study protocol event: {other:?}"),
+    };
+    let world = match accepted_study(
+        store,
+        &format!("{label}-world"),
+        StudyCommand::AdmitWorldRevision {
+            protocol_revision_id: protocol,
+            world_digest: Blake3Digest::of_bytes(format!("{label}-world").as_bytes()),
+        },
+    ) {
+        StudyEvent::WorldRevisionAdmitted { world_revision_id } => world_revision_id,
+        other => panic!("unexpected study world event: {other:?}"),
+    };
+    let measurement = match accepted_study(
+        store,
+        &format!("{label}-measurement"),
+        StudyCommand::AdmitMeasurementRevision {
+            protocol_revision_id: protocol,
+            analysis_digest: Blake3Digest::of_bytes(format!("{label}-analysis").as_bytes()),
+            measurement_slot_count: society_kernel::StudyMeasurementSlotCount::new(1).unwrap(),
+        },
+    ) {
+        StudyEvent::MeasurementRevisionAdmitted {
+            measurement_revision_id,
+        } => measurement_revision_id,
+        other => panic!("unexpected study measurement event: {other:?}"),
+    };
+    let institution = match accepted_study(
+        store,
+        &format!("{label}-institution"),
+        StudyCommand::AdmitInstitutionRevision {
+            protocol_revision_id: protocol,
+            institution_digest: Blake3Digest::of_bytes(format!("{label}-institution").as_bytes()),
+        },
+    ) {
+        StudyEvent::InstitutionRevisionAdmitted {
+            institution_revision_id,
+        } => institution_revision_id,
+        other => panic!("unexpected study institution event: {other:?}"),
+    };
+    let population = match accepted_study(
+        store,
+        &format!("{label}-population"),
+        StudyCommand::AdmitPopulationSnapshot {
+            protocol_revision_id: protocol,
+            population_digest: Blake3Digest::of_bytes(format!("{label}-population").as_bytes()),
+            population_size: 1,
+        },
+    ) {
+        StudyEvent::PopulationSnapshotAdmitted {
+            population_snapshot_id,
+        } => population_snapshot_id,
+        other => panic!("unexpected study population event: {other:?}"),
+    };
+    let episode = match accepted_study(
+        store,
+        &format!("{label}-episode"),
+        StudyCommand::AdmitEpisode {
+            protocol_revision_id: protocol,
+            world_revision_id: world,
+            measurement_revision_id: measurement,
+            institution_revision_id: institution,
+            population_snapshot_id: population,
+            randomization_digest: Blake3Digest::of_bytes(
+                format!("{label}-randomization").as_bytes(),
+            ),
+        },
+    ) {
+        StudyEvent::EpisodeAdmitted { episode_id } => episode_id,
+        other => panic!("unexpected study episode event: {other:?}"),
+    };
+    accepted_study(
+        store,
+        &format!("{label}-treatment"),
+        StudyCommand::AssignTreatment {
+            episode_id: episode,
+            treatment: StudyTreatment::Retained,
+        },
+    );
+    match accepted_study(
+        store,
+        &format!("{label}-obligation"),
+        StudyCommand::AdmitActorObligation {
+            episode_id: episode,
+            phase: StudyPopulationPhase::Source,
+            role: StudyRoleOrdinal::new(1).unwrap(),
+            private_view_digest: Blake3Digest::of_bytes(format!("{label}-view").as_bytes()),
+            prompt_digest: forum_f0_awareness_digest(),
+            tool_digest: forum_f0_tool_contract_digest(),
+            budget: StudyBudgetUnits::new(3).unwrap(),
+            read_budget: society_kernel::ForumReadBudget::new(1).unwrap(),
+            post_budget: society_kernel::ForumPostBudget::new(1).unwrap(),
+        },
+    ) {
+        StudyEvent::ActorObligationAdmitted { obligation_id, .. } => obligation_id,
+        other => panic!("unexpected study obligation event: {other:?}"),
+    }
 }
 
 fn rejected(
@@ -1860,6 +2006,7 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
         },
     );
     let first_attempt = ActorAttemptId::new(1).unwrap();
+
     // Cancellation is a durable control request, then a separate trusted
     // terminal fact. A cancellation request cannot silently become success,
     // nor may a terminal fact manufacture cancellation from a running Attempt.
@@ -2745,6 +2892,784 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
             .is_err()
     );
     let _ = fs::remove_file(path);
+}
+
+#[test]
+fn study_task_attempt_recovery_settlement_preserves_unknown_accounting() {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("society-study-recovery-{nonce}"));
+    let mut store = KernelStore::connect_test_path(&path).unwrap();
+    let (root_authority, cycle) = founded_cycle(
+        &mut store,
+        OperatingCycleTreatment::DeterministicPiHostFixtureV1,
+    );
+    let generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
+    let project = active_project(&mut store, root_authority, cycle);
+    accepted(
+        &mut store,
+        "study-recovery-create-ticket",
+        root_authority,
+        Capability::CreateTicket,
+        generation,
+        CommandBody::CreateTicket {
+            operating_cycle_id: cycle,
+            project_id: project,
+            ticket_title: TicketTitle::parse("Recover study actor").unwrap(),
+            acceptance_condition: TicketAcceptanceConditionText::parse(
+                "The study actor recovery is explicit.",
+            )
+            .unwrap(),
+            prerequisite_ticket_id: None,
+        },
+    );
+    accepted(
+        &mut store,
+        "study-recovery-register-config",
+        root_authority,
+        Capability::RegisterActorConfiguration,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::RegisterActorConfiguration {
+            configuration_name: ActorConfigurationName::parse("recovery actor").unwrap(),
+            model_policy: ActorModelPolicy::PinnedDeepseekV4FlashHigh,
+            primary_attractor: DevelopmentalAttractor::Challenge,
+        },
+    );
+    accepted(
+        &mut store,
+        "study-recovery-register-context",
+        root_authority,
+        Capability::RegisterContextPack,
+        generation,
+        CommandBody::RegisterContextPack {
+            operating_cycle_id: cycle,
+            purpose: ContextPackPurpose::TicketExecution,
+            rendering_digest: Blake3Digest::of_bytes(b"study-recovery-context"),
+        },
+    );
+    accepted(
+        &mut store,
+        "study-recovery-admit-actor",
+        root_authority,
+        Capability::AdmitActorInstance,
+        generation,
+        CommandBody::AdmitActorInstance {
+            operating_cycle_id: cycle,
+            actor_configuration_revision_id: ActorConfigurationRevisionId::new(1).unwrap(),
+            execution_profile_id: ExecutionProfileId::DETERMINISTIC_PI_HOST_DOUBLE_V1,
+            actor_display_name: PrincipalDisplayName::parse("recovery actor").unwrap(),
+        },
+    );
+    accepted(
+        &mut store,
+        "study-recovery-admit-ticket",
+        root_authority,
+        Capability::AdmitTicket,
+        generation,
+        CommandBody::AdmitTicket {
+            operating_cycle_id: cycle,
+            ticket_id: TicketId::new(1).unwrap(),
+        },
+    );
+    accepted(
+        &mut store,
+        "study-recovery-register-work",
+        root_authority,
+        Capability::RegisterWorkItem,
+        generation,
+        CommandBody::RegisterWorkItem {
+            operating_cycle_id: cycle,
+            ticket_id: TicketId::new(1).unwrap(),
+            actor_instance_id: ActorInstanceId::new(1).unwrap(),
+            context_pack_id: society_kernel::ContextPackId::new(1).unwrap(),
+            work_kind: WorkItemKind::TicketExecution,
+            adversarial_review_id: None,
+            assignment: WorkAssignmentText::parse("Recover the admitted study actor.").unwrap(),
+        },
+    );
+    accepted(
+        &mut store,
+        "study-recovery-claim-work",
+        PrincipalId::new(4).unwrap(),
+        Capability::ClaimWorkItem,
+        generation,
+        CommandBody::ClaimWorkItem {
+            operating_cycle_id: cycle,
+            work_item_id: WorkItemId::new(1).unwrap(),
+        },
+    );
+    accepted(
+        &mut store,
+        "study-recovery-start-attempt",
+        root_authority,
+        Capability::StartActorAttempt,
+        generation,
+        CommandBody::StartActorAttempt {
+            operating_cycle_id: cycle,
+            work_item_id: WorkItemId::new(1).unwrap(),
+            reservation_amount: UsdMicros::new(5_000).unwrap(),
+        },
+    );
+    let actor_attempt = ActorAttemptId::new(1).unwrap();
+    let epoch = SupervisorEpochId::new(1).unwrap();
+    let epoch_identity = SupervisorEpochIdentity::parse("study-recovery-epoch").unwrap();
+    accepted(
+        &mut store,
+        "study-recovery-open-epoch",
+        PrincipalId::KERNEL,
+        Capability::OpenSupervisorEpoch,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::OpenSupervisorEpoch {
+            supervisor_epoch_id: epoch,
+            supervisor_epoch_identity: epoch_identity.clone(),
+        },
+    );
+    accepted(
+        &mut store,
+        "study-recovery-admit-child",
+        PrincipalId::KERNEL,
+        Capability::AdmitPiChildSpawn,
+        generation,
+        CommandBody::AdmitPiChildSpawn {
+            operating_cycle_id: cycle,
+            owner: PiChildOwner::ActorAttempt(actor_attempt),
+            budget_reservation_id: BudgetReservationId::new(1).unwrap(),
+            execution_profile_id: ExecutionProfileId::DETERMINISTIC_PI_HOST_DOUBLE_V1,
+            native_workspace_id: NativeWorkspaceId::parse("study-recovery-workspace").unwrap(),
+            canonical_workspace_path: CanonicalWorkspacePath::parse(
+                "/tmp/study-recovery-workspace",
+            )
+            .unwrap(),
+            supervisor_epoch_id: epoch,
+            supervisor_epoch_identity: epoch_identity,
+            pi_session_identity: PiBoundarySessionIdentity::parse("study-recovery-session")
+                .unwrap(),
+            spawn_nonce: SpawnNonce::parse("study-recovery-nonce").unwrap(),
+        },
+    );
+    accepted(
+        &mut store,
+        "study-recovery-record-child",
+        PrincipalId::KERNEL,
+        Capability::RecordInertChildSpawn,
+        generation,
+        CommandBody::RecordInertChildSpawn {
+            native_child_spawn_admission_id: NativeChildSpawnAdmissionId::new(1).unwrap(),
+            child_identity: SupervisedChildIdentity::parse("study-recovery-child").unwrap(),
+            direct_child_pid: NativeChildPid::try_from(8202).unwrap(),
+            process_group_id: OwnedProcessGroupId::try_from(8202).unwrap(),
+        },
+    );
+    let obligation = minimal_study_obligation(&mut store, "study-recovery");
+    accepted_study(
+        &mut store,
+        "study-recovery-bind",
+        StudyCommand::BindActorTaskAttemptRuntime {
+            obligation_id: obligation,
+            actor_attempt_id: actor_attempt,
+            native_child_id: NativeChildId::new(1).unwrap(),
+            native_child_spawn_admission_id: NativeChildSpawnAdmissionId::new(1).unwrap(),
+        },
+    );
+    let recovery_receipt = accepted(
+        &mut store,
+        "study-recovery-record-recovery",
+        PrincipalId::KERNEL,
+        Capability::RecordChildRecovery,
+        generation,
+        CommandBody::RecordChildRecovery {
+            native_child_id: NativeChildId::new(1).unwrap(),
+            observation: ChildRecoveryObservation::ParentageLost,
+            group_liveness_after_restart: ProcessGroupLiveness::Absent,
+        },
+    );
+    let recovery_receipt_id = match recovery_receipt.disposition {
+        CommandDisposition::Accepted(event_id) => {
+            match store.ledger_event(event_id).unwrap().body {
+                EventBody::ChildRecoveryObserved {
+                    native_child_recovery_receipt_id,
+                    ..
+                } => native_child_recovery_receipt_id,
+                other => panic!("unexpected recovery event: {other:?}"),
+            }
+        }
+        CommandDisposition::Rejected(rejection) => {
+            panic!("recovery unexpectedly rejected: {rejection:?}")
+        }
+    };
+    let settled = store
+        .execute_study_transition(
+            CommandId::parse("study-recovery-settle").unwrap(),
+            StudyCommand::SettleActorTaskAttemptAfterRecovery {
+                obligation_id: obligation,
+                actor_attempt_id: actor_attempt,
+                native_child_id: NativeChildId::new(1).unwrap(),
+                native_child_recovery_receipt_id: recovery_receipt_id,
+            },
+        )
+        .unwrap();
+    assert!(matches!(
+        settled.disposition,
+        StudyTransitionDisposition::Accepted(StudyEvent::ActorTaskAttemptRecoverySettled {
+            accounting_state: society_kernel::StudyActorTaskAttemptRecoveryAccountingState::Unknown,
+            ..
+        })
+    ));
+    let binding = store
+        .study_actor_runtime_binding(obligation)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        binding.lifecycle_state,
+        StudyActorRuntimeBindingState::RecoverySettled
+    );
+    let complete = store
+        .execute_study_transition(
+            CommandId::parse("study-recovery-complete").unwrap(),
+            StudyCommand::CompleteActorObligation {
+                obligation_id: obligation,
+                charged_budget: StudyBudgetUnits::ZERO,
+            },
+        )
+        .unwrap();
+    assert!(matches!(
+        complete.disposition,
+        StudyTransitionDisposition::Rejected(Rejection::InvalidLifecycleTransition)
+    ));
+    let failed = accepted_study(
+        &mut store,
+        "study-recovery-fail",
+        StudyCommand::FailActorObligation {
+            obligation_id: obligation,
+            reason_digest: Blake3Digest::of_bytes(b"lost-parentage"),
+        },
+    );
+    assert!(matches!(
+        failed,
+        StudyEvent::ActorObligationFailed { obligation_id: id, .. } if id == obligation
+    ));
+    assert!(store.replay_ledger().is_ok());
+    drop(store);
+    let connection = Connection::connect_test_path(&path).unwrap();
+    let (attempt_state, pi_terminal_receipts, accounting_state): (i64, i64, i64) = connection
+        .query_row(
+            "SELECT attempts.lifecycle_state,
+                    (SELECT COUNT(*) FROM pi_task_attempt_terminal_receipts
+                      WHERE actor_attempt_id = attempts.actor_attempt_id),
+                    (SELECT accounting_state
+                       FROM study_actor_task_attempt_recovery_settlements
+                      WHERE actor_attempt_id = attempts.actor_attempt_id)
+               FROM attempts WHERE actor_attempt_id = $1",
+            [actor_attempt.value()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        attempt_state,
+        ActorAttemptTerminalKind::SupervisorFailed.state() as i64
+    );
+    assert_eq!(pi_terminal_receipts, 0);
+    assert_eq!(accounting_state, 1);
+    drop(connection);
+    assert!(
+        KernelStore::connect_test_path(&path)
+            .unwrap()
+            .validate_replayed_materialized_state()
+            .is_ok()
+    );
+    let tamper = Connection::connect_test_path(&path).unwrap();
+    tamper
+        .execute(
+            "UPDATE study_actor_task_attempt_recovery_settlements
+             SET settled_by_command_id = 1
+             WHERE actor_attempt_id = $1",
+            [actor_attempt.value()],
+        )
+        .unwrap();
+    drop(tamper);
+    assert!(
+        KernelStore::connect_test_path(&path)
+            .unwrap()
+            .validate_replayed_materialized_state()
+            .is_err()
+    );
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn study_task_attempt_binding_requires_and_preserves_task_attempt_owner() {
+    let mut store = KernelStore::connect_test().unwrap();
+    let (root_authority, cycle) = founded_cycle(
+        &mut store,
+        OperatingCycleTreatment::DeterministicPiHostFixtureV1,
+    );
+    let generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
+    let project = active_project(&mut store, root_authority, cycle);
+    accepted(
+        &mut store,
+        "study-task-create-ticket",
+        root_authority,
+        Capability::CreateTicket,
+        generation,
+        CommandBody::CreateTicket {
+            operating_cycle_id: cycle,
+            project_id: project,
+            ticket_title: TicketTitle::parse("Run study actor").unwrap(),
+            acceptance_condition: TicketAcceptanceConditionText::parse(
+                "The study actor runtime is reconciled.",
+            )
+            .unwrap(),
+            prerequisite_ticket_id: None,
+        },
+    );
+    accepted(
+        &mut store,
+        "study-task-register-config",
+        root_authority,
+        Capability::RegisterActorConfiguration,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::RegisterActorConfiguration {
+            configuration_name: ActorConfigurationName::parse("study actor").unwrap(),
+            model_policy: ActorModelPolicy::PinnedDeepseekV4FlashHigh,
+            primary_attractor: DevelopmentalAttractor::Challenge,
+        },
+    );
+    accepted(
+        &mut store,
+        "study-task-register-context",
+        root_authority,
+        Capability::RegisterContextPack,
+        generation,
+        CommandBody::RegisterContextPack {
+            operating_cycle_id: cycle,
+            purpose: ContextPackPurpose::TicketExecution,
+            rendering_digest: Blake3Digest::of_bytes(b"study-task-context"),
+        },
+    );
+    accepted(
+        &mut store,
+        "study-task-admit-actor",
+        root_authority,
+        Capability::AdmitActorInstance,
+        generation,
+        CommandBody::AdmitActorInstance {
+            operating_cycle_id: cycle,
+            actor_configuration_revision_id: ActorConfigurationRevisionId::new(1).unwrap(),
+            execution_profile_id: ExecutionProfileId::DETERMINISTIC_PI_HOST_DOUBLE_V1,
+            actor_display_name: PrincipalDisplayName::parse("study actor").unwrap(),
+        },
+    );
+    accepted(
+        &mut store,
+        "study-task-admit-ticket",
+        root_authority,
+        Capability::AdmitTicket,
+        generation,
+        CommandBody::AdmitTicket {
+            operating_cycle_id: cycle,
+            ticket_id: TicketId::new(1).unwrap(),
+        },
+    );
+    accepted(
+        &mut store,
+        "study-task-register-work",
+        root_authority,
+        Capability::RegisterWorkItem,
+        generation,
+        CommandBody::RegisterWorkItem {
+            operating_cycle_id: cycle,
+            ticket_id: TicketId::new(1).unwrap(),
+            actor_instance_id: ActorInstanceId::new(1).unwrap(),
+            context_pack_id: society_kernel::ContextPackId::new(1).unwrap(),
+            work_kind: WorkItemKind::TicketExecution,
+            adversarial_review_id: None,
+            assignment: WorkAssignmentText::parse("Run the admitted study actor.").unwrap(),
+        },
+    );
+    accepted(
+        &mut store,
+        "study-task-claim-work",
+        PrincipalId::new(4).unwrap(),
+        Capability::ClaimWorkItem,
+        generation,
+        CommandBody::ClaimWorkItem {
+            operating_cycle_id: cycle,
+            work_item_id: WorkItemId::new(1).unwrap(),
+        },
+    );
+    accepted(
+        &mut store,
+        "study-task-start-attempt",
+        root_authority,
+        Capability::StartActorAttempt,
+        generation,
+        CommandBody::StartActorAttempt {
+            operating_cycle_id: cycle,
+            work_item_id: WorkItemId::new(1).unwrap(),
+            reservation_amount: UsdMicros::new(5_000).unwrap(),
+        },
+    );
+    let actor_attempt = ActorAttemptId::new(1).unwrap();
+    let epoch = SupervisorEpochId::new(1).unwrap();
+    let epoch_identity = SupervisorEpochIdentity::parse("study-task-binding-epoch").unwrap();
+    accepted(
+        &mut store,
+        "study-task-binding-open-epoch",
+        PrincipalId::KERNEL,
+        Capability::OpenSupervisorEpoch,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::OpenSupervisorEpoch {
+            supervisor_epoch_id: epoch,
+            supervisor_epoch_identity: epoch_identity.clone(),
+        },
+    );
+    accepted(
+        &mut store,
+        "study-task-binding-admit-child",
+        PrincipalId::KERNEL,
+        Capability::AdmitPiChildSpawn,
+        generation,
+        CommandBody::AdmitPiChildSpawn {
+            operating_cycle_id: cycle,
+            owner: PiChildOwner::ActorAttempt(actor_attempt),
+            budget_reservation_id: BudgetReservationId::new(1).unwrap(),
+            execution_profile_id: ExecutionProfileId::DETERMINISTIC_PI_HOST_DOUBLE_V1,
+            native_workspace_id: NativeWorkspaceId::parse("study-task-binding-workspace").unwrap(),
+            canonical_workspace_path: CanonicalWorkspacePath::parse(
+                "/tmp/study-task-binding-workspace",
+            )
+            .unwrap(),
+            supervisor_epoch_id: epoch,
+            supervisor_epoch_identity: epoch_identity,
+            pi_session_identity: PiBoundarySessionIdentity::parse("study-task-binding-session")
+                .unwrap(),
+            spawn_nonce: SpawnNonce::parse("study-task-binding-nonce").unwrap(),
+        },
+    );
+    accepted(
+        &mut store,
+        "study-task-binding-record-child",
+        PrincipalId::KERNEL,
+        Capability::RecordInertChildSpawn,
+        generation,
+        CommandBody::RecordInertChildSpawn {
+            native_child_spawn_admission_id: NativeChildSpawnAdmissionId::new(1).unwrap(),
+            child_identity: SupervisedChildIdentity::parse("study-task-binding-child").unwrap(),
+            direct_child_pid: NativeChildPid::try_from(8201).unwrap(),
+            process_group_id: OwnedProcessGroupId::try_from(8201).unwrap(),
+        },
+    );
+    let pi_session = PiBoundarySessionIdentity::parse("study-task-binding-session").unwrap();
+    let spawn_nonce = SpawnNonce::parse("study-task-binding-nonce").unwrap();
+    accepted(
+        &mut store,
+        "study-task-prompt-adapter-ready",
+        PrincipalId::KERNEL,
+        Capability::RecordPiAdapterReady,
+        generation,
+        CommandBody::RecordPiAdapterReady {
+            native_child_id: NativeChildId::new(1).unwrap(),
+            pi_session_identity: pi_session.clone(),
+            spawn_nonce: spawn_nonce.clone(),
+        },
+    );
+    let create_correlation = PiCorrelationIdentity::parse("study-task-prompt-create").unwrap();
+    let create_digest = Blake3Digest::of_bytes(b"study-task-prompt-create");
+    accepted(
+        &mut store,
+        "study-task-prompt-authorize-create",
+        PrincipalId::KERNEL,
+        Capability::AuthorizePiCreateSession,
+        generation,
+        CommandBody::AuthorizePiCreateSession {
+            native_child_id: NativeChildId::new(1).unwrap(),
+            correlation_identity: create_correlation.clone(),
+            create_request_digest: create_digest,
+        },
+    );
+    accepted(
+        &mut store,
+        "study-task-prompt-deliver-create",
+        PrincipalId::KERNEL,
+        Capability::RecordPiCreateSessionDelivery,
+        generation,
+        CommandBody::RecordPiCreateSessionDelivery {
+            native_child_id: NativeChildId::new(1).unwrap(),
+            correlation_identity: create_correlation,
+            create_request_digest: create_digest,
+        },
+    );
+    accepted(
+        &mut store,
+        "study-task-prompt-ready",
+        PrincipalId::KERNEL,
+        Capability::RecordPiSessionReady,
+        generation,
+        CommandBody::RecordPiSessionReady {
+            native_child_id: NativeChildId::new(1).unwrap(),
+            pi_session_identity: pi_session,
+        },
+    );
+    let prompt_digest = Blake3Digest::of_bytes(b"study-task-exact-assignment");
+    accepted(
+        &mut store,
+        "study-task-prompt-seal",
+        PrincipalId::KERNEL,
+        Capability::RecordContentSealReceipt,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::RecordContentSealReceipt {
+            digest: prompt_digest,
+        },
+    );
+    let prompt_content_event = accepted(
+        &mut store,
+        "study-task-prompt-register",
+        PrincipalId::KERNEL,
+        Capability::RegisterContentObject,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::RegisterContentObject {
+            content_seal_receipt_id: ContentSealReceiptId::new(2).unwrap(),
+        },
+    );
+    let frontier_event_id = match prompt_content_event.disposition {
+        CommandDisposition::Accepted(event_id) => event_id,
+        CommandDisposition::Rejected(_) => unreachable!(),
+    };
+    let prompt_correlation = PiCorrelationIdentity::parse("study-task-assignment-prompt").unwrap();
+    accepted(
+        &mut store,
+        "study-task-prompt-authorize",
+        PrincipalId::KERNEL,
+        Capability::AuthorizePiTaskAttemptPrompt,
+        generation,
+        CommandBody::AuthorizePiTaskAttemptPrompt {
+            actor_attempt_id: actor_attempt,
+            correlation_identity: prompt_correlation.clone(),
+            prompt_content_object_id: ContentObjectId::new(2).unwrap(),
+            prompt_digest,
+            frontier_event_id,
+        },
+    );
+    accepted(
+        &mut store,
+        "study-task-prompt-deliver",
+        PrincipalId::KERNEL,
+        Capability::RecordPiTaskAttemptPromptDelivery,
+        generation,
+        CommandBody::RecordPiTaskAttemptPromptDelivery {
+            actor_attempt_id: actor_attempt,
+            correlation_identity: prompt_correlation.clone(),
+            prompt_digest,
+        },
+    );
+    accepted(
+        &mut store,
+        "study-task-prompt-accept",
+        PrincipalId::KERNEL,
+        Capability::RecordPiTaskAttemptPromptAccepted,
+        generation,
+        CommandBody::RecordPiTaskAttemptPromptAccepted {
+            actor_attempt_id: actor_attempt,
+            correlation_identity: prompt_correlation.clone(),
+            command_result_sequence: PiProtocolSequence::try_from(1).unwrap(),
+        },
+    );
+    let usage = PiCumulativeUsage {
+        input_tokens: PiTokenCount::try_from(1).unwrap(),
+        output_tokens: PiTokenCount::try_from(1).unwrap(),
+        cache_read_tokens: PiTokenCount::try_from(1).unwrap(),
+        cache_write_tokens: PiTokenCount::try_from(1).unwrap(),
+        total_tokens: PiTokenCount::try_from(4).unwrap(),
+        provider_cost: ProviderCostBinary64::from_big_endian(0.000004_f64.to_bits().to_be_bytes())
+            .unwrap(),
+        ceiling_micro_usd: UsdMicros::new(4).unwrap(),
+    };
+    accepted(
+        &mut store,
+        "study-task-prompt-usage",
+        PrincipalId::KERNEL,
+        Capability::RecordPiTaskAttemptUsage,
+        generation,
+        CommandBody::RecordPiTaskAttemptUsage {
+            actor_attempt_id: actor_attempt,
+            correlation_identity: prompt_correlation.clone(),
+            protocol_sequence: PiProtocolSequence::try_from(3).unwrap(),
+            usage,
+        },
+    );
+    accepted(
+        &mut store,
+        "study-task-prompt-terminal",
+        PrincipalId::KERNEL,
+        Capability::RecordPiTaskAttemptTerminal,
+        generation,
+        CommandBody::RecordPiTaskAttemptTerminal {
+            actor_attempt_id: actor_attempt,
+            correlation_identity: prompt_correlation,
+            terminal_evidence: PiTaskAttemptTerminalEvidence::ObservedAssistant {
+                agent_settled_sequence: PiProtocolSequence::try_from(2).unwrap(),
+                final_accounting_sequence: PiProtocolSequence::try_from(3).unwrap(),
+            },
+            settled_sequence: PiProtocolSequence::try_from(4).unwrap(),
+            disposition: PiTaskAttemptDisposition::Completed,
+            assistant_outcome: PiTaskAttemptAssistantOutcome::ObservedStop,
+            transcript_disposition:
+                PiTaskAttemptTranscriptDisposition::DeferredUntilTaskAttemptSessionDispose,
+        },
+    );
+    let dispose_correlation =
+        PiCorrelationIdentity::parse("study-task-assignment-dispose").unwrap();
+    accepted(
+        &mut store,
+        "study-task-dispose-authorize",
+        PrincipalId::KERNEL,
+        Capability::AuthorizePiTaskAttemptSessionDispose,
+        generation,
+        CommandBody::AuthorizePiTaskAttemptSessionDispose {
+            actor_attempt_id: actor_attempt,
+            correlation_identity: dispose_correlation.clone(),
+        },
+    );
+    accepted(
+        &mut store,
+        "study-task-dispose-deliver",
+        PrincipalId::KERNEL,
+        Capability::RecordPiTaskAttemptSessionDisposeDelivery,
+        generation,
+        CommandBody::RecordPiTaskAttemptSessionDisposeDelivery {
+            actor_attempt_id: actor_attempt,
+            correlation_identity: dispose_correlation.clone(),
+        },
+    );
+    accepted(
+        &mut store,
+        "study-task-dispose-accept",
+        PrincipalId::KERNEL,
+        Capability::RecordPiTaskAttemptSessionDisposeAccepted,
+        generation,
+        CommandBody::RecordPiTaskAttemptSessionDisposeAccepted {
+            actor_attempt_id: actor_attempt,
+            correlation_identity: dispose_correlation.clone(),
+            command_result_sequence: PiProtocolSequence::try_from(5).unwrap(),
+        },
+    );
+    accepted(
+        &mut store,
+        "study-task-dispose-usage",
+        PrincipalId::KERNEL,
+        Capability::RecordPiTaskAttemptSessionDisposeUsage,
+        generation,
+        CommandBody::RecordPiTaskAttemptSessionDisposeUsage {
+            actor_attempt_id: actor_attempt,
+            correlation_identity: dispose_correlation.clone(),
+            protocol_sequence: PiProtocolSequence::try_from(6).unwrap(),
+            usage,
+        },
+    );
+    accepted(
+        &mut store,
+        "study-task-dispose-receipt",
+        PrincipalId::KERNEL,
+        Capability::RecordPiTaskAttemptSessionDisposed,
+        generation,
+        CommandBody::RecordPiTaskAttemptSessionDisposed {
+            actor_attempt_id: actor_attempt,
+            correlation_identity: dispose_correlation,
+            disposed_sequence: PiProtocolSequence::try_from(7).unwrap(),
+            transcript_receipt: PiTaskAttemptSessionTranscriptReceipt::UnmaterializedNoPrompt {
+                session_file: CanonicalPiSessionTranscriptPath::parse(
+                    "/tmp/study-task-assignment.jsonl",
+                )
+                .unwrap(),
+            },
+        },
+    );
+    let obligation = minimal_study_obligation(&mut store, "study-task-binding");
+    let obligation_observations = store
+        .study_actor_obligation_observations(society_kernel::StudyEpisodeId::new(1).unwrap())
+        .unwrap();
+    assert_eq!(obligation_observations.len(), 1);
+    assert_eq!(obligation_observations[0].obligation_id, obligation);
+    assert_eq!(
+        obligation_observations[0].lifecycle_state,
+        society_kernel::StudyActorObligationState::Active
+    );
+    assert_eq!(obligation_observations[0].reads_used, 0);
+    assert_eq!(obligation_observations[0].posts_used, 0);
+    let bound = accepted_study(
+        &mut store,
+        "study-task-binding-bind",
+        StudyCommand::BindActorTaskAttemptRuntime {
+            obligation_id: obligation,
+            actor_attempt_id: actor_attempt,
+            native_child_id: NativeChildId::new(1).unwrap(),
+            native_child_spawn_admission_id: NativeChildSpawnAdmissionId::new(1).unwrap(),
+        },
+    );
+    assert!(matches!(
+        bound,
+        StudyEvent::ActorTaskAttemptRuntimeBound {
+            obligation_id,
+            actor_attempt_id,
+            ..
+        } if obligation_id == obligation && actor_attempt_id == actor_attempt
+    ));
+    let binding = store
+        .study_actor_runtime_binding(obligation)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        binding.owner,
+        StudyActorRuntimeOwner::TaskAttempt(actor_attempt)
+    );
+    assert_eq!(
+        binding.lifecycle_state,
+        StudyActorRuntimeBindingState::Bound
+    );
+    let recovery_receipt = accepted(
+        &mut store,
+        "study-task-binding-recovery",
+        PrincipalId::KERNEL,
+        Capability::RecordChildRecovery,
+        generation,
+        CommandBody::RecordChildRecovery {
+            native_child_id: NativeChildId::new(1).unwrap(),
+            observation: ChildRecoveryObservation::ParentageLost,
+            group_liveness_after_restart: ProcessGroupLiveness::Absent,
+        },
+    );
+    let recovery_receipt_id = match recovery_receipt.disposition {
+        CommandDisposition::Accepted(event_id) => {
+            match store.ledger_event(event_id).unwrap().body {
+                EventBody::ChildRecoveryObserved {
+                    native_child_recovery_receipt_id,
+                    ..
+                } => native_child_recovery_receipt_id,
+                other => panic!("unexpected recovery event: {other:?}"),
+            }
+        }
+        CommandDisposition::Rejected(rejection) => {
+            panic!("recovery unexpectedly rejected: {rejection:?}")
+        }
+    };
+    let settled = store
+        .execute_study_transition(
+            CommandId::parse("study-task-binding-recovery-settle").unwrap(),
+            StudyCommand::SettleActorTaskAttemptAfterRecovery {
+                obligation_id: obligation,
+                actor_attempt_id: actor_attempt,
+                native_child_id: NativeChildId::new(1).unwrap(),
+                native_child_recovery_receipt_id: recovery_receipt_id,
+            },
+        )
+        .unwrap();
+    assert!(matches!(
+        settled.disposition,
+        StudyTransitionDisposition::Rejected(Rejection::InvalidLifecycleTransition)
+    ));
+    assert!(store.replay_ledger().is_ok());
 }
 
 #[test]

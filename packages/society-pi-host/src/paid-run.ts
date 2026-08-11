@@ -49,6 +49,13 @@ import {
 	type UsageTotals,
 } from "./protocol.js";
 import { FORUM_F0_AWARENESS_TEXT, type ForumToolArguments, type ForumToolName, type ForumToolResult } from "./forum.js";
+import {
+	buildPaidQualificationArtifact,
+	type PaidQualificationActorReport,
+	type PaidQualificationArtifact,
+	type PaidQualificationForumPost,
+	type PaidQualificationForumRead,
+} from "./paid-artifact.js";
 
 const TOTAL_ACTORS = 16;
 const MAX_CONCURRENT_ACTORS = 8;
@@ -88,36 +95,11 @@ const ROLE_INSTRUCTIONS: Readonly<Record<ActorSpec["role"], string>> = {
 	challenger: "Raise a thoughtful alternative, question, or counterexample.",
 };
 
-interface ActorReport {
-	readonly actor: string;
-	readonly arm: ActorSpec["arm"];
-	readonly population: ActorSpec["population"];
-	readonly role: ActorSpec["role"];
-	readonly status: "completed" | "failed" | "rate_limited" | "budget_guardrail";
-	readonly providerAttempts: number;
-	readonly inputTokens: number;
-	readonly outputTokens: number;
-	readonly cacheReadTokens: number;
-	readonly cacheWriteTokens: number;
-	readonly totalTokens: number;
-	readonly costUsd: number;
-	readonly providerCostUsd: number;
-	readonly catalogEstimateUsd: number;
-	readonly forumPosts: number;
-	readonly forumReads: number;
-	readonly forumErrors: number;
-	readonly error?: string;
-}
+type ActorReport = PaidQualificationActorReport;
 
-interface ForumPost {
-	readonly messageId: string;
-	readonly ordinal: number;
-	readonly author: string;
-	readonly messageKind: "finding" | "correction" | "question" | "challenge" | "synthesis";
-	readonly bodyUtf8: string;
-	readonly inReplyToMessageId: string | null;
-	readonly supersedesMessageId: string | null;
-}
+type ForumPost = PaidQualificationForumPost;
+
+type ForumRead = PaidQualificationForumRead;
 
 class ForumStore {
 	private readonly posts: ForumPost[] = [{
@@ -131,6 +113,7 @@ class ForumStore {
 	}];
 	private readonly actorPostCounts = new Map<string, number>();
 	private readonly actorReadCounts = new Map<string, number>();
+	private readonly reads: ForumRead[] = [];
 	private totalReads = 0;
 
 	async call(actor: string, call: { readonly toolCallIdentity: string; readonly toolName: ForumToolName; readonly args: ForumToolArguments }): Promise<ForumToolResult> {
@@ -144,6 +127,8 @@ class ForumStore {
 
 	get postCount(): number { return this.posts.length - 1; }
 	get readCount(): number { return this.totalReads; }
+	get postsSnapshot(): readonly ForumPost[] { return this.posts.map((post) => ({ ...post })); }
+	get readsSnapshot(): readonly ForumRead[] { return this.reads.map((read) => ({ ...read })); }
 
 	private read(actor: string, args: Extract<ForumToolArguments, { readonly toolName: "society_forum_read" }>): SdkJsonValue {
 		const reads = this.actorReadCounts.get(actor) ?? 0;
@@ -154,7 +139,7 @@ class ForumStore {
 		if (args.through_message_ordinal > this.posts.length) throw new Error("Forum frontier exceeded");
 		this.actorReadCounts.set(actor, reads + 1);
 		this.totalReads += 1;
-		return {
+		const payload = {
 			kind: "forum_read_receipt_v1",
 			first_message_ordinal: args.first_message_ordinal,
 			through_message_ordinal: args.through_message_ordinal,
@@ -168,6 +153,14 @@ class ForumStore {
 				supersedes_message_id: post.supersedesMessageId,
 			})),
 		};
+		this.reads.push({
+			actor,
+			firstMessageOrdinal: args.first_message_ordinal,
+			throughMessageOrdinal: args.through_message_ordinal,
+			returnedBytes: Buffer.byteLength(JSON.stringify(payload), "utf8"),
+			renderingBlake3: blake3Digest(blake3Hex(JSON.stringify(payload))),
+		});
+		return payload;
 	}
 
 	private post(actor: string, args: Extract<ForumToolArguments, { readonly toolName: "society_forum_post" }>): SdkJsonValue {
@@ -315,7 +308,23 @@ async function main(): Promise<void> {
 		};
 		await Promise.all(Array.from({ length: MAX_CONCURRENT_ACTORS }, () => worker()));
 		const ordered = specs.map((spec) => reports.find((report) => report.actor === actorName(spec))!).filter(Boolean);
-		console.log(formatReport(ordered, forum, budget, root, selectedModel));
+		const artifact = buildPaidQualificationArtifact({
+			model: {
+				provider: selectedModel.provider,
+				modelId: selectedModel.modelId,
+				canonicalSlug: selectedModel.canonicalSlug,
+				thinkingLevel: selectedModel.thinkingLevel,
+				catalogBlake3: blake3Digest(blake3Hex(await readFile(paths.modelsPath))),
+			},
+			totalCostCeilingUsd: budget.totalCeilingUsd,
+			actorCostCeilingUsd: Math.min(ACTOR_COST_CEILING_USD, budget.totalCeilingUsd / TOTAL_ACTORS),
+			reports: ordered,
+			forumPosts: forum.postsSnapshot,
+			forumReads: forum.readsSnapshot,
+		});
+		const artifactPath = join(root, "qualification-artifact.json");
+		await writeFile(artifactPath, `${JSON.stringify(artifact, null, 2)}\n`, { mode: 0o600 });
+		console.log(formatReport(ordered, forum, budget, root, selectedModel, artifactPath, artifact));
 	} finally {
 		// The raw transcript/usage directory remains available to inspect, but
 		// the copied credential is never retained after the runner exits.
@@ -672,7 +681,15 @@ function childExit(child: ChildProcessWithoutNullStreams): Promise<number> {
 	});
 }
 
-function formatReport(reports: readonly ActorReport[], forum: ForumStore, budget: RunBudget, root: string, selectedModel: SelectedModel): string {
+function formatReport(
+	reports: readonly ActorReport[],
+	forum: ForumStore,
+	budget: RunBudget,
+	root: string,
+	selectedModel: SelectedModel,
+	artifactPath: string,
+	artifact: PaidQualificationArtifact,
+): string {
 	const totalInput = reports.reduce((sum, report) => sum + report.inputTokens, 0);
 	const totalOutput = reports.reduce((sum, report) => sum + report.outputTokens, 0);
 	const totalCacheRead = reports.reduce((sum, report) => sum + report.cacheReadTokens, 0);
@@ -716,6 +733,8 @@ function formatReport(reports: readonly ActorReport[], forum: ForumStore, budget
 		"  shell_search_filesystem_tools: absent",
 		"  credential_copy: removed_on_exit",
 		`  retained_run_directory: ${root}`,
+		`  qualification_artifact: ${artifactPath}`,
+		`  qualification_artifact_body_blake3: ${artifact.integrity.bodyBlake3}`,
 	];
 	return `${lines.join("\n")}\n`;
 }

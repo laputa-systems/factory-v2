@@ -25,7 +25,8 @@ use society_kernel::{
     ForumMessageBody, ForumMessageId, ForumMessageKind, InstallFoundingMissionPreflight,
     KernelDatabaseUrl, KernelStore, PostgresAdvisoryLockLease, PostgresKernelStore,
     PostgresStoreError, PrincipalId, StoreError, StudyActorObligationId, StudyCommand, StudyEvent,
-    StudyTransitionDisposition, StudyTransitionReceipt,
+    StudyPairId, StudyRunId, StudyRunPairOrdinal, StudyTransitionDisposition,
+    StudyTransitionReceipt,
 };
 use thiserror::Error;
 
@@ -37,7 +38,11 @@ use crate::pi_execution::{
     OfficePiExecutionChild, OfficePiExecutionStart, OfficePiSessionDispose,
     OfficePiSessionDisposeOutput, OfficePiSessionDisposeStart, OfficePiSpawnRegistration,
     OfficePiTurn, OfficePiTurnOutput, OfficePiTurnStart, PiExecutionDriver, PiExecutionError,
-    UnregisteredOfficePiChild, VerifiedPiSessionDisposeTerminal, VerifiedPiSessionTranscript,
+    TaskAttemptPiExecutionChild, TaskAttemptPiExecutionStart, TaskAttemptPiPrompt,
+    TaskAttemptPiPromptOutput, TaskAttemptPiPromptStart, TaskAttemptPiSessionDispose,
+    TaskAttemptPiSessionDisposeOutput, TaskAttemptPiSessionDisposeStart,
+    TaskAttemptPiSpawnRegistration, UnregisteredOfficePiChild, VerifiedPiSessionDisposeTerminal,
+    VerifiedPiSessionTranscript, VerifiedTaskAttemptSessionDisposeTerminal,
 };
 use crate::protocol::{
     ClientCommandBody, ClientCommandRequest, CorrelationId, DaemonStatus, ProtocolErrorCode,
@@ -456,8 +461,16 @@ impl Daemon {
             Some(schema) => KernelStore::connect_in_schema(&database_url, schema)?,
             None => KernelStore::connect(&database_url)?,
         };
-        let database_lock = PostgresKernelStore::connect(&database_url)?
-            .acquire_owned_advisory_lock(DATABASE_ADVISORY_LOCK_KEY)?;
+        // The advisory-lock connection must use the same selected schema as
+        // the kernel store. A private-schema deployment has no Society
+        // contract in `public`; validating/locking the default schema would
+        // therefore reject an otherwise valid PostgreSQL migration.
+        let database_lock_store = match database_schema.as_deref() {
+            Some(schema) => PostgresKernelStore::connect_in_schema(&database_url, schema)?,
+            None => PostgresKernelStore::connect(&database_url)?,
+        };
+        let database_lock =
+            database_lock_store.acquire_owned_advisory_lock(DATABASE_ADVISORY_LOCK_KEY)?;
         let command_count = store.command_count()?;
         store.validate_replayed_materialized_state()?;
         let mode = if command_count == 0 {
@@ -550,6 +563,40 @@ impl Daemon {
         Ok(registration)
     }
 
+    /// Daemon-only task child admission. The exact actor-attempt owner is
+    /// carried by the start value and verified by the kernel before native
+    /// spawn, so this cannot be used to relabel an Office session as a study
+    /// participant.
+    #[allow(dead_code)]
+    pub(crate) fn admit_task_attempt_pi_child(
+        &mut self,
+        start: TaskAttemptPiExecutionStart,
+    ) -> Result<TaskAttemptPiSpawnRegistration, PiExecutionError> {
+        if self.mode == StartupMode::RecoveryFenced {
+            return Err(PiExecutionError::RecoveryFenced);
+        }
+        let registration = self
+            .pi_execution
+            .admit_task_attempt_spawn_and_register(&mut self.store, start)?;
+        if matches!(
+            &registration,
+            TaskAttemptPiSpawnRegistration::RegistrationUnresolved { .. }
+        ) {
+            self.mode = StartupMode::RecoveryFenced;
+        }
+        Ok(registration)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn drive_task_attempt_pi_boundary_containment(
+        &mut self,
+        child: &TaskAttemptPiExecutionChild,
+        now: crate::supervision::MonotonicTick,
+    ) -> Result<(), PiExecutionError> {
+        self.pi_execution
+            .drive_task_attempt_boundary_containment(child, now)
+    }
+
     /// Drives the fixed emergency path for any registered child that crossed
     /// a daemon-private Pi boundary failure after its PID/PGID receipt.
     #[allow(dead_code)]
@@ -604,6 +651,98 @@ impl Daemon {
     ) -> Result<crate::supervision::ControlWriteProgress, PiExecutionError> {
         self.pi_execution
             .drive_create_delivery(&mut self.store, child, now)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn observe_task_attempt_pi_adapter_ready(
+        &mut self,
+        child: &mut TaskAttemptPiExecutionChild,
+        now: crate::supervision::MonotonicTick,
+        deadline: crate::supervision::HandshakeDeadline,
+    ) -> Result<bool, PiExecutionError> {
+        self.pi_execution
+            .observe_task_attempt_adapter_ready(&mut self.store, child, now, deadline)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn authorize_and_begin_task_attempt_pi_create(
+        &mut self,
+        child: &mut TaskAttemptPiExecutionChild,
+        now: crate::supervision::MonotonicTick,
+        deadline: crate::supervision::ControlWriteDeadline,
+    ) -> Result<crate::supervision::ControlWriteProgress, PiExecutionError> {
+        self.pi_execution.authorize_and_begin_task_attempt_create(
+            &mut self.store,
+            child,
+            now,
+            deadline,
+        )
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn drive_task_attempt_pi_create_delivery(
+        &mut self,
+        child: &mut TaskAttemptPiExecutionChild,
+        now: crate::supervision::MonotonicTick,
+    ) -> Result<crate::supervision::ControlWriteProgress, PiExecutionError> {
+        self.pi_execution
+            .drive_task_attempt_create_delivery(&mut self.store, child, now)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn observe_task_attempt_pi_session_ready(
+        &mut self,
+        child: &mut TaskAttemptPiExecutionChild,
+        now: crate::supervision::MonotonicTick,
+        deadline: crate::supervision::HandshakeDeadline,
+    ) -> Result<bool, PiExecutionError> {
+        self.pi_execution
+            .observe_task_attempt_session_ready(&mut self.store, child, now, deadline)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn authorize_and_begin_task_attempt_pi_prompt(
+        &mut self,
+        child: &mut TaskAttemptPiExecutionChild,
+        start: TaskAttemptPiPromptStart,
+        now: crate::supervision::MonotonicTick,
+        deadline: crate::supervision::ControlWriteDeadline,
+    ) -> Result<
+        (
+            TaskAttemptPiPrompt,
+            crate::supervision::ControlWriteProgress,
+        ),
+        PiExecutionError,
+    > {
+        self.pi_execution.authorize_and_begin_task_attempt_prompt(
+            &mut self.store,
+            child,
+            start,
+            now,
+            deadline,
+        )
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn drive_task_attempt_pi_prompt_delivery(
+        &mut self,
+        child: &mut TaskAttemptPiExecutionChild,
+        prompt: &mut TaskAttemptPiPrompt,
+        now: crate::supervision::MonotonicTick,
+    ) -> Result<crate::supervision::ControlWriteProgress, PiExecutionError> {
+        self.pi_execution
+            .drive_task_attempt_prompt_delivery(&mut self.store, child, prompt, now)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn observe_task_attempt_pi_prompt_output(
+        &mut self,
+        child: &mut TaskAttemptPiExecutionChild,
+        prompt: &mut TaskAttemptPiPrompt,
+        now: crate::supervision::MonotonicTick,
+    ) -> Result<Option<TaskAttemptPiPromptOutput>, PiExecutionError> {
+        self.pi_execution
+            .observe_task_attempt_prompt_output(&mut self.store, child, prompt, now)
     }
 
     #[allow(dead_code)]
@@ -678,6 +817,39 @@ impl Daemon {
             .drive_office_forum_tool_result_delivery(child, now)
     }
 
+    #[allow(dead_code)]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn send_task_attempt_pi_forum_tool_result(
+        &mut self,
+        child: &mut TaskAttemptPiExecutionChild,
+        prompt: &TaskAttemptPiPrompt,
+        tool_call_identity: society_pi::ToolCallIdentity,
+        result: society_pi::SdkJsonValue,
+        is_error: bool,
+        now: crate::supervision::MonotonicTick,
+        deadline: crate::supervision::ControlWriteDeadline,
+    ) -> Result<crate::supervision::ControlWriteProgress, PiExecutionError> {
+        self.pi_execution.send_task_attempt_forum_tool_result(
+            child,
+            prompt,
+            tool_call_identity,
+            result,
+            is_error,
+            now,
+            deadline,
+        )
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn drive_task_attempt_pi_forum_tool_result_delivery(
+        &mut self,
+        child: &mut TaskAttemptPiExecutionChild,
+        now: crate::supervision::MonotonicTick,
+    ) -> Result<crate::supervision::ControlWriteProgress, PiExecutionError> {
+        self.pi_execution
+            .drive_task_attempt_forum_tool_result_delivery(child, now)
+    }
+
     /// Builds the runtime-binding command from the exact IDs retained by the
     /// resident child handle. A scheduler cannot accidentally bind an
     /// obligation to a separately supplied child or office session.
@@ -699,6 +871,27 @@ impl Daemon {
         )
     }
 
+    /// Builds the task/runtime join from the registered task child only. The
+    /// scheduler supplies the study obligation but cannot supply a foreign
+    /// actor attempt or native-child identity.
+    #[allow(dead_code)]
+    pub(crate) fn bind_study_actor_task_attempt_runtime_for_child(
+        &mut self,
+        command_id: CommandId,
+        obligation_id: society_kernel::StudyActorObligationId,
+        child: &TaskAttemptPiExecutionChild,
+    ) -> Result<StudyTransitionReceipt, PiExecutionError> {
+        self.bind_study_actor_runtime(
+            command_id,
+            StudyCommand::BindActorTaskAttemptRuntime {
+                obligation_id,
+                actor_attempt_id: child.actor_attempt_id(),
+                native_child_id: child.child_process_id(),
+                native_child_spawn_admission_id: child.native_child_spawn_admission_id(),
+            },
+        )
+    }
+
     /// Records runtime reconciliation only after the lower-level driver has
     /// reached its durable `Finalized` native-child state.
     #[allow(dead_code)]
@@ -707,6 +900,25 @@ impl Daemon {
         command_id: CommandId,
         obligation_id: society_kernel::StudyActorObligationId,
         child: &OfficePiExecutionChild,
+    ) -> Result<StudyTransitionReceipt, PiExecutionError> {
+        if child.phase() != "reconciled" {
+            return Err(PiExecutionError::InvalidLifecycle);
+        }
+        self.bind_study_actor_runtime(
+            command_id,
+            StudyCommand::ReconcileActorRuntime {
+                obligation_id,
+                native_child_id: child.child_process_id(),
+            },
+        )
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn reconcile_study_actor_task_attempt_runtime_for_child(
+        &mut self,
+        command_id: CommandId,
+        obligation_id: society_kernel::StudyActorObligationId,
+        child: &TaskAttemptPiExecutionChild,
     ) -> Result<StudyTransitionReceipt, PiExecutionError> {
         if child.phase() != "reconciled" {
             return Err(PiExecutionError::InvalidLifecycle);
@@ -962,6 +1174,47 @@ impl Daemon {
         )
     }
 
+    /// TaskAttempt counterpart of [`Self::handle_office_pi_forum_tool_call`].
+    /// The Forum transition remains obligation-scoped, while the native
+    /// result is directed only to the exact actor attempt that issued it.
+    #[allow(dead_code)]
+    pub(crate) fn handle_task_attempt_pi_forum_tool_call(
+        &mut self,
+        obligation_id: StudyActorObligationId,
+        child: &mut TaskAttemptPiExecutionChild,
+        prompt: &TaskAttemptPiPrompt,
+        output: TaskAttemptPiPromptOutput,
+        now: crate::supervision::MonotonicTick,
+        deadline: crate::supervision::ControlWriteDeadline,
+    ) -> Result<crate::supervision::ControlWriteProgress, PiExecutionError> {
+        let TaskAttemptPiPromptOutput::ForumToolCall {
+            tool_call_identity,
+            tool_name,
+            args,
+            ..
+        } = output
+        else {
+            return Err(PiExecutionError::InvalidLifecycle);
+        };
+        let command_id = CommandId::parse(format!(
+            "study-forum-tool-{}-{}",
+            obligation_id.value(),
+            blake3::hash(tool_call_identity.as_str().as_bytes()).to_hex()
+        ))
+        .map_err(|_| PiExecutionError::IdentityConversion)?;
+        let (result, is_error) =
+            self.execute_study_forum_tool_call(command_id, obligation_id, tool_name, &args)?;
+        self.send_task_attempt_pi_forum_tool_result(
+            child,
+            prompt,
+            tool_call_identity,
+            result,
+            is_error,
+            now,
+            deadline,
+        )
+    }
+
     /// Commits a live study/runtime binding through the same resident store
     /// used by native-child custody. This is intentionally not a local-wire
     /// operation; only a daemon-owned coordinator can call it.
@@ -973,6 +1226,47 @@ impl Daemon {
     ) -> Result<StudyTransitionReceipt, PiExecutionError> {
         self.store
             .execute_study_transition(command_id, command)
+            .map_err(PiExecutionError::Kernel)
+    }
+
+    /// Claims one already-admitted, fully paired study run for the resident
+    /// coordinator. The plan remains opaque application content: this seam
+    /// carries only its durable run identity, and the kernel verifies that
+    /// every declared pair is registered before moving it to `Running`.
+    ///
+    /// This is daemon-internal rather than supervisor-wire authority. A
+    /// caller must use one stable `command_id` for retries; PostgreSQL ledger
+    /// idempotency then makes a crash between commit and response safe.
+    #[allow(dead_code)]
+    pub(crate) fn start_study_run(
+        &mut self,
+        command_id: CommandId,
+        study_run_id: StudyRunId,
+    ) -> Result<StudyTransitionReceipt, PiExecutionError> {
+        if self.mode == StartupMode::RecoveryFenced {
+            return Err(PiExecutionError::RecoveryFenced);
+        }
+        self.store
+            .execute_study_transition(command_id, StudyCommand::StartStudyRun { study_run_id })
+            .map_err(PiExecutionError::Kernel)
+    }
+
+    /// Records the terminal generic run receipt after the resident
+    /// coordinator has driven every registered pair to independently closed
+    /// episodes. This is deliberately not a local-wire operation: the
+    /// daemon remains the only writer that can pair the durable closure with
+    /// native-child recovery custody.
+    #[allow(dead_code)]
+    pub(crate) fn complete_study_run(
+        &mut self,
+        command_id: CommandId,
+        study_run_id: StudyRunId,
+    ) -> Result<StudyTransitionReceipt, PiExecutionError> {
+        if self.mode == StartupMode::RecoveryFenced {
+            return Err(PiExecutionError::RecoveryFenced);
+        }
+        self.store
+            .execute_study_transition(command_id, StudyCommand::CompleteStudyRun { study_run_id })
             .map_err(PiExecutionError::Kernel)
     }
 
@@ -1103,6 +1397,118 @@ impl Daemon {
             return Err(PiExecutionError::RecoveryFenced);
         }
         self.pi_execution.poll_reap_and_reconcile(
+            &mut self.store,
+            &self.content_sealing,
+            child,
+            now,
+        )
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn begin_task_attempt_pi_session_dispose(
+        &mut self,
+        child: &mut TaskAttemptPiExecutionChild,
+        start: TaskAttemptPiSessionDisposeStart,
+        now: crate::supervision::MonotonicTick,
+        deadline: crate::supervision::ControlWriteDeadline,
+    ) -> Result<
+        (
+            TaskAttemptPiSessionDispose,
+            crate::supervision::ControlWriteProgress,
+        ),
+        PiExecutionError,
+    > {
+        if self.mode == StartupMode::RecoveryFenced {
+            return Err(PiExecutionError::RecoveryFenced);
+        }
+        self.pi_execution.begin_task_attempt_session_dispose(
+            &mut self.store,
+            child,
+            start,
+            now,
+            deadline,
+        )
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn drive_task_attempt_pi_session_dispose_delivery(
+        &mut self,
+        child: &mut TaskAttemptPiExecutionChild,
+        dispose: &mut TaskAttemptPiSessionDispose,
+        now: crate::supervision::MonotonicTick,
+    ) -> Result<crate::supervision::ControlWriteProgress, PiExecutionError> {
+        if self.mode == StartupMode::RecoveryFenced {
+            return Err(PiExecutionError::RecoveryFenced);
+        }
+        self.pi_execution
+            .drive_task_attempt_session_dispose_delivery(&mut self.store, child, dispose, now)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn observe_task_attempt_pi_session_dispose_output(
+        &mut self,
+        child: &mut TaskAttemptPiExecutionChild,
+        dispose: &mut TaskAttemptPiSessionDispose,
+        now: crate::supervision::MonotonicTick,
+        deadline: crate::supervision::HandshakeDeadline,
+    ) -> Result<Option<TaskAttemptPiSessionDisposeOutput>, PiExecutionError> {
+        if self.mode == StartupMode::RecoveryFenced {
+            return Err(PiExecutionError::RecoveryFenced);
+        }
+        self.pi_execution
+            .observe_task_attempt_session_dispose_output(
+                &mut self.store,
+                child,
+                dispose,
+                now,
+                deadline,
+                self.content_seal_limit,
+            )
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn record_task_attempt_pi_session_disposed(
+        &mut self,
+        child: &mut TaskAttemptPiExecutionChild,
+        dispose: &mut TaskAttemptPiSessionDispose,
+        terminal: &VerifiedTaskAttemptSessionDisposeTerminal,
+        now: crate::supervision::MonotonicTick,
+    ) -> Result<TaskAttemptPiSessionDisposeOutput, PiExecutionError> {
+        if self.mode == StartupMode::RecoveryFenced {
+            return Err(PiExecutionError::RecoveryFenced);
+        }
+        let sealed_content = match terminal.transcript() {
+            VerifiedPiSessionTranscript::Materialized(request) => Some(
+                self.content_sealing
+                    .seal_and_register(
+                        &mut self.store,
+                        request.content_operation(),
+                        request.bytes(),
+                    )
+                    .map_err(PiExecutionError::Content)?,
+            ),
+            VerifiedPiSessionTranscript::UnmaterializedNoPrompt { .. } => None,
+        };
+        self.pi_execution.record_task_attempt_session_disposed(
+            &mut self.store,
+            child,
+            dispose,
+            terminal,
+            sealed_content,
+            now,
+        )
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn reconcile_reaped_task_attempt_pi_child(
+        &mut self,
+        child: &mut TaskAttemptPiExecutionChild,
+        now: crate::supervision::MonotonicTick,
+    ) -> Result<bool, PiExecutionError> {
+        if self.mode == StartupMode::RecoveryFenced {
+            return Err(PiExecutionError::RecoveryFenced);
+        }
+        self.pi_execution.poll_task_attempt_reap_and_reconcile(
             &mut self.store,
             &self.content_sealing,
             child,
@@ -1317,7 +1723,64 @@ impl Daemon {
                 correlation,
                 status: self.status()?,
             }),
+            PublicRequest::StudyPairObservation {
+                correlation,
+                pair_id,
+            } => Ok(Response::StudyPairObservation {
+                correlation,
+                pair: self.study_pair_observation(pair_id)?,
+            }),
+            PublicRequest::StudyRunObservation {
+                correlation,
+                study_run_id,
+            } => Ok(Response::StudyRunSummary {
+                correlation,
+                study_run: self
+                    .study_run_observation(study_run_id)?
+                    .as_ref()
+                    .map(Into::into),
+            }),
+            PublicRequest::StudyRunPairRegistration {
+                correlation,
+                study_run_id,
+                pair_ordinal,
+            } => Ok(Response::StudyRunPairRegistration {
+                correlation,
+                registration: self.study_run_pair_registration(study_run_id, pair_ordinal)?,
+            }),
         }
+    }
+
+    fn study_pair_observation(
+        &self,
+        pair_id: StudyPairId,
+    ) -> Result<Option<society_kernel::StudyPairObservation>, DaemonError> {
+        match self.store.study_pair_observation(pair_id) {
+            Ok(pair) => Ok(Some(pair)),
+            Err(StoreError::StudyPairNotFound(_)) => Ok(None),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    fn study_run_observation(
+        &self,
+        study_run_id: StudyRunId,
+    ) -> Result<Option<society_kernel::StudyRunObservation>, DaemonError> {
+        match self.store.study_run_observation(study_run_id) {
+            Ok(study_run) => Ok(Some(study_run)),
+            Err(StoreError::StudyRunNotFound(_)) => Ok(None),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    fn study_run_pair_registration(
+        &self,
+        study_run_id: StudyRunId,
+        pair_ordinal: StudyRunPairOrdinal,
+    ) -> Result<Option<society_kernel::StudyRunPairRegistrationObservation>, DaemonError> {
+        self.store
+            .study_run_pair_registration(study_run_id, pair_ordinal)
+            .map_err(Into::into)
     }
 
     fn execute(

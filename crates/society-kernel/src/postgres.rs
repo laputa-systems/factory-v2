@@ -11,6 +11,9 @@ use sqlx::{AssertSqlSafe, Row, pool::PoolConnection};
 use sqlx_postgres::{PgConnectOptions, PgPool, PgPoolOptions, PgSslMode, Postgres};
 use thiserror::Error;
 
+/// Exact marker applied by the authoritative fresh PostgreSQL bootstrap.
+pub const POSTGRES_SCHEMA_REVISION: &str = "society-kernel-postgres-schema-v11";
+
 /// A validated PostgreSQL connection URL whose `Display` implementation never
 /// includes a password or other credential material.
 #[derive(Clone)]
@@ -99,12 +102,20 @@ pub enum PostgresStoreError {
     MissingEnvironment(String),
     #[error("PostgreSQL operation failed")]
     Database(#[source] sqlx::Error),
+    #[error(
+        "PostgreSQL schema revision mismatch: expected {expected}, found {actual:?}; apply the canonical fresh bootstrap"
+    )]
+    SchemaRevisionMismatch {
+        expected: &'static str,
+        actual: Option<String>,
+    },
     #[error("PostgreSQL advisory lock is already held")]
     AdvisoryLockUnavailable,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PostgresCatalogSnapshot {
+    pub schema_revision: Option<String>,
     pub table_count: i64,
     pub foreign_key_count: i64,
     pub partial_index_count: i64,
@@ -171,42 +182,49 @@ pub struct PostgresKernelStore {
 
 impl PostgresKernelStore {
     pub fn connect(url: &KernelDatabaseUrl) -> Result<Self, PostgresStoreError> {
-        Self::connect_with_options(url, None, 8)
+        Self::connect_with_options(url, None, 8, true)
     }
 
     pub fn connect_in_schema(
         url: &KernelDatabaseUrl,
         schema: &str,
     ) -> Result<Self, PostgresStoreError> {
-        Self::connect_in_schema_with_max_connections(url, schema, 8)
+        Self::connect_in_schema_with_max_connections(url, schema, 8, true)
     }
 
     pub(crate) fn connect_for_test(url: &KernelDatabaseUrl) -> Result<Self, PostgresStoreError> {
-        Self::connect_with_options(url, None, 2)
+        // Test administration connects to `template1` and to the source
+        // database while materializing isolated fixtures. Those connections
+        // deliberately bypass the application-schema guard; the scoped
+        // fixture connection is checked by `ensure_test_template` and its
+        // private-schema clone path before any test transition runs.
+        Self::connect_with_options(url, None, 2, false)
     }
 
     pub(crate) fn connect_in_schema_for_test(
         url: &KernelDatabaseUrl,
         schema: &str,
     ) -> Result<Self, PostgresStoreError> {
-        Self::connect_in_schema_with_max_connections(url, schema, 2)
+        Self::connect_in_schema_with_max_connections(url, schema, 2, false)
     }
 
     fn connect_in_schema_with_max_connections(
         url: &KernelDatabaseUrl,
         schema: &str,
         max_connections: u32,
+        validate_schema_revision: bool,
     ) -> Result<Self, PostgresStoreError> {
         if !is_safe_schema_name(schema) {
             return Err(PostgresStoreError::InvalidDatabaseUrl);
         }
-        Self::connect_with_options(url, Some(schema), max_connections)
+        Self::connect_with_options(url, Some(schema), max_connections, validate_schema_revision)
     }
 
     fn connect_with_options(
         url: &KernelDatabaseUrl,
         schema: Option<&str>,
         max_connections: u32,
+        validate_schema_revision: bool,
     ) -> Result<Self, PostgresStoreError> {
         let mut options = PgPoolOptions::new()
             .max_connections(max_connections)
@@ -236,6 +254,26 @@ impl PostgresKernelStore {
         }
         let pool = async_std::task::block_on(options.connect_with(url.options()))
             .map_err(PostgresStoreError::Database)?;
+        if validate_schema_revision {
+            let actual = async_std::task::block_on(async {
+                let row = sqlx::query(
+                    "SELECT obj_description(namespace.oid, 'pg_namespace')
+                       FROM pg_namespace AS namespace
+                      WHERE namespace.nspname = current_schema()",
+                )
+                .fetch_one(&pool)
+                .await
+                .map_err(PostgresStoreError::Database)?;
+                row.try_get::<Option<String>, _>(0)
+                    .map_err(PostgresStoreError::Database)
+            })?;
+            if actual.as_deref() != Some(POSTGRES_SCHEMA_REVISION) {
+                return Err(PostgresStoreError::SchemaRevisionMismatch {
+                    expected: POSTGRES_SCHEMA_REVISION,
+                    actual,
+                });
+            }
+        }
         Ok(Self { pool })
     }
 
@@ -247,6 +285,8 @@ impl PostgresKernelStore {
         self.block_on(async {
             let row = sqlx::query(
                 "SELECT
+                    (SELECT obj_description(n.oid, 'pg_namespace')
+                       FROM pg_namespace AS n WHERE n.nspname = current_schema()),
                     (SELECT COUNT(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
                      WHERE n.nspname = current_schema() AND c.relkind = 'r'),
                     (SELECT COUNT(*) FROM pg_constraint k JOIN pg_class c ON c.oid = k.conrelid JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -262,11 +302,12 @@ impl PostgresKernelStore {
             .await
             .map_err(PostgresStoreError::Database)?;
             Ok(PostgresCatalogSnapshot {
-                table_count: row.get(0),
-                foreign_key_count: row.get(1),
-                partial_index_count: row.get(2),
-                trigger_count: row.get(3),
-                check_constraint_count: row.get(4),
+                schema_revision: row.get(0),
+                table_count: row.get(1),
+                foreign_key_count: row.get(2),
+                partial_index_count: row.get(3),
+                trigger_count: row.get(4),
+                check_constraint_count: row.get(5),
             })
         })
     }
