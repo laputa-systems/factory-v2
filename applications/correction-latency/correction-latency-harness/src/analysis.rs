@@ -949,7 +949,7 @@ fn append_outcome(output: &mut String, outcome: MeasurementOutcome) {
             output.push('\t');
             output.push_str(&hex_digest(value_digest));
             output.push('\t');
-            output.push_str("-");
+            output.push('-');
         }
         MeasurementOutcome::Unavailable { reason_digest } => {
             output.push_str("unavailable\t-\t-\t");

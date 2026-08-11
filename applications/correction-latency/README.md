@@ -20,6 +20,9 @@ helps. Faster correction, slower correction, persistent error, and no
 measurable difference are all legitimate results.
 
 See [`VERTICAL-SLICE.md`](VERTICAL-SLICE.md) for the protocol.
+[`LIVE-STUDY-PLAN.md`](LIVE-STUDY-PLAN.md) fixes the candidate native runtime,
+the authorized $0.25 staged allocation, the two-pair feasibility pilot, and
+the gates for a separately authorized substantive study.
 
 ## Provider-free acceptance run
 

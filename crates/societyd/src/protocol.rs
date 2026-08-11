@@ -369,6 +369,11 @@ pub enum ProtocolErrorCode {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+// The response stays a closed by-value protocol value at the daemon wire
+// boundary.  Boxing its one large, bounded study observation would introduce
+// an allocation distinction into every local response without shrinking the
+// fixed frame contract; retain the direct representation deliberately.
+#[allow(clippy::large_enum_variant)]
 pub enum Response {
     CommandReceipt {
         correlation: CorrelationId,

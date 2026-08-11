@@ -93,17 +93,17 @@ Office usage has exact ledger-backed provider-cost accounting; a live
 end-of-cycle aggregate remains separately scoped.
 
 The separately admitted `forum_isolated_v1` profile is exercised by
-`make run-society-paid`. That reduced qualification smoke runs 16 actor
-lifetimes with at most 8 native Pi hosts concurrently, applies a hard $0.50
-aggregate provider-cost ceiling plus a per-actor guardrail, and prints a
+`make run-society-cheapest-paid-smoke`. That reduced adapter smoke runs 16
+actor lifetimes with at most 8 native Pi hosts concurrently, applies a hard
+$0.05 aggregate provider-cost ceiling plus a 3,125 micro-USD per-actor
+guardrail, and prints a
 world-simulation-style report with each actor's status, tokens, cost, Forum
 reads/posts, and errors. Its actor prompt uses ordinary participant language;
 the retained/reset treatment labels remain report metadata and are not shown
-to the actors. This runner is direct adapter qualification, not canonical
-CL-001 evidence or proof of daemon-owned native-child custody. Pass
-`PROVIDER` and `MODEL` to select the same admitted treatment for every actor;
-the default is paid Ling 2.6. The provider-scoped catalog retains DeepSeek,
-free Ling, Laguna, and paid Ling 2.6 at
+to the actors. This runner is optional adapter diagnosis, not canonical
+CL-001 evidence, a native-profile qualification, or proof of daemon-owned
+native-child custody. It is pinned to paid Ling 2.6 with thinking off. The
+provider-scoped catalog retains DeepSeek, free Ling, Laguna, and paid Ling 2.6 at
 `packages/society-pi-host/catalogs/openrouter-admitted-models-v1.json`.
 
 ### Study protocol

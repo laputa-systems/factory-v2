@@ -12,7 +12,7 @@ use sqlx_postgres::{PgConnectOptions, PgPool, PgPoolOptions, PgSslMode, Postgres
 use thiserror::Error;
 
 /// Exact marker applied by the authoritative fresh PostgreSQL bootstrap.
-pub const POSTGRES_SCHEMA_REVISION: &str = "society-kernel-postgres-schema-v11";
+pub const POSTGRES_SCHEMA_REVISION: &str = "society-kernel-postgres-schema-v12";
 
 /// A validated PostgreSQL connection URL whose `Display` implementation never
 /// includes a password or other credential material.

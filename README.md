@@ -61,19 +61,22 @@ CL-001 runtime profile.
 The separately admitted `forum_isolated_v1` profile gives an actor a natural,
 digest-bound Forum prompt and exactly two custom tools—read and post—with no
 shell, search, general filesystem, or native-child capability. `make
-run-society-paid` runs a reduced qualification smoke of 16 actor lifetimes,
-with at most 8 native Pi hosts at once and a hard aggregate provider-cost
-ceiling; it reports per-actor tokens, cost, reads, posts, and failures. This
-is direct adapter qualification, not yet daemon-owned CL-001 custody or
-scientific evidence. Pass `PROVIDER` and `MODEL` to select the same admitted
-treatment for every actor; the default is the paid
-`openrouter/inclusionai/ling-2.6-flash` treatment for the first paid smoke.
+run-society-cheapest-paid-smoke` runs a reduced adapter smoke of 16 actor lifetimes,
+with at most 8 native Pi hosts at once and a fixed $0.05 aggregate provider-
+cost ceiling. It is pinned to OpenRouter `inclusionai/ling-2.6-flash` with
+thinking off; another provider/model requires a new versioned profile, not a
+make-variable override. It reports per-actor tokens, cost, reads, posts, and
+failures. This is direct adapter diagnosis, not daemon-owned CL-001
+custody or scientific evidence.
 Each run retains a `qualification-artifact.json` in its printed run directory.
 That host-bound artifact carries a BLAKE3 digest and contains the exact actor
 usage/cost rows, Forum post bodies and read intervals, model/catalog identity,
 and explicit `absent` PostgreSQL/daemon and `not_executed` CL-001 lifecycle
 markers. It makes the smoke auditable without presenting its in-memory shared
 Forum as institutional evidence.
+The staged $0.25 allocation and later two-pair pilot/substantive-study gates
+are owned by
+[`applications/correction-latency/LIVE-STUDY-PLAN.md`](applications/correction-latency/LIVE-STUDY-PLAN.md).
 The credential-free provider catalog, retaining DeepSeek alongside free Ling,
 Laguna, and paid Ling 2.6, is saved at
 `packages/society-pi-host/catalogs/openrouter-admitted-models-v1.json`.

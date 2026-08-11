@@ -106,8 +106,10 @@ do
     APPLICATION_BOUNDARY_ROOT="$repository_root/$application_root" \
     GENERIC_CRATE_ROOT="$repository_root/crates" \
     node <<'NODE'
-// Applications may consume public generic domain crates, but may not gain the
-// resident authority or its supervisor client by a path dependency.
+// Applications may consume public generic domain crates. The CL-001 harness is
+// the one approved application/daemon composition seam: it may construct the
+// resident daemon, but still has no PostgreSQL, supervisor-client, process, or
+// generic-mutation path. No other application may gain resident authority.
 const metadata = JSON.parse(process.env.APPLICATION_BOUNDARY_METADATA);
 const applicationRoot = process.env.APPLICATION_BOUNDARY_ROOT;
 const genericCrateRoot = process.env.GENERIC_CRATE_ROOT;
@@ -125,7 +127,10 @@ for (const package of metadata.packages) {
         if (!isApplicationLocal && !isGenericInwardDependency) {
             throw new Error(`${package.name} path dependency escapes allowed boundaries: ${dependency.path}`);
         }
-        if (residentAuthorityPackages.has(dependency.name) || residentAuthorityRoots.has(dependency.path)) {
+        const approvedDaemonComposition = package.name === "correction-latency-harness"
+            && dependency.name === "societyd";
+        if (!approvedDaemonComposition
+            && (residentAuthorityPackages.has(dependency.name) || residentAuthorityRoots.has(dependency.path))) {
             throw new Error(`${package.name} depends on resident authority package ${dependency.name}`);
         }
     }

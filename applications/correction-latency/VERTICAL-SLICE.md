@@ -208,6 +208,15 @@ already-admitted retained/reset episodes. This is a recovery and provenance
 anchor only: it does not yet cause actors to be scheduled or make the paid
 adapter smoke into a CL-001 run.
 
+`LIVE-STUDY-PLAN.md` adds staged live-study planning without changing this
+CL-001 world contract. It fixes a candidate OpenRouter Ling 2.6 Flash,
+thinking-off runtime and partitions the current $0.25 authorization into a
+$0.05 optional noncanonical adapter smoke and a $0.20 two-pair feasibility
+pilot. It withholds substantive-study spend and sample size until pilot
+variance is observed and a new plan is sealed. This is planning material only:
+the generic native profile remains unqualified and the daemon-owned canonical
+runner remains a prerequisite.
+
 The application-owned `PairChoreography` expands each admitted seed into the
 two treatment arms, and `LiveRunDescriptor::actor_prompt` constructs the
 digest-bound F0 awareness, role fragment, private view, and exposure frontier

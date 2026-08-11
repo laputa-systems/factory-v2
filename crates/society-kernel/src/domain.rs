@@ -1288,13 +1288,18 @@ pub enum AdversarialReviewState {
     Escalated = 9,
 }
 
-/// The M3 execution foundation permits only the current pinned Pi SDK model
-/// policy. A future policy mutation needs its own versioned, qualified path;
-/// a provider/model string may not quietly change an Actor's identity.
+/// Each pinned Pi SDK model policy is a distinct durable actor identity. A
+/// provider/model string may not quietly change an Actor's identity: a new
+/// treatment gets a new closed variant and remains subject to the separate
+/// execution-profile qualification gate.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(i64)]
 pub enum ActorModelPolicy {
     PinnedDeepseekV4FlashHigh = 1,
+    /// OpenRouter `inclusionai/ling-2.6-flash` with thinking explicitly off.
+    /// This records a candidate live-study population identity; it does not
+    /// make the native Pi execution profile qualified for paid use.
+    PinnedOpenRouterLing26FlashOff = 2,
 }
 
 /// Developmental attractors are explicit treatment biases, never authority

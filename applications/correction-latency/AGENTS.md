@@ -7,8 +7,10 @@ authority, process, content, experiment, and replay contracts.
 
 - Keep world ground truth, evidence-card semantics, actor-local obligations,
   fixtures, and measurement interpretation here.
-- Do not import or depend on `societyd`, `societyctl`, PostgreSQL, process custody,
-  or generic mutation authority.
+- `correction-latency-harness` may depend on `societyd` only for the approved
+  application/daemon composition boundary. It does not import `societyctl`,
+  PostgreSQL, process custody, or generic mutation authority, and `societyd`
+  must not import this application's semantics.
 - An application crate may submit closed commands through a public generic
   control boundary; it never opens PostgreSQL, writes ledger rows directly, or
   chooses native executable paths.

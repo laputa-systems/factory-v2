@@ -26,6 +26,7 @@ mod observability;
 mod native_child;
 #[allow(dead_code)]
 mod pi_execution;
+mod study_admission;
 // The live-study TaskAttempt coordinator is deliberately separate from the
 // Office-only Pi bridge. It has no wire form and remains dormant until a
 // TaskAttempt driver implementing its private contract exists.
@@ -36,3 +37,7 @@ mod task_attempt_scheduler;
 
 pub use daemon::{Daemon, DaemonConfig, DaemonError, FaultInjection, ShutdownHandle, StartupMode};
 pub use observability::{MonitorInstallError, install_mandatory_monitor};
+pub use study_admission::{
+    SealedStudyContent, StudyAdmissionAuthority, StudyAdmissionContentSlot, StudyAdmissionError,
+    StudyAdmissionOperationId,
+};

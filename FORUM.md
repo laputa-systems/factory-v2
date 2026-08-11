@@ -258,9 +258,9 @@ profile installs exactly these two custom tools and returns typed JSON-safe
 results across the Pi SDK boundary. The resident daemon now has the matching
 typed call-to-study-transition/result bridge and a durable obligation-to-runtime
 binding which cannot close until native-child finalization. The reduced
-`make run-society-paid` smoke still routes calls through its bounded local Forum
-authority rather than that daemon bridge, so it remains qualification rather
-than canonical CL-001 evidence.
+`make run-society-cheapest-paid-smoke` still routes calls through its bounded
+local Forum authority rather than that daemon bridge, so it remains optional
+adapter diagnosis rather than canonical CL-001 evidence.
 
 F0's intended live profile performs reads and posts only on explicit model
 tool actions. It has no notifications, unread polling, or hidden second Prompt.

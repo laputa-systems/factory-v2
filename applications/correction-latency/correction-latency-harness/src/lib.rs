@@ -36,7 +36,9 @@ use society_kernel::{
 
 mod analysis;
 mod choreography;
+mod daemon_composition;
 mod live_plan;
+mod study_program;
 
 pub use analysis::{
     ANALYSIS_REVISION, AnalysisArtifact, AnalysisEstimand, AnalysisExclusionPolicy,
@@ -48,12 +50,22 @@ pub use choreography::{
     ChoreographyError, ForumExposure, PairChoreography, PairOutcome, PairStateRecord,
     PrivateViewMaterial,
 };
+pub use daemon_composition::{
+    DAEMON_COMPOSITION_REVISION, DaemonComposition, DaemonCompositionError,
+    PreparedLiveRunAdmission, SealedLiveRunAdmission,
+};
 pub use live_plan::{
     ANALYSIS_CONTRACT_BYTES, ActorPolicyIdentity, ActorSeatContract, BaselineKind,
     Cl001ActorPolicyIdentity, Cl001LiveRunDescriptor, Cl001LiveRunPlan, Cl001PairSeed,
     Cl001TreatmentArm, FORUM_CHARTER_BYTES, INSTITUTION_BYTES, LIVE_PLAN_REVISION, LivePlanError,
     LiveRunDescriptor, LiveRunPlan, POPULATION_BYTES, PROTOCOL_BYTES, PairSeed, PopulationPhase,
     ResourceBudgetContract, TreatmentArm,
+};
+pub use study_program::{
+    AuthorizedPilotBudget, CANONICAL_LIVE_MODEL, CANONICAL_LIVE_PROVIDER,
+    CANONICAL_LIVE_THINKING_LEVEL, CANONICAL_LIVE_TOOL_PROFILE, CanonicalLiveRuntimeProfile,
+    FeasibilityPilotPlan, NativeRuntimeArtifacts, PilotAnalysisArtifactReference,
+    STUDY_PROGRAM_REVISION, StudyProgramError, StudyStage, SubstantiveStudyPlan,
 };
 
 const POPULATION_SIZE: u8 = 8;

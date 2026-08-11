@@ -2895,6 +2895,39 @@ fn typed_attempt_retry_review_resolution_and_close_are_replayable() {
 }
 
 #[test]
+fn ling_actor_policy_is_a_distinct_replayable_durable_identity() {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("society-ling-policy-{nonce}"));
+    let mut store = KernelStore::connect_test_path(&path).unwrap();
+    let (root_authority, _) = founded_cycle(
+        &mut store,
+        OperatingCycleTreatment::DeterministicPiHostFixtureV1,
+    );
+    accepted(
+        &mut store,
+        "ling-policy-register",
+        root_authority,
+        Capability::RegisterActorConfiguration,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::RegisterActorConfiguration {
+            configuration_name: ActorConfigurationName::parse("ling actor v1").unwrap(),
+            model_policy: ActorModelPolicy::PinnedOpenRouterLing26FlashOff,
+            primary_attractor: DevelopmentalAttractor::Measure,
+        },
+    );
+    assert!(store.validate_replayed_materialized_state().is_ok());
+    drop(store);
+
+    let replayed = KernelStore::connect_test_path(&path).unwrap();
+    assert!(replayed.validate_replayed_materialized_state().is_ok());
+    drop(replayed);
+    let _ = fs::remove_file(path);
+}
+
+#[test]
 fn study_task_attempt_recovery_settlement_preserves_unknown_accounting() {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)

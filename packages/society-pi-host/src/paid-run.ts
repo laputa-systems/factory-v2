@@ -18,25 +18,19 @@ import { fileURLToPath } from "node:url";
 import { blake3Hex } from "./digest.js";
 import {
 	ADAPTER_PROTOCOL_VERSION,
-	ADMITTED_LAGUNA_CANONICAL_MODEL_SLUG,
-	ADMITTED_LAGUNA_MODEL,
 	ADMITTED_LING_26_FLASH_CANONICAL_MODEL_SLUG,
 	ADMITTED_LING_26_FLASH_MODEL,
-	ADMITTED_LING_CANONICAL_MODEL_SLUG,
 	ADMITTED_LING_MODEL,
 	ADMITTED_NON_REASONING_THINKING_LEVEL,
 	PINNED_ACTOR_MODEL_POLICY_V1,
-	PINNED_CANONICAL_MODEL_SLUG,
 	PINNED_FORUM_F0_AWARENESS_BLAKE3,
 	PINNED_FORUM_F0_TOOL_CONTRACT_BLAKE3,
-	PINNED_MODEL,
 	PINNED_OPENROUTER_BASE_URL,
 	PINNED_PROVIDER,
 	absolutePath,
 	blake3Digest,
 	boundarySequence,
 	correlationIdentity,
-	isAdmittedModelId,
 	positiveInteger,
 	sessionIdentity,
 	spawnNonce,
@@ -60,14 +54,15 @@ import {
 const TOTAL_ACTORS = 16;
 const MAX_CONCURRENT_ACTORS = 8;
 const ROLES_PER_CELL = 4;
-const TOTAL_COST_CEILING_USD = 0.5;
-const ACTOR_COST_CEILING_USD = 0.08;
+const MICRO_USD_PER_USD = 1_000_000;
+const TOTAL_COST_CEILING_MICRO_USD = 50_000;
+const ACTOR_COST_CEILING_MICRO_USD = 3_125;
 const MAX_FORUM_POSTS_PER_ACTOR = 2;
 const MAX_FORUM_READS_PER_ACTOR = 2;
 const MAX_FORUM_TOOL_ERRORS_PER_ACTOR = 3;
-/** The first paid qualification smoke uses the admitted Ling 2.6 treatment. */
-const DEFAULT_PROVIDER = PINNED_PROVIDER;
-const DEFAULT_MODEL = ADMITTED_LING_26_FLASH_MODEL;
+/** The first paid qualification smoke is one fixed Ling 2.6 treatment. */
+const QUALIFICATION_PROVIDER = PINNED_PROVIDER;
+const QUALIFICATION_MODEL = ADMITTED_LING_26_FLASH_MODEL;
 
 interface SelectedModel {
 	readonly provider: typeof PINNED_PROVIDER;
@@ -192,25 +187,33 @@ class ForumStore {
 }
 
 class RunBudget {
-	private finalizedCostUsd = 0;
-	private readonly inFlightCostUsd = new Map<string, number>();
-	constructor(readonly totalCeilingUsd: number) {}
+	private finalizedCostMicroUsd = 0;
+	private readonly inFlightCostMicroUsd = new Map<string, number>();
+	constructor(readonly totalCeilingMicroUsd: number) {}
+	get totalCeilingUsd(): number { return this.totalCeilingMicroUsd / MICRO_USD_PER_USD; }
+	get actorCeilingMicroUsd(): number { return ACTOR_COST_CEILING_MICRO_USD; }
+	get actorCeilingUsd(): number { return this.actorCeilingMicroUsd / MICRO_USD_PER_USD; }
+	get totalCostMicroUsd(): number {
+		return this.finalizedCostMicroUsd + [...this.inFlightCostMicroUsd.values()].reduce((sum, cost) => sum + cost, 0);
+	}
 	get totalCostUsd(): number {
-		return this.finalizedCostUsd + [...this.inFlightCostUsd.values()].reduce((sum, cost) => sum + cost, 0);
+		return this.totalCostMicroUsd / MICRO_USD_PER_USD;
 	}
 
 	observe(actor: string, costUsd: number): "ok" | "actor_limit" | "total_limit" {
-		const prior = this.inFlightCostUsd.get(actor) ?? 0;
-		if (!Number.isFinite(costUsd) || costUsd < prior) return "total_limit";
-		if (costUsd > Math.min(ACTOR_COST_CEILING_USD, this.totalCeilingUsd / TOTAL_ACTORS)) return "actor_limit";
-		const projected = this.totalCostUsd - prior + costUsd;
-		if (projected > this.totalCeilingUsd) return "total_limit";
-		this.inFlightCostUsd.set(actor, costUsd);
+		const observedMicroUsd = ceilMicroUsd(costUsd);
+		const prior = this.inFlightCostMicroUsd.get(actor) ?? 0;
+		if (observedMicroUsd === undefined || observedMicroUsd < prior) return "total_limit";
+		if (observedMicroUsd > this.actorCeilingMicroUsd) return "actor_limit";
+		const projected = this.totalCostMicroUsd - prior + observedMicroUsd;
+		if (projected > this.totalCeilingMicroUsd) return "total_limit";
+		this.inFlightCostMicroUsd.set(actor, observedMicroUsd);
 		return "ok";
 	}
 	addFinal(actor: string, costUsd: number): void {
-		this.inFlightCostUsd.delete(actor);
-		this.finalizedCostUsd += Math.max(0, costUsd);
+		const prior = this.inFlightCostMicroUsd.get(actor) ?? 0;
+		this.inFlightCostMicroUsd.delete(actor);
+		this.finalizedCostMicroUsd += ceilMicroUsd(costUsd) ?? prior;
 	}
 }
 
@@ -263,7 +266,8 @@ async function main(): Promise<void> {
 	const sourceAgentDirectory = process.env.SOCIETY_PI_AGENT_DIRECTORY ?? join(homedir(), ".pi", "agent");
 	const sourceAuthPath = join(sourceAgentDirectory, "auth.json");
 	const catalogPath = join(packageRoot, "catalogs", "openrouter-admitted-models-v1.json");
-	const selectedModel = selectModel(process.env.SOCIETY_PI_PROVIDER ?? DEFAULT_PROVIDER, process.env.SOCIETY_PI_MODEL ?? DEFAULT_MODEL);
+	assertRequestedQualificationProfile();
+	const selectedModel = qualificationModel();
 	await stat(hostEntrypoint);
 	await stat(lockfile);
 	await stat(sourceAuthPath);
@@ -289,7 +293,7 @@ async function main(): Promise<void> {
 		lockfile,
 	};
 	const forum = new ForumStore();
-	const budget = new RunBudget(TOTAL_COST_CEILING_USD);
+	const budget = new RunBudget(TOTAL_COST_CEILING_MICRO_USD);
 	const providerBackoff = new ProviderBackoff(selectedModel.inputUsdPerMillion === "0" ? 5_000 : 500);
 	const specs = actorSpecs();
 	const reports: ActorReport[] = [];
@@ -317,7 +321,9 @@ async function main(): Promise<void> {
 				catalogBlake3: blake3Digest(blake3Hex(await readFile(paths.modelsPath))),
 			},
 			totalCostCeilingUsd: budget.totalCeilingUsd,
-			actorCostCeilingUsd: Math.min(ACTOR_COST_CEILING_USD, budget.totalCeilingUsd / TOTAL_ACTORS),
+			actorCostCeilingUsd: budget.actorCeilingUsd,
+			totalCostCeilingMicroUsd: budget.totalCeilingMicroUsd,
+			actorCostCeilingMicroUsd: budget.actorCeilingMicroUsd,
 			reports: ordered,
 			forumPosts: forum.postsSnapshot,
 			forumReads: forum.readsSnapshot,
@@ -569,29 +575,18 @@ async function admittedModelsCatalog(catalogPath: string): Promise<string> {
 	return catalogText;
 }
 
-function selectModel(provider: string, model: string): SelectedModel {
-	if (provider !== PINNED_PROVIDER || !isAdmittedModelId(model)) {
-		throw new Error(`model is not admitted: ${provider}/${model}`);
+
+function assertRequestedQualificationProfile(): void {
+	const requestedProvider = process.env.SOCIETY_PI_PROVIDER ?? QUALIFICATION_PROVIDER;
+	const requestedModel = process.env.SOCIETY_PI_MODEL ?? QUALIFICATION_MODEL;
+	if (requestedProvider !== QUALIFICATION_PROVIDER || requestedModel !== QUALIFICATION_MODEL) {
+		throw new Error(
+			`qualification profile is pinned to ${QUALIFICATION_PROVIDER}/${QUALIFICATION_MODEL}; use a separately revised profile for another treatment`,
+		);
 	}
-	if (model === PINNED_MODEL) {
-		return {
-			provider: PINNED_PROVIDER,
-			modelId: PINNED_MODEL,
-			canonicalSlug: PINNED_CANONICAL_MODEL_SLUG,
-			thinkingLevel: "high",
-			contextWindow: 1_048_576,
-			maxTokens: 384_000,
-			inputUsdPerMillion: "0.09",
-			outputUsdPerMillion: "0.18",
-			cacheReadUsdPerMillion: "0.018",
-		};
-	}
-	if (model === ADMITTED_LING_MODEL) {
-		return freeModel(ADMITTED_LING_MODEL, ADMITTED_LING_CANONICAL_MODEL_SLUG);
-	}
-	if (model === ADMITTED_LAGUNA_MODEL) {
-		return freeModel(ADMITTED_LAGUNA_MODEL, ADMITTED_LAGUNA_CANONICAL_MODEL_SLUG);
-	}
+}
+
+function qualificationModel(): SelectedModel {
 	return {
 		provider: PINNED_PROVIDER,
 		modelId: ADMITTED_LING_26_FLASH_MODEL,
@@ -602,20 +597,6 @@ function selectModel(provider: string, model: string): SelectedModel {
 		inputUsdPerMillion: "0.01",
 		outputUsdPerMillion: "0.03",
 		cacheReadUsdPerMillion: "0.002",
-	};
-}
-
-function freeModel(modelId: typeof ADMITTED_LING_MODEL | typeof ADMITTED_LAGUNA_MODEL, canonicalSlug: typeof ADMITTED_LING_CANONICAL_MODEL_SLUG | typeof ADMITTED_LAGUNA_CANONICAL_MODEL_SLUG): SelectedModel {
-	return {
-		provider: PINNED_PROVIDER,
-		modelId,
-		canonicalSlug,
-		thinkingLevel: "high",
-		contextWindow: 262_144,
-		maxTokens: 32_768,
-		inputUsdPerMillion: "0",
-		outputUsdPerMillion: "0",
-		cacheReadUsdPerMillion: "0",
 	};
 }
 
@@ -672,6 +653,18 @@ function zeroCostObservation(): CostObservation {
 	return { providerUsd: 0, catalogEstimateUsd: 0, effectiveUsd: 0 };
 }
 
+/**
+ * Every observed cost is rounded upward before it reaches a guardrail. The
+ * adapter's provider and catalog costs are binary64 observations, while the
+ * authorization is an integer micro-USD ceiling; rounding toward spend is the
+ * only safe conversion at this boundary.
+ */
+function ceilMicroUsd(costUsd: number): number | undefined {
+	if (!Number.isFinite(costUsd) || costUsd < 0) return undefined;
+	const microUsd = Math.ceil(costUsd * MICRO_USD_PER_USD);
+	return Number.isSafeInteger(microUsd) ? microUsd : undefined;
+}
+
 function childExit(child: ChildProcessWithoutNullStreams): Promise<number> {
 	return new Promise((resolveExit) => {
 		child.once("exit", (code, signal) => {
@@ -716,7 +709,7 @@ function formatReport(
 		`  catalog_estimated_cost_usd: ${catalogEstimate.toFixed(9)}`,
 		`  total_cost_usd: ${totalCost.toFixed(9)}`,
 		`  hard_total_ceiling_usd: ${budget.totalCeilingUsd.toFixed(2)}`,
-		`  hard_per_actor_ceiling_usd: ${Math.min(ACTOR_COST_CEILING_USD, budget.totalCeilingUsd / TOTAL_ACTORS).toFixed(6)}`,
+		`  hard_per_actor_ceiling_usd: ${budget.actorCeilingUsd.toFixed(6)}`,
 		`  input_tokens: ${totalInput}`,
 		`  output_tokens: ${totalOutput}`,
 		`  cache_read_tokens: ${totalCacheRead}`,

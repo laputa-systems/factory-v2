@@ -62,6 +62,9 @@ export interface PaidQualificationArtifactInput {
 	};
 	readonly totalCostCeilingUsd: number;
 	readonly actorCostCeilingUsd: number;
+	/** Integer guardrails; USD renderings are derived only for display. */
+	readonly totalCostCeilingMicroUsd: number;
+	readonly actorCostCeilingMicroUsd: number;
 	readonly reports: readonly PaidQualificationActorReport[];
 	readonly forumPosts: readonly PaidQualificationForumPost[];
 	readonly forumReads: readonly PaidQualificationForumRead[];
@@ -95,6 +98,8 @@ export interface PaidQualificationArtifact {
 	readonly budget: {
 		readonly totalCeilingUsd: number;
 		readonly actorCeilingUsd: number;
+		readonly totalCeilingMicroUsd: number;
+		readonly actorCeilingMicroUsd: number;
 	};
 	readonly actors: readonly PaidQualificationActorReport[];
 	readonly forum: {
@@ -131,6 +136,8 @@ export function buildPaidQualificationArtifact(input: PaidQualificationArtifactI
 		budget: {
 			totalCeilingUsd: input.totalCostCeilingUsd,
 			actorCeilingUsd: input.actorCostCeilingUsd,
+			totalCeilingMicroUsd: input.totalCostCeilingMicroUsd,
+			actorCeilingMicroUsd: input.actorCostCeilingMicroUsd,
 		},
 		actors: input.reports,
 		forum: {
@@ -141,4 +148,3 @@ export function buildPaidQualificationArtifact(input: PaidQualificationArtifactI
 	const bodyBlake3 = blake3Digest(blake3Hex(JSON.stringify(body)));
 	return { ...body, integrity: { bodyBlake3 } };
 }
-

@@ -85,6 +85,21 @@ type StoredStudyEventRow = (
     Option<i64>,
     Option<i64>,
 );
+type StoredActorRuntimeBindingRow = (Option<i64>, Option<i64>, i64, i64, i64, i64);
+type StoredStudyRunAdmittedEventRow = (
+    Option<i64>,
+    Option<i64>,
+    Option<i64>,
+    Option<Vec<u8>>,
+    Option<i64>,
+);
+type StoredStudyRunPairRegisteredEventRow = (
+    Option<i64>,
+    Option<i64>,
+    Option<i64>,
+    Option<Vec<u8>>,
+    Option<i64>,
+);
 
 macro_rules! study_identifier {
     ($name:ident) => {
@@ -1878,7 +1893,7 @@ pub(crate) fn actor_runtime_binding(
     connection: &Connection,
     obligation_id: StudyActorObligationId,
 ) -> Result<Option<StudyActorRuntimeBindingObservation>, StoreError> {
-    let row: Option<(Option<i64>, Option<i64>, i64, i64, i64, i64)> = connection
+    let row: Option<StoredActorRuntimeBindingRow> = connection
         .query_row(
             "SELECT actor_attempt_id, root_authority_office_session_id,
                     native_child_id, native_child_spawn_admission_id,
@@ -5320,13 +5335,7 @@ pub(crate) fn decode_event_body(
             pair_id: stored(row.1)?,
         }),
         StudyEventKind::StudyRunAdmitted => {
-            let run: (
-                Option<i64>,
-                Option<i64>,
-                Option<i64>,
-                Option<Vec<u8>>,
-                Option<i64>,
-            ) = connection.query_row(
+            let run: StoredStudyRunAdmittedEventRow = connection.query_row(
                 "SELECT study_run_id, protocol_revision_id, plan_content_object_id,
                             plan_digest, pair_count
                        FROM event_study_transition WHERE event_id = $1",
@@ -5345,13 +5354,7 @@ pub(crate) fn decode_event_body(
             })
         }
         StudyEventKind::StudyRunPairRegistered => {
-            let pair: (
-                Option<i64>,
-                Option<i64>,
-                Option<i64>,
-                Option<Vec<u8>>,
-                Option<i64>,
-            ) = connection.query_row(
+            let pair: StoredStudyRunPairRegisteredEventRow = connection.query_row(
                 "SELECT study_run_id, study_pair_id, pair_ordinal,
                             randomization_digest, study_run_lifecycle_state
                        FROM event_study_transition WHERE event_id = $1",

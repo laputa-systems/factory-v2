@@ -9,3 +9,4 @@ correction-latency-world = { path = "../correction-latency-world" }
 society-kernel.workspace = true
 society-pi.workspace = true
 society-content = { path = "../../../crates/society-content" }
+societyd = { path = "../../../crates/societyd" }

@@ -144,6 +144,29 @@ struct PiTaskAttemptTerminalInput<'a> {
     transcript_disposition: PiTaskAttemptTranscriptDisposition,
 }
 
+// Closed PostgreSQL row shapes used by the Pi TaskAttempt receipt decoder.
+// Naming these projections keeps their durable column contracts visible while
+// avoiding anonymous tuples at each query boundary.
+type TaskAttemptTranscriptValues<'a> = (
+    i64,
+    &'a str,
+    Option<Vec<u8>>,
+    Option<i64>,
+    Option<i64>,
+    Option<Vec<u8>>,
+);
+type StoredTaskAttemptDisposeCommandRow = (
+    i64,
+    String,
+    i64,
+    i64,
+    String,
+    Option<Vec<u8>>,
+    Option<i64>,
+    Option<i64>,
+    Option<Vec<u8>>,
+);
+
 type StoredPiChildAdmissionCommand = (
     i64,
     Option<i64>,
@@ -5352,14 +5375,7 @@ fn record_pi_task_attempt_session_dispose_usage_failure(
 
 fn task_attempt_transcript_values(
     receipt: &PiTaskAttemptSessionTranscriptReceipt,
-) -> (
-    i64,
-    &str,
-    Option<Vec<u8>>,
-    Option<i64>,
-    Option<i64>,
-    Option<Vec<u8>>,
-) {
+) -> TaskAttemptTranscriptValues<'_> {
     match receipt {
         PiTaskAttemptSessionTranscriptReceipt::Materialized {
             session_file,
@@ -20907,7 +20923,7 @@ fn decode_command_body(
             }
         }
         CommandKind::RecordPiTaskAttemptSessionDisposed => {
-            let row: (i64, String, i64, i64, String, Option<Vec<u8>>, Option<i64>, Option<i64>, Option<Vec<u8>>) = connection.query_row("SELECT actor_attempt_id, correlation_identity, disposed_sequence, transcript_kind, session_file, session_file_digest, transcript_content_object_id, first_user_prompt_kind, first_user_prompt_digest FROM command_record_pi_task_attempt_session_disposed WHERE command_row_id = $1", [command_row_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?,row.get(7)?,row.get(8)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing task disposed command body"))?;
+            let row: StoredTaskAttemptDisposeCommandRow = connection.query_row("SELECT actor_attempt_id, correlation_identity, disposed_sequence, transcript_kind, session_file, session_file_digest, transcript_content_object_id, first_user_prompt_kind, first_user_prompt_digest FROM command_record_pi_task_attempt_session_disposed WHERE command_row_id = $1", [command_row_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?,row.get(7)?,row.get(8)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing task disposed command body"))?;
             CommandBody::RecordPiTaskAttemptSessionDisposed {
                 actor_attempt_id: ActorAttemptId::try_from(row.0)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
@@ -22531,6 +22547,7 @@ fn ticket_state_from_i64(value: i64) -> Result<TicketState, StoreError> {
 fn actor_model_policy_from_i64(value: i64) -> Result<ActorModelPolicy, StoreError> {
     match value {
         1 => Ok(ActorModelPolicy::PinnedDeepseekV4FlashHigh),
+        2 => Ok(ActorModelPolicy::PinnedOpenRouterLing26FlashOff),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }
@@ -22763,5 +22780,19 @@ fn postmortem_action_kind_from_i64(value: i64) -> Result<PostmortemActionKind, S
         1 => Ok(PostmortemActionKind::CreateFollowUpTicket),
         2 => Ok(PostmortemActionKind::ChangePolicyProposal),
         _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ling_actor_model_policy_has_its_own_closed_durable_code() {
+        assert!(matches!(
+            actor_model_policy_from_i64(2),
+            Ok(ActorModelPolicy::PinnedOpenRouterLing26FlashOff)
+        ));
+        assert!(actor_model_policy_from_i64(3).is_err());
     }
 }

@@ -1,9 +1,6 @@
-.PHONY: test postgres-test-ready postgres-test-clean run-society run-society-paid
-
-PROVIDER ?= openrouter
-MODEL ?= inclusionai/ling-2.6-flash
+.PHONY: test postgres-test-ready postgres-test-clean run-society run-society-cheapest-paid-smoke
 POSTGRES_EXPECTED_VERSION_NUM ?= 180004
-POSTGRES_SCHEMA_REVISION ?= society-kernel-postgres-schema-v11
+POSTGRES_SCHEMA_REVISION ?= society-kernel-postgres-schema-v12
 CARGO_TEST_THREADS ?= 8
 SOCIETY_POSTGRES_TEST_URL ?= postgresql://$(shell id -un)@localhost/postgres
 SOCIETY_POSTGRES_TEST_TEMPLATE_DB ?= society_test_template
@@ -94,13 +91,14 @@ test: postgres-test-ready
 run-society: postgres-test-ready
 	SOCIETY_POSTGRES_TEST_URL='$(SOCIETY_POSTGRES_TEST_URL)' cargo run --quiet --manifest-path applications/correction-latency/Cargo.toml -p correction-latency-harness
 
-# Explicitly paid, noncanonical qualification smoke: 16 actors total and
-# eight native Pi hosts at once, versus the 32/16 canonical CL-001 topology.
-run-society-paid:
+# Explicitly paid, noncanonical adapter smoke: 16 actors total,
+# eight native Pi hosts at once, and a fixed $0.05 ceiling. It is pinned to
+# OpenRouter Ling 2.6 Flash with thinking off; another treatment needs a new
+# versioned profile rather than make-variable selection.
+run-society-cheapest-paid-smoke:
 	npm run build --prefix packages/society-pi-host
-	SOCIETY_PI_PROVIDER="$(PROVIDER)" SOCIETY_PI_MODEL="$(MODEL)" node packages/society-pi-host/dist/src/paid-run.js
+	node packages/society-pi-host/dist/src/paid-run.js
 
 lint:
 	cargo fmt --all
 	cargo clippy --fix --allow-dirty --all-targets --all-features -- --deny warnings
-

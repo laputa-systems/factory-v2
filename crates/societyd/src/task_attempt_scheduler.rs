@@ -431,16 +431,17 @@ mod tests {
 
     fn key() -> TaskAttemptScheduleKey {
         TaskAttemptScheduleKey::new(
-            StudyActorObligationId::new(11).unwrap(),
-            ActorAttemptId::new(23).unwrap(),
+            StudyActorObligationId::new(11).expect("test fixture"),
+            ActorAttemptId::new(23).expect("test fixture"),
         )
     }
 
     fn receipt(actor_attempt_id: ActorAttemptId) -> TaskAttemptSpawnReceipt {
         TaskAttemptSpawnReceipt {
             actor_attempt_id,
-            native_child_id: NativeChildId::new(31).unwrap(),
-            native_child_spawn_admission_id: NativeChildSpawnAdmissionId::new(37).unwrap(),
+            native_child_id: NativeChildId::new(31).expect("test fixture"),
+            native_child_spawn_admission_id: NativeChildSpawnAdmissionId::new(37)
+                .expect("test fixture"),
         }
     }
 
@@ -458,15 +459,17 @@ mod tests {
             seen_key: None,
         };
         let mut scheduler = TaskAttemptScheduler::default();
-        let spawned = scheduler.spawn(&mut driver, key).unwrap();
+        let spawned = scheduler.spawn(&mut driver, key).expect("test fixture");
         assert_eq!(driver.seen_key, Some(key));
         assert_eq!(
-            scheduler.state(key).unwrap(),
+            scheduler.state(key).expect("test fixture"),
             TaskAttemptScheduleState::Spawned
         );
-        assert_eq!(scheduler.child(key).unwrap(), spawned);
+        assert_eq!(scheduler.child(key).expect("test fixture"), spawned);
         assert_eq!(
-            scheduler.runtime_binding_command(key).unwrap(),
+            scheduler
+                .runtime_binding_command(key)
+                .expect("test fixture"),
             StudyCommand::BindActorTaskAttemptRuntime {
                 obligation_id: key.obligation_id,
                 actor_attempt_id: key.actor_attempt_id,
@@ -474,41 +477,45 @@ mod tests {
                 native_child_spawn_admission_id: spawned.native_child_spawn_admission_id,
             }
         );
-        scheduler.record_runtime_bound(key).unwrap();
+        scheduler.record_runtime_bound(key).expect("test fixture");
         assert_eq!(
             scheduler
                 .drive(&mut driver, key, MonotonicTick::ZERO)
-                .unwrap(),
+                .expect("test fixture"),
             TaskAttemptScheduleState::RuntimeBound
         );
         assert_eq!(
             scheduler
                 .drive(&mut driver, key, MonotonicTick::ZERO)
-                .unwrap(),
+                .expect("test fixture"),
             TaskAttemptScheduleState::Ready
         );
         assert_eq!(
             scheduler
                 .drive(&mut driver, key, MonotonicTick::ZERO)
-                .unwrap(),
+                .expect("test fixture"),
             TaskAttemptScheduleState::Disposed
         );
         assert_eq!(
             scheduler
                 .drive(&mut driver, key, MonotonicTick::ZERO)
-                .unwrap(),
+                .expect("test fixture"),
             TaskAttemptScheduleState::PhysicalReconciled
         );
         assert_eq!(
-            scheduler.runtime_reconciliation_command(key).unwrap(),
+            scheduler
+                .runtime_reconciliation_command(key)
+                .expect("test fixture"),
             StudyCommand::ReconcileActorRuntime {
                 obligation_id: key.obligation_id,
                 native_child_id: spawned.native_child_id,
             }
         );
-        scheduler.record_runtime_reconciled(key).unwrap();
+        scheduler
+            .record_runtime_reconciled(key)
+            .expect("test fixture");
         assert_eq!(
-            scheduler.state(key).unwrap(),
+            scheduler.state(key).expect("test fixture"),
             TaskAttemptScheduleState::Reconciled
         );
     }
@@ -517,7 +524,7 @@ mod tests {
     fn task_attempt_scheduler_rejects_off_by_one_identity_and_duplicate() {
         let key = key();
         let mut driver = FakeDriver {
-            receipt: receipt(ActorAttemptId::new(29).unwrap()),
+            receipt: receipt(ActorAttemptId::new(29).expect("test fixture")),
             progress: Vec::new(),
             seen_key: None,
         };
@@ -527,7 +534,7 @@ mod tests {
             Err(TaskAttemptSchedulerError::DriverIdentityMismatch)
         );
         assert_eq!(
-            scheduler.state(key).unwrap(),
+            scheduler.state(key).expect("test fixture"),
             TaskAttemptScheduleState::ContainmentRequired
         );
         assert_eq!(
@@ -539,8 +546,8 @@ mod tests {
     #[test]
     fn task_attempt_command_ids_are_distinct_and_typed() {
         let key = key();
-        let binding = runtime_binding_command_id(key).unwrap();
-        let reconciliation = runtime_reconciliation_command_id(key).unwrap();
+        let binding = runtime_binding_command_id(key).expect("test fixture");
+        let reconciliation = runtime_reconciliation_command_id(key).expect("test fixture");
         assert_ne!(binding, reconciliation);
         assert!(binding.as_str().contains("obligation-11/attempt-23"));
         assert!(reconciliation.as_str().ends_with("/reconcile"));
@@ -555,14 +562,14 @@ mod tests {
             seen_key: None,
         };
         let mut scheduler = TaskAttemptScheduler::default();
-        scheduler.spawn(&mut driver, key).unwrap();
-        scheduler.record_runtime_bound(key).unwrap();
+        scheduler.spawn(&mut driver, key).expect("test fixture");
+        scheduler.record_runtime_bound(key).expect("test fixture");
         assert_eq!(
             scheduler.drive(&mut driver, key, MonotonicTick::ZERO),
             Err(TaskAttemptSchedulerError::UnexpectedDriverProgress)
         );
         assert_eq!(
-            scheduler.state(key).unwrap(),
+            scheduler.state(key).expect("test fixture"),
             TaskAttemptScheduleState::RuntimeBound
         );
     }
@@ -580,8 +587,8 @@ mod tests {
             seen_key: None,
         };
         let mut scheduler = TaskAttemptScheduler::default();
-        scheduler.spawn(&mut driver, key).unwrap();
-        scheduler.record_runtime_bound(key).unwrap();
+        scheduler.spawn(&mut driver, key).expect("test fixture");
+        scheduler.record_runtime_bound(key).expect("test fixture");
         assert_eq!(
             scheduler.drive(&mut driver, key, MonotonicTick::ZERO),
             Ok(TaskAttemptScheduleState::ContainmentRequired)

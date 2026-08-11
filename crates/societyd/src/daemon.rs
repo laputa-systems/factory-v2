@@ -48,6 +48,9 @@ use crate::protocol::{
     ClientCommandBody, ClientCommandRequest, CorrelationId, DaemonStatus, ProtocolErrorCode,
     PublicRequest, Response, SupervisorRequest, WireError,
 };
+use crate::study_admission::{
+    StudyAdmissionAuthority, StudyAdmissionError, StudyAdmissionOperationId,
+};
 
 const SOCKET_FILE_NAME: &str = "societyd.sock";
 const LOCK_FILE_NAME: &str = "societyd.lock";
@@ -518,6 +521,39 @@ impl Daemon {
 
     pub fn startup_mode(&self) -> StartupMode {
         self.mode
+    }
+
+    /// Open the approved in-process application/daemon study-admission seam.
+    ///
+    /// This does not expose the store, the content writer, or native process
+    /// custody.  It admits only the generic closed `StudyCommand` family and
+    /// is intentionally unavailable once recovery fencing is active.
+    pub fn open_study_admission(
+        &mut self,
+        operation: StudyAdmissionOperationId,
+    ) -> Result<StudyAdmissionAuthority<'_>, StudyAdmissionError> {
+        StudyAdmissionAuthority::new(self, operation)
+    }
+
+    pub(crate) fn seal_study_admission_content(
+        &mut self,
+        operation: &ContentSealOperationId,
+        bytes: &[u8],
+    ) -> Result<ContentObjectRegistration, ContentSealingError> {
+        self.seal_content_object(operation, bytes)
+    }
+
+    pub(crate) fn execute_study_admission_transition(
+        &mut self,
+        command_id: CommandId,
+        command: StudyCommand,
+    ) -> Result<StudyTransitionReceipt, StudyAdmissionError> {
+        if self.mode == StartupMode::RecoveryFenced {
+            return Err(StudyAdmissionError::RecoveryFenced);
+        }
+        self.store
+            .execute_study_transition(command_id, command)
+            .map_err(StudyAdmissionError::Kernel)
     }
 
     /// Daemon-internal content writer. It is intentionally unavailable from
