@@ -371,8 +371,13 @@ fn validate_persisted_pair(pair: &PersistedStudyPairObservation) -> Result<(), A
         || reset.frozen_forum_head.is_none()
         || retained.ground_truth_reveal_digest.is_none()
         || reset.ground_truth_reveal_digest.is_none()
-        || retained.decisions != 2
-        || reset.decisions != 2
+        // A valid strict public decision is retained as a generic decision
+        // citation when present. A missing, duplicate, or malformed public
+        // declaration instead produces explicit unavailable CL-001 outcome
+        // slots, so it is not silently replaced by a fabricated decision or
+        // excluded before metricwise missingness is counted.
+        || retained.decisions > 2
+        || reset.decisions > 2
     {
         return Err(AnalysisInputError::IncompletePersistedPair);
     }

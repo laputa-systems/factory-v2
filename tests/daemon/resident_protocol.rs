@@ -200,6 +200,25 @@ fn public_study_observation_queries_are_read_only_and_report_absence() {
     fs::remove_dir_all(root).unwrap();
 }
 
+#[test]
+fn named_monitor_socket_rejects_supervisor_execute_frames() {
+    // The public socket must remain a query-only transport even when a peer
+    // knows the version and correlation framing.  In particular, a raw
+    // supervisor Execute tag cannot become a study-run admission or scheduler
+    // capability by being sent to the named monitor socket.
+    let mut payload = Vec::new();
+    payload.extend_from_slice(&protocol::PROTOCOL_VERSION.to_be_bytes());
+    payload.push(0x41); // SUPERVISOR_EXECUTE_TAG, intentionally not public.
+    payload.extend_from_slice(&1_u64.to_be_bytes()); // nonzero correlation.
+    let mut frame = Vec::new();
+    protocol::write_frame(&mut frame, &payload).unwrap();
+
+    assert!(matches!(
+        protocol::read_public_request(&mut frame.as_slice()),
+        Err(protocol::WireError::UnknownTag)
+    ));
+}
+
 fn command(
     command_id: &str,
     principal_id: PrincipalId,

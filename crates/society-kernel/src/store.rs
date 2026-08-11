@@ -24,15 +24,17 @@ use crate::{
     DeterministicExperimentState, DevelopmentalAttractor, DirectChildWaitStatus, EpisodeState,
     EvaluatorExecutionContract, EvaluatorOutputContract, EvaluatorRevisionId, EventBody, EventId,
     EventKind, EvidenceAdmissionId, EvidenceLimitationKind, EvidenceSemanticRole,
-    ExecutionProfileId, ExecutionProfileKind, ExecutionProfileReadiness, ExpectedGeneration,
-    ForensicManifestCapturePolicy, ForensicManifestId, FoundingMissionId, GraphEdgeId,
-    GraphEdgeKind, GraphObjectId, GraphObjectKind, GraphRevisionBody, GraphRevisionId,
-    GraphRevisionState, HypothesisRevisionText, InputManifestId, LedgerEvent, MissionPrinciple,
-    MissionPrincipleKind, MissionPrincipleText, MissionPrinciples, MissionStatement, NativeChildId,
+    ExecutionProfileId, ExecutionProfileKind, ExecutionProfileQualificationId,
+    ExecutionProfileReadiness, ExpectedGeneration, ForensicManifestCapturePolicy,
+    ForensicManifestId, FoundingMissionId, GraphEdgeId, GraphEdgeKind, GraphObjectId,
+    GraphObjectKind, GraphRevisionBody, GraphRevisionId, GraphRevisionState,
+    HypothesisRevisionText, InputManifestId, LedgerEvent, MissionPrinciple, MissionPrincipleKind,
+    MissionPrincipleText, MissionPrinciples, MissionStatement, NativeChildId,
     NativeChildLivenessObservationId, NativeChildNotSpawnedReason, NativeChildOwner,
     NativeChildPid, NativeChildReapReceiptId, NativeChildRecoveryReceiptId,
     NativeChildSpawnAdmissionId, NativeChildSpawnAdmissionState, NativeChildStreamSealId,
-    NativeWorkspaceId, NorthStarBoundaryCommitmentQuestion, NorthStarChangeQuestion,
+    NativeExecutionProfileQualificationLaunchId, NativeWorkspaceId,
+    NorthStarBoundaryCommitmentQuestion, NorthStarChangeQuestion,
     NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet, NorthStarRevisitQuestion,
     ObservationRevisionText, OfficeId, OfficeKind, OfficeOccupancyId, OfficeSessionState,
     OfficeSessionTerminalState, OfficeTurnId, OfficeTurnPurpose, OfficeTurnState, OperatingCycleId,
@@ -62,12 +64,78 @@ use crate::{
     RetentionAccessClass, ReviewChallengeId, ReviewChallengeResponseState, ReviewChallengeSeverity,
     ReviewDispositionKind, ReviewResolutionKind, RootAuthorityOfficeSessionId, SocietyId,
     SocietyName, SpawnNonce, StudyActorObligationId, StudyActorObligationObservation,
-    StudyActorRuntimeBindingObservation, StudyCommand, StudyEpisodeId, StudyPairId,
-    StudyPairObservation, StudyRunId, StudyRunObservation, StudyTransitionDisposition,
-    StudyTransitionReceipt, SupervisedChildIdentity, SupervisorEpochId, SupervisorEpochIdentity,
-    TicketId, TicketState, UsdMicros, WorkItemId, WorkItemKind, WorkItemState, WorkLeaseId,
-    WorkLeaseState,
+    StudyActorRuntimeBindingObservation, StudyActorTaskAttemptLaunchId, StudyCommand,
+    StudyEpisodeId, StudyPairId, StudyPairObservation, StudyPopulationPhase,
+    StudyPostActorPublicForumObservation, StudyRoleOrdinal, StudyRunId, StudyRunObservation,
+    StudyRunPairOrdinal, StudyTransitionDisposition, StudyTransitionReceipt, StudyTreatment,
+    SupervisedChildIdentity, SupervisorEpochId, SupervisorEpochIdentity, TicketId, TicketState,
+    UsdMicros, WorkItemId, WorkItemKind, WorkItemState, WorkLeaseId, WorkLeaseState,
 };
+
+/// Normalized projection used to reopen one active actor TaskAttempt claim.
+type StudyActorTaskAttemptLaunchClaimRow = (
+    i64,
+    i64,
+    i64,
+    i64,
+    i64,
+    i64,
+    i64,
+    String,
+    String,
+    String,
+    i64,
+    i64,
+    i64,
+    i64,
+);
+
+type StudyActorWorkAllocationRow = (i64, i64, i64, String, i64, i64);
+
+/// Normalized projection used to reopen one active native-profile
+/// qualification claim.
+type NativeExecutionProfileQualificationLaunchClaimRow = (
+    i64,
+    i64,
+    i64,
+    i64,
+    i64,
+    i64,
+    String,
+    String,
+    String,
+    i64,
+    i64,
+    i64,
+);
+
+/// Exact child/admission/profile facts required before the kernel authorizes
+/// a Pi CreateSession frame.
+type PiCreateSessionAdmissionRow = (
+    i64,
+    i64,
+    i64,
+    Option<i64>,
+    Option<i64>,
+    Option<i64>,
+    i64,
+    i64,
+);
+
+/// Persisted body of the evidence-bound native execution-profile promotion.
+type QualifyNativeExecutionProfileCommandRow = (
+    i64,
+    i64,
+    i64,
+    i64,
+    Vec<u8>,
+    i64,
+    Vec<u8>,
+    i64,
+    Vec<u8>,
+    Vec<u8>,
+    i64,
+);
 
 struct PiChildSpawnAdmissionInput<'a> {
     operating_cycle_id: OperatingCycleId,
@@ -171,6 +239,7 @@ type StoredPiChildAdmissionCommand = (
     i64,
     Option<i64>,
     Option<i64>,
+    Option<i64>,
     i64,
     i64,
     String,
@@ -239,7 +308,7 @@ type PiOfficeSessionDisposedCommandSqlRow = (
     Option<Vec<u8>>,
 );
 
-const COMMAND_BODY_TABLES: [&str; 113] = [
+const COMMAND_BODY_TABLES: [&str; 118] = [
     "command_create_society_identity",
     "command_install_root_authority_office",
     "command_install_founding_mission",
@@ -353,9 +422,14 @@ const COMMAND_BODY_TABLES: [&str; 113] = [
     "command_record_pi_task_attempt_session_dispose_usage",
     "command_record_pi_task_attempt_session_dispose_usage_failure",
     "command_record_pi_task_attempt_session_disposed",
+    "command_qualify_native_execution_profile",
+    "command_start_native_execution_profile_qualification",
+    "command_claim_study_actor_task_attempt_launch",
+    "command_claim_native_execution_profile_qualification_launch",
+    "command_allocate_study_actor_work",
 ];
 
-const EVENT_BODY_TABLES: [&str; 107] = [
+const EVENT_BODY_TABLES: [&str; 112] = [
     "event_society_identity_created",
     "event_root_authority_office_installed",
     "event_founding_mission_installed",
@@ -463,6 +537,11 @@ const EVENT_BODY_TABLES: [&str; 107] = [
     "event_pi_task_attempt_session_dispose_usage_recorded",
     "event_pi_task_attempt_session_dispose_usage_frozen",
     "event_pi_task_attempt_session_disposed",
+    "event_native_execution_profile_qualified",
+    "event_native_execution_profile_qualification_started",
+    "event_study_actor_task_attempt_launch_claimed",
+    "event_native_execution_profile_qualification_launch_claimed",
+    "event_study_actor_work_allocated",
 ];
 
 const GRAPH_REVISION_BODY_TABLES: [&str; 2] = ["observation_revisions", "hypothesis_revisions"];
@@ -581,6 +660,155 @@ impl DeterministicEvaluatorNativeChildAdmission {
     }
     pub const fn input_manifest_content_object_id(&self) -> ContentObjectId {
         self.input_manifest_content_object_id
+    }
+}
+
+/// Kernel-derived M3 launch inputs for one active study obligation. The
+/// caller supplies only the obligation, work item, budget amount, and generic
+/// supervisor/workspace facts; the attempt, reservation, qualified profile,
+/// cycle generation, and binding identities are resolved and retained by one
+/// accepted command.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StudyActorTaskAttemptLaunchClaim {
+    launch_claim_id: StudyActorTaskAttemptLaunchId,
+    study_actor_obligation_id: StudyActorObligationId,
+    operating_cycle_id: OperatingCycleId,
+    work_item_id: WorkItemId,
+    actor_attempt_id: ActorAttemptId,
+    budget_reservation_id: BudgetReservationId,
+    reservation_amount: UsdMicros,
+    execution_profile_id: ExecutionProfileId,
+    supervisor_epoch_id: SupervisorEpochId,
+    supervisor_epoch_identity: SupervisorEpochIdentity,
+    native_workspace_id: NativeWorkspaceId,
+    canonical_workspace_path: CanonicalWorkspacePath,
+    admission_generation: AdmissionGeneration,
+}
+
+/// Root-owned, durable M3 assignment for one sealed study seat.  The daemon
+/// reads this projection only after it has independently verified the sealed
+/// run selector and resolved the current obligation for that seat.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StudyActorWorkAllocation {
+    operating_cycle_id: OperatingCycleId,
+    work_item_id: WorkItemId,
+    reservation_amount: UsdMicros,
+    supervisor_epoch_id: SupervisorEpochId,
+    supervisor_epoch_identity: SupervisorEpochIdentity,
+    admission_generation: AdmissionGeneration,
+}
+
+impl StudyActorWorkAllocation {
+    pub const fn operating_cycle_id(&self) -> OperatingCycleId {
+        self.operating_cycle_id
+    }
+    pub const fn work_item_id(&self) -> WorkItemId {
+        self.work_item_id
+    }
+    pub const fn reservation_amount(&self) -> UsdMicros {
+        self.reservation_amount
+    }
+    pub const fn supervisor_epoch_id(&self) -> SupervisorEpochId {
+        self.supervisor_epoch_id
+    }
+    pub fn supervisor_epoch_identity(&self) -> &SupervisorEpochIdentity {
+        &self.supervisor_epoch_identity
+    }
+    pub const fn admission_generation(&self) -> AdmissionGeneration {
+        self.admission_generation
+    }
+}
+
+impl StudyActorTaskAttemptLaunchClaim {
+    pub const fn launch_claim_id(&self) -> StudyActorTaskAttemptLaunchId {
+        self.launch_claim_id
+    }
+    pub const fn study_actor_obligation_id(&self) -> StudyActorObligationId {
+        self.study_actor_obligation_id
+    }
+    pub const fn operating_cycle_id(&self) -> OperatingCycleId {
+        self.operating_cycle_id
+    }
+    pub const fn work_item_id(&self) -> WorkItemId {
+        self.work_item_id
+    }
+    pub const fn actor_attempt_id(&self) -> ActorAttemptId {
+        self.actor_attempt_id
+    }
+    pub const fn budget_reservation_id(&self) -> BudgetReservationId {
+        self.budget_reservation_id
+    }
+    pub const fn reservation_amount(&self) -> UsdMicros {
+        self.reservation_amount
+    }
+    pub const fn execution_profile_id(&self) -> ExecutionProfileId {
+        self.execution_profile_id
+    }
+    pub const fn supervisor_epoch_id(&self) -> SupervisorEpochId {
+        self.supervisor_epoch_id
+    }
+    pub fn supervisor_epoch_identity(&self) -> &SupervisorEpochIdentity {
+        &self.supervisor_epoch_identity
+    }
+    pub fn native_workspace_id(&self) -> &NativeWorkspaceId {
+        &self.native_workspace_id
+    }
+    pub fn canonical_workspace_path(&self) -> &CanonicalWorkspacePath {
+        &self.canonical_workspace_path
+    }
+    pub const fn admission_generation(&self) -> AdmissionGeneration {
+        self.admission_generation
+    }
+}
+
+/// Kernel-derived launch inputs for the resident's one native execution
+/// profile qualification child. The claim is the durable hand-off between
+/// cycle admission and daemon-owned Pi spawn construction; it contains no
+/// provider, prompt, environment, or application payload.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeExecutionProfileQualificationLaunchClaim {
+    launch_claim_id: NativeExecutionProfileQualificationLaunchId,
+    operating_cycle_id: OperatingCycleId,
+    budget_reservation_id: BudgetReservationId,
+    reservation_amount: UsdMicros,
+    execution_profile_id: ExecutionProfileId,
+    supervisor_epoch_id: SupervisorEpochId,
+    supervisor_epoch_identity: SupervisorEpochIdentity,
+    native_workspace_id: NativeWorkspaceId,
+    canonical_workspace_path: CanonicalWorkspacePath,
+    admission_generation: AdmissionGeneration,
+}
+
+impl NativeExecutionProfileQualificationLaunchClaim {
+    pub const fn launch_claim_id(&self) -> NativeExecutionProfileQualificationLaunchId {
+        self.launch_claim_id
+    }
+    pub const fn operating_cycle_id(&self) -> OperatingCycleId {
+        self.operating_cycle_id
+    }
+    pub const fn budget_reservation_id(&self) -> BudgetReservationId {
+        self.budget_reservation_id
+    }
+    pub const fn reservation_amount(&self) -> UsdMicros {
+        self.reservation_amount
+    }
+    pub const fn execution_profile_id(&self) -> ExecutionProfileId {
+        self.execution_profile_id
+    }
+    pub const fn supervisor_epoch_id(&self) -> SupervisorEpochId {
+        self.supervisor_epoch_id
+    }
+    pub fn supervisor_epoch_identity(&self) -> &SupervisorEpochIdentity {
+        &self.supervisor_epoch_identity
+    }
+    pub fn native_workspace_id(&self) -> &NativeWorkspaceId {
+        &self.native_workspace_id
+    }
+    pub fn canonical_workspace_path(&self) -> &CanonicalWorkspacePath {
+        &self.canonical_workspace_path
+    }
+    pub const fn admission_generation(&self) -> AdmissionGeneration {
+        self.admission_generation
     }
 }
 
@@ -714,6 +942,15 @@ pub enum StoreError {
     StudyPairNotFound(StudyPairId),
     #[error("study episode {0:?} was not found")]
     StudyEpisodeNotFound(StudyEpisodeId),
+    #[error("episode {0:?} has not reached the post-actor public-Forum boundary")]
+    StudyPostActorForumNotReady(StudyEpisodeId),
+    #[error(
+        "episode {episode_id:?} exceeds the bounded post-actor public-Forum projection ({limit} messages)"
+    )]
+    StudyPostActorForumTooLarge {
+        episode_id: StudyEpisodeId,
+        limit: usize,
+    },
     #[error("study run {0:?} was not found")]
     StudyRunNotFound(StudyRunId),
     #[error("ledger corruption: {0}")]
@@ -900,6 +1137,86 @@ impl KernelStore {
         crate::study::run_pair_registration(&self.connection, study_run_id, pair_ordinal)
     }
 
+    /// Resolves the one active generic actor obligation admitted for a
+    /// sealed run lifetime. The key identifies only durable study topology;
+    /// M3 work, attempts, budgets, and native custody remain outside this
+    /// query.
+    pub fn study_run_lifetime_obligation(
+        &self,
+        study_run_id: StudyRunId,
+        pair_ordinal: crate::StudyRunPairOrdinal,
+        treatment: crate::StudyTreatment,
+        phase: crate::StudyPopulationPhase,
+        role: crate::StudyRoleOrdinal,
+    ) -> Result<Option<StudyActorObligationId>, StoreError> {
+        crate::study::run_lifetime_obligation(
+            &self.connection,
+            study_run_id,
+            pair_ordinal,
+            treatment,
+            phase,
+            role,
+        )
+    }
+
+    /// Reads the root-owned M3 allocation for one declared study seat.  This
+    /// intentionally does not resolve an obligation: successor obligations
+    /// are admitted later, while the allocation remains a pre-registered
+    /// immutable selection.
+    pub fn study_actor_work_allocation(
+        &self,
+        study_run_id: StudyRunId,
+        pair_ordinal: StudyRunPairOrdinal,
+        treatment: StudyTreatment,
+        phase: StudyPopulationPhase,
+        role: StudyRoleOrdinal,
+    ) -> Result<Option<StudyActorWorkAllocation>, StoreError> {
+        let row: Option<StudyActorWorkAllocationRow> = self
+            .connection
+            .query_row(
+                "SELECT operating_cycle_id, work_item_id, reservation_amount_micros,
+                    supervisor_epoch_identity, supervisor_epoch_id, admission_generation
+               FROM study_actor_work_allocations
+              WHERE study_run_id = $1 AND pair_ordinal = $2 AND treatment = $3
+                AND population_phase = $4 AND role_ordinal = $5",
+                params![
+                    study_run_id.value(),
+                    i64::from(pair_ordinal.value()),
+                    treatment as i64,
+                    phase as i64,
+                    i64::from(role.value()),
+                ],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                    ))
+                },
+            )
+            .optional()?;
+        row.map(|row| {
+            Ok(StudyActorWorkAllocation {
+                operating_cycle_id: OperatingCycleId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                work_item_id: WorkItemId::try_from(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                reservation_amount: UsdMicros::try_from(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                supervisor_epoch_identity: SupervisorEpochIdentity::parse(row.3)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                supervisor_epoch_id: SupervisorEpochId::try_from(row.4)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                admission_generation: AdmissionGeneration::try_from(row.5)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            })
+        })
+        .transpose()
+    }
+
     /// Reads one exact study actor-runtime binding for resident recovery. The
     /// owner is a closed typed identity (task attempt or root Office session),
     /// never a generic payload selected by the caller.
@@ -910,6 +1227,236 @@ impl KernelStore {
         crate::study::actor_runtime_binding(&self.connection, obligation_id)
     }
 
+    /// Reads the kernel-owned launch association for one obligation. Every
+    /// returned identity is joined back to its normalized source row and the
+    /// exact live/qualified profile and running cycle generation; a missing
+    /// claim is therefore distinct from a forged or stale detached request.
+    pub fn study_actor_task_attempt_launch_claim(
+        &self,
+        obligation_id: StudyActorObligationId,
+    ) -> Result<Option<StudyActorTaskAttemptLaunchClaim>, StoreError> {
+        let row: Option<StudyActorTaskAttemptLaunchClaimRow> = self
+            .connection
+            .query_row(
+                "SELECT claim.study_actor_task_attempt_launch_id,
+                        claim.operating_cycle_id, claim.work_item_id,
+                        claim.actor_attempt_id, claim.budget_reservation_id,
+                        claim.execution_profile_id, claim.supervisor_epoch_id,
+                        claim.supervisor_epoch_identity,
+                        claim.native_workspace_id, claim.canonical_workspace_path,
+                        claim.admission_generation, reservation.amount_micros,
+                        cycle.lifecycle_state, attempt.lifecycle_state
+                   FROM study_actor_task_attempt_launch_claims claim
+                   JOIN study_actor_obligations obligation
+                     ON obligation.study_actor_obligation_id = claim.study_actor_obligation_id
+                   JOIN operating_cycles cycle
+                     ON cycle.operating_cycle_id = claim.operating_cycle_id
+                   JOIN work_items work ON work.work_item_id = claim.work_item_id
+                   JOIN attempts attempt ON attempt.actor_attempt_id = claim.actor_attempt_id
+                   JOIN workspaces workspace
+                     ON workspace.native_workspace_id = claim.native_workspace_id
+                    AND workspace.canonical_workspace_path = claim.canonical_workspace_path
+                   JOIN budget_reservations reservation
+                     ON reservation.budget_reservation_id = claim.budget_reservation_id
+                   JOIN execution_profiles profile
+                     ON profile.execution_profile_id = claim.execution_profile_id
+                   JOIN supervisor_epochs epoch
+                     ON epoch.supervisor_epoch_id = claim.supervisor_epoch_id
+                  WHERE claim.study_actor_obligation_id = $1
+                    AND obligation.lifecycle_state = 1
+                    AND cycle.lifecycle_state = 3
+                    AND cycle.treatment = 2
+                    AND cycle.admission_generation = claim.admission_generation
+                    AND attempt.operating_cycle_id = claim.operating_cycle_id
+                    AND attempt.work_item_id = claim.work_item_id
+                    AND attempt.execution_profile_id = claim.execution_profile_id
+                    AND attempt.lifecycle_state = 1
+                    AND reservation.operating_cycle_id = claim.operating_cycle_id
+                    AND profile.profile_kind = 2
+                    AND profile.readiness = 3
+                    AND epoch.supervisor_epoch_identity = claim.supervisor_epoch_identity",
+                [obligation_id.value()],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                        row.get(7)?,
+                        row.get(8)?,
+                        row.get(9)?,
+                        row.get(10)?,
+                        row.get(11)?,
+                        row.get(12)?,
+                        row.get(13)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        if row.12 != OperatingCycleState::Running as i64
+            || row.13 != ActorAttemptState::Running as i64
+        {
+            return Err(StoreError::LedgerCorruption(
+                "launch claim projection returned a non-running source",
+            ));
+        }
+        Ok(Some(StudyActorTaskAttemptLaunchClaim {
+            launch_claim_id: StudyActorTaskAttemptLaunchId::try_from(row.0)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+            study_actor_obligation_id: obligation_id,
+            operating_cycle_id: OperatingCycleId::try_from(row.1)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+            work_item_id: WorkItemId::try_from(row.2)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+            actor_attempt_id: ActorAttemptId::try_from(row.3)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+            budget_reservation_id: BudgetReservationId::try_from(row.4)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+            execution_profile_id: ExecutionProfileId::try_from(row.5)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+            reservation_amount: UsdMicros::try_from(row.11)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+            supervisor_epoch_id: SupervisorEpochId::try_from(row.6)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+            supervisor_epoch_identity: SupervisorEpochIdentity::parse(row.7)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+            native_workspace_id: NativeWorkspaceId::parse(row.8)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+            canonical_workspace_path: CanonicalWorkspacePath::parse(row.9)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+            admission_generation: AdmissionGeneration::try_from(row.10)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+        }))
+    }
+
+    /// Resolves a study TaskAttempt launch claim through its deterministic
+    /// resident command identity. The command identity is the restart-safe
+    /// projection for a plan lifetime; callers still receive only the normal
+    /// claim after all running-source checks above.
+    pub fn study_actor_task_attempt_launch_claim_for_command_id(
+        &self,
+        command_id: &CommandId,
+    ) -> Result<Option<StudyActorTaskAttemptLaunchClaim>, StoreError> {
+        let obligation_id: Option<i64> = self
+            .connection
+            .query_row(
+                "SELECT body.study_actor_obligation_id
+                   FROM commands command
+                   JOIN command_claim_study_actor_task_attempt_launch body
+                     ON body.command_row_id = command.command_row_id
+                  WHERE command.command_id = $1
+                    AND command.command_status = 1",
+                [command_id.as_str()],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(obligation_id) = obligation_id else {
+            return Ok(None);
+        };
+        let obligation_id = StudyActorObligationId::try_from(obligation_id)
+            .map_err(|_| StoreError::InvalidStoredValue)?;
+        self.study_actor_task_attempt_launch_claim(obligation_id)
+    }
+
+    /// Reads the durable resident-owned launch claim for the native profile
+    /// qualification child. A stale, detached, or already-consumed claim is
+    /// absent rather than being converted into spawn input.
+    pub fn native_execution_profile_qualification_launch_claim(
+        &self,
+        operating_cycle_id: OperatingCycleId,
+    ) -> Result<Option<NativeExecutionProfileQualificationLaunchClaim>, StoreError> {
+        let row: Option<NativeExecutionProfileQualificationLaunchClaimRow> = self
+            .connection
+            .query_row(
+                "SELECT claim.native_execution_profile_qualification_launch_id,
+                        claim.operating_cycle_id, claim.budget_reservation_id,
+                        reservation.amount_micros, claim.execution_profile_id,
+                        claim.supervisor_epoch_id, claim.supervisor_epoch_identity,
+                        claim.native_workspace_id, claim.canonical_workspace_path,
+                        claim.admission_generation, cycle.lifecycle_state,
+                        profile.readiness
+                   FROM native_execution_profile_qualification_launch_claims claim
+                   JOIN operating_cycles cycle
+                     ON cycle.operating_cycle_id = claim.operating_cycle_id
+                   JOIN budget_reservations reservation
+                     ON reservation.budget_reservation_id = claim.budget_reservation_id
+                   JOIN execution_profiles profile
+                     ON profile.execution_profile_id = claim.execution_profile_id
+                   JOIN supervisor_epochs epoch
+                     ON epoch.supervisor_epoch_id = claim.supervisor_epoch_id
+                   JOIN workspaces workspace
+                     ON workspace.native_workspace_id = claim.native_workspace_id
+                    AND workspace.canonical_workspace_path = claim.canonical_workspace_path
+                  WHERE claim.operating_cycle_id = $1
+                    AND cycle.lifecycle_state = 3
+                    AND cycle.treatment = 1
+                    AND cycle.admission_generation = claim.admission_generation
+                    AND reservation.operating_cycle_id = claim.operating_cycle_id
+                    AND reservation.reservation_state = 1
+                    AND profile.profile_kind = 2
+                    AND profile.readiness = 2
+                    AND epoch.supervisor_epoch_identity = claim.supervisor_epoch_identity
+                  ORDER BY claim.native_execution_profile_qualification_launch_id
+                  LIMIT 1",
+                [operating_cycle_id.value()],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                        row.get(7)?,
+                        row.get(8)?,
+                        row.get(9)?,
+                        row.get(10)?,
+                        row.get(11)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        if row.10 != OperatingCycleState::Running as i64
+            || row.11 != ExecutionProfileReadiness::Unqualified as i64
+        {
+            return Err(StoreError::LedgerCorruption(
+                "qualification launch claim projection returned a stale source",
+            ));
+        }
+        Ok(Some(NativeExecutionProfileQualificationLaunchClaim {
+            launch_claim_id: NativeExecutionProfileQualificationLaunchId::try_from(row.0)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+            operating_cycle_id: OperatingCycleId::try_from(row.1)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+            budget_reservation_id: BudgetReservationId::try_from(row.2)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+            reservation_amount: UsdMicros::try_from(row.3)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+            execution_profile_id: ExecutionProfileId::try_from(row.4)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+            supervisor_epoch_id: SupervisorEpochId::try_from(row.5)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+            supervisor_epoch_identity: SupervisorEpochIdentity::parse(row.6)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+            native_workspace_id: NativeWorkspaceId::parse(row.7)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+            canonical_workspace_path: CanonicalWorkspacePath::parse(row.8)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+            admission_generation: AdmissionGeneration::try_from(row.9)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+        }))
+    }
+
     /// Reads the stable, typed obligation set for one episode. A resident
     /// coordinator uses this after restart to reconstruct schedule state;
     /// application bytes remain outside the kernel projection.
@@ -918,6 +1465,18 @@ impl KernelStore {
         episode_id: crate::StudyEpisodeId,
     ) -> Result<Vec<StudyActorObligationObservation>, StoreError> {
         crate::study::actor_obligation_observations(&self.connection, episode_id)
+    }
+
+    /// Reads one episode's bounded, attributable public F0 Forum only after
+    /// its admitted actors are terminal. This intentionally excludes Pi
+    /// transcripts, private Forum views, and content-store bytes; applications
+    /// may use it to parse a pre-registered public record grammar without
+    /// claiming access to a model's latent reasoning.
+    pub fn study_post_actor_public_forum(
+        &self,
+        episode_id: crate::StudyEpisodeId,
+    ) -> Result<StudyPostActorPublicForumObservation, StoreError> {
+        crate::study::post_actor_public_forum(&self.connection, episode_id)
     }
 
     /// Prepares the exact deterministic bytes which a read transition will
@@ -1844,6 +2403,9 @@ fn qualification_treatment_fences_request(
         PrincipalId::KERNEL => matches!(
             body,
             CommandBody::RecordCycleDrained { .. }
+                | CommandBody::QuiesceOperatingCycle { .. }
+                | CommandBody::ReconcileOperatingCycle { .. }
+                | CommandBody::CloseOperatingCycle { .. }
                 | CommandBody::RecordOfficeSessionReady { .. }
                 | CommandBody::RecordOfficeSessionTerminal { .. }
                 | CommandBody::SettleOfficeTurn { .. }
@@ -1852,6 +2414,21 @@ fn qualification_treatment_fences_request(
                 | CommandBody::AttestActorAttemptTerminal { .. }
                 | CommandBody::ExpireWorkLease { .. }
                 | CommandBody::CancelActorAttempt { .. }
+                | CommandBody::ReserveBudget { .. }
+                | CommandBody::AdmitPiChildSpawn { .. }
+                | CommandBody::RecordInertChildSpawn { .. }
+                | CommandBody::RecordPiAdapterReady { .. }
+                | CommandBody::AuthorizePiCreateSession { .. }
+                | CommandBody::RecordPiCreateSessionDelivery { .. }
+                | CommandBody::RecordPiSessionReady { .. }
+                | CommandBody::RecordChildStreamSeal { .. }
+                | CommandBody::RecordChildProcessLiveness { .. }
+                | CommandBody::RecordProcessSignalReceipt { .. }
+                | CommandBody::RecordDirectChildReap { .. }
+                | CommandBody::FinalizeChildProcess { .. }
+                | CommandBody::StartNativeExecutionProfileQualification { .. }
+                | CommandBody::QualifyNativeExecutionProfile { .. }
+                | CommandBody::ClaimNativeExecutionProfileQualificationLaunch { .. }
         ),
         _ => false,
     };
@@ -1995,6 +2572,19 @@ fn command_operating_cycle_for_treatment(
         | CommandBody::AdmitDeterministicEvaluatorNativeChild {
             operating_cycle_id, ..
         } => Some(*operating_cycle_id),
+        CommandBody::QualifyNativeExecutionProfile {
+            operating_cycle_id, ..
+        } => Some(*operating_cycle_id),
+        CommandBody::StartNativeExecutionProfileQualification { operating_cycle_id }
+        | CommandBody::ClaimStudyActorTaskAttemptLaunch {
+            operating_cycle_id, ..
+        } => Some(*operating_cycle_id),
+        CommandBody::ClaimNativeExecutionProfileQualificationLaunch {
+            operating_cycle_id, ..
+        } => Some(*operating_cycle_id),
+        CommandBody::AllocateStudyActorWork {
+            operating_cycle_id, ..
+        } => Some(*operating_cycle_id),
         _ => None,
     };
     if direct.is_some() {
@@ -2125,6 +2715,11 @@ fn apply_command(
         request.body,
         CommandBody::AdmitOperatingCycle { .. }
             | CommandBody::StartRootAuthorityOfficeSession { .. }
+            | CommandBody::StartNativeExecutionProfileQualification { .. }
+            | CommandBody::ClaimStudyActorTaskAttemptLaunch { .. }
+            | CommandBody::ClaimNativeExecutionProfileQualificationLaunch { .. }
+            | CommandBody::AllocateStudyActorWork { .. }
+            | CommandBody::QualifyNativeExecutionProfile { .. }
             | CommandBody::RecordOfficeSessionReady { .. }
             | CommandBody::RecordOfficeSessionTerminal { .. }
             | CommandBody::OpenOfficeTurn { .. }
@@ -2297,6 +2892,14 @@ fn apply_command(
             request.expected_generation,
             *cycle_id,
         ),
+        CommandBody::StartNativeExecutionProfileQualification { operating_cycle_id } => {
+            start_native_execution_profile_qualification(
+                transaction,
+                command_row_id,
+                request.expected_generation,
+                *operating_cycle_id,
+            )
+        }
         CommandBody::RecordOfficeSessionReady { session_id } => record_office_session_ready(
             transaction,
             command_row_id,
@@ -3507,6 +4110,100 @@ fn apply_command(
             *disposed_sequence,
             transcript_receipt,
         ),
+        CommandBody::QualifyNativeExecutionProfile {
+            operating_cycle_id,
+            execution_profile_id,
+            native_child_spawn_admission_id,
+            native_child_id,
+            runtime_identity_digest,
+            runtime_identity_content_object_id,
+            adapter_report_digest,
+            adapter_report_content_object_id,
+            probe_request_digest,
+            probe_response_digest,
+            probe_response_content_object_id,
+        } => qualify_native_execution_profile(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *operating_cycle_id,
+            *execution_profile_id,
+            *native_child_spawn_admission_id,
+            *native_child_id,
+            *runtime_identity_digest,
+            *runtime_identity_content_object_id,
+            *adapter_report_digest,
+            *adapter_report_content_object_id,
+            *probe_request_digest,
+            *probe_response_digest,
+            *probe_response_content_object_id,
+        ),
+        CommandBody::ClaimStudyActorTaskAttemptLaunch {
+            study_actor_obligation_id,
+            operating_cycle_id,
+            work_item_id,
+            reservation_amount,
+            supervisor_epoch_id,
+            supervisor_epoch_identity,
+            native_workspace_id,
+            canonical_workspace_path,
+        } => claim_study_actor_task_attempt_launch(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *study_actor_obligation_id,
+            *operating_cycle_id,
+            *work_item_id,
+            *reservation_amount,
+            *supervisor_epoch_id,
+            supervisor_epoch_identity,
+            native_workspace_id,
+            canonical_workspace_path,
+        ),
+        CommandBody::ClaimNativeExecutionProfileQualificationLaunch {
+            operating_cycle_id,
+            reservation_amount,
+            supervisor_epoch_id,
+            supervisor_epoch_identity,
+            native_workspace_id,
+            canonical_workspace_path,
+        } => claim_native_execution_profile_qualification_launch(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *operating_cycle_id,
+            *reservation_amount,
+            *supervisor_epoch_id,
+            supervisor_epoch_identity,
+            native_workspace_id,
+            canonical_workspace_path,
+        ),
+        CommandBody::AllocateStudyActorWork {
+            study_run_id,
+            pair_ordinal,
+            treatment,
+            phase,
+            role,
+            operating_cycle_id,
+            work_item_id,
+            reservation_amount,
+            supervisor_epoch_id,
+            supervisor_epoch_identity,
+        } => allocate_study_actor_work(
+            transaction,
+            command_row_id,
+            request.expected_generation,
+            *study_run_id,
+            *pair_ordinal,
+            *treatment,
+            *phase,
+            *role,
+            *operating_cycle_id,
+            *work_item_id,
+            *reservation_amount,
+            *supervisor_epoch_id,
+            supervisor_epoch_identity,
+        ),
         CommandBody::StudyTransition { command } => {
             crate::study::apply(transaction, command_row_id, command)
                 .map(|event| EventBody::StudyTransition { event })
@@ -3854,6 +4551,48 @@ fn start_office_session(
     Ok(EventBody::RootAuthorityOfficeSessionStarted {
         session_id: id_from_returned_identity::<RootAuthorityOfficeSessionId>(transaction)?,
         cycle_id,
+    })
+}
+
+/// Qualification has no office owner. Its explicit kernel transition moves
+/// the admitted cycle into the same Running state used by other supervised
+/// work, while keeping the treatment fence closed to office semantics.
+fn start_native_execution_profile_qualification(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    operating_cycle_id: OperatingCycleId,
+) -> Result<EventBody, Rejection> {
+    let cycle = cycle_for_generation(transaction, operating_cycle_id, expected_generation)?;
+    if cycle._treatment != OperatingCycleTreatment::PiSdkQualificationV1 {
+        return Err(Rejection::QualificationTreatmentRestricted);
+    }
+    if cycle.state != OperatingCycleState::Admitted {
+        return Err(Rejection::InvalidLifecycleTransition);
+    }
+    transaction
+        .execute(
+            "UPDATE operating_cycles
+                SET lifecycle_state = $1, last_transition_command_id = $2
+              WHERE operating_cycle_id = $3",
+            params![
+                OperatingCycleState::Running as i64,
+                command_row_id,
+                operating_cycle_id.value()
+            ],
+        )
+        .map_err(|_| Rejection::SubjectNotFound)?;
+    transaction
+        .execute(
+            "UPDATE operating_cycle_admissions
+                SET started_by_command_id = $1
+              WHERE operating_cycle_id = $2",
+            params![command_row_id, operating_cycle_id.value()],
+        )
+        .map_err(|_| Rejection::InvalidLifecycleTransition)?;
+    Ok(EventBody::NativeExecutionProfileQualificationStarted {
+        operating_cycle_id,
+        generation: cycle.generation,
     })
 }
 
@@ -9375,6 +10114,531 @@ fn start_actor_attempt(
     })
 }
 
+/// Atomically associates one active study obligation with its first generic
+/// M3 attempt. The command intentionally accepts no actor-attempt,
+/// reservation, profile, or generation IDs: those are derived here from the
+/// admitted work item, exact qualified native profile, and running cycle.
+#[allow(clippy::too_many_arguments)]
+fn claim_study_actor_task_attempt_launch(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    study_actor_obligation_id: StudyActorObligationId,
+    operating_cycle_id: OperatingCycleId,
+    work_item_id: WorkItemId,
+    reservation_amount: UsdMicros,
+    supervisor_epoch_id: SupervisorEpochId,
+    supervisor_epoch_identity: &SupervisorEpochIdentity,
+    native_workspace_id: &NativeWorkspaceId,
+    canonical_workspace_path: &CanonicalWorkspacePath,
+) -> Result<EventBody, Rejection> {
+    let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
+    if cycle._treatment != OperatingCycleTreatment::PinnedPiSdkLiveV1 {
+        return Err(Rejection::ExecutionProfileIneligible);
+    }
+    let active_obligation: bool = transaction
+        .query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM study_actor_obligations
+                 WHERE study_actor_obligation_id = $1 AND lifecycle_state = 1
+            )",
+            [study_actor_obligation_id.value()],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|_| Rejection::SubjectNotFound)?
+        != 0;
+    if !active_obligation {
+        return Err(Rejection::InvalidLifecycleTransition);
+    }
+    let already_bound: bool = transaction
+        .query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM study_actor_runtime_bindings
+                 WHERE study_actor_obligation_id = $1
+            ) OR EXISTS(
+                SELECT 1 FROM study_actor_task_attempt_launch_claims
+                 WHERE study_actor_obligation_id = $1
+            )",
+            [study_actor_obligation_id.value()],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|_| Rejection::InvalidLifecycleTransition)?
+        != 0;
+    if already_bound {
+        return Err(Rejection::InvalidLifecycleTransition);
+    }
+    let epoch_matches: bool = transaction
+        .query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM supervisor_epochs
+                 WHERE supervisor_epoch_id = $1 AND supervisor_epoch_identity = $2
+            )",
+            params![
+                supervisor_epoch_id.value(),
+                supervisor_epoch_identity.as_str()
+            ],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?
+        != 0;
+    if !epoch_matches {
+        return Err(Rejection::ChildSpawnAdmissionInvalid);
+    }
+
+    // Workspace registration is part of the same claim transaction, so a
+    // daemon cannot materialize a path that was not the kernel's canonical
+    // spawn input. Existing identical registrations are safely idempotent.
+    transaction
+        .execute(
+            "INSERT INTO workspaces(native_workspace_id, canonical_workspace_path, registered_by_command_id)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (native_workspace_id) DO NOTHING",
+            params![
+                native_workspace_id.as_str(),
+                canonical_workspace_path.as_str(),
+                command_row_id
+            ],
+        )
+        .map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
+    let workspace_matches: bool = transaction
+        .query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM workspaces
+                 WHERE native_workspace_id = $1 AND canonical_workspace_path = $2
+            )",
+            params![
+                native_workspace_id.as_str(),
+                canonical_workspace_path.as_str()
+            ],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?
+        != 0;
+    if !workspace_matches {
+        return Err(Rejection::ChildSpawnAdmissionInvalid);
+    }
+
+    // Validate the exact profile before reserving budget. The work item and
+    // actor instance are the only source of this profile identity.
+    let (_, actor_instance_id, _, _, _, work_state, _) = work_item_row(transaction, work_item_id)?;
+    let (_, _, execution_profile_id, actor_cycle, actor_state) =
+        actor_instance_row(transaction, actor_instance_id)?;
+    if actor_cycle != operating_cycle_id
+        || actor_state != ActorInstanceState::Active
+        || work_state != WorkItemState::Claimed
+    {
+        return Err(Rejection::WorkLeaseUnavailable);
+    }
+    let qualified_profile: bool = transaction
+        .query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM execution_profiles
+                 WHERE execution_profile_id = $1
+                   AND profile_kind = 2 AND readiness = 3
+            )",
+            [execution_profile_id.value()],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|_| Rejection::ExecutionProfileIneligible)?
+        != 0;
+    if !qualified_profile {
+        return Err(Rejection::ExecutionProfileIneligible);
+    }
+
+    let started = start_actor_attempt(
+        transaction,
+        command_row_id,
+        expected_generation,
+        operating_cycle_id,
+        work_item_id,
+        reservation_amount,
+    )?;
+    let EventBody::ActorAttemptStarted {
+        actor_attempt_id,
+        budget_reservation_id,
+        ..
+    } = started
+    else {
+        return Err(Rejection::InvalidLifecycleTransition);
+    };
+    transaction
+        .execute(
+            "INSERT INTO study_actor_task_attempt_launch_claims(
+                study_actor_obligation_id, operating_cycle_id, work_item_id,
+                actor_attempt_id, budget_reservation_id, execution_profile_id,
+                supervisor_epoch_id, supervisor_epoch_identity,
+                native_workspace_id, canonical_workspace_path,
+                admission_generation, claimed_by_command_id
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+            params![
+                study_actor_obligation_id.value(),
+                operating_cycle_id.value(),
+                work_item_id.value(),
+                actor_attempt_id.value(),
+                budget_reservation_id.value(),
+                execution_profile_id.value(),
+                supervisor_epoch_id.value(),
+                supervisor_epoch_identity.as_str(),
+                native_workspace_id.as_str(),
+                canonical_workspace_path.as_str(),
+                cycle.generation.value(),
+                command_row_id,
+            ],
+        )
+        .map_err(|_| Rejection::InvalidLifecycleTransition)?;
+    let launch_claim_id = id_from_returned_identity::<StudyActorTaskAttemptLaunchId>(transaction)?;
+    Ok(EventBody::StudyActorTaskAttemptLaunchClaimed {
+        launch_claim_id,
+        study_actor_obligation_id,
+        operating_cycle_id,
+        work_item_id,
+        actor_attempt_id,
+        budget_reservation_id,
+        execution_profile_id,
+        supervisor_epoch_id,
+        admission_generation: cycle.generation,
+    })
+}
+
+/// Atomically claims and stores one root-selected M3 work allocation for a
+/// finite study seat. The allocation deliberately precedes task launch: it
+/// lets a root pre-register the complete source/successor schedule while only
+/// the current active obligation can later consume its work through the
+/// daemon-only claim.
+///
+/// The Root Authority, rather than the resident or application, is the
+/// explicit actor-work allocator. A fresh actor cannot claim its own task
+/// before that task has authorized the first native launch, so requiring an
+/// antecedent actor-authored `ClaimWorkItem` would create a circular admission
+/// path. This command resolves it in one replayable transition: it validates
+/// the exact ready work item's admitted actor, creates its lease, and then
+/// records the immutable study-seat allocation. No caller may select another
+/// actor principal or later substitute a claimed work item.
+#[allow(clippy::too_many_arguments)]
+fn allocate_study_actor_work(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    study_run_id: StudyRunId,
+    pair_ordinal: StudyRunPairOrdinal,
+    treatment: StudyTreatment,
+    phase: StudyPopulationPhase,
+    role: StudyRoleOrdinal,
+    operating_cycle_id: OperatingCycleId,
+    work_item_id: WorkItemId,
+    reservation_amount: UsdMicros,
+    supervisor_epoch_id: SupervisorEpochId,
+    supervisor_epoch_identity: &SupervisorEpochIdentity,
+) -> Result<EventBody, Rejection> {
+    let cycle = coordination_cycle(transaction, expected_generation, operating_cycle_id)?;
+    if cycle._treatment != OperatingCycleTreatment::PinnedPiSdkLiveV1 {
+        return Err(Rejection::ExecutionProfileIneligible);
+    }
+    if reservation_amount == UsdMicros::ZERO {
+        return Err(Rejection::BudgetCeilingExceeded);
+    }
+    let run_and_pair_exist: bool = transaction
+        .query_row(
+            "SELECT EXISTS(
+            SELECT 1
+              FROM study_runs run
+              JOIN study_run_pairs pair ON pair.study_run_id = run.study_run_id
+             WHERE run.study_run_id = $1
+               AND run.lifecycle_state IN (2, 3)
+               AND pair.pair_ordinal = $2
+        )",
+            params![study_run_id.value(), i64::from(pair_ordinal.value())],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|_| Rejection::SubjectNotFound)?
+        != 0;
+    if !run_and_pair_exist {
+        return Err(Rejection::InvalidLifecycleTransition);
+    }
+    let epoch_matches: bool = transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM supervisor_epochs
+          WHERE supervisor_epoch_id = $1 AND supervisor_epoch_identity = $2)",
+            params![
+                supervisor_epoch_id.value(),
+                supervisor_epoch_identity.as_str()
+            ],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?
+        != 0;
+    if !epoch_matches {
+        return Err(Rejection::ChildSpawnAdmissionInvalid);
+    }
+    let (_, actor_instance_id, _, _, _, work_state, _) = work_item_row(transaction, work_item_id)?;
+    let (actor_principal, _, execution_profile_id, actor_cycle, actor_state) =
+        actor_instance_row(transaction, actor_instance_id)?;
+    if actor_cycle != operating_cycle_id
+        || actor_state != ActorInstanceState::Active
+        || work_state != WorkItemState::Ready
+    {
+        return Err(Rejection::WorkLeaseUnavailable);
+    }
+    let qualified_profile: bool = transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM execution_profiles
+          WHERE execution_profile_id = $1 AND profile_kind = 2 AND readiness = 3)",
+            [execution_profile_id.value()],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|_| Rejection::ExecutionProfileIneligible)?
+        != 0;
+    if !qualified_profile {
+        return Err(Rejection::ExecutionProfileIneligible);
+    }
+    let duplicate: bool = transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM study_actor_work_allocations
+          WHERE study_run_id = $1 AND pair_ordinal = $2 AND treatment = $3
+            AND population_phase = $4 AND role_ordinal = $5)",
+            params![
+                study_run_id.value(),
+                i64::from(pair_ordinal.value()),
+                treatment as i64,
+                phase as i64,
+                i64::from(role.value())
+            ],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|_| Rejection::InvalidLifecycleTransition)?
+        != 0;
+    if duplicate {
+        return Err(Rejection::InvalidLifecycleTransition);
+    }
+    // The actor identity is derived from `work_item_id`; Root Authority never
+    // supplies an actor principal and the daemon/application never needs to
+    // impersonate one merely to make its first launch possible.
+    let claimed = claim_work_item(
+        transaction,
+        command_row_id,
+        actor_principal,
+        expected_generation,
+        operating_cycle_id,
+        work_item_id,
+    )?;
+    if !matches!(claimed, EventBody::WorkItemClaimed { .. }) {
+        return Err(Rejection::InvalidLifecycleTransition);
+    }
+    transaction
+        .execute(
+            "INSERT INTO study_actor_work_allocations(
+            study_run_id, pair_ordinal, treatment, population_phase, role_ordinal,
+            operating_cycle_id, work_item_id, reservation_amount_micros,
+            supervisor_epoch_id, supervisor_epoch_identity, admission_generation,
+            allocated_by_command_id
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+            params![
+                study_run_id.value(),
+                i64::from(pair_ordinal.value()),
+                treatment as i64,
+                phase as i64,
+                i64::from(role.value()),
+                operating_cycle_id.value(),
+                work_item_id.value(),
+                reservation_amount.value(),
+                supervisor_epoch_id.value(),
+                supervisor_epoch_identity.as_str(),
+                cycle.generation.value(),
+                command_row_id
+            ],
+        )
+        .map_err(|_| Rejection::InvalidLifecycleTransition)?;
+    Ok(EventBody::StudyActorWorkAllocated {
+        study_run_id,
+        pair_ordinal,
+        treatment,
+        phase,
+        role,
+        operating_cycle_id,
+        work_item_id,
+        reservation_amount,
+        supervisor_epoch_id,
+        admission_generation: cycle.generation,
+    })
+}
+
+/// Durably claims the daemon-owned child used for native profile
+/// qualification. This is the one atomic qualification launch transition: it
+/// moves the admitted qualification cycle to Running, creates its budget
+/// reservation, and binds that reservation to the exact unqualified native
+/// profile, supervisor epoch, and registered private workspace in one
+/// transaction. A daemon must not issue the older standalone start/reserve
+/// sequence for this path.
+#[allow(clippy::too_many_arguments)]
+fn claim_native_execution_profile_qualification_launch(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    operating_cycle_id: OperatingCycleId,
+    reservation_amount: UsdMicros,
+    supervisor_epoch_id: SupervisorEpochId,
+    supervisor_epoch_identity: &SupervisorEpochIdentity,
+    native_workspace_id: &NativeWorkspaceId,
+    canonical_workspace_path: &CanonicalWorkspacePath,
+) -> Result<EventBody, Rejection> {
+    let cycle = cycle_for_generation(transaction, operating_cycle_id, expected_generation)?;
+    if cycle.state != OperatingCycleState::Admitted
+        || cycle._treatment != OperatingCycleTreatment::PiSdkQualificationV1
+    {
+        return Err(Rejection::QualificationTreatmentRestricted);
+    }
+    let already_claimed: bool = transaction
+        .query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM native_execution_profile_qualification_launch_claims
+                 WHERE operating_cycle_id = $1
+            )",
+            [operating_cycle_id.value()],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|_| Rejection::InvalidLifecycleTransition)?
+        != 0;
+    if already_claimed {
+        return Err(Rejection::InvalidLifecycleTransition);
+    }
+    let profile_id = ExecutionProfileId::NATIVE_PINNED_PI_SDK_V1;
+    let profile_eligible: bool = transaction
+        .query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM execution_profiles
+                 WHERE execution_profile_id = $1
+                   AND profile_kind = $2 AND readiness = $3
+            )",
+            params![
+                profile_id.value(),
+                ExecutionProfileKind::NativePinnedPiSdkV1 as i64,
+                ExecutionProfileReadiness::Unqualified as i64
+            ],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|_| Rejection::ExecutionProfileIneligible)?
+        != 0;
+    if !profile_eligible {
+        return Err(Rejection::ExecutionProfileIneligible);
+    }
+    if reservation_amount == UsdMicros::ZERO {
+        return Err(Rejection::BudgetCeilingExceeded);
+    }
+    let epoch_matches: bool = transaction
+        .query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM supervisor_epochs
+                 WHERE supervisor_epoch_id = $1 AND supervisor_epoch_identity = $2
+            )",
+            params![
+                supervisor_epoch_id.value(),
+                supervisor_epoch_identity.as_str()
+            ],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?
+        != 0;
+    if !epoch_matches {
+        return Err(Rejection::ChildSpawnAdmissionInvalid);
+    }
+    transaction
+        .execute(
+            "INSERT INTO workspaces(native_workspace_id, canonical_workspace_path, registered_by_command_id)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (native_workspace_id) DO NOTHING",
+            params![
+                native_workspace_id.as_str(),
+                canonical_workspace_path.as_str(),
+                command_row_id
+            ],
+        )
+        .map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
+    let workspace_matches: bool = transaction
+        .query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM workspaces
+                 WHERE native_workspace_id = $1 AND canonical_workspace_path = $2
+            )",
+            params![
+                native_workspace_id.as_str(),
+                canonical_workspace_path.as_str()
+            ],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?
+        != 0;
+    if !workspace_matches {
+        return Err(Rejection::ChildSpawnAdmissionInvalid);
+    }
+    transaction
+        .execute(
+            "UPDATE operating_cycles
+                SET lifecycle_state = $1, last_transition_command_id = $2
+              WHERE operating_cycle_id = $3",
+            params![
+                OperatingCycleState::Running as i64,
+                command_row_id,
+                operating_cycle_id.value()
+            ],
+        )
+        .map_err(|_| Rejection::InvalidLifecycleTransition)?;
+    transaction
+        .execute(
+            "UPDATE operating_cycle_admissions
+                SET started_by_command_id = $1
+              WHERE operating_cycle_id = $2",
+            params![command_row_id, operating_cycle_id.value()],
+        )
+        .map_err(|_| Rejection::InvalidLifecycleTransition)?;
+    let reservation = reserve_budget(
+        transaction,
+        command_row_id,
+        expected_generation,
+        operating_cycle_id,
+        reservation_amount,
+    )?;
+    let EventBody::BudgetReserved {
+        reservation_id: budget_reservation_id,
+        ..
+    } = reservation
+    else {
+        return Err(Rejection::InvalidLifecycleTransition);
+    };
+    transaction
+        .execute(
+            "INSERT INTO native_execution_profile_qualification_launch_claims(
+                operating_cycle_id, budget_reservation_id, execution_profile_id,
+                supervisor_epoch_id, supervisor_epoch_identity,
+                native_workspace_id, canonical_workspace_path,
+                admission_generation, claimed_by_command_id
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+            params![
+                operating_cycle_id.value(),
+                budget_reservation_id.value(),
+                profile_id.value(),
+                supervisor_epoch_id.value(),
+                supervisor_epoch_identity.as_str(),
+                native_workspace_id.as_str(),
+                canonical_workspace_path.as_str(),
+                cycle.generation.value(),
+                command_row_id,
+            ],
+        )
+        .map_err(|_| Rejection::InvalidLifecycleTransition)?;
+    let launch_claim_id =
+        id_from_returned_identity::<NativeExecutionProfileQualificationLaunchId>(transaction)?;
+    Ok(
+        EventBody::NativeExecutionProfileQualificationLaunchClaimed {
+            launch_claim_id,
+            operating_cycle_id,
+            budget_reservation_id,
+            execution_profile_id: profile_id,
+            supervisor_epoch_id,
+            admission_generation: cycle.generation,
+        },
+    )
+}
+
 fn actor_attempt_row(
     transaction: &Transaction<'_>,
     actor_attempt_id: ActorAttemptId,
@@ -10812,7 +12076,7 @@ fn admit_pi_child_spawn(
     {
         return Err(Rejection::ReservationNotActive);
     }
-    let (attempt, office_session) = match owner {
+    let (attempt, office_session, qualification_cycle) = match owner {
         PiChildOwner::ActorAttempt(actor_attempt_id) => {
             let row: Option<(i64, i64, i64)> = transaction.query_row(
                 "SELECT a.operating_cycle_id, a.execution_profile_id, r.budget_reservation_id
@@ -10830,7 +12094,7 @@ fn admit_pi_child_spawn(
             {
                 return Err(Rejection::ChildSpawnAdmissionInvalid);
             }
-            (Some(actor_attempt_id), None)
+            (Some(actor_attempt_id), None, None)
         }
         PiChildOwner::RootAuthorityOfficeSession(session_id) => {
             let row: Option<i64> = transaction
@@ -10859,7 +12123,15 @@ fn admit_pi_child_spawn(
                     ).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
                 }
             }
-            (None, Some(session_id))
+            (None, Some(session_id), None)
+        }
+        PiChildOwner::NativeExecutionProfileQualification(qualification_cycle_id) => {
+            if qualification_cycle_id != operating_cycle_id
+                || cycle._treatment != OperatingCycleTreatment::PiSdkQualificationV1
+            {
+                return Err(Rejection::ChildSpawnAdmissionInvalid);
+            }
+            (None, None, Some(qualification_cycle_id))
         }
     };
     let profile: Option<(i64, i64)> = transaction.query_row(
@@ -10897,9 +12169,9 @@ fn admit_pi_child_spawn(
     transaction.execute("INSERT INTO pi_child_sessions(pi_session_identity, spawn_nonce, created_by_command_id, ready_by_command_id) VALUES ($1, $2, $3, NULL)", params![pi_session_identity.as_str(), spawn_nonce.as_str(), command_row_id]).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
     let pi_session_id = id_from_returned_identity::<PiSessionId>(transaction)?;
     transaction.execute(
-        "INSERT INTO native_child_spawn_admissions(operating_cycle_id, actor_attempt_id, root_authority_office_session_id, deterministic_experiment_id, evaluator_revision_id, input_manifest_id, budget_reservation_id, execution_profile_id, workspace_id, supervisor_epoch_id, admission_generation, lifecycle_state, admitted_by_command_id, spawned_by_command_id)
-         VALUES ($1, $2, $3, NULL, NULL, NULL, $4, $5, $6, $7, $8, 1, $9, NULL)",
-        params![operating_cycle_id.value(), attempt.map(ActorAttemptId::value), office_session.map(RootAuthorityOfficeSessionId::value), budget_reservation_id.value(), execution_profile_id.value(), workspace_id, supervisor_epoch_id.value(), cycle.generation.value(), command_row_id],
+        "INSERT INTO native_child_spawn_admissions(operating_cycle_id, actor_attempt_id, root_authority_office_session_id, qualification_operating_cycle_id, deterministic_experiment_id, evaluator_revision_id, input_manifest_id, budget_reservation_id, execution_profile_id, workspace_id, supervisor_epoch_id, admission_generation, lifecycle_state, admitted_by_command_id, spawned_by_command_id)
+         VALUES ($1, $2, $3, $4, NULL, NULL, NULL, $5, $6, $7, $8, $9, 1, $10, NULL)",
+        params![operating_cycle_id.value(), attempt.map(ActorAttemptId::value), office_session.map(RootAuthorityOfficeSessionId::value), qualification_cycle.map(OperatingCycleId::value), budget_reservation_id.value(), execution_profile_id.value(), workspace_id, supervisor_epoch_id.value(), cycle.generation.value(), command_row_id],
     ).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
     let admission_id = id_from_returned_identity::<NativeChildSpawnAdmissionId>(transaction)?;
     transaction.execute(
@@ -11017,8 +12289,9 @@ fn record_inert_child_spawn(
              WHERE admission.native_child_spawn_admission_id = $1
                AND admission.deterministic_experiment_id IS NULL
                AND admission.budget_reservation_id IS NOT NULL
-               AND ((admission.actor_attempt_id IS NOT NULL AND admission.root_authority_office_session_id IS NULL)
-                 OR (admission.actor_attempt_id IS NULL AND admission.root_authority_office_session_id IS NOT NULL))
+               AND ((admission.actor_attempt_id IS NOT NULL AND admission.root_authority_office_session_id IS NULL AND admission.qualification_operating_cycle_id IS NULL)
+                 OR (admission.actor_attempt_id IS NULL AND admission.root_authority_office_session_id IS NOT NULL AND admission.qualification_operating_cycle_id IS NULL)
+                 OR (admission.actor_attempt_id IS NULL AND admission.root_authority_office_session_id IS NULL AND admission.qualification_operating_cycle_id IS NOT NULL))
          )",
         [admission_id.value()], |row| row.get::<_, i64>(0),
     ).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)? != 0;
@@ -11103,6 +12376,14 @@ fn record_native_child_not_spawned(
             AND ((admission.deterministic_experiment_id IS NULL
                   AND admission.evaluator_revision_id IS NULL
                   AND admission.input_manifest_id IS NULL
+                  AND admission.qualification_operating_cycle_id IS NOT NULL
+                  AND admission.budget_reservation_id IS NOT NULL
+                  AND EXISTS(SELECT 1 FROM pi_child_spawn_sidecars sidecar
+                               WHERE sidecar.native_child_spawn_admission_id = admission.native_child_spawn_admission_id))
+              OR (admission.deterministic_experiment_id IS NULL
+                  AND admission.evaluator_revision_id IS NULL
+                  AND admission.input_manifest_id IS NULL
+                  AND admission.qualification_operating_cycle_id IS NULL
                   AND admission.budget_reservation_id IS NOT NULL
                   AND EXISTS(SELECT 1 FROM pi_child_spawn_sidecars sidecar
                                WHERE sidecar.native_child_spawn_admission_id = admission.native_child_spawn_admission_id))
@@ -11209,12 +12490,12 @@ fn authorize_pi_create_session(
 ) -> Result<EventBody, Rejection> {
     let (cycle_id, state, _) = child_cycle_for_generation(transaction, child_id, expected)?;
     let cycle = cycle_for_generation(transaction, cycle_id, expected)?;
-    let admission: (i64, i64, i64, Option<i64>, Option<i64>, i64, i64) = transaction.query_row(
-        "SELECT a.admission_generation, a.budget_reservation_id, a.execution_profile_id, a.actor_attempt_id, a.root_authority_office_session_id, p.profile_kind, p.readiness
+    let admission: PiCreateSessionAdmissionRow = transaction.query_row(
+        "SELECT a.admission_generation, a.budget_reservation_id, a.execution_profile_id, a.actor_attempt_id, a.root_authority_office_session_id, a.qualification_operating_cycle_id, p.profile_kind, p.readiness
            FROM native_children c JOIN native_child_spawn_admissions a ON a.native_child_spawn_admission_id = c.native_child_spawn_admission_id
            JOIN execution_profiles p ON p.execution_profile_id = a.execution_profile_id
           WHERE c.native_child_id = $1",
-        [child_id.value()], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?)),
+        [child_id.value()], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?)),
     ).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
     if state != ChildProcessState::Spawned
         || pi_protocol_state(transaction, child_id)? != PiChildSessionState::AdapterReady
@@ -11227,17 +12508,18 @@ fn authorize_pi_create_session(
     if !reservation_active || active_cancellation_count(transaction, cycle_id)? != 0 {
         return Err(Rejection::ReservationNotActive);
     }
-    let owner_active = match (admission.3, admission.4) {
-        (Some(attempt), None) => transaction.query_row("SELECT EXISTS(SELECT 1 FROM attempts WHERE actor_attempt_id = $1 AND lifecycle_state = 1)", [attempt], |r| r.get::<_,i64>(0)).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)? != 0,
-        (None, Some(session)) => transaction.query_row("SELECT EXISTS(SELECT 1 FROM root_authority_office_sessions s JOIN office_session_budget_reservations b ON b.root_authority_office_session_id = s.root_authority_office_session_id WHERE s.root_authority_office_session_id = $1 AND b.budget_reservation_id = $2 AND s.lifecycle_state IN (1,2,3,4))", params![session, admission.1], |r| r.get::<_,i64>(0)).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)? != 0,
+    let owner_active = match (admission.3, admission.4, admission.5) {
+        (Some(attempt), None, None) => transaction.query_row("SELECT EXISTS(SELECT 1 FROM attempts WHERE actor_attempt_id = $1 AND lifecycle_state = 1)", [attempt], |r| r.get::<_,i64>(0)).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)? != 0,
+        (None, Some(session), None) => transaction.query_row("SELECT EXISTS(SELECT 1 FROM root_authority_office_sessions s JOIN office_session_budget_reservations b ON b.root_authority_office_session_id = s.root_authority_office_session_id WHERE s.root_authority_office_session_id = $1 AND b.budget_reservation_id = $2 AND s.lifecycle_state IN (1,2,3,4))", params![session, admission.1], |r| r.get::<_,i64>(0)).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)? != 0,
+        (None, None, Some(qualification_cycle)) => transaction.query_row("SELECT EXISTS(SELECT 1 FROM operating_cycles WHERE operating_cycle_id = $1 AND treatment = $2 AND lifecycle_state = 3)", params![qualification_cycle, OperatingCycleTreatment::PiSdkQualificationV1 as i64], |r| r.get::<_,i64>(0)).map_err(|_| Rejection::ChildSpawnAdmissionInvalid)? != 0,
         _ => false,
     };
     if !owner_active {
         return Err(Rejection::ChildSpawnAdmissionInvalid);
     }
     let profile_allowed = match (
-        execution_profile_kind_from_i64(admission.5),
-        execution_profile_readiness_from_i64(admission.6),
+        execution_profile_kind_from_i64(admission.6),
+        execution_profile_readiness_from_i64(admission.7),
     ) {
         (Ok(kind), Ok(readiness)) => pi_child_profile_allowed(cycle._treatment, kind, readiness),
         _ => false,
@@ -11977,6 +13259,215 @@ fn finalize_child_process(
     Ok(EventBody::ChildProcessFinalized {
         native_child_id: child_id,
         disposition,
+    })
+}
+
+/// Promote the pinned native Pi profile only from a complete, daemon-owned
+/// qualification child.  The command deliberately takes the child and its
+/// admission separately, then proves they are the same qualification owner;
+/// a detached paid-smoke artifact therefore cannot manufacture readiness.
+#[allow(clippy::too_many_arguments)]
+fn qualify_native_execution_profile(
+    transaction: &Transaction<'_>,
+    command_row_id: i64,
+    expected_generation: ExpectedGeneration,
+    operating_cycle_id: OperatingCycleId,
+    execution_profile_id: ExecutionProfileId,
+    admission_id: NativeChildSpawnAdmissionId,
+    child_id: NativeChildId,
+    runtime_identity_digest: Blake3Digest,
+    runtime_identity_content_object_id: ContentObjectId,
+    adapter_report_digest: Blake3Digest,
+    adapter_report_content_object_id: ContentObjectId,
+    probe_request_digest: Blake3Digest,
+    probe_response_digest: Blake3Digest,
+    probe_response_content_object_id: ContentObjectId,
+) -> Result<EventBody, Rejection> {
+    let cycle = cycle_for_generation(transaction, operating_cycle_id, expected_generation)?;
+    if cycle.state != OperatingCycleState::Running
+        || cycle._treatment != OperatingCycleTreatment::PiSdkQualificationV1
+    {
+        return Err(Rejection::QualificationTreatmentRestricted);
+    }
+    let profile: Option<(i64, i64)> = transaction
+        .query_row(
+            "SELECT profile_kind, readiness FROM execution_profiles
+              WHERE execution_profile_id = $1",
+            [execution_profile_id.value()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(|_| Rejection::SubjectNotFound)?;
+    if profile
+        != Some((
+            ExecutionProfileKind::NativePinnedPiSdkV1 as i64,
+            ExecutionProfileReadiness::Unqualified as i64,
+        ))
+    {
+        return Err(Rejection::ExecutionProfileIneligible);
+    }
+    let chain: Option<(i64, i64, i64, i64, i64)> = transaction
+        .query_row(
+            "SELECT admission.operating_cycle_id,
+                    admission.execution_profile_id,
+                    admission.qualification_operating_cycle_id,
+                    child.lifecycle_state,
+                    child.terminal_disposition
+               FROM native_child_spawn_admissions admission
+               JOIN native_children child
+                 ON child.native_child_spawn_admission_id = admission.native_child_spawn_admission_id
+              WHERE admission.native_child_spawn_admission_id = $1
+                AND child.native_child_id = $2",
+            params![admission_id.value(), child_id.value()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+        )
+        .optional()
+        .map_err(|_| Rejection::ChildSpawnAdmissionInvalid)?;
+    let Some((admission_cycle, admission_profile, qualification_cycle, child_state, disposition)) =
+        chain
+    else {
+        return Err(Rejection::ChildSpawnAdmissionInvalid);
+    };
+    if admission_cycle != operating_cycle_id.value()
+        || admission_profile != execution_profile_id.value()
+        || qualification_cycle != operating_cycle_id.value()
+        || child_state != ChildProcessState::Finalized as i64
+        || disposition != ChildTerminalDisposition::Exited as i64
+    {
+        return Err(Rejection::ChildLifecycleReceiptMissing);
+    }
+    if pi_protocol_state(transaction, child_id)? != PiChildSessionState::SessionReady {
+        return Err(Rejection::ChildLifecycleReceiptMissing);
+    }
+    let retained_streams: i64 = transaction
+        .query_row(
+            "SELECT COUNT(*) FROM native_child_stream_seals
+              WHERE native_child_id = $1 AND completeness IN (1, 2)",
+            [child_id.value()],
+            |row| row.get(0),
+        )
+        .map_err(|_| Rejection::ChildLifecycleReceiptMissing)?;
+    if retained_streams != 4 {
+        return Err(Rejection::ChildLifecycleReceiptMissing);
+    }
+    let runtime_bound: bool = transaction
+        .query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM native_child_stream_seals
+                 WHERE native_child_id = $1 AND stream_kind = 1
+                   AND full_observed_digest = $2
+                   AND retained_content_object_id = $3
+                   AND completeness IN (1, 2)
+            )",
+            params![
+                child_id.value(),
+                runtime_identity_digest.as_bytes().as_slice(),
+                runtime_identity_content_object_id.value()
+            ],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|_| Rejection::ChildStreamSealBindingMismatch)?
+        != 0;
+    let adapter_bound: bool = transaction
+        .query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM native_child_stream_seals
+                 WHERE native_child_id = $1 AND stream_kind = 2
+                   AND full_observed_digest = $2
+                   AND retained_content_object_id = $3
+                   AND completeness IN (1, 2)
+            )",
+            params![
+                child_id.value(),
+                adapter_report_digest.as_bytes().as_slice(),
+                adapter_report_content_object_id.value()
+            ],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|_| Rejection::ChildStreamSealBindingMismatch)?
+        != 0;
+    if !runtime_bound || !adapter_bound {
+        return Err(Rejection::ChildStreamSealBindingMismatch);
+    }
+    let probe_bound: bool = transaction
+        .query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM native_child_stream_seals
+                 WHERE native_child_id = $1
+                   AND stream_kind = 3
+                   AND full_observed_digest = $2
+                   AND retained_content_object_id = $3
+                   AND completeness IN (1, 2)
+            )",
+            params![
+                child_id.value(),
+                probe_response_digest.as_bytes().as_slice(),
+                probe_response_content_object_id.value()
+            ],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|_| Rejection::ChildStreamSealBindingMismatch)?
+        != 0;
+    if !probe_bound {
+        return Err(Rejection::ChildStreamSealBindingMismatch);
+    }
+    let create_bound: bool = transaction
+        .query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM pi_child_session_protocols
+                 WHERE native_child_id = $1 AND create_request_digest = $2
+            )",
+            params![child_id.value(), probe_request_digest.as_bytes().as_slice()],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|_| Rejection::PiOfficeTurnPromptBindingMismatch)?
+        != 0;
+    if !create_bound {
+        return Err(Rejection::PiOfficeTurnPromptBindingMismatch);
+    }
+    transaction
+        .execute(
+            "INSERT INTO execution_profile_qualifications(
+                operating_cycle_id, execution_profile_id,
+                native_child_spawn_admission_id, native_child_id,
+                runtime_identity_digest, runtime_identity_content_object_id,
+                adapter_report_digest, adapter_report_content_object_id,
+                probe_request_digest, probe_response_digest,
+                probe_response_content_object_id, qualified_by_command_id
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+            params![
+                operating_cycle_id.value(),
+                execution_profile_id.value(),
+                admission_id.value(),
+                child_id.value(),
+                runtime_identity_digest.as_bytes().as_slice(),
+                runtime_identity_content_object_id.value(),
+                adapter_report_digest.as_bytes().as_slice(),
+                adapter_report_content_object_id.value(),
+                probe_request_digest.as_bytes().as_slice(),
+                probe_response_digest.as_bytes().as_slice(),
+                probe_response_content_object_id.value(),
+                command_row_id,
+            ],
+        )
+        .map_err(|_| Rejection::InvalidLifecycleTransition)?;
+    let qualification_id =
+        id_from_returned_identity::<ExecutionProfileQualificationId>(transaction)?;
+    transaction
+        .execute(
+            "UPDATE execution_profiles SET readiness = $1 WHERE execution_profile_id = $2",
+            params![
+                ExecutionProfileReadiness::QualifiedForLiveUse as i64,
+                execution_profile_id.value()
+            ],
+        )
+        .map_err(|_| Rejection::InvalidLifecycleTransition)?;
+    Ok(EventBody::NativeExecutionProfileQualified {
+        qualification_id,
+        operating_cycle_id,
+        execution_profile_id,
+        native_child_spawn_admission_id: admission_id,
+        native_child_id: child_id,
     })
 }
 
@@ -13560,6 +15051,10 @@ fn request_fingerprint(request: &CommandRequest) -> Blake3Digest {
                     put_i64(&mut bytes, 2);
                     put_i64(&mut bytes, id.value());
                 }
+                PiChildOwner::NativeExecutionProfileQualification(cycle) => {
+                    put_i64(&mut bytes, 3);
+                    put_i64(&mut bytes, cycle.value());
+                }
             }
             put_i64(&mut bytes, budget_reservation_id.value());
             put_i64(&mut bytes, execution_profile_id.value());
@@ -13931,6 +15426,91 @@ fn request_fingerprint(request: &CommandRequest) -> Blake3Digest {
             put_bytes(&mut bytes, correlation_identity.as_str().as_bytes());
             put_i64(&mut bytes, disposed_sequence.value());
             put_pi_task_attempt_session_transcript_receipt(&mut bytes, transcript_receipt);
+        }
+        CommandBody::QualifyNativeExecutionProfile {
+            operating_cycle_id,
+            execution_profile_id,
+            native_child_spawn_admission_id,
+            native_child_id,
+            runtime_identity_digest,
+            runtime_identity_content_object_id,
+            adapter_report_digest,
+            adapter_report_content_object_id,
+            probe_request_digest,
+            probe_response_digest,
+            probe_response_content_object_id,
+        } => {
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, execution_profile_id.value());
+            put_i64(&mut bytes, native_child_spawn_admission_id.value());
+            put_i64(&mut bytes, native_child_id.value());
+            put_bytes(&mut bytes, &runtime_identity_digest.as_bytes());
+            put_i64(&mut bytes, runtime_identity_content_object_id.value());
+            put_bytes(&mut bytes, &adapter_report_digest.as_bytes());
+            put_i64(&mut bytes, adapter_report_content_object_id.value());
+            put_bytes(&mut bytes, &probe_request_digest.as_bytes());
+            put_bytes(&mut bytes, &probe_response_digest.as_bytes());
+            put_i64(&mut bytes, probe_response_content_object_id.value());
+        }
+        CommandBody::StartNativeExecutionProfileQualification { operating_cycle_id } => {
+            put_i64(&mut bytes, operating_cycle_id.value());
+        }
+        CommandBody::ClaimStudyActorTaskAttemptLaunch {
+            study_actor_obligation_id,
+            operating_cycle_id,
+            work_item_id,
+            reservation_amount,
+            supervisor_epoch_id,
+            supervisor_epoch_identity,
+            native_workspace_id,
+            canonical_workspace_path,
+        } => {
+            put_i64(&mut bytes, study_actor_obligation_id.value());
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, work_item_id.value());
+            put_i64(&mut bytes, reservation_amount.value());
+            put_i64(&mut bytes, supervisor_epoch_id.value());
+            put_bytes(&mut bytes, supervisor_epoch_identity.as_str().as_bytes());
+            put_bytes(&mut bytes, native_workspace_id.as_str().as_bytes());
+            put_bytes(&mut bytes, canonical_workspace_path.as_str().as_bytes());
+        }
+        CommandBody::ClaimNativeExecutionProfileQualificationLaunch {
+            operating_cycle_id,
+            reservation_amount,
+            supervisor_epoch_id,
+            supervisor_epoch_identity,
+            native_workspace_id,
+            canonical_workspace_path,
+        } => {
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, reservation_amount.value());
+            put_i64(&mut bytes, supervisor_epoch_id.value());
+            put_bytes(&mut bytes, supervisor_epoch_identity.as_str().as_bytes());
+            put_bytes(&mut bytes, native_workspace_id.as_str().as_bytes());
+            put_bytes(&mut bytes, canonical_workspace_path.as_str().as_bytes());
+        }
+        CommandBody::AllocateStudyActorWork {
+            study_run_id,
+            pair_ordinal,
+            treatment,
+            phase,
+            role,
+            operating_cycle_id,
+            work_item_id,
+            reservation_amount,
+            supervisor_epoch_id,
+            supervisor_epoch_identity,
+        } => {
+            put_i64(&mut bytes, study_run_id.value());
+            put_i64(&mut bytes, i64::from(pair_ordinal.value()));
+            put_i64(&mut bytes, *treatment as i64);
+            put_i64(&mut bytes, *phase as i64);
+            put_i64(&mut bytes, i64::from(role.value()));
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, work_item_id.value());
+            put_i64(&mut bytes, reservation_amount.value());
+            put_i64(&mut bytes, supervisor_epoch_id.value());
+            put_bytes(&mut bytes, supervisor_epoch_identity.as_str().as_bytes());
         }
         CommandBody::StudyTransition { command } => {
             crate::study::append_command_fingerprint(&mut bytes, command);
@@ -14417,6 +15997,10 @@ fn event_fingerprint(event_id: EventId, command_id: &CommandId, body: &EventBody
                     put_i64(&mut bytes, 2);
                     put_i64(&mut bytes, id.value());
                 }
+                PiChildOwner::NativeExecutionProfileQualification(cycle) => {
+                    put_i64(&mut bytes, 3);
+                    put_i64(&mut bytes, cycle.value());
+                }
             }
             put_i64(&mut bytes, budget_reservation_id.value());
         }
@@ -14804,6 +16388,85 @@ fn event_fingerprint(event_id: EventId, command_id: &CommandId, body: &EventBody
             put_i64(&mut bytes, budget_reservation_id.value());
             put_i64(&mut bytes, observed_cumulative_micro_usd.value());
             put_pi_task_attempt_session_dispose_budget_disposition(&mut bytes, *budget_disposition);
+        }
+        EventBody::NativeExecutionProfileQualified {
+            qualification_id,
+            operating_cycle_id,
+            execution_profile_id,
+            native_child_spawn_admission_id,
+            native_child_id,
+        } => {
+            put_i64(&mut bytes, qualification_id.value());
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, execution_profile_id.value());
+            put_i64(&mut bytes, native_child_spawn_admission_id.value());
+            put_i64(&mut bytes, native_child_id.value());
+        }
+        EventBody::NativeExecutionProfileQualificationStarted {
+            operating_cycle_id,
+            generation,
+        } => {
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, generation.value());
+        }
+        EventBody::StudyActorTaskAttemptLaunchClaimed {
+            launch_claim_id,
+            study_actor_obligation_id,
+            operating_cycle_id,
+            work_item_id,
+            actor_attempt_id,
+            budget_reservation_id,
+            execution_profile_id,
+            supervisor_epoch_id,
+            admission_generation,
+        } => {
+            put_i64(&mut bytes, launch_claim_id.value());
+            put_i64(&mut bytes, study_actor_obligation_id.value());
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, work_item_id.value());
+            put_i64(&mut bytes, actor_attempt_id.value());
+            put_i64(&mut bytes, budget_reservation_id.value());
+            put_i64(&mut bytes, execution_profile_id.value());
+            put_i64(&mut bytes, supervisor_epoch_id.value());
+            put_i64(&mut bytes, admission_generation.value());
+        }
+        EventBody::NativeExecutionProfileQualificationLaunchClaimed {
+            launch_claim_id,
+            operating_cycle_id,
+            budget_reservation_id,
+            execution_profile_id,
+            supervisor_epoch_id,
+            admission_generation,
+        } => {
+            put_i64(&mut bytes, launch_claim_id.value());
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, budget_reservation_id.value());
+            put_i64(&mut bytes, execution_profile_id.value());
+            put_i64(&mut bytes, supervisor_epoch_id.value());
+            put_i64(&mut bytes, admission_generation.value());
+        }
+        EventBody::StudyActorWorkAllocated {
+            study_run_id,
+            pair_ordinal,
+            treatment,
+            phase,
+            role,
+            operating_cycle_id,
+            work_item_id,
+            reservation_amount,
+            supervisor_epoch_id,
+            admission_generation,
+        } => {
+            put_i64(&mut bytes, study_run_id.value());
+            put_i64(&mut bytes, i64::from(pair_ordinal.value()));
+            put_i64(&mut bytes, *treatment as i64);
+            put_i64(&mut bytes, *phase as i64);
+            put_i64(&mut bytes, i64::from(role.value()));
+            put_i64(&mut bytes, operating_cycle_id.value());
+            put_i64(&mut bytes, work_item_id.value());
+            put_i64(&mut bytes, reservation_amount.value());
+            put_i64(&mut bytes, supervisor_epoch_id.value());
+            put_i64(&mut bytes, admission_generation.value());
         }
         EventBody::StudyTransition { event } => {
             crate::study::append_event_fingerprint(&mut bytes, event);
@@ -15545,6 +17208,109 @@ fn insert_command_body(
                 task_attempt_transcript_values(transcript_receipt);
             transaction.execute("INSERT INTO command_record_pi_task_attempt_session_disposed VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)", params![command_row_id, actor_attempt_id.value(), correlation_identity.as_str(), disposed_sequence.value(), kind, session_file, digest, content, first_kind, first_digest])?;
         }
+        CommandBody::QualifyNativeExecutionProfile {
+            operating_cycle_id,
+            execution_profile_id,
+            native_child_spawn_admission_id,
+            native_child_id,
+            runtime_identity_digest,
+            runtime_identity_content_object_id,
+            adapter_report_digest,
+            adapter_report_content_object_id,
+            probe_request_digest,
+            probe_response_digest,
+            probe_response_content_object_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_qualify_native_execution_profile VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+                params![
+                    command_row_id,
+                    operating_cycle_id.value(),
+                    execution_profile_id.value(),
+                    native_child_spawn_admission_id.value(),
+                    native_child_id.value(),
+                    runtime_identity_digest.as_bytes().as_slice(),
+                    runtime_identity_content_object_id.value(),
+                    adapter_report_digest.as_bytes().as_slice(),
+                    adapter_report_content_object_id.value(),
+                    probe_request_digest.as_bytes().as_slice(),
+                    probe_response_digest.as_bytes().as_slice(),
+                    probe_response_content_object_id.value(),
+                ],
+            )?;
+        }
+        CommandBody::StartNativeExecutionProfileQualification { operating_cycle_id } => {
+            transaction.execute(
+                "INSERT INTO command_start_native_execution_profile_qualification VALUES ($1, $2)",
+                params![command_row_id, operating_cycle_id.value()],
+            )?;
+        }
+        CommandBody::ClaimStudyActorTaskAttemptLaunch {
+            study_actor_obligation_id,
+            operating_cycle_id,
+            work_item_id,
+            reservation_amount,
+            supervisor_epoch_id,
+            supervisor_epoch_identity,
+            native_workspace_id,
+            canonical_workspace_path,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_claim_study_actor_task_attempt_launch VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+                params![
+                    command_row_id,
+                    study_actor_obligation_id.value(),
+                    operating_cycle_id.value(),
+                    work_item_id.value(),
+                    reservation_amount.value(),
+                    supervisor_epoch_id.value(),
+                    supervisor_epoch_identity.as_str(),
+                    native_workspace_id.as_str(),
+                    canonical_workspace_path.as_str(),
+                ],
+            )?;
+        }
+        CommandBody::ClaimNativeExecutionProfileQualificationLaunch {
+            operating_cycle_id,
+            reservation_amount,
+            supervisor_epoch_id,
+            supervisor_epoch_identity,
+            native_workspace_id,
+            canonical_workspace_path,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_claim_native_execution_profile_qualification_launch VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                params![
+                    command_row_id,
+                    operating_cycle_id.value(),
+                    reservation_amount.value(),
+                    supervisor_epoch_id.value(),
+                    supervisor_epoch_identity.as_str(),
+                    native_workspace_id.as_str(),
+                    canonical_workspace_path.as_str(),
+                ],
+            )?;
+        }
+        CommandBody::AllocateStudyActorWork {
+            study_run_id,
+            pair_ordinal,
+            treatment,
+            phase,
+            role,
+            operating_cycle_id,
+            work_item_id,
+            reservation_amount,
+            supervisor_epoch_id,
+            supervisor_epoch_identity,
+        } => {
+            transaction.execute(
+                "INSERT INTO command_allocate_study_actor_work VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+                params![command_row_id, study_run_id.value(), i64::from(pair_ordinal.value()),
+                    *treatment as i64, *phase as i64, i64::from(role.value()),
+                    operating_cycle_id.value(), work_item_id.value(), reservation_amount.value(),
+                    supervisor_epoch_id.value(), supervisor_epoch_identity.as_str()],
+            )?;
+        }
         CommandBody::StudyTransition { command } => {
             crate::study::insert_command_body(transaction, command_row_id, command)?;
         }
@@ -16261,11 +18027,14 @@ fn insert_command_body(
             pi_session_identity,
             spawn_nonce,
         } => {
-            let (attempt, office) = match owner {
-                PiChildOwner::ActorAttempt(id) => (Some(id.value()), None),
-                PiChildOwner::RootAuthorityOfficeSession(id) => (None, Some(id.value())),
+            let (attempt, office, qualification_cycle) = match owner {
+                PiChildOwner::ActorAttempt(id) => (Some(id.value()), None, None),
+                PiChildOwner::RootAuthorityOfficeSession(id) => (None, Some(id.value()), None),
+                PiChildOwner::NativeExecutionProfileQualification(cycle) => {
+                    (None, None, Some(cycle.value()))
+                }
             };
-            transaction.execute("INSERT INTO command_admit_pi_child_spawn VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)", params![command_row_id, operating_cycle_id.value(), attempt, office, budget_reservation_id.value(), execution_profile_id.value(), native_workspace_id.as_str(), canonical_workspace_path.as_str(), supervisor_epoch_id.value(), supervisor_epoch_identity.as_str(), pi_session_identity.as_str(), spawn_nonce.as_str()])?;
+            transaction.execute("INSERT INTO command_admit_pi_child_spawn VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)", params![command_row_id, operating_cycle_id.value(), attempt, office, qualification_cycle, budget_reservation_id.value(), execution_profile_id.value(), native_workspace_id.as_str(), canonical_workspace_path.as_str(), supervisor_epoch_id.value(), supervisor_epoch_identity.as_str(), pi_session_identity.as_str(), spawn_nonce.as_str()])?;
         }
         CommandBody::RecordInertChildSpawn {
             native_child_spawn_admission_id,
@@ -17176,17 +18945,21 @@ fn insert_event_body(
             owner,
             budget_reservation_id,
         } => {
-            let (attempt, office) = match owner {
-                PiChildOwner::ActorAttempt(id) => (Some(id.value()), None),
-                PiChildOwner::RootAuthorityOfficeSession(id) => (None, Some(id.value())),
+            let (attempt, office, qualification_cycle) = match owner {
+                PiChildOwner::ActorAttempt(id) => (Some(id.value()), None, None),
+                PiChildOwner::RootAuthorityOfficeSession(id) => (None, Some(id.value()), None),
+                PiChildOwner::NativeExecutionProfileQualification(cycle) => {
+                    (None, None, Some(cycle.value()))
+                }
             };
             transaction.execute(
-                "INSERT INTO event_pi_child_spawn_admitted VALUES ($1, $2, $3, $4, $5)",
+                "INSERT INTO event_pi_child_spawn_admitted VALUES ($1, $2, $3, $4, $5, $6)",
                 params![
                     event_id.value(),
                     native_child_spawn_admission_id.value(),
                     attempt,
                     office,
+                    qualification_cycle,
                     budget_reservation_id.value()
                 ],
             )?;
@@ -17685,6 +19458,102 @@ fn insert_event_body(
             let (kind, cancellation_request_id, postmortem_id) =
                 sql_pi_task_attempt_session_dispose_budget_disposition(*budget_disposition);
             transaction.execute("INSERT INTO event_pi_task_attempt_session_disposed VALUES ($1, $2, $3, $4, $5, $6, $7, $8)", params![event_id.value(), pi_task_attempt_session_dispose_receipt_id.value(), actor_attempt_id.value(), budget_reservation_id.value(), observed_cumulative_micro_usd.value(), kind, cancellation_request_id, postmortem_id])?;
+        }
+        EventBody::NativeExecutionProfileQualified {
+            qualification_id,
+            operating_cycle_id,
+            execution_profile_id,
+            native_child_spawn_admission_id,
+            native_child_id,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_native_execution_profile_qualified VALUES ($1, $2, $3, $4, $5, $6)",
+                params![
+                    event_id.value(),
+                    qualification_id.value(),
+                    operating_cycle_id.value(),
+                    execution_profile_id.value(),
+                    native_child_spawn_admission_id.value(),
+                    native_child_id.value()
+                ],
+            )?;
+        }
+        EventBody::NativeExecutionProfileQualificationStarted {
+            operating_cycle_id,
+            generation,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_native_execution_profile_qualification_started VALUES ($1, $2, $3)",
+                params![event_id.value(), operating_cycle_id.value(), generation.value()],
+            )?;
+        }
+        EventBody::StudyActorTaskAttemptLaunchClaimed {
+            launch_claim_id,
+            study_actor_obligation_id,
+            operating_cycle_id,
+            work_item_id,
+            actor_attempt_id,
+            budget_reservation_id,
+            execution_profile_id,
+            supervisor_epoch_id,
+            admission_generation,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_study_actor_task_attempt_launch_claimed VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+                params![
+                    event_id.value(),
+                    launch_claim_id.value(),
+                    study_actor_obligation_id.value(),
+                    operating_cycle_id.value(),
+                    work_item_id.value(),
+                    actor_attempt_id.value(),
+                    budget_reservation_id.value(),
+                    execution_profile_id.value(),
+                    supervisor_epoch_id.value(),
+                    admission_generation.value(),
+                ],
+            )?;
+        }
+        EventBody::NativeExecutionProfileQualificationLaunchClaimed {
+            launch_claim_id,
+            operating_cycle_id,
+            budget_reservation_id,
+            execution_profile_id,
+            supervisor_epoch_id,
+            admission_generation,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_native_execution_profile_qualification_launch_claimed VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                params![
+                    event_id.value(),
+                    launch_claim_id.value(),
+                    operating_cycle_id.value(),
+                    budget_reservation_id.value(),
+                    execution_profile_id.value(),
+                    supervisor_epoch_id.value(),
+                    admission_generation.value(),
+                ],
+            )?;
+        }
+        EventBody::StudyActorWorkAllocated {
+            study_run_id,
+            pair_ordinal,
+            treatment,
+            phase,
+            role,
+            operating_cycle_id,
+            work_item_id,
+            reservation_amount,
+            supervisor_epoch_id,
+            admission_generation,
+        } => {
+            transaction.execute(
+                "INSERT INTO event_study_actor_work_allocated VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+                params![event_id.value(), study_run_id.value(), i64::from(pair_ordinal.value()),
+                    *treatment as i64, *phase as i64, i64::from(role.value()),
+                    operating_cycle_id.value(), work_item_id.value(), reservation_amount.value(),
+                    supervisor_epoch_id.value(), admission_generation.value()],
+            )?;
         }
         EventBody::StudyTransition { event } => {
             crate::study::insert_event_body(transaction, event_id.value(), event)?;
@@ -18394,13 +20263,13 @@ fn decode_event_body(
             }
         }
         EventKind::PiChildSpawnAdmitted => {
-            let row: (i64, Option<i64>, Option<i64>, i64) = connection.query_row("SELECT native_child_spawn_admission_id, actor_attempt_id, root_authority_office_session_id, budget_reservation_id FROM event_pi_child_spawn_admitted WHERE event_id = $1", [event_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi child admission event body"))?;
-            let owner = decode_child_owner(row.1, row.2)?;
+            let row: (i64, Option<i64>, Option<i64>, Option<i64>, i64) = connection.query_row("SELECT native_child_spawn_admission_id, actor_attempt_id, root_authority_office_session_id, qualification_operating_cycle_id, budget_reservation_id FROM event_pi_child_spawn_admitted WHERE event_id = $1", [event_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi child admission event body"))?;
+            let owner = decode_child_owner(row.1, row.2, row.3)?;
             EventBody::PiChildSpawnAdmitted {
                 native_child_spawn_admission_id: NativeChildSpawnAdmissionId::try_from(row.0)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
                 owner,
-                budget_reservation_id: BudgetReservationId::try_from(row.3)
+                budget_reservation_id: BudgetReservationId::try_from(row.4)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
             }
         }
@@ -18988,6 +20857,200 @@ fn decode_event_body(
                 budget_disposition: pi_task_attempt_session_dispose_budget_disposition_from_sql(
                     row.4, row.3, row.5, row.6,
                 )?,
+            }
+        }
+        EventKind::NativeExecutionProfileQualificationStarted => {
+            let row: (i64, i64) = connection
+                .query_row(
+                    "SELECT operating_cycle_id, admission_generation
+                       FROM event_native_execution_profile_qualification_started
+                      WHERE event_id = $1",
+                    [event_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?
+                .ok_or(StoreError::LedgerCorruption(
+                    "missing native qualification start event body",
+                ))?;
+            EventBody::NativeExecutionProfileQualificationStarted {
+                operating_cycle_id: OperatingCycleId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                generation: AdmissionGeneration::try_from(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        EventKind::StudyActorTaskAttemptLaunchClaimed => {
+            let row: (i64, i64, i64, i64, i64, i64, i64, i64, i64) = connection
+                .query_row(
+                    "SELECT study_actor_task_attempt_launch_id,
+                            study_actor_obligation_id, operating_cycle_id,
+                            work_item_id, actor_attempt_id, budget_reservation_id,
+                            execution_profile_id, supervisor_epoch_id,
+                            admission_generation
+                       FROM event_study_actor_task_attempt_launch_claimed
+                      WHERE event_id = $1",
+                    [event_id],
+                    |row| {
+                        Ok((
+                            row.get(0)?,
+                            row.get(1)?,
+                            row.get(2)?,
+                            row.get(3)?,
+                            row.get(4)?,
+                            row.get(5)?,
+                            row.get(6)?,
+                            row.get(7)?,
+                            row.get(8)?,
+                        ))
+                    },
+                )
+                .optional()?
+                .ok_or(StoreError::LedgerCorruption(
+                    "missing study launch claim event body",
+                ))?;
+            EventBody::StudyActorTaskAttemptLaunchClaimed {
+                launch_claim_id: StudyActorTaskAttemptLaunchId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                study_actor_obligation_id: StudyActorObligationId::try_from(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                operating_cycle_id: OperatingCycleId::try_from(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                work_item_id: WorkItemId::try_from(row.3)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                actor_attempt_id: ActorAttemptId::try_from(row.4)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                budget_reservation_id: BudgetReservationId::try_from(row.5)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                execution_profile_id: ExecutionProfileId::try_from(row.6)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                supervisor_epoch_id: SupervisorEpochId::try_from(row.7)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                admission_generation: AdmissionGeneration::try_from(row.8)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        EventKind::NativeExecutionProfileQualificationLaunchClaimed => {
+            let row: (i64, i64, i64, i64, i64, i64) = connection
+                .query_row(
+                    "SELECT native_execution_profile_qualification_launch_id,
+                            operating_cycle_id, budget_reservation_id,
+                            execution_profile_id, supervisor_epoch_id,
+                            admission_generation
+                       FROM event_native_execution_profile_qualification_launch_claimed
+                      WHERE event_id = $1",
+                    [event_id],
+                    |row| {
+                        Ok((
+                            row.get(0)?,
+                            row.get(1)?,
+                            row.get(2)?,
+                            row.get(3)?,
+                            row.get(4)?,
+                            row.get(5)?,
+                        ))
+                    },
+                )
+                .optional()?
+                .ok_or(StoreError::LedgerCorruption(
+                    "missing native qualification launch claim event body",
+                ))?;
+            EventBody::NativeExecutionProfileQualificationLaunchClaimed {
+                launch_claim_id: NativeExecutionProfileQualificationLaunchId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                operating_cycle_id: OperatingCycleId::try_from(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                budget_reservation_id: BudgetReservationId::try_from(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                execution_profile_id: ExecutionProfileId::try_from(row.3)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                supervisor_epoch_id: SupervisorEpochId::try_from(row.4)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                admission_generation: AdmissionGeneration::try_from(row.5)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        EventKind::StudyActorWorkAllocated => {
+            let row: (i64, i64, i64, i64, i64, i64, i64, i64, i64, i64) = connection
+                .query_row(
+                    "SELECT study_run_id, pair_ordinal, treatment, population_phase,
+                            role_ordinal, operating_cycle_id, work_item_id,
+                            reservation_amount_micros, supervisor_epoch_id, admission_generation
+                       FROM event_study_actor_work_allocated WHERE event_id = $1",
+                    [event_id],
+                    |row| {
+                        Ok((
+                            row.get(0)?,
+                            row.get(1)?,
+                            row.get(2)?,
+                            row.get(3)?,
+                            row.get(4)?,
+                            row.get(5)?,
+                            row.get(6)?,
+                            row.get(7)?,
+                            row.get(8)?,
+                            row.get(9)?,
+                        ))
+                    },
+                )
+                .optional()?
+                .ok_or(StoreError::LedgerCorruption(
+                    "missing study work allocation event body",
+                ))?;
+            EventBody::StudyActorWorkAllocated {
+                study_run_id: StudyRunId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                pair_ordinal: StudyRunPairOrdinal::try_from(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                treatment: study_treatment_from_i64(row.2)?,
+                phase: study_population_phase_from_i64(row.3)?,
+                role: StudyRoleOrdinal::try_from(row.4)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                operating_cycle_id: OperatingCycleId::try_from(row.5)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                work_item_id: WorkItemId::try_from(row.6)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                reservation_amount: UsdMicros::try_from(row.7)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                supervisor_epoch_id: SupervisorEpochId::try_from(row.8)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                admission_generation: AdmissionGeneration::try_from(row.9)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        EventKind::NativeExecutionProfileQualified => {
+            let row: (i64, i64, i64, i64, i64) = connection
+                .query_row(
+                    "SELECT execution_profile_qualification_id, operating_cycle_id,
+                            execution_profile_id, native_child_spawn_admission_id,
+                            native_child_id
+                       FROM event_native_execution_profile_qualified
+                      WHERE event_id = $1",
+                    [event_id],
+                    |row| {
+                        Ok((
+                            row.get(0)?,
+                            row.get(1)?,
+                            row.get(2)?,
+                            row.get(3)?,
+                            row.get(4)?,
+                        ))
+                    },
+                )
+                .optional()?
+                .ok_or(StoreError::LedgerCorruption(
+                    "missing native profile qualification event body",
+                ))?;
+            EventBody::NativeExecutionProfileQualified {
+                qualification_id: ExecutionProfileQualificationId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                operating_cycle_id: OperatingCycleId::try_from(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                execution_profile_id: ExecutionProfileId::try_from(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                native_child_spawn_admission_id: NativeChildSpawnAdmissionId::try_from(row.3)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                native_child_id: NativeChildId::try_from(row.4)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
             }
         }
         EventKind::StudyTransition => EventBody::StudyTransition {
@@ -20375,26 +22438,26 @@ fn decode_command_body(
             }
         }
         CommandKind::AdmitPiChildSpawn => {
-            let row: StoredPiChildAdmissionCommand = connection.query_row("SELECT operating_cycle_id, actor_attempt_id, root_authority_office_session_id, budget_reservation_id, execution_profile_id, native_workspace_id, canonical_workspace_path, supervisor_epoch_id, supervisor_epoch_identity, pi_session_identity, spawn_nonce FROM command_admit_pi_child_spawn WHERE command_row_id = $1",[command_row_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,r.get(8)?,r.get(9)?,r.get(10)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi child admission command body"))?;
+            let row: StoredPiChildAdmissionCommand = connection.query_row("SELECT operating_cycle_id, actor_attempt_id, root_authority_office_session_id, qualification_operating_cycle_id, budget_reservation_id, execution_profile_id, native_workspace_id, canonical_workspace_path, supervisor_epoch_id, supervisor_epoch_identity, pi_session_identity, spawn_nonce FROM command_admit_pi_child_spawn WHERE command_row_id = $1",[command_row_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,r.get(8)?,r.get(9)?,r.get(10)?,r.get(11)?))).optional()?.ok_or(StoreError::LedgerCorruption("missing Pi child admission command body"))?;
             CommandBody::AdmitPiChildSpawn {
                 operating_cycle_id: OperatingCycleId::try_from(row.0)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
-                owner: decode_child_owner(row.1, row.2)?,
-                budget_reservation_id: BudgetReservationId::try_from(row.3)
+                owner: decode_child_owner(row.1, row.2, row.3)?,
+                budget_reservation_id: BudgetReservationId::try_from(row.4)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
-                execution_profile_id: ExecutionProfileId::try_from(row.4)
+                execution_profile_id: ExecutionProfileId::try_from(row.5)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
-                native_workspace_id: NativeWorkspaceId::parse(row.5)
+                native_workspace_id: NativeWorkspaceId::parse(row.6)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
-                canonical_workspace_path: CanonicalWorkspacePath::parse(row.6)
+                canonical_workspace_path: CanonicalWorkspacePath::parse(row.7)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
-                supervisor_epoch_id: SupervisorEpochId::try_from(row.7)
+                supervisor_epoch_id: SupervisorEpochId::try_from(row.8)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
-                supervisor_epoch_identity: SupervisorEpochIdentity::parse(row.8)
+                supervisor_epoch_identity: SupervisorEpochIdentity::parse(row.9)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
-                pi_session_identity: PiBoundarySessionIdentity::parse(row.9)
+                pi_session_identity: PiBoundarySessionIdentity::parse(row.10)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
-                spawn_nonce: SpawnNonce::parse(row.10)
+                spawn_nonce: SpawnNonce::parse(row.11)
                     .map_err(|_| StoreError::InvalidStoredValue)?,
             }
         }
@@ -20936,6 +22999,211 @@ fn decode_command_body(
                 )?,
             }
         }
+        CommandKind::StartNativeExecutionProfileQualification => {
+            let operating_cycle_id: i64 = connection
+                .query_row(
+                    "SELECT operating_cycle_id
+                       FROM command_start_native_execution_profile_qualification
+                      WHERE command_row_id = $1",
+                    [command_row_id],
+                    |row| row.get(0),
+                )
+                .optional()?
+                .ok_or(StoreError::LedgerCorruption(
+                    "missing native qualification start command body",
+                ))?;
+            CommandBody::StartNativeExecutionProfileQualification {
+                operating_cycle_id: OperatingCycleId::try_from(operating_cycle_id)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::ClaimStudyActorTaskAttemptLaunch => {
+            let row: (i64, i64, i64, i64, i64, String, String, String) = connection
+                .query_row(
+                    "SELECT study_actor_obligation_id, operating_cycle_id, work_item_id,
+                            reservation_amount_micros, supervisor_epoch_id,
+                            supervisor_epoch_identity, native_workspace_id,
+                            canonical_workspace_path
+                       FROM command_claim_study_actor_task_attempt_launch
+                      WHERE command_row_id = $1",
+                    [command_row_id],
+                    |row| {
+                        Ok((
+                            row.get(0)?,
+                            row.get(1)?,
+                            row.get(2)?,
+                            row.get(3)?,
+                            row.get(4)?,
+                            row.get(5)?,
+                            row.get(6)?,
+                            row.get(7)?,
+                        ))
+                    },
+                )
+                .optional()?
+                .ok_or(StoreError::LedgerCorruption(
+                    "missing study launch claim command body",
+                ))?;
+            CommandBody::ClaimStudyActorTaskAttemptLaunch {
+                study_actor_obligation_id: StudyActorObligationId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                operating_cycle_id: OperatingCycleId::try_from(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                work_item_id: WorkItemId::try_from(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                reservation_amount: UsdMicros::try_from(row.3)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                supervisor_epoch_id: SupervisorEpochId::try_from(row.4)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                supervisor_epoch_identity: SupervisorEpochIdentity::parse(row.5)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                native_workspace_id: NativeWorkspaceId::parse(row.6)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                canonical_workspace_path: CanonicalWorkspacePath::parse(row.7)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::ClaimNativeExecutionProfileQualificationLaunch => {
+            let row: (i64, i64, i64, String, String, String) = connection
+                .query_row(
+                    "SELECT operating_cycle_id, reservation_amount_micros,
+                            supervisor_epoch_id, supervisor_epoch_identity,
+                            native_workspace_id, canonical_workspace_path
+                       FROM command_claim_native_execution_profile_qualification_launch
+                      WHERE command_row_id = $1",
+                    [command_row_id],
+                    |row| {
+                        Ok((
+                            row.get(0)?,
+                            row.get(1)?,
+                            row.get(2)?,
+                            row.get(3)?,
+                            row.get(4)?,
+                            row.get(5)?,
+                        ))
+                    },
+                )
+                .optional()?
+                .ok_or(StoreError::LedgerCorruption(
+                    "missing native qualification launch claim command body",
+                ))?;
+            CommandBody::ClaimNativeExecutionProfileQualificationLaunch {
+                operating_cycle_id: OperatingCycleId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                reservation_amount: UsdMicros::try_from(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                supervisor_epoch_id: SupervisorEpochId::try_from(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                supervisor_epoch_identity: SupervisorEpochIdentity::parse(row.3)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                native_workspace_id: NativeWorkspaceId::parse(row.4)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                canonical_workspace_path: CanonicalWorkspacePath::parse(row.5)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::AllocateStudyActorWork => {
+            let row: (i64, i64, i64, i64, i64, i64, i64, i64, i64, String) = connection
+                .query_row(
+                    "SELECT study_run_id, pair_ordinal, treatment, population_phase,
+                            role_ordinal, operating_cycle_id, work_item_id,
+                            reservation_amount_micros, supervisor_epoch_id,
+                            supervisor_epoch_identity
+                       FROM command_allocate_study_actor_work WHERE command_row_id = $1",
+                    [command_row_id],
+                    |row| {
+                        Ok((
+                            row.get(0)?,
+                            row.get(1)?,
+                            row.get(2)?,
+                            row.get(3)?,
+                            row.get(4)?,
+                            row.get(5)?,
+                            row.get(6)?,
+                            row.get(7)?,
+                            row.get(8)?,
+                            row.get(9)?,
+                        ))
+                    },
+                )
+                .optional()?
+                .ok_or(StoreError::LedgerCorruption(
+                    "missing study work allocation command body",
+                ))?;
+            CommandBody::AllocateStudyActorWork {
+                study_run_id: StudyRunId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                pair_ordinal: StudyRunPairOrdinal::try_from(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                treatment: study_treatment_from_i64(row.2)?,
+                phase: study_population_phase_from_i64(row.3)?,
+                role: StudyRoleOrdinal::try_from(row.4)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                operating_cycle_id: OperatingCycleId::try_from(row.5)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                work_item_id: WorkItemId::try_from(row.6)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                reservation_amount: UsdMicros::try_from(row.7)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                supervisor_epoch_id: SupervisorEpochId::try_from(row.8)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                supervisor_epoch_identity: SupervisorEpochIdentity::parse(row.9)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
+        CommandKind::QualifyNativeExecutionProfile => {
+            let row: QualifyNativeExecutionProfileCommandRow = connection
+                .query_row(
+                    "SELECT operating_cycle_id, execution_profile_id,
+                            native_child_spawn_admission_id, native_child_id,
+                            runtime_identity_digest, runtime_identity_content_object_id,
+                            adapter_report_digest, adapter_report_content_object_id,
+                            probe_request_digest, probe_response_digest,
+                            probe_response_content_object_id
+                       FROM command_qualify_native_execution_profile
+                      WHERE command_row_id = $1",
+                    [command_row_id],
+                    |row| {
+                        Ok((
+                            row.get(0)?,
+                            row.get(1)?,
+                            row.get(2)?,
+                            row.get(3)?,
+                            row.get(4)?,
+                            row.get(5)?,
+                            row.get(6)?,
+                            row.get(7)?,
+                            row.get(8)?,
+                            row.get(9)?,
+                            row.get(10)?,
+                        ))
+                    },
+                )
+                .optional()?
+                .ok_or(StoreError::LedgerCorruption(
+                    "missing native profile qualification command body",
+                ))?;
+            CommandBody::QualifyNativeExecutionProfile {
+                operating_cycle_id: OperatingCycleId::try_from(row.0)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                execution_profile_id: ExecutionProfileId::try_from(row.1)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                native_child_spawn_admission_id: NativeChildSpawnAdmissionId::try_from(row.2)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                native_child_id: NativeChildId::try_from(row.3)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                runtime_identity_digest: digest_from_stored_bytes(&row.4)?,
+                runtime_identity_content_object_id: ContentObjectId::try_from(row.5)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                adapter_report_digest: digest_from_stored_bytes(&row.6)?,
+                adapter_report_content_object_id: ContentObjectId::try_from(row.7)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+                probe_request_digest: digest_from_stored_bytes(&row.8)?,
+                probe_response_digest: digest_from_stored_bytes(&row.9)?,
+                probe_response_content_object_id: ContentObjectId::try_from(row.10)
+                    .map_err(|_| StoreError::InvalidStoredValue)?,
+            }
+        }
         CommandKind::StudyTransition => CommandBody::StudyTransition {
             command: crate::study::decode_command_body(connection, command_row_id)?,
         },
@@ -21469,6 +23737,11 @@ fn command_kind_from_i64(value: i64) -> Result<CommandKind, StoreError> {
         111 => Ok(CommandKind::RecordPiTaskAttemptSessionDisposeUsage),
         112 => Ok(CommandKind::RecordPiTaskAttemptSessionDisposeUsageFailure),
         113 => Ok(CommandKind::RecordPiTaskAttemptSessionDisposed),
+        114 => Ok(CommandKind::QualifyNativeExecutionProfile),
+        115 => Ok(CommandKind::StartNativeExecutionProfileQualification),
+        116 => Ok(CommandKind::ClaimStudyActorTaskAttemptLaunch),
+        117 => Ok(CommandKind::ClaimNativeExecutionProfileQualificationLaunch),
+        118 => Ok(CommandKind::AllocateStudyActorWork),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }
@@ -21588,6 +23861,27 @@ fn capability_from_i64(value: i64) -> Result<Capability, StoreError> {
         111 => Ok(Capability::RecordPiTaskAttemptSessionDisposeUsage),
         112 => Ok(Capability::RecordPiTaskAttemptSessionDisposeUsageFailure),
         113 => Ok(Capability::RecordPiTaskAttemptSessionDisposed),
+        114 => Ok(Capability::QualifyNativeExecutionProfile),
+        115 => Ok(Capability::StartNativeExecutionProfileQualification),
+        116 => Ok(Capability::ClaimStudyActorTaskAttemptLaunch),
+        117 => Ok(Capability::ClaimNativeExecutionProfileQualificationLaunch),
+        118 => Ok(Capability::AllocateStudyActorWork),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+
+fn study_treatment_from_i64(value: i64) -> Result<StudyTreatment, StoreError> {
+    match value {
+        1 => Ok(StudyTreatment::Retained),
+        2 => Ok(StudyTreatment::Reset),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+
+fn study_population_phase_from_i64(value: i64) -> Result<StudyPopulationPhase, StoreError> {
+    match value {
+        1 => Ok(StudyPopulationPhase::Source),
+        2 => Ok(StudyPopulationPhase::Successor),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }
@@ -22117,6 +24411,11 @@ fn event_kind_from_i64(value: i64) -> Result<EventKind, StoreError> {
         105 => Ok(EventKind::PiTaskAttemptSessionDisposeUsageRecorded),
         106 => Ok(EventKind::PiTaskAttemptSessionDisposeUsageFrozen),
         107 => Ok(EventKind::PiTaskAttemptSessionDisposed),
+        108 => Ok(EventKind::NativeExecutionProfileQualified),
+        109 => Ok(EventKind::NativeExecutionProfileQualificationStarted),
+        110 => Ok(EventKind::StudyActorTaskAttemptLaunchClaimed),
+        111 => Ok(EventKind::NativeExecutionProfileQualificationLaunchClaimed),
+        112 => Ok(EventKind::StudyActorWorkAllocated),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }
@@ -22155,14 +24454,18 @@ fn child_process_state_from_i64(value: i64) -> Result<ChildProcessState, StoreEr
 fn decode_child_owner(
     attempt: Option<i64>,
     office: Option<i64>,
+    qualification_cycle: Option<i64>,
 ) -> Result<PiChildOwner, StoreError> {
-    match (attempt, office) {
-        (Some(attempt), None) => Ok(PiChildOwner::ActorAttempt(
+    match (attempt, office, qualification_cycle) {
+        (Some(attempt), None, None) => Ok(PiChildOwner::ActorAttempt(
             ActorAttemptId::try_from(attempt).map_err(|_| StoreError::InvalidStoredValue)?,
         )),
-        (None, Some(office)) => Ok(PiChildOwner::RootAuthorityOfficeSession(
+        (None, Some(office), None) => Ok(PiChildOwner::RootAuthorityOfficeSession(
             RootAuthorityOfficeSessionId::try_from(office)
                 .map_err(|_| StoreError::InvalidStoredValue)?,
+        )),
+        (None, None, Some(cycle)) => Ok(PiChildOwner::NativeExecutionProfileQualification(
+            OperatingCycleId::try_from(cycle).map_err(|_| StoreError::InvalidStoredValue)?,
         )),
         _ => Err(StoreError::LedgerCorruption("invalid Pi child owner union")),
     }

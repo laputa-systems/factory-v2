@@ -15,11 +15,11 @@ use society_kernel::{
     NorthStarBoundaryCommitmentQuestion, NorthStarChangeQuestion,
     NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet, NorthStarRevisitQuestion,
     PrincipalId, Rejection, StoreError, StudyBudgetUnits, StudyCommand, StudyDecisionBody,
-    StudyEpisodeId, StudyEvent, StudyGroundTruthReveal, StudyMeasurementSlot,
-    StudyMeasurementSlotCount, StudyMeasurementStatus, StudyPopulationPhase, StudyRoleOrdinal,
-    StudyRunLifecycleState, StudyRunPairCount, StudyRunPairOrdinal, StudyRunRegisteredPairCount,
-    StudyTransitionDisposition, StudyTreatment, forum_f0_awareness_digest,
-    forum_f0_tool_contract_digest,
+    StudyEpisodeId, StudyEvent, StudyForumPublicAuthor, StudyGroundTruthReveal,
+    StudyMeasurementSlot, StudyMeasurementSlotCount, StudyMeasurementStatus, StudyPopulationPhase,
+    StudyRoleOrdinal, StudyRunLifecycleState, StudyRunPairCount, StudyRunPairOrdinal,
+    StudyRunRegisteredPairCount, StudyTransitionDisposition, StudyTreatment,
+    forum_f0_awareness_digest, forum_f0_tool_contract_digest,
 };
 
 fn application_mission() -> ApplicationMissionInput {
@@ -229,6 +229,185 @@ fn forum_body_limits_are_exact_and_no_nul_body_is_admissible() {
     assert!(ForumMessageBody::parse("x".repeat(8_192)).is_ok());
     assert!(ForumMessageBody::parse("x".repeat(8_193)).is_err());
     assert!(ForumMessageBody::parse("visible\0hidden").is_err());
+}
+
+#[test]
+fn completed_actor_can_record_only_its_own_published_public_decision() {
+    let path = temporary_database_path();
+    let mut store = KernelStore::connect_test_path(&path).unwrap();
+    install_application_revision(&mut store);
+    let mut ordinal = 1_u16;
+    let prompt = forum_f0_awareness_digest();
+    let tools = forum_f0_tool_contract_digest();
+    let reveal = StudyGroundTruthReveal::parse("completed-decision-reveal-v1").unwrap();
+    let protocol = society_kernel::StudyProtocolRevisionId::try_from(event_id(submit_study(
+        &mut store,
+        &mut ordinal,
+        StudyCommand::AdmitProtocolRevision {
+            application_revision_id: ApplicationRevisionId::new(1).unwrap(),
+            protocol_digest: Blake3Digest::of_bytes(b"completed-decision-protocol"),
+            actor_policy_digest: Blake3Digest::of_bytes(b"completed-decision-policy"),
+            forum_prompt_digest: prompt,
+            forum_tool_digest: tools,
+            evidence_digest: Blake3Digest::of_bytes(b"completed-decision-evidence"),
+            ground_truth_commitment_digest: reveal.digest(),
+            correction_digest: Blake3Digest::of_bytes(b"completed-decision-correction"),
+            topology_digest: Blake3Digest::of_bytes(b"completed-decision-topology"),
+            episode_budget: StudyBudgetUnits::new(2).unwrap(),
+        },
+    )))
+    .unwrap();
+    let world = society_kernel::StudyWorldRevisionId::try_from(event_id(submit_study(
+        &mut store,
+        &mut ordinal,
+        StudyCommand::AdmitWorldRevision {
+            protocol_revision_id: protocol,
+            world_digest: Blake3Digest::of_bytes(b"completed-decision-world"),
+        },
+    )))
+    .unwrap();
+    let measurement = society_kernel::StudyMeasurementRevisionId::try_from(event_id(submit_study(
+        &mut store,
+        &mut ordinal,
+        StudyCommand::AdmitMeasurementRevision {
+            protocol_revision_id: protocol,
+            analysis_digest: Blake3Digest::of_bytes(b"completed-decision-analysis"),
+            measurement_slot_count: StudyMeasurementSlotCount::new(1).unwrap(),
+        },
+    )))
+    .unwrap();
+    let institution = society_kernel::StudyInstitutionRevisionId::try_from(event_id(submit_study(
+        &mut store,
+        &mut ordinal,
+        StudyCommand::AdmitInstitutionRevision {
+            protocol_revision_id: protocol,
+            institution_digest: Blake3Digest::of_bytes(b"completed-decision-institution"),
+        },
+    )))
+    .unwrap();
+    let population = society_kernel::StudyPopulationSnapshotId::try_from(event_id(submit_study(
+        &mut store,
+        &mut ordinal,
+        StudyCommand::AdmitPopulationSnapshot {
+            protocol_revision_id: protocol,
+            population_digest: Blake3Digest::of_bytes(b"completed-decision-population"),
+            population_size: 1,
+        },
+    )))
+    .unwrap();
+    let episode = StudyEpisodeId::try_from(event_id(submit_study(
+        &mut store,
+        &mut ordinal,
+        StudyCommand::AdmitEpisode {
+            protocol_revision_id: protocol,
+            world_revision_id: world,
+            measurement_revision_id: measurement,
+            institution_revision_id: institution,
+            population_snapshot_id: population,
+            randomization_digest: Blake3Digest::of_bytes(b"completed-decision-seed"),
+        },
+    )))
+    .unwrap();
+    submit_study(
+        &mut store,
+        &mut ordinal,
+        StudyCommand::AssignTreatment {
+            episode_id: episode,
+            treatment: StudyTreatment::Retained,
+        },
+    );
+    let forum = match submit_study(
+        &mut store,
+        &mut ordinal,
+        StudyCommand::CreateEpisodeForum {
+            episode_id: episode,
+            charter_digest: Blake3Digest::of_bytes(b"completed-decision-charter"),
+        },
+    ) {
+        StudyEvent::EpisodeForumCreated { forum_id, .. } => forum_id,
+        event => panic!("unexpected event: {event:?}"),
+    };
+    submit_study(
+        &mut store,
+        &mut ordinal,
+        StudyCommand::OpenForumThread {
+            forum_id: forum,
+            title: ForumThreadTitle::parse("completed decision thread").unwrap(),
+        },
+    );
+    let obligation = match submit_study(
+        &mut store,
+        &mut ordinal,
+        StudyCommand::AdmitActorObligation {
+            episode_id: episode,
+            phase: StudyPopulationPhase::Source,
+            role: StudyRoleOrdinal::new(1).unwrap(),
+            private_view_digest: Blake3Digest::of_bytes(b"completed-decision-private"),
+            prompt_digest: prompt,
+            tool_digest: tools,
+            budget: StudyBudgetUnits::new(2).unwrap(),
+            read_budget: ForumReadBudget::new(1).unwrap(),
+            post_budget: ForumPostBudget::new(1).unwrap(),
+        },
+    ) {
+        StudyEvent::ActorObligationAdmitted { obligation_id, .. } => obligation_id,
+        event => panic!("unexpected event: {event:?}"),
+    };
+    submit_study(
+        &mut store,
+        &mut ordinal,
+        StudyCommand::AdmitForumExposure {
+            obligation_id: obligation,
+            forum_id: forum,
+            visible_from_message_ordinal: 1,
+        },
+    );
+    let message_id = match submit_study(
+        &mut store,
+        &mut ordinal,
+        StudyCommand::PublishForumMessage {
+            obligation_id: obligation,
+            kind: ForumMessageKind::Synthesis,
+            body: ForumMessageBody::parse("public decision v1").unwrap(),
+            in_reply_to_message_id: None,
+            supersedes_message_id: None,
+        },
+    ) {
+        StudyEvent::ForumMessagePublished { message_id, .. } => message_id,
+        event => panic!("unexpected event: {event:?}"),
+    };
+    submit_study(
+        &mut store,
+        &mut ordinal,
+        StudyCommand::CompleteActorObligation {
+            obligation_id: obligation,
+            charged_budget: StudyBudgetUnits::new(2).unwrap(),
+        },
+    );
+    assert_eq!(
+        rejected_study(
+            &mut store,
+            &mut ordinal,
+            StudyCommand::RecordDecision {
+                obligation_id: obligation,
+                decision: StudyDecisionBody::parse("uncited completed decision").unwrap(),
+                cited_message_id: None,
+            },
+        ),
+        Rejection::InvalidLifecycleTransition
+    );
+    assert!(matches!(
+        submit_study(
+            &mut store,
+            &mut ordinal,
+            StudyCommand::RecordDecision {
+                obligation_id: obligation,
+                decision: StudyDecisionBody::parse("public decision v1").unwrap(),
+                cited_message_id: Some(message_id),
+            },
+        ),
+        StudyEvent::DecisionRecorded { obligation_id: actual } if actual == obligation
+    ));
 }
 
 #[test]
@@ -709,6 +888,42 @@ fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
         source_role,
         population,
     );
+    assert_eq!(
+        store
+            .study_run_lifetime_obligation(
+                study_run_id,
+                StudyRunPairOrdinal::new(1).unwrap(),
+                StudyTreatment::Retained,
+                StudyPopulationPhase::Source,
+                source_role,
+            )
+            .unwrap(),
+        Some(retained_source)
+    );
+    assert_eq!(
+        store
+            .study_run_lifetime_obligation(
+                study_run_id,
+                StudyRunPairOrdinal::new(1).unwrap(),
+                StudyTreatment::Reset,
+                StudyPopulationPhase::Source,
+                source_role,
+            )
+            .unwrap(),
+        Some(reset_source)
+    );
+    assert_eq!(
+        store
+            .study_run_lifetime_obligation(
+                study_run_id,
+                StudyRunPairOrdinal::new(1).unwrap(),
+                StudyTreatment::Retained,
+                StudyPopulationPhase::Source,
+                StudyRoleOrdinal::new(2).unwrap(),
+            )
+            .unwrap(),
+        None
+    );
     for (obligation, forum) in [
         (retained_source, retained_forum),
         (reset_source, reset_forum),
@@ -773,6 +988,10 @@ fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
         ),
         Rejection::BudgetPolicyViolation
     );
+    assert!(matches!(
+        store.study_post_actor_public_forum(retained),
+        Err(StoreError::StudyPostActorForumNotReady(episode_id)) if episode_id == retained
+    ));
     for (obligation_id, message_id) in [
         (retained_source, retained_false),
         (reset_source, reset_false),
@@ -1317,6 +1536,31 @@ fn provider_free_pair_preserves_reset_boundary_and_replays_after_restart() {
         observation.retained.measurements[2].status,
         StudyMeasurementStatus::Invalidated
     ));
+
+    let public_forum = store.study_post_actor_public_forum(retained).unwrap();
+    assert_eq!(public_forum.episode_id, retained);
+    assert_eq!(public_forum.messages.len(), 2);
+    assert_eq!(
+        public_forum.messages[0].author,
+        StudyForumPublicAuthor::Actor {
+            obligation_id: retained_source,
+            occurrence_id: society_kernel::ActorOccurrenceId::new(retained_source.value()).unwrap(),
+            phase: StudyPopulationPhase::Source,
+            role: source_role,
+        }
+    );
+    assert_eq!(
+        public_forum.messages[0].publication_state,
+        society_kernel::ForumPublicationState::Retracted
+    );
+    assert_eq!(
+        public_forum.messages[1].author,
+        StudyForumPublicAuthor::SocietyService
+    );
+    assert_eq!(
+        public_forum.messages[1].publication_state,
+        society_kernel::ForumPublicationState::Published
+    );
 
     let idempotent = store
         .execute_study_transition(

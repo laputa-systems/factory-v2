@@ -80,6 +80,39 @@ then
     exit 1
 fi
 
+# The approved CL-001 harness may compose a resident daemon through a narrow
+# high-level boundary, but native process physics remain daemon-owned.  In
+# particular, an application must not construct a PiSpawnRequest (or its
+# TaskAttempt wrapper), choose a host executable/workspace, or reach either
+# resident wire/client protocol.  These types would let application code
+# bypass the canonical runtime profile and native custody checks.
+if rg -n \
+    'societyctl|societyd::(protocol|supervision)|\b(PiSpawnRequest|TaskAttemptExecutionStart|QualifiedHostExecution|NativeWorkspace|NativeWorkspaceRoot)\b' \
+    applications \
+    --glob '*.rs' \
+    --glob '*.toml' \
+    --glob '*.js' \
+    --glob '*.mjs' \
+    --glob '*.ts' \
+    --glob '!target/**' \
+    --glob '!node_modules/**'
+then
+    echo 'application imports resident wire or native process authority' >&2
+    exit 1
+fi
+
+# The release-plan gate must name the same fresh-schema revision used by the
+# executable and bootstrap. A stale revision in the pilot protocol is a false
+# readiness signal: it can make a locally passing fixture look canonical while
+# the daemon refuses the actual schema.
+schema_revision=$(sed -n 's/^POSTGRES_SCHEMA_REVISION ?= //p' Makefile)
+if test -z "$schema_revision" || ! rg -q --fixed-strings "$schema_revision" \
+    applications/correction-latency/LIVE-STUDY-PLAN.md
+then
+    echo 'live-study plan names a stale or missing PostgreSQL schema revision' >&2
+    exit 1
+fi
+
 if test -e crates/society-product/Cargo.lock
 then
     echo 'root workspace member retains a stale nested lockfile' >&2

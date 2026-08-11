@@ -21,12 +21,13 @@ use society_content::{
     ContentSealLimit, ContentStoreError, ContentStoreRoot, ContentStoreRootError,
 };
 use society_kernel::{
-    Capability, CommandBody, CommandDisposition, CommandId, CommandRequest, ExpectedGeneration,
-    ForumMessageBody, ForumMessageId, ForumMessageKind, InstallFoundingMissionPreflight,
-    KernelDatabaseUrl, KernelStore, PostgresAdvisoryLockLease, PostgresKernelStore,
-    PostgresStoreError, PrincipalId, StoreError, StudyActorObligationId, StudyCommand, StudyEvent,
-    StudyPairId, StudyRunId, StudyRunPairOrdinal, StudyTransitionDisposition,
-    StudyTransitionReceipt,
+    Capability, CommandBody, CommandDisposition, CommandId, CommandRequest, EventId,
+    ExpectedGeneration, ForumMessageBody, ForumMessageId, ForumMessageKind,
+    InstallFoundingMissionPreflight, KernelDatabaseUrl, KernelStore,
+    NativeExecutionProfileQualificationLaunchClaim, PostgresAdvisoryLockLease, PostgresKernelStore,
+    PostgresStoreError, PrincipalId, StoreError, StudyActorObligationId,
+    StudyActorTaskAttemptLaunchClaim, StudyCommand, StudyEvent, StudyPairId, StudyRunId,
+    StudyRunPairOrdinal, StudyTransitionDisposition, StudyTransitionReceipt,
 };
 use thiserror::Error;
 
@@ -34,7 +35,10 @@ use crate::content::{
     ContentObjectRegistration, ContentSealCrashSeam, ContentSealOperationId,
     ContentSealingAuthority, ContentSealingError,
 };
+use crate::launch_profile::{PinnedPiLaunchProfile, PinnedPiProfileError};
 use crate::pi_execution::{
+    NativeExecutionProfileQualificationChild, NativeExecutionProfileQualificationEvidence,
+    NativeExecutionProfileQualificationSpawnRegistration, NativeExecutionProfileQualificationStart,
     OfficePiExecutionChild, OfficePiExecutionStart, OfficePiSessionDispose,
     OfficePiSessionDisposeOutput, OfficePiSessionDisposeStart, OfficePiSpawnRegistration,
     OfficePiTurn, OfficePiTurnOutput, OfficePiTurnStart, PiExecutionDriver, PiExecutionError,
@@ -51,11 +55,13 @@ use crate::protocol::{
 use crate::study_admission::{
     StudyAdmissionAuthority, StudyAdmissionError, StudyAdmissionOperationId,
 };
+use crate::study_plan::{StudyPlanLifetimeError, StudyPlanLifetimeKey};
 
 const SOCKET_FILE_NAME: &str = "societyd.sock";
 const LOCK_FILE_NAME: &str = "societyd.lock";
 const DATABASE_ADVISORY_LOCK_KEY: i64 = 0x0053_4f43_4945_5459;
 const CONTENT_STORE_DIRECTORY_NAME: &str = "content";
+const NATIVE_WORKSPACE_DIRECTORY_NAME: &str = "workspaces";
 const DAEMON_CONTENT_SEAL_LIMIT_BYTES: u64 = 64 * 1024 * 1024;
 const SOCKET_READ_TIMEOUT: Duration = Duration::from_secs(2);
 const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(5);
@@ -95,6 +101,7 @@ pub struct DaemonConfig {
     database_schema: Option<String>,
     fault_injection: FaultInjection,
     supervisor_stream: Option<UnixStream>,
+    pinned_pi_profile: Option<PinnedPiLaunchProfile>,
 }
 
 impl DaemonConfig {
@@ -105,6 +112,7 @@ impl DaemonConfig {
             database_schema: None,
             fault_injection: FaultInjection::None,
             supervisor_stream: None,
+            pinned_pi_profile: None,
         }
     }
 
@@ -135,6 +143,18 @@ impl DaemonConfig {
         self
     }
 
+    /// Installs the supervisor-selected, pinned Pi host/session profile.  The
+    /// profile contains no caller-selected workspace or process identity;
+    /// those are allocated by the resident only after a typed kernel claim.
+    pub fn with_pinned_pi_profile(
+        mut self,
+        profile: PinnedPiLaunchProfile,
+    ) -> Result<Self, PinnedPiProfileError> {
+        profile.assert_valid()?;
+        self.pinned_pi_profile = Some(profile);
+        Ok(self)
+    }
+
     pub fn runtime_root(&self) -> &Path {
         &self.runtime_root
     }
@@ -162,6 +182,10 @@ pub enum DaemonError {
     ContentStoreRoot(#[from] ContentStoreRootError),
     #[error("daemon content-store failed: {0}")]
     ContentStore(#[from] ContentStoreError),
+    #[error("daemon native workspace root is unsafe: {0}")]
+    NativeWorkspaceRoot(#[from] crate::supervision::SupervisionError),
+    #[error("pinned Pi launch profile is invalid: {0}")]
+    PinnedPiProfile(#[from] PinnedPiProfileError),
     #[error("daemon founding-mission content sealing failed")]
     FoundingMissionContentSealingFailed,
     #[error("compiled daemon content seal limit must be nonzero")]
@@ -198,6 +222,11 @@ pub struct Daemon {
     /// The reader bound paired with the only content writer. The Pi bridge
     /// supplies a transcript only after this exact native byte limit.
     content_seal_limit: ContentSealLimit,
+    /// Fresh actor/qualification workspaces are allocated only below this
+    /// resident-owned root.  Kernel claim paths are checked against the
+    /// resulting allocation before native spawn.
+    native_workspace_root: crate::supervision::NativeWorkspaceRoot,
+    pinned_pi_profile: Option<PinnedPiLaunchProfile>,
     /// The daemon exclusively owns live Pi process physics.  The driver has
     /// no local-wire constructor and cannot survive a restart attach.
     #[allow(dead_code)]
@@ -487,11 +516,16 @@ impl Daemon {
             return Err(DaemonError::InvalidContentSealLimit);
         };
         let content_sealing = ContentSealingAuthority::open(content_root, content_limit)?;
+        let native_workspace_root = open_native_workspace_root(&config.runtime_root)?;
+        if let Some(profile) = &config.pinned_pi_profile {
+            profile.assert_valid()?;
+        }
 
         let listener = UnixListener::bind(&socket_path)?;
         set_mode(&socket_path, 0o600)?;
         listener.set_nonblocking(true)?;
         let owner_uid = effective_uid();
+        let pinned_pi_profile = config.pinned_pi_profile.clone();
         tracing::info!(
             target: "society.ledger",
             command_count,
@@ -505,6 +539,8 @@ impl Daemon {
             _database_lock: database_lock,
             content_sealing,
             content_seal_limit: content_limit,
+            native_workspace_root,
+            pinned_pi_profile,
             pi_execution: PiExecutionDriver::new(),
             listener,
             _lock: lock,
@@ -535,12 +571,459 @@ impl Daemon {
         StudyAdmissionAuthority::new(self, operation)
     }
 
+    /// Executes one command from the deliberately narrow root-owned study
+    /// work provisioner. This is crate-private so neither the local socket nor
+    /// an application can turn it into a generic raw-command surface.
+    pub(crate) fn execute_root_study_provisioning_command(
+        &mut self,
+        command_id: CommandId,
+        principal_id: PrincipalId,
+        capability: Capability,
+        expected_generation: ExpectedGeneration,
+        body: CommandBody,
+    ) -> Result<CommandDisposition, StoreError> {
+        if self.mode == StartupMode::RecoveryFenced {
+            return Err(StoreError::LedgerCorruption(
+                "root study provisioning attempted while recovery-fenced",
+            ));
+        }
+        let capability_grant_id = self
+            .store
+            .active_capability_grant(principal_id, capability)?
+            .ok_or(StoreError::LedgerCorruption(
+                "root study provisioning capability grant is absent",
+            ))?;
+        Ok(self
+            .store
+            .execute(CommandRequest {
+                command_id,
+                principal_id,
+                capability_grant_id,
+                capability,
+                expected_generation,
+                body,
+            })?
+            .disposition)
+    }
+
+    pub(crate) fn root_study_provisioning_event(
+        &self,
+        event_id: EventId,
+    ) -> Result<society_kernel::EventBody, StoreError> {
+        Ok(self.store.ledger_event(event_id)?.body)
+    }
+
+    /// Verifies that a sealed study's declared runtime identity is the exact
+    /// opaque identity installed by the supervisor with the resident Pi
+    /// launch profile. This reveals no profile paths, credentials, or catalog
+    /// material, and is deliberately checked before a study admits any work.
+    pub fn assert_pinned_study_runtime_profile(
+        &self,
+        runtime_profile_digest: society_kernel::Blake3Digest,
+    ) -> Result<(), PinnedPiProfileError> {
+        let profile = self
+            .pinned_pi_profile
+            .as_ref()
+            .ok_or(PinnedPiProfileError::NotConfigured)?;
+        profile.assert_valid()?;
+        if profile.runtime_profile_digest() != runtime_profile_digest {
+            return Err(PinnedPiProfileError::RuntimeProfileMismatch);
+        }
+        Ok(())
+    }
+
+    /// Materializes the native request for a typed TaskAttempt launch claim.
+    /// This is resident-only: the profile, workspace root, and all session
+    /// paths remain inside `societyd`; a study application receives none of
+    /// these values.
+    pub(crate) fn materialize_task_attempt_spawn_request(
+        &self,
+        workspace_identity: crate::supervision::NativeWorkspaceId,
+        child_process_id: crate::supervision::SupervisedChildId,
+        session_identity: society_pi::SessionIdentity,
+        spawn_nonce: society_pi::SpawnNonce,
+        create_correlation_identity: society_pi::CorrelationIdentity,
+    ) -> Result<crate::supervision::PiSpawnRequest, PinnedPiProfileError> {
+        let profile = self
+            .pinned_pi_profile
+            .as_ref()
+            .ok_or(PinnedPiProfileError::NotConfigured)?;
+        profile.materialize_task_attempt(
+            &self.native_workspace_root,
+            workspace_identity,
+            child_process_id,
+            session_identity,
+            spawn_nonce,
+            create_correlation_identity,
+        )
+    }
+
+    /// Materializes the one-shot native qualification request from resident
+    /// configuration. Qualification intentionally uses the same closed
+    /// TaskAttempt wire shape as the physical Pi adapter but has a distinct
+    /// kernel owner and operation path.
+    pub(crate) fn materialize_native_profile_qualification_spawn_request(
+        &self,
+        workspace_identity: crate::supervision::NativeWorkspaceId,
+        child_process_id: crate::supervision::SupervisedChildId,
+        session_identity: society_pi::SessionIdentity,
+        spawn_nonce: society_pi::SpawnNonce,
+        create_correlation_identity: society_pi::CorrelationIdentity,
+    ) -> Result<crate::supervision::PiSpawnRequest, PinnedPiProfileError> {
+        let profile = self
+            .pinned_pi_profile
+            .as_ref()
+            .ok_or(PinnedPiProfileError::NotConfigured)?;
+        profile.materialize_native_profile_qualification(
+            &self.native_workspace_root,
+            workspace_identity,
+            child_process_id,
+            session_identity,
+            spawn_nonce,
+            create_correlation_identity,
+        )
+    }
+
+    pub(crate) fn assert_claim_workspace_path(
+        &self,
+        workspace_identity: &society_kernel::NativeWorkspaceId,
+        canonical_workspace_path: &society_kernel::CanonicalWorkspacePath,
+    ) -> Result<(), PinnedPiProfileError> {
+        let expected = self
+            .native_workspace_root
+            .directory()
+            .as_path()
+            .join(workspace_identity.as_str());
+        let Some(expected) = expected.to_str() else {
+            return Err(PinnedPiProfileError::WorkspacePathMismatch);
+        };
+        if expected != canonical_workspace_path.as_str() {
+            return Err(PinnedPiProfileError::WorkspacePathMismatch);
+        }
+        Ok(())
+    }
+
+    /// Computes the only canonical workspace path accepted for a daemon-owned
+    /// launch claim. The directory is still allocated transactionally at
+    /// materialization time; this helper lets the resident scheduler register
+    /// the same typed path in the kernel before accepting the claim.
+    #[allow(dead_code)]
+    pub(crate) fn native_workspace_claim_path(
+        &self,
+        workspace_identity: &society_kernel::NativeWorkspaceId,
+    ) -> Result<society_kernel::CanonicalWorkspacePath, PinnedPiProfileError> {
+        let path = self
+            .native_workspace_root
+            .directory()
+            .as_path()
+            .join(workspace_identity.as_str());
+        let path = path
+            .to_str()
+            .ok_or(PinnedPiProfileError::WorkspacePathMismatch)?;
+        society_kernel::CanonicalWorkspacePath::parse(path)
+            .map_err(|_| PinnedPiProfileError::WorkspacePathMismatch)
+    }
+
+    pub(crate) fn task_attempt_execution_start_from_claim(
+        &self,
+        claim: &StudyActorTaskAttemptLaunchClaim,
+    ) -> Result<crate::task_attempt_scheduler::TaskAttemptExecutionStart, PinnedPiProfileError>
+    {
+        self.assert_claim_workspace_path(
+            claim.native_workspace_id(),
+            claim.canonical_workspace_path(),
+        )?;
+        let suffix = claim.actor_attempt_id().value().to_string();
+        let workspace_identity =
+            crate::supervision::NativeWorkspaceId::parse(claim.native_workspace_id().as_str())?;
+        let child_process_id =
+            crate::supervision::SupervisedChildId::parse(format!("task-attempt-child-{suffix}"))?;
+        let session_identity =
+            society_pi::SessionIdentity::parse(format!("task-attempt-session-{suffix}"))
+                .map_err(PinnedPiProfileError::Protocol)?;
+        let spawn_nonce = society_pi::SpawnNonce::parse(format!("task-attempt-spawn-{suffix}"))
+            .map_err(PinnedPiProfileError::Protocol)?;
+        let create_correlation =
+            society_pi::CorrelationIdentity::parse(format!("task-attempt-create-{suffix}"))
+                .map_err(PinnedPiProfileError::Protocol)?;
+        let spawn_request = self.materialize_task_attempt_spawn_request(
+            workspace_identity,
+            child_process_id,
+            session_identity,
+            spawn_nonce,
+            create_correlation,
+        )?;
+        Ok(crate::task_attempt_scheduler::TaskAttemptExecutionStart {
+            obligation_id: claim.study_actor_obligation_id(),
+            operating_cycle_id: claim.operating_cycle_id(),
+            actor_attempt_id: claim.actor_attempt_id(),
+            budget_reservation_id: claim.budget_reservation_id(),
+            execution_profile_id: claim.execution_profile_id(),
+            expected_generation: claim.admission_generation(),
+            supervisor_epoch_id: claim.supervisor_epoch_id(),
+            supervisor_epoch_identity: claim.supervisor_epoch_identity().clone(),
+            spawn_request,
+        })
+    }
+
+    pub(crate) fn native_profile_qualification_start_from_claim(
+        &self,
+        operation: &crate::NativeProfileQualificationRunnerOperationId,
+        claim: &NativeExecutionProfileQualificationLaunchClaim,
+    ) -> Result<NativeExecutionProfileQualificationStart, PinnedPiProfileError> {
+        self.assert_claim_workspace_path(
+            claim.native_workspace_id(),
+            claim.canonical_workspace_path(),
+        )?;
+        let suffix = claim.launch_claim_id().value().to_string();
+        let workspace_identity =
+            crate::supervision::NativeWorkspaceId::parse(claim.native_workspace_id().as_str())?;
+        let child_process_id =
+            crate::supervision::SupervisedChildId::parse(format!("qualification-child-{suffix}"))?;
+        let session_identity =
+            society_pi::SessionIdentity::parse(format!("qualification-session-{suffix}"))
+                .map_err(PinnedPiProfileError::Protocol)?;
+        let spawn_nonce = society_pi::SpawnNonce::parse(format!("qualification-spawn-{suffix}"))
+            .map_err(PinnedPiProfileError::Protocol)?;
+        let create_correlation =
+            society_pi::CorrelationIdentity::parse(format!("qualification-create-{suffix}"))
+                .map_err(PinnedPiProfileError::Protocol)?;
+        let spawn_request = self.materialize_native_profile_qualification_spawn_request(
+            workspace_identity,
+            child_process_id,
+            session_identity,
+            spawn_nonce,
+            create_correlation,
+        )?;
+        let operation = crate::pi_execution::PiExecutionOperationId::parse(operation.as_str())
+            .map_err(|_| PinnedPiProfileError::InvalidOperationIdentity)?;
+        Ok(NativeExecutionProfileQualificationStart {
+            operation,
+            operating_cycle_id: claim.operating_cycle_id(),
+            budget_reservation_id: claim.budget_reservation_id(),
+            execution_profile_id: claim.execution_profile_id(),
+            expected_generation: claim.admission_generation(),
+            supervisor_epoch_id: claim.supervisor_epoch_id(),
+            supervisor_epoch_identity: claim.supervisor_epoch_identity().clone(),
+            spawn_request,
+            already_started: true,
+        })
+    }
+
+    /// Opens the resident-owned TaskAttempt scheduler. This is an in-process
+    /// composition boundary for an already-admitted generic actor obligation;
+    /// it is intentionally absent from the local query protocol. The runner
+    /// retains the mutable daemon borrow while native custody is live, so an
+    /// application cannot acquire the store, content writer, or child handle.
+    #[allow(dead_code)]
+    pub(crate) fn open_task_attempt_runner(
+        &mut self,
+        operation: crate::TaskAttemptRunnerOperationId,
+    ) -> crate::TaskAttemptRunner<'_> {
+        crate::TaskAttemptRunner::new(self, operation)
+    }
+
+    /// Opens a TaskAttempt runner only from the kernel's active durable launch
+    /// claim.  The application supplies an obligation lookup key and an
+    /// operation namespace; actor-attempt, reservation, qualified profile,
+    /// admission generation, epoch, and workspace facts are projected by the
+    /// kernel and retained by the daemon.  Native spawn materialization remains
+    /// a resident-only step and is never accepted as a caller payload.
+    pub fn open_task_attempt_runner_from_claim(
+        &mut self,
+        operation: crate::TaskAttemptRunnerOperationId,
+        obligation_id: society_kernel::StudyActorObligationId,
+    ) -> Result<crate::TaskAttemptRunner<'_>, crate::TaskAttemptRunnerOpenError> {
+        if self.mode == StartupMode::RecoveryFenced {
+            return Err(crate::TaskAttemptRunnerOpenError::RecoveryFenced);
+        }
+        let claim = self
+            .store
+            .study_actor_task_attempt_launch_claim(obligation_id)
+            .map_err(|_| crate::TaskAttemptRunnerOpenError::Kernel)?
+            .ok_or(crate::TaskAttemptRunnerOpenError::LaunchClaimMissing)?;
+        Ok(crate::TaskAttemptRunner::new_from_launch_claim(
+            self, operation, claim,
+        ))
+    }
+
+    /// Resolves one plan lifetime through the resident registration, accepts
+    /// the durable kernel launch claim, and opens the existing claim-gated
+    /// TaskAttempt runner.  The selector contains only a sealed run identity
+    /// and generic pair/arm/phase/role facts; M3 and native identities stay in
+    /// the resident process.
+    pub fn open_task_attempt_runner_for_study_lifetime(
+        &mut self,
+        operation: crate::TaskAttemptRunnerOperationId,
+        key: StudyPlanLifetimeKey,
+    ) -> Result<crate::TaskAttemptRunner<'_>, StudyPlanLifetimeError> {
+        if self.mode == StartupMode::RecoveryFenced {
+            return Err(StudyPlanLifetimeError::RecoveryFenced);
+        }
+        let run = self
+            .store
+            .study_run_observation(key.study_run_id())
+            .map_err(|_| StudyPlanLifetimeError::PlanMismatch)?;
+        if run.plan_content_object_id != key.plan_content_object_id()
+            || run.plan_digest != key.plan_digest()
+            || run.pair_count != key.pair_count()
+        {
+            return Err(StudyPlanLifetimeError::PlanMismatch);
+        }
+        if run.lifecycle_state != society_kernel::StudyRunLifecycleState::Running {
+            return Err(StudyPlanLifetimeError::RunNotRunning);
+        }
+        if !run
+            .pairs
+            .iter()
+            .any(|pair| pair.pair_ordinal == key.pair_ordinal())
+        {
+            return Err(StudyPlanLifetimeError::PairNotRegistered);
+        }
+        let expected_obligation = self
+            .store
+            .study_run_lifetime_obligation(
+                key.study_run_id(),
+                key.pair_ordinal(),
+                key.treatment(),
+                key.phase(),
+                key.role(),
+            )
+            .map_err(|_| StudyPlanLifetimeError::Kernel)?
+            .ok_or(StudyPlanLifetimeError::ObligationMismatch)?;
+        if let Some(claim) = self
+            .store
+            .study_actor_task_attempt_launch_claim_for_command_id(&key.launch_command_id())
+            .map_err(|_| StudyPlanLifetimeError::Kernel)?
+        {
+            if claim.study_actor_obligation_id() != expected_obligation {
+                return Err(StudyPlanLifetimeError::ObligationMismatch);
+            }
+            return Ok(crate::TaskAttemptRunner::new_from_launch_claim(
+                self, operation, claim,
+            ));
+        }
+        let allocation = self
+            .store
+            .study_actor_work_allocation(
+                key.study_run_id(),
+                key.pair_ordinal(),
+                key.treatment(),
+                key.phase(),
+                key.role(),
+            )
+            .map_err(|_| StudyPlanLifetimeError::Kernel)?
+            .ok_or(StudyPlanLifetimeError::AllocationMissing)?;
+        let native_workspace_id = society_kernel::NativeWorkspaceId::parse(format!(
+            "study-{}-{}-{}-{}-{}",
+            key.study_run_id().value(),
+            key.pair_ordinal().value(),
+            key.treatment() as i64,
+            key.phase() as i64,
+            key.role().value(),
+        ))
+        .map_err(|_| StudyPlanLifetimeError::WorkspaceMismatch)?;
+        let canonical_workspace_path = self
+            .native_workspace_claim_path(&native_workspace_id)
+            .map_err(|_| StudyPlanLifetimeError::WorkspaceMismatch)?;
+        let capability = Capability::ClaimStudyActorTaskAttemptLaunch;
+        let capability_grant_id = self
+            .store
+            .active_capability_grant(PrincipalId::KERNEL, capability)
+            .map_err(|_| StudyPlanLifetimeError::Kernel)?
+            .ok_or(StudyPlanLifetimeError::Kernel)?;
+        let command_id = key.launch_command_id();
+        let receipt = self
+            .store
+            .execute(CommandRequest {
+                command_id,
+                principal_id: PrincipalId::KERNEL,
+                capability_grant_id,
+                capability,
+                expected_generation: ExpectedGeneration::exact(allocation.admission_generation()),
+                body: CommandBody::ClaimStudyActorTaskAttemptLaunch {
+                    study_actor_obligation_id: expected_obligation,
+                    operating_cycle_id: allocation.operating_cycle_id(),
+                    work_item_id: allocation.work_item_id(),
+                    reservation_amount: allocation.reservation_amount(),
+                    supervisor_epoch_id: allocation.supervisor_epoch_id(),
+                    supervisor_epoch_identity: allocation.supervisor_epoch_identity().clone(),
+                    native_workspace_id,
+                    canonical_workspace_path,
+                },
+            })
+            .map_err(|_| StudyPlanLifetimeError::Kernel)?;
+        if !matches!(receipt.disposition, CommandDisposition::Accepted(_)) {
+            return Err(StudyPlanLifetimeError::Kernel);
+        }
+        let claim = self
+            .store
+            .study_actor_task_attempt_launch_claim(expected_obligation)
+            .map_err(|_| StudyPlanLifetimeError::Kernel)?
+            .ok_or(StudyPlanLifetimeError::LaunchClaimMissing)?;
+        Ok(crate::TaskAttemptRunner::new_from_launch_claim(
+            self, operation, claim,
+        ))
+    }
+
+    /// Opens the resident-owned native execution-profile qualification
+    /// runner. The concrete launch input is daemon-private: a future durable
+    /// qualification admission/claim projection constructs it, while an
+    /// application can never provide executable, workspace, environment, or
+    /// session custody.
+    #[allow(dead_code)]
+    pub(crate) fn open_native_profile_qualification_runner(
+        &mut self,
+        operation: crate::NativeProfileQualificationRunnerOperationId,
+        start: NativeExecutionProfileQualificationStart,
+    ) -> crate::NativeProfileQualificationRunner<'_> {
+        crate::NativeProfileQualificationRunner::new(self, operation, start)
+    }
+
+    /// Opens qualification only from the durable kernel launch projection.
+    /// The caller supplies a cycle lookup and operation namespace; all
+    /// reservation/profile/generation/epoch/workspace values are projected by
+    /// the kernel and the native request is materialized by this daemon.
+    pub fn open_native_profile_qualification_runner_from_claim(
+        &mut self,
+        operation: crate::NativeProfileQualificationRunnerOperationId,
+        operating_cycle_id: society_kernel::OperatingCycleId,
+    ) -> Result<crate::NativeProfileQualificationRunner<'_>, crate::NativeProfileQualificationError>
+    {
+        if self.mode == StartupMode::RecoveryFenced {
+            return Err(crate::NativeProfileQualificationError::RecoveryFenced);
+        }
+        let claim = self
+            .store
+            .native_execution_profile_qualification_launch_claim(operating_cycle_id)
+            .map_err(|_| crate::NativeProfileQualificationError::Kernel)?
+            .ok_or(crate::NativeProfileQualificationError::LaunchClaimMissing)?;
+        let start = self
+            .native_profile_qualification_start_from_claim(&operation, &claim)
+            .map_err(|_| crate::NativeProfileQualificationError::Profile)?;
+        Ok(crate::NativeProfileQualificationRunner::new(
+            self, operation, start,
+        ))
+    }
+
     pub(crate) fn seal_study_admission_content(
         &mut self,
         operation: &ContentSealOperationId,
         bytes: &[u8],
-    ) -> Result<ContentObjectRegistration, ContentSealingError> {
-        self.seal_content_object(operation, bytes)
+    ) -> Result<(ContentObjectRegistration, EventId), ContentSealingError> {
+        let registration = self.seal_content_object(operation, bytes)?;
+        // The registration receipt is the exact ledger frontier immediately
+        // after this immutable object became available. A later TaskAttempt
+        // prompt must use this event, rather than guess at a global head or
+        // accept a caller-supplied stale frontier.
+        let receipt = self
+            .store
+            .command_receipt(operation.register_content_object_command_id())?
+            .ok_or(ContentSealingError::ContentObjectNotMaterialized)?;
+        let CommandDisposition::Accepted(frontier_event_id) = receipt.disposition else {
+            return Err(ContentSealingError::ContentObjectNotMaterialized);
+        };
+        Ok((registration, frontier_event_id))
     }
 
     pub(crate) fn execute_study_admission_transition(
@@ -553,6 +1036,56 @@ impl Daemon {
         }
         self.store
             .execute_study_transition(command_id, command)
+            .map_err(StudyAdmissionError::Kernel)
+    }
+
+    /// Application-admission analysis seam for the bounded public F0 record
+    /// after every admitted actor in an episode is terminal. The store
+    /// projection contains no Pi transcript or private Forum delivery.
+    pub(crate) fn study_post_actor_public_forum(
+        &self,
+        episode_id: society_kernel::StudyEpisodeId,
+    ) -> Result<society_kernel::StudyPostActorPublicForumObservation, StudyAdmissionError> {
+        self.store
+            .study_post_actor_public_forum(episode_id)
+            .map_err(StudyAdmissionError::Kernel)
+    }
+
+    /// Narrow in-process projection for an application which already holds
+    /// the study-admission authority. This bypasses neither the normalized
+    /// kernel query nor immutable-content custody; it simply avoids granting
+    /// the application a database connection.
+    pub(crate) fn study_pair_observation_for_admission(
+        &self,
+        pair_id: society_kernel::StudyPairId,
+    ) -> Result<society_kernel::StudyPairObservation, StudyAdmissionError> {
+        self.store
+            .study_pair_observation(pair_id)
+            .map_err(StudyAdmissionError::Kernel)
+    }
+
+    /// Narrow in-process obligation projection for an application which
+    /// already holds its study-admission authority. It preserves only the
+    /// typed terminal/active state needed to avoid replaying a completed
+    /// actor; M3, native-custody, and private-content identities remain
+    /// resident-private.
+    pub(crate) fn study_actor_obligation_observations_for_admission(
+        &self,
+        episode_id: society_kernel::StudyEpisodeId,
+    ) -> Result<Vec<society_kernel::StudyActorObligationObservation>, StudyAdmissionError> {
+        self.store
+            .study_actor_obligation_observations(episode_id)
+            .map_err(StudyAdmissionError::Kernel)
+    }
+
+    /// Narrow in-process finite-run projection for an application which
+    /// already holds the study-admission authority.
+    pub(crate) fn study_run_observation_for_admission(
+        &self,
+        study_run_id: society_kernel::StudyRunId,
+    ) -> Result<society_kernel::StudyRunObservation, StudyAdmissionError> {
+        self.store
+            .study_run_observation(study_run_id)
             .map_err(StudyAdmissionError::Kernel)
     }
 
@@ -624,6 +1157,130 @@ impl Daemon {
     }
 
     #[allow(dead_code)]
+    pub(crate) fn admit_native_profile_qualification_child(
+        &mut self,
+        start: NativeExecutionProfileQualificationStart,
+    ) -> Result<NativeExecutionProfileQualificationSpawnRegistration, PiExecutionError> {
+        if self.mode == StartupMode::RecoveryFenced {
+            return Err(PiExecutionError::RecoveryFenced);
+        }
+        let registration = self
+            .pi_execution
+            .admit_native_profile_qualification_spawn_and_register(&mut self.store, start)?;
+        if matches!(
+            &registration,
+            NativeExecutionProfileQualificationSpawnRegistration::RegistrationUnresolved { .. }
+        ) {
+            self.mode = StartupMode::RecoveryFenced;
+        }
+        Ok(registration)
+    }
+
+    pub(crate) fn drive_native_profile_qualification_boundary_containment(
+        &mut self,
+        child: &NativeExecutionProfileQualificationChild,
+        now: crate::supervision::MonotonicTick,
+    ) -> Result<(), PiExecutionError> {
+        self.pi_execution
+            .drive_native_profile_qualification_boundary_containment(child, now)
+    }
+
+    pub(crate) fn observe_native_profile_qualification_adapter_ready(
+        &mut self,
+        child: &mut NativeExecutionProfileQualificationChild,
+        now: crate::supervision::MonotonicTick,
+        deadline: crate::supervision::HandshakeDeadline,
+    ) -> Result<bool, PiExecutionError> {
+        self.pi_execution
+            .observe_native_profile_qualification_adapter_ready(
+                &mut self.store,
+                child,
+                now,
+                deadline,
+            )
+    }
+
+    pub(crate) fn authorize_and_begin_native_profile_qualification_create(
+        &mut self,
+        child: &mut NativeExecutionProfileQualificationChild,
+        now: crate::supervision::MonotonicTick,
+        deadline: crate::supervision::ControlWriteDeadline,
+    ) -> Result<crate::supervision::ControlWriteProgress, PiExecutionError> {
+        self.pi_execution
+            .authorize_and_begin_native_profile_qualification_create(
+                &mut self.store,
+                child,
+                now,
+                deadline,
+            )
+    }
+
+    pub(crate) fn drive_native_profile_qualification_create_delivery(
+        &mut self,
+        child: &mut NativeExecutionProfileQualificationChild,
+        now: crate::supervision::MonotonicTick,
+    ) -> Result<crate::supervision::ControlWriteProgress, PiExecutionError> {
+        self.pi_execution
+            .drive_native_profile_qualification_create_delivery(&mut self.store, child, now)
+    }
+
+    pub(crate) fn observe_native_profile_qualification_session_ready(
+        &mut self,
+        child: &mut NativeExecutionProfileQualificationChild,
+        now: crate::supervision::MonotonicTick,
+        deadline: crate::supervision::HandshakeDeadline,
+    ) -> Result<bool, PiExecutionError> {
+        self.pi_execution
+            .observe_native_profile_qualification_session_ready(
+                &mut self.store,
+                child,
+                now,
+                deadline,
+            )
+    }
+
+    pub(crate) fn request_native_profile_qualification_exit(
+        &mut self,
+        child: &mut NativeExecutionProfileQualificationChild,
+        now: crate::supervision::MonotonicTick,
+    ) -> Result<(), PiExecutionError> {
+        self.pi_execution
+            .request_native_profile_qualification_exit(child, now)
+    }
+
+    pub(crate) fn drive_native_profile_qualification_exit(
+        &mut self,
+        child: &NativeExecutionProfileQualificationChild,
+        now: crate::supervision::MonotonicTick,
+    ) -> Result<(), PiExecutionError> {
+        self.pi_execution
+            .drive_native_profile_qualification_exit(child, now)
+    }
+
+    pub(crate) fn reconcile_native_profile_qualification_child(
+        &mut self,
+        child: &mut NativeExecutionProfileQualificationChild,
+        now: crate::supervision::MonotonicTick,
+    ) -> Result<Option<NativeExecutionProfileQualificationEvidence>, PiExecutionError> {
+        self.pi_execution
+            .poll_native_profile_qualification_reap_and_reconcile(
+                &mut self.store,
+                &self.content_sealing,
+                child,
+                now,
+            )
+    }
+
+    pub(crate) fn qualify_native_profile(
+        &mut self,
+        child: &NativeExecutionProfileQualificationChild,
+        evidence: &NativeExecutionProfileQualificationEvidence,
+    ) -> Result<society_kernel::ExecutionProfileQualificationId, PiExecutionError> {
+        self.pi_execution
+            .qualify_native_execution_profile(&mut self.store, child, evidence)
+    }
+
+    #[allow(dead_code)]
     pub(crate) fn drive_task_attempt_pi_boundary_containment(
         &mut self,
         child: &TaskAttemptPiExecutionChild,
@@ -651,6 +1308,27 @@ impl Daemon {
     pub(crate) fn drive_unregistered_office_pi_containment(
         &mut self,
         child: &mut UnregisteredOfficePiChild,
+        now: crate::supervision::MonotonicTick,
+    ) -> Result<bool, PiExecutionError> {
+        self.pi_execution
+            .drive_unregistered_spawn_containment(child, now)
+    }
+
+    /// TaskAttempt counterpart of the unregistered-child containment suffix.
+    /// The custody type is owner-neutral internally, but the public runner
+    /// never exposes it or its process identity.
+    pub(crate) fn drive_unregistered_task_attempt_pi_containment(
+        &mut self,
+        child: &mut crate::pi_execution::UnregisteredPiChild,
+        now: crate::supervision::MonotonicTick,
+    ) -> Result<bool, PiExecutionError> {
+        self.pi_execution
+            .drive_unregistered_spawn_containment(child, now)
+    }
+
+    pub(crate) fn drive_unregistered_native_profile_qualification_containment(
+        &mut self,
+        child: &mut crate::pi_execution::UnregisteredPiChild,
         now: crate::supervision::MonotonicTick,
     ) -> Result<bool, PiExecutionError> {
         self.pi_execution
@@ -2099,6 +2777,32 @@ fn prepare_runtime_root(root: &Path) -> Result<(), DaemonError> {
         }
         Err(error) => Err(DaemonError::Io(error)),
     }
+}
+
+fn open_native_workspace_root(
+    runtime_root: &Path,
+) -> Result<crate::supervision::NativeWorkspaceRoot, DaemonError> {
+    let path = runtime_root.join(NATIVE_WORKSPACE_DIRECTORY_NAME);
+    match fs::symlink_metadata(&path) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink()
+                || !metadata.file_type().is_dir()
+                || metadata.uid() != effective_uid()
+                || metadata.permissions().mode() & 0o777 != 0o700
+            {
+                return Err(DaemonError::NativeWorkspaceRoot(
+                    crate::supervision::SupervisionError::UnsafeWorkspaceRoot,
+                ));
+            }
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            fs::create_dir(&path)?;
+            set_mode(&path, 0o700)?;
+        }
+        Err(error) => return Err(DaemonError::Io(error)),
+    }
+    crate::supervision::NativeWorkspaceRoot::open_owned(path)
+        .map_err(DaemonError::NativeWorkspaceRoot)
 }
 
 fn validate_runtime_root_metadata(metadata: &fs::Metadata) -> Result<(), DaemonError> {

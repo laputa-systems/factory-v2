@@ -571,6 +571,52 @@ pub enum ForumPublicationState {
     Retracted = 2,
 }
 
+/// Public, attributable author identity on an F0 Forum message.  Service
+/// corrections intentionally have no actor identity; this closed union keeps
+/// an application from treating a service release as an actor decision.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StudyForumPublicAuthor {
+    Actor {
+        obligation_id: StudyActorObligationId,
+        occurrence_id: ActorOccurrenceId,
+        phase: StudyPopulationPhase,
+        role: StudyRoleOrdinal,
+    },
+    SocietyService,
+}
+
+/// One public F0 message made available only after an episode has no active
+/// actor obligation.  This is not a Pi transcript, a private Forum read, or
+/// a model-cognition claim: it is the same attributed public record peers
+/// could have published into the institutional Forum.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StudyPostActorPublicForumMessage {
+    pub message_id: ForumMessageId,
+    pub thread_id: ForumThreadId,
+    pub thread_message_ordinal: i64,
+    pub author: StudyForumPublicAuthor,
+    pub kind: ForumMessageKind,
+    pub body: ForumMessageBody,
+    pub body_digest: Blake3Digest,
+    pub publication_state: ForumPublicationState,
+}
+
+/// Bounded post-actor projection of one episode's public F0 Forum.
+///
+/// The hard bound keeps this read-only analysis seam from becoming a generic
+/// transcript browser.  An episode which exceeds it must be treated as an
+/// unavailable analysis input rather than silently truncating evidence.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StudyPostActorPublicForumObservation {
+    pub episode_id: StudyEpisodeId,
+    pub messages: Vec<StudyPostActorPublicForumMessage>,
+}
+
+/// The largest public F0 Forum projection available to a post-actor
+/// application analysis. Every returned body is separately capped by
+/// [`ForumMessageBody::MAX_BYTES`].
+pub const POST_ACTOR_PUBLIC_FORUM_MESSAGE_LIMIT: usize = 256;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(i64)]
 pub enum StudyMeasurementStatus {
@@ -2108,6 +2154,176 @@ pub(crate) fn actor_obligation_observations(
     Ok(observations)
 }
 
+/// Reads the bounded public F0 record for one fully terminal episode.
+///
+/// This is deliberately an analysis seam rather than a live actor tool.  The
+/// stable actor occurrence, phase, and role attribution let an application
+/// recognize a declared public output grammar; the query never returns an
+/// adapter transcript, a private view, or a content-store read.
+pub(crate) fn post_actor_public_forum(
+    connection: &Connection,
+    episode_id: StudyEpisodeId,
+) -> Result<StudyPostActorPublicForumObservation, StoreError> {
+    // Distinguish a missing episode from one that simply has not admitted an
+    // actor yet before counting the bounded public record.
+    let episode_exists: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM study_episodes WHERE study_episode_id = $1)",
+        [episode_id.value()],
+        |row| row.get::<_, i64>(0),
+    )? != 0;
+    if !episode_exists {
+        return Err(StoreError::StudyEpisodeNotFound(episode_id));
+    }
+    let admitted_obligations: i64 = connection.query_row(
+        "SELECT COUNT(*)
+           FROM study_actor_obligations
+          WHERE study_episode_id = $1",
+        [episode_id.value()],
+        |row| row.get(0),
+    )?;
+    let active_obligations: i64 = connection.query_row(
+        "SELECT COUNT(*)
+           FROM study_actor_obligations
+          WHERE study_episode_id = $1
+            AND lifecycle_state = 1",
+        [episode_id.value()],
+        |row| row.get(0),
+    )?;
+    if admitted_obligations == 0 || active_obligations != 0 {
+        return Err(StoreError::StudyPostActorForumNotReady(episode_id));
+    }
+
+    type PublicMessageRow = (
+        i64,
+        i64,
+        i64,
+        Option<i64>,
+        i64,
+        Option<i64>,
+        Option<i64>,
+        Option<i64>,
+        i64,
+        String,
+        Vec<u8>,
+        i64,
+    );
+    let limit_plus_one = i64::try_from(POST_ACTOR_PUBLIC_FORUM_MESSAGE_LIMIT + 1)
+        .map_err(|_| StoreError::InvalidStoredValue)?;
+    let mut statement = connection.prepare(
+        "SELECT message.forum_message_id,
+                message.forum_thread_id,
+                message.thread_message_ordinal,
+                message.author_occurrence_id,
+                message.service_origin,
+                obligation.study_actor_obligation_id,
+                obligation.population_phase,
+                obligation.role_ordinal,
+                message.message_kind,
+                message.body_utf8,
+                message.body_digest,
+                message.publication_state
+           FROM study_episode_forums AS forum
+           JOIN study_forum_threads AS thread
+             ON thread.episode_forum_id = forum.episode_forum_id
+           JOIN study_forum_messages AS message
+             ON message.forum_thread_id = thread.forum_thread_id
+      LEFT JOIN study_actor_occurrences AS occurrence
+             ON occurrence.actor_occurrence_id = message.author_occurrence_id
+      LEFT JOIN study_actor_obligations AS obligation
+             ON obligation.study_actor_obligation_id = occurrence.study_actor_obligation_id
+          WHERE forum.study_episode_id = $1
+          ORDER BY message.forum_thread_id, message.thread_message_ordinal
+          LIMIT $2",
+    )?;
+    let rows = statement.query_map([episode_id.value(), limit_plus_one], |row| {
+        Ok((
+            row.get(0)?,
+            row.get(1)?,
+            row.get(2)?,
+            row.get(3)?,
+            row.get(4)?,
+            row.get(5)?,
+            row.get(6)?,
+            row.get(7)?,
+            row.get(8)?,
+            row.get(9)?,
+            row.get(10)?,
+            row.get(11)?,
+        ))
+    })?;
+    let mut messages = Vec::new();
+    for row in rows {
+        let (
+            message_id,
+            thread_id,
+            thread_message_ordinal,
+            author_occurrence_id,
+            service_origin,
+            obligation_id,
+            phase,
+            role,
+            message_kind,
+            body,
+            body_digest,
+            publication_state,
+        ): PublicMessageRow = row?;
+        if messages.len() == POST_ACTOR_PUBLIC_FORUM_MESSAGE_LIMIT {
+            return Err(StoreError::StudyPostActorForumTooLarge {
+                episode_id,
+                limit: POST_ACTOR_PUBLIC_FORUM_MESSAGE_LIMIT,
+            });
+        }
+        let author = match (
+            service_origin,
+            author_occurrence_id,
+            obligation_id,
+            phase,
+            role,
+        ) {
+            (0, Some(occurrence_id), Some(obligation_id), Some(phase), Some(role)) => {
+                StudyForumPublicAuthor::Actor {
+                    obligation_id: StudyActorObligationId::try_from(obligation_id)
+                        .map_err(|_| StoreError::InvalidStoredValue)?,
+                    occurrence_id: ActorOccurrenceId::try_from(occurrence_id)
+                        .map_err(|_| StoreError::InvalidStoredValue)?,
+                    phase: population_phase_from_stored(phase)?,
+                    role: StudyRoleOrdinal::try_from(role)
+                        .map_err(|_| StoreError::InvalidStoredValue)?,
+                }
+            }
+            (1, None, None, None, None) => StudyForumPublicAuthor::SocietyService,
+            _ => {
+                return Err(StoreError::LedgerCorruption(
+                    "public Forum message attribution is not a closed actor-or-service identity",
+                ));
+            }
+        };
+        let body = ForumMessageBody::parse(body).map_err(|_| StoreError::InvalidStoredValue)?;
+        let body_digest = exact_digest(body_digest)?;
+        if body.digest() != body_digest {
+            return Err(StoreError::LedgerCorruption(
+                "public Forum message body does not match its stored digest",
+            ));
+        }
+        messages.push(StudyPostActorPublicForumMessage {
+            message_id: ForumMessageId::try_from(message_id)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+            thread_id: ForumThreadId::try_from(thread_id)
+                .map_err(|_| StoreError::InvalidStoredValue)?,
+            thread_message_ordinal,
+            author,
+            kind: message_kind_from_i64(message_kind)?,
+            body,
+            body_digest,
+            publication_state: forum_publication_state_from_i64(publication_state)?,
+        });
+    }
+    Ok(StudyPostActorPublicForumObservation {
+        episode_id,
+        messages,
+    })
+}
+
 /// Loads one complete matched pair from normalized study state. This is a
 /// query boundary rather than an analysis procedure: it never infers missing
 /// values, calculates an effect, or changes any lifecycle state.
@@ -2253,6 +2469,65 @@ pub(crate) fn run_pair_registration(
         })
     })
     .transpose()
+}
+
+/// Resolves the exact active study obligation at one registered run seat.
+///
+/// The query follows the durable run ordinal to its matched pair, then uses
+/// the durable treatment assignment rather than trusting a caller-selected
+/// episode. It does not select work or an actor attempt. A missing or
+/// duplicate row is not silently repaired: a resident must refuse to bind a
+/// private M3 allocation until the sealed study topology is coherent.
+pub(crate) fn run_lifetime_obligation(
+    connection: &Connection,
+    study_run_id: StudyRunId,
+    pair_ordinal: StudyRunPairOrdinal,
+    treatment: StudyTreatment,
+    phase: StudyPopulationPhase,
+    role: StudyRoleOrdinal,
+) -> Result<Option<StudyActorObligationId>, StoreError> {
+    let mut statement = connection.prepare(
+        "SELECT obligation.study_actor_obligation_id
+           FROM study_run_pairs registration
+           JOIN study_pairs pair
+             ON pair.study_pair_id = registration.study_pair_id
+           JOIN study_episodes episode
+             ON episode.study_episode_id = CASE
+                    WHEN $3 = 1 THEN pair.retained_episode_id
+                    WHEN $3 = 2 THEN pair.reset_episode_id
+                END
+           JOIN study_treatment_assignments assignment
+             ON assignment.study_episode_id = episode.study_episode_id
+            AND assignment.treatment = $3
+           JOIN study_actor_obligations obligation
+             ON obligation.study_episode_id = episode.study_episode_id
+            AND obligation.population_phase = $4
+            AND obligation.role_ordinal = $5
+            AND obligation.lifecycle_state = 1
+          WHERE registration.study_run_id = $1
+            AND registration.pair_ordinal = $2",
+    )?;
+    let rows = statement.query_map(
+        [
+            study_run_id.value(),
+            i64::from(pair_ordinal.value()),
+            treatment as i64,
+            phase as i64,
+            i64::from(role.value()),
+        ],
+        |row| row.get::<_, i64>(0),
+    )?;
+    let mut obligation_id = None;
+    for row in rows {
+        let id =
+            StudyActorObligationId::try_from(row?).map_err(|_| StoreError::InvalidStoredValue)?;
+        if obligation_id.replace(id).is_some() {
+            return Err(StoreError::LedgerCorruption(
+                "a sealed study lifetime resolved more than one active obligation",
+            ));
+        }
+    }
+    Ok(obligation_id)
 }
 
 fn episode_observation(
@@ -3680,12 +3955,41 @@ pub(crate) fn apply(
             cited_message_id,
         } => {
             let (episode_id, _, lifecycle, _, _) = obligation_row(transaction, *obligation_id)?;
-            if lifecycle != 1 {
+            // A live application may deliberately admit a decision only from
+            // the bounded post-actor public Forum projection.  A completed
+            // actor can therefore record its decision after native disposal,
+            // but only by citing its own already-published public message.
+            // This is not a posthumous free-form assertion: a failed actor,
+            // an uncited completed actor, and a citation to anyone else's
+            // message remain rejected.
+            if lifecycle != 1 && lifecycle != 2 {
+                return Err(Rejection::InvalidLifecycleTransition);
+            }
+            let own_published_message = if let Some(message_id) = cited_message_id {
+                let own: i64 = transaction
+                    .query_row(
+                        "SELECT COUNT(*)
+                           FROM study_forum_messages AS message
+                           JOIN study_actor_occurrences AS occurrence
+                             ON occurrence.actor_occurrence_id = message.author_occurrence_id
+                          WHERE message.forum_message_id = $1
+                            AND occurrence.study_actor_obligation_id = $2
+                            AND message.service_origin = 0
+                            AND message.publication_state = 1",
+                        params![message_id.value(), obligation_id.value()],
+                        |row| row.get(0),
+                    )
+                    .map_err(|_| Rejection::SubjectNotFound)?;
+                own == 1
+            } else {
+                false
+            };
+            if lifecycle == 2 && !own_published_message {
                 return Err(Rejection::InvalidLifecycleTransition);
             }
             if let Some(message_id) = cited_message_id {
                 let returned: i64 = transaction.query_row("SELECT COUNT(*) FROM study_forum_messages message JOIN study_forum_read_receipts receipt ON receipt.forum_thread_id = message.forum_thread_id WHERE message.forum_message_id = $1 AND receipt.study_actor_obligation_id = $2 AND message.thread_message_ordinal BETWEEN receipt.first_message_ordinal AND receipt.through_message_ordinal", params![message_id.value(), obligation_id.value()], |row| row.get(0)).map_err(|_| Rejection::SubjectNotFound)?;
-                if returned != 1 {
+                if returned != 1 && !own_published_message {
                     return Err(Rejection::SubjectNotFound);
                 }
             }
@@ -4871,6 +5175,14 @@ fn message_kind_from_i64(value: i64) -> Result<ForumMessageKind, StoreError> {
         3 => Ok(ForumMessageKind::Challenge),
         4 => Ok(ForumMessageKind::Correction),
         5 => Ok(ForumMessageKind::Synthesis),
+        _ => Err(StoreError::InvalidStoredValue),
+    }
+}
+
+fn forum_publication_state_from_i64(value: i64) -> Result<ForumPublicationState, StoreError> {
+    match value {
+        1 => Ok(ForumPublicationState::Published),
+        2 => Ok(ForumPublicationState::Retracted),
         _ => Err(StoreError::InvalidStoredValue),
     }
 }

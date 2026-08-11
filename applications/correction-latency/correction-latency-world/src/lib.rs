@@ -66,7 +66,16 @@ pub const ROLE_TOPOLOGY_BYTES: &[u8] =
     b"cl-001|roles=4-observer,2-challenger,1-synthesizer,1-decision|v1";
 
 /// Canonical revision bytes for all application role-prompt fragments.
-pub const ROLE_PROMPT_REVISION_BYTES: &[u8] = b"cl-001|application-role-prompts|v1";
+///
+/// Version two adds the only live decision-output grammar that the analysis
+/// may accept. It is a public Forum declaration, not a model transcript or
+/// an inference about a model's hidden cognition.
+pub const ROLE_PROMPT_REVISION_BYTES: &[u8] = b"cl-001|application-role-prompts|v2";
+
+/// Exact application grammar accepted from a terminal decision role's public
+/// Forum Synthesis. The complete message body must equal
+/// `cl-001|decision-record|v2|outcome=<0-or-1>|confidence=<low-medium-high>`.
+pub const PUBLIC_DECISION_RECORD_REVISION: &str = "cl-001|decision-record|v2";
 
 const OBSERVER_ROLE_PROMPT_BYTES: &[u8] =
     b"cl-001|role=observer|Inspect only the one admitted private evidence card. Publish one bounded finding or question; do not infer the hidden parity from one card.";
@@ -75,7 +84,7 @@ const CHALLENGER_ROLE_PROMPT_BYTES: &[u8] =
 const SYNTHESIZER_ROLE_PROMPT_BYTES: &[u8] =
     b"cl-001|role=synthesizer|Relate available claims and conflicts from the bounded Forum view. Do not treat a Message as ground truth or authority.";
 const DECISION_ROLE_PROMPT_BYTES: &[u8] =
-    b"cl-001|role=decision|Record a binary belief from the bounded Forum view and state uncertainty. Ground truth is unavailable to this role.";
+    b"cl-001|role=decision|From the bounded Forum view, publish exactly one Forum Synthesis whose entire body is cl-001|decision-record|v2|outcome=<0-or-1>|confidence=<low-or-medium-or-high>. Ground truth is unavailable to this role.";
 
 const SOURCE_SIGNATURE_BYTES: &[u8] = b"cl-001|synthetic-card-source|signature=v1";
 
@@ -1099,6 +1108,80 @@ pub enum DecisionConfidence {
     High,
 }
 
+/// Declared confidence from the live decision role's strict public Forum
+/// record. It remains an actor statement, not a calibrated probability or
+/// an observation of latent model state.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum PublicDecisionConfidence {
+    Low,
+    Medium,
+    High,
+}
+
+/// One strict, application-owned decision declaration parsed from the public
+/// Forum after the actor population is terminal. The parser accepts no free
+/// text, optional fields, or alternate revisions, so malformed output is an
+/// unavailable analysis input rather than an opportunity to infer intent.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PublicDecisionRecord {
+    outcome: BinaryOutcome,
+    confidence: PublicDecisionConfidence,
+}
+
+impl PublicDecisionRecord {
+    pub const fn outcome(self) -> BinaryOutcome {
+        self.outcome
+    }
+
+    pub const fn confidence(self) -> PublicDecisionConfidence {
+        self.confidence
+    }
+}
+
+/// The supplied public Forum body does not satisfy the sole accepted CL-001
+/// live decision grammar.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PublicDecisionRecordError;
+
+impl fmt::Display for PublicDecisionRecordError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("invalid CL-001 public decision record")
+    }
+}
+
+impl std::error::Error for PublicDecisionRecordError {}
+
+/// Parse one exact `PUBLIC_DECISION_RECORD_REVISION` declaration.
+pub fn parse_public_decision_record(
+    body: &str,
+) -> Result<PublicDecisionRecord, PublicDecisionRecordError> {
+    let mut fields = body.split('|');
+    if fields.next() != Some("cl-001")
+        || fields.next() != Some("decision-record")
+        || fields.next() != Some("v2")
+    {
+        return Err(PublicDecisionRecordError);
+    }
+    let outcome = match fields.next() {
+        Some("outcome=0") => BinaryOutcome::Zero,
+        Some("outcome=1") => BinaryOutcome::One,
+        _ => return Err(PublicDecisionRecordError),
+    };
+    let confidence = match fields.next() {
+        Some("confidence=low") => PublicDecisionConfidence::Low,
+        Some("confidence=medium") => PublicDecisionConfidence::Medium,
+        Some("confidence=high") => PublicDecisionConfidence::High,
+        _ => return Err(PublicDecisionRecordError),
+    };
+    if fields.next().is_some() {
+        return Err(PublicDecisionRecordError);
+    }
+    Ok(PublicDecisionRecord {
+        outcome,
+        confidence,
+    })
+}
+
 /// A typed decision observation emitted by the decision-role double.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DecisionObservation {
@@ -1470,6 +1553,29 @@ mod tests {
             .zip(CANONICAL_CARD_DIGESTS)
         {
             assert_eq!(card.digest(), digest);
+        }
+    }
+
+    #[test]
+    fn public_decision_record_grammar_is_strict_and_closed() {
+        let parsed = parse_public_decision_record(
+            "cl-001|decision-record|v2|outcome=1|confidence=medium",
+        )
+        .expect("canonical public declaration must parse");
+        assert_eq!(parsed.outcome(), BinaryOutcome::One);
+        assert_eq!(parsed.confidence(), PublicDecisionConfidence::Medium);
+        for malformed in [
+            "cl-001|decision-record|v1|outcome=1|confidence=medium",
+            "cl-001|decision-record|v2|outcome=2|confidence=medium",
+            "cl-001|decision-record|v2|outcome=1|confidence=certain",
+            "cl-001|decision-record|v2|outcome=1|confidence=medium|note=extra",
+            "a model appears to believe outcome=1",
+        ] {
+            assert_eq!(
+                parse_public_decision_record(malformed),
+                Err(PublicDecisionRecordError),
+                "must reject {malformed:?}"
+            );
         }
     }
 

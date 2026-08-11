@@ -13,59 +13,72 @@ use std::{
 };
 
 use correction_latency_world::{
-    ActorPopulationPhase, BinaryOutcome, RoleMessageKind, WorldFixture,
     canonical_role_prompt_revision_digest, canonical_role_specifications,
-    canonical_role_topology_digest,
+    canonical_role_topology_digest, ActorPopulationPhase, BinaryOutcome, RoleMessageKind,
+    WorldFixture,
 };
 use society_content::{ContentObjectStore, ContentSealLimit, ContentStoreRoot};
 use society_kernel::{
-    ApplicationIdentity, ApplicationMissionInput, ApplicationName, ApplicationRevisionId,
-    ApplicationRevisionOrdinal, Blake3Digest, Capability, CommandBody, CommandDisposition,
-    CommandId, CommandRequest, ContentIdentityState, ContentObjectId, ExpectedGeneration,
-    ForumMessageBody, ForumMessageId, ForumMessageKind, ForumPostBudget, ForumReadBudget,
-    ForumThreadId, ForumThreadTitle, KernelStore, MissionPrinciple, MissionPrincipleKind,
-    MissionPrincipleText, MissionPrinciples, MissionStatement, NorthStarBoundaryCommitmentQuestion,
-    NorthStarChangeQuestion, NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet,
-    NorthStarRevisitQuestion, PrincipalId, Rejection, StoreError, StudyActorObligationId,
-    StudyBudgetUnits, StudyCommand, StudyDecisionBody, StudyEpisodeId, StudyEvent,
-    StudyGroundTruthReveal, StudyMeasurementSlot, StudyMeasurementSlotCount,
-    StudyMeasurementStatus, StudyPopulationPhase, StudyPopulationSnapshotId,
-    StudyProtocolRevisionId, StudyRoleOrdinal, StudyTransitionDisposition, StudyTreatment,
-    forum_f0_awareness_digest, forum_f0_tool_contract_digest,
+    forum_f0_awareness_digest, forum_f0_tool_contract_digest, ApplicationIdentity,
+    ApplicationMissionInput, ApplicationName, ApplicationRevisionId, ApplicationRevisionOrdinal,
+    Blake3Digest, Capability, CommandBody, CommandDisposition, CommandId, CommandRequest,
+    ContentIdentityState, ContentObjectId, ExpectedGeneration, ForumMessageBody, ForumMessageId,
+    ForumMessageKind, ForumPostBudget, ForumReadBudget, ForumThreadId, ForumThreadTitle,
+    KernelStore, MissionPrinciple, MissionPrincipleKind, MissionPrincipleText, MissionPrinciples,
+    MissionStatement, NorthStarBoundaryCommitmentQuestion, NorthStarChangeQuestion,
+    NorthStarImprovementEvidenceQuestion, NorthStarQuestionSet, NorthStarRevisitQuestion,
+    PrincipalId, Rejection, StoreError, StudyActorObligationId, StudyBudgetUnits, StudyCommand,
+    StudyDecisionBody, StudyEpisodeId, StudyEvent, StudyGroundTruthReveal, StudyMeasurementSlot,
+    StudyMeasurementSlotCount, StudyMeasurementStatus, StudyPopulationPhase,
+    StudyPopulationSnapshotId, StudyProtocolRevisionId, StudyRoleOrdinal,
+    StudyTransitionDisposition, StudyTreatment,
 };
 
 mod analysis;
 mod choreography;
 mod daemon_composition;
 mod live_plan;
+mod native_task_driver;
+mod pilot_runner;
+mod resident_pilot_backend;
 mod study_program;
 
 pub use analysis::{
-    ANALYSIS_REVISION, AnalysisArtifact, AnalysisEstimand, AnalysisExclusionPolicy,
-    AnalysisInputError, AnalysisPairId, ArmAnalysisObservation, Cl001Metric, MetricSummary,
-    PairObservation, PairProvenance, PrecisionTarget, PreregisteredAnalysisPlan,
+    AnalysisArtifact, AnalysisEstimand, AnalysisExclusionPolicy, AnalysisInputError,
+    AnalysisPairId, ArmAnalysisObservation, Cl001Metric, MetricSummary, PairObservation,
+    PairProvenance, PrecisionTarget, PreregisteredAnalysisPlan, ANALYSIS_REVISION,
 };
 pub use choreography::{
-    ActorPromptMaterial, ArmChoreography, ArmLifecycle, ArmStateRecord, CHOREOGRAPHY_REVISION,
-    ChoreographyError, ForumExposure, PairChoreography, PairOutcome, PairStateRecord,
-    PrivateViewMaterial,
+    ActorPromptMaterial, ArmChoreography, ArmLifecycle, ArmStateRecord, ChoreographyError,
+    ForumExposure, PairChoreography, PairOutcome, PairStateRecord, PrivateViewMaterial,
+    CHOREOGRAPHY_REVISION,
 };
 pub use daemon_composition::{
-    DAEMON_COMPOSITION_REVISION, DaemonComposition, DaemonCompositionError,
-    PreparedLiveRunAdmission, SealedLiveRunAdmission,
+    DaemonComposition, DaemonCompositionError, PreparedLiveRunAdmission, SealedLiveRunAdmission,
+    DAEMON_COMPOSITION_REVISION,
 };
 pub use live_plan::{
-    ANALYSIS_CONTRACT_BYTES, ActorPolicyIdentity, ActorSeatContract, BaselineKind,
-    Cl001ActorPolicyIdentity, Cl001LiveRunDescriptor, Cl001LiveRunPlan, Cl001PairSeed,
-    Cl001TreatmentArm, FORUM_CHARTER_BYTES, INSTITUTION_BYTES, LIVE_PLAN_REVISION, LivePlanError,
-    LiveRunDescriptor, LiveRunPlan, POPULATION_BYTES, PROTOCOL_BYTES, PairSeed, PopulationPhase,
-    ResourceBudgetContract, TreatmentArm,
+    ActorPolicyIdentity, ActorSeatContract, BaselineKind, Cl001ActorPolicyIdentity,
+    Cl001LiveRunDescriptor, Cl001LiveRunPlan, Cl001PairSeed, Cl001TreatmentArm, LivePlanError,
+    LiveRunDescriptor, LiveRunPlan, PairSeed, PopulationPhase, ResourceBudgetContract,
+    TreatmentArm, ANALYSIS_CONTRACT_BYTES, FORUM_CHARTER_BYTES, INSTITUTION_BYTES,
+    LIVE_PLAN_REVISION, POPULATION_BYTES, PROTOCOL_BYTES,
+};
+pub use native_task_driver::{NativeTaskAttemptDriver, NativeTaskDriveError, NativeTaskDriveLimits};
+pub use pilot_runner::{
+    terminal_public_forum_decision, ActorLifetime, CanonicalPilotRunner, PilotExecutionBackend,
+    PilotRunLifecycle, PilotRunnerError, PublicForumDecision, PublicForumDecisionError,
+    PILOT_RUNNER_REVISION,
+};
+pub use resident_pilot_backend::{
+    ResidentPilotBackendError, ResidentPilotExecutionBackend, ResidentPilotM3Authority,
+    RESIDENT_PILOT_BACKEND_REVISION,
 };
 pub use study_program::{
-    AuthorizedPilotBudget, CANONICAL_LIVE_MODEL, CANONICAL_LIVE_PROVIDER,
-    CANONICAL_LIVE_THINKING_LEVEL, CANONICAL_LIVE_TOOL_PROFILE, CanonicalLiveRuntimeProfile,
-    FeasibilityPilotPlan, NativeRuntimeArtifacts, PilotAnalysisArtifactReference,
-    STUDY_PROGRAM_REVISION, StudyProgramError, StudyStage, SubstantiveStudyPlan,
+    AuthorizedPilotBudget, CanonicalLiveRuntimeProfile, FeasibilityPilotPlan,
+    NativeRuntimeArtifacts, PilotAnalysisArtifactReference, StudyProgramError, StudyStage,
+    SubstantiveStudyPlan, CANONICAL_LIVE_MODEL, CANONICAL_LIVE_PROVIDER,
+    CANONICAL_LIVE_THINKING_LEVEL, CANONICAL_LIVE_TOOL_PROFILE, STUDY_PROGRAM_REVISION,
 };
 
 const POPULATION_SIZE: u8 = 8;
@@ -2235,7 +2248,7 @@ mod tests {
     #[test]
     fn matched_actor_contract_uses_the_exact_pi_f0_bytes() {
         use society_pi::{
-            FORUM_F0_AWARENESS_BYTES, FORUM_F0_TOOL_CONTRACT_BYTES, ForumToolContractDescriptor,
+            ForumToolContractDescriptor, FORUM_F0_AWARENESS_BYTES, FORUM_F0_TOOL_CONTRACT_BYTES,
         };
 
         assert_eq!(
@@ -2250,15 +2263,11 @@ mod tests {
             ForumToolContractDescriptor::ForumEnabledV1.awareness_bytes(),
             Some(FORUM_F0_AWARENESS_BYTES)
         );
-        assert!(
-            ForumToolContractDescriptor::SequesteredV1
-                .awareness_bytes()
-                .is_none()
-        );
-        assert!(
-            ForumToolContractDescriptor::SequesteredV1
-                .tool_names()
-                .is_empty()
-        );
+        assert!(ForumToolContractDescriptor::SequesteredV1
+            .awareness_bytes()
+            .is_none());
+        assert!(ForumToolContractDescriptor::SequesteredV1
+            .tool_names()
+            .is_empty());
     }
 }

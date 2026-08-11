@@ -19,6 +19,7 @@ pub use postgres::{
 pub use store::{
     ContentIdentityState, DeterministicEvaluatorNativeChildAdmission,
     DeterministicEvaluatorScheduleClaim, DeterministicEvaluatorScheduleClaimRequest,
-    InstallFoundingMissionPreflight, KernelStore, StoreError,
+    InstallFoundingMissionPreflight, KernelStore, NativeExecutionProfileQualificationLaunchClaim,
+    StoreError, StudyActorTaskAttemptLaunchClaim, StudyActorWorkAllocation,
 };
 pub use study::*;

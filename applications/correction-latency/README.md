@@ -75,16 +75,42 @@ kernel's read-only persisted-pair query into CL-001's closed metric vocabulary.
 For a live runner, collect one `PairObservation` per preregistered matched pair
 and render the artifact only after the raw observations are fixed.
 
-A daemon-owned live runner reads its sealed run identity and ordinal pair set
-through `SocietyctlClient::study_run_observation`, then retrieves each arm pair
-through `SocietyctlClient::study_pair_observation`. Pass those normalized
-observations to `LiveRunPlan::analysis_artifact_from_study_run`. That
+The application-owned `CanonicalPilotRunner` reads its sealed run identity and
+ordinal pair set through a daemon `PilotExecutionBackend`.
+`ResidentPilotExecutionBackend` is its concrete implementation: it translates
+typed admission, pair registration, source freeze, successor exposure, matched
+correction, closure, and completion into resident generic transitions. It
+provisions exactly two pairs × two arms × eight source/successor role seats =
+64 root-authorized M3 allocations before starting, then retrieves closed
+run/pair observations through the read-only generic boundary. It accepts only
+an operator-supplied `ResidentPilotM3Authority` (root principal, cycle,
+generation, epoch, application revision, and provisioning operation), never
+an M3 work item or native identity. The resident exposes
+`StudyPlanLifetimeKey` only as a sealed run/pair/arm/phase/role selector; its
+matching work, attempt, budget, workspace, and child identities remain
+private. Rebuilding the backend with the same operation identities reads the
+bounded obligation projection and skips completed seats rather than making a
+second paid prompt. The resulting closed observations are passed to
+`LiveRunPlan::analysis_artifact_from_study_run`. That
 application-owned gate first proves that the daemon retained the exact sealed
 CL-001 plan, then requires a terminal completed run and joins
 every application-owned pair label and world-seed digest to the exact
 registered generic pair. It rejects a post-hoc plan, order, or seed
 substitution. Neither client operation grants a PostgreSQL connection or
 returns application private-content bytes.
+
+For live decision measurement, the backend may read only the bounded,
+post-actor public Forum projection. `terminal_public_forum_decision` accepts
+one non-retracted decision-seat `Synthesis` with the exact
+`cl-001|decision-record|v2|outcome=<0-or-1>|confidence=<low-medium-high>`
+body and preserves that Forum message as the generic decision citation. It
+never derives a decision from a private Pi transcript or ordinary model prose;
+missing, duplicate, and malformed declarations leave correction-to-final-
+decision latency and final-decision correctness explicitly unavailable. A
+completed actor may be recorded only by citing its own published public
+message, never an uncited posthumous value. The live latency is precisely the
+public Forum ordinal distance from the service correction to that strict final
+decision; it is not a claim about a model's latent cognition.
 
 The live admission contract is application-owned in
 `correction-latency-harness::LiveRunDescriptor` and

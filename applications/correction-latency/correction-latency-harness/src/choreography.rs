@@ -16,8 +16,8 @@ use correction_latency_world::{
     ForumReadObligation, PrivateViewKind, RoleKind, RoleOrdinal, RoleSpecification, WorldFixture,
 };
 use society_kernel::{
-    Blake3Digest, StudyPairObservation as PersistedStudyPairObservation, forum_f0_awareness_digest,
-    forum_f0_tool_contract_digest,
+    forum_f0_awareness_digest, forum_f0_tool_contract_digest, Blake3Digest,
+    StudyPairObservation as PersistedStudyPairObservation,
 };
 
 use crate::{
@@ -28,7 +28,11 @@ use crate::{
 /// Stable revision of the application-owned live choreography bytes.
 pub const CHOREOGRAPHY_REVISION: &str = "cl-001-live-choreography-v1";
 
-const TASK_ASSIGNMENT_REVISION: &[u8] = b"cl-001|task-assignment|v1";
+// v2 moves the application role fragment into the sealed one-shot task
+// payload. The supervisor owns one fixed Pi session system prompt, so keeping
+// role instructions only in `ActorPromptMaterial::system_prompt` would leave
+// a live TaskAttempt without its role contract.
+const TASK_ASSIGNMENT_REVISION: &[u8] = b"cl-001|task-assignment|v2";
 const SOURCE_EXPOSURE_START: i64 = 1;
 
 /// An exact Forum visibility frontier assigned to one actor occurrence.
@@ -411,6 +415,19 @@ impl PairStateRecord {
         &self.reset
     }
 
+    /// Return one arm's state by its closed treatment label.
+    pub const fn arm(&self, treatment: TreatmentArm) -> &ArmStateRecord {
+        match treatment {
+            TreatmentArm::Retained => &self.retained,
+            TreatmentArm::Reset => &self.reset,
+        }
+    }
+
+    /// Return one arm's lifecycle by its closed treatment label.
+    pub const fn lifecycle(&self, treatment: TreatmentArm) -> ArmLifecycle {
+        self.arm(treatment).lifecycle()
+    }
+
     pub const fn correction_released(&self) -> bool {
         self.correction_released
     }
@@ -625,9 +642,11 @@ impl LiveRunDescriptor {
         system_prompt.extend_from_slice(b"\n\n");
         system_prompt.extend_from_slice(role_prompt);
 
-        let mut task_prompt = Vec::with_capacity(256);
+        let mut task_prompt = Vec::with_capacity(256 + role_prompt.len());
         task_prompt.extend_from_slice(TASK_ASSIGNMENT_REVISION);
-        task_prompt.push(0);
+        task_prompt.extend_from_slice(b"\n\nrole-instructions:\n");
+        task_prompt.extend_from_slice(role_prompt);
+        task_prompt.extend_from_slice(b"\n\nassignment-record\0");
         put_phase(&mut task_prompt, phase);
         task_prompt.push(0);
         task_prompt.push(ordinal.value());
@@ -752,12 +771,14 @@ mod tests {
             .unwrap();
         assert_eq!(source.role(), RoleKind::Observer);
         assert_eq!(source.private_view().card_bytes().unwrap().len(), 57);
-        assert!(
-            source
-                .system_prompt()
-                .starts_with(society_pi::FORUM_F0_AWARENESS_BYTES)
-        );
+        assert!(source
+            .system_prompt()
+            .starts_with(society_pi::FORUM_F0_AWARENESS_BYTES));
         assert!(source.task_prompt().starts_with(TASK_ASSIGNMENT_REVISION));
+        assert!(source
+            .task_prompt()
+            .windows(b"cl-001|role=observer".len())
+            .any(|window| window == b"cl-001|role=observer"));
         assert_eq!(
             source.system_prompt_digest(),
             Blake3Digest::of_bytes(source.system_prompt())
@@ -766,18 +787,14 @@ mod tests {
             source.task_prompt_digest(),
             Blake3Digest::of_bytes(source.task_prompt())
         );
-        assert!(
-            !source
-                .task_prompt()
-                .windows(b"retained".len())
-                .any(|window| window == b"retained")
-        );
-        assert!(
-            !source
-                .task_prompt()
-                .windows(b"reset".len())
-                .any(|window| window == b"reset")
-        );
+        assert!(!source
+            .task_prompt()
+            .windows(b"retained".len())
+            .any(|window| window == b"retained"));
+        assert!(!source
+            .task_prompt()
+            .windows(b"reset".len())
+            .any(|window| window == b"reset"));
     }
 
     #[test]

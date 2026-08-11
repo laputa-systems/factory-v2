@@ -13,7 +13,9 @@
 //! recovery remain daemon-owned work and require a later concrete runner.
 
 use society_kernel::{
-    Blake3Digest, CommandId, ContentObjectId, StoreError, StudyCommand, StudyTransitionReceipt,
+    Blake3Digest, CommandId, ContentObjectId, EventId, StoreError, StudyActorObligationObservation,
+    StudyCommand, StudyEpisodeId, StudyPairId, StudyPairObservation,
+    StudyPostActorPublicForumObservation, StudyRunId, StudyRunObservation, StudyTransitionReceipt,
 };
 use thiserror::Error;
 
@@ -77,6 +79,7 @@ impl StudyAdmissionContentSlot {
 pub struct SealedStudyContent {
     content_object_id: ContentObjectId,
     digest: Blake3Digest,
+    registration_frontier_event_id: EventId,
 }
 
 impl SealedStudyContent {
@@ -86,6 +89,14 @@ impl SealedStudyContent {
 
     pub const fn digest(self) -> Blake3Digest {
         self.digest
+    }
+
+    /// Exact accepted event which registered this content object. A live Pi
+    /// prompt uses it as its frontier fence, preventing a newly sealed prompt
+    /// from being overtaken by unrelated ledger activity or paired with an
+    /// earlier state head.
+    pub const fn registration_frontier_event_id(self) -> EventId {
+        self.registration_frontier_event_id
     }
 }
 
@@ -152,13 +163,14 @@ impl<'daemon> StudyAdmissionAuthority<'daemon> {
         let label = self.content_label(&slot);
         let operation = ContentSealOperationId::parse(label, digest)
             .map_err(|_| StudyAdmissionError::ContentOperationIdentity)?;
-        let registration = self
+        let (registration, registration_frontier_event_id) = self
             .daemon
             .seal_study_admission_content(&operation, bytes)
             .map_err(map_content_error)?;
         Ok(SealedStudyContent {
             content_object_id: registration.content_object_id,
             digest: registration.digest,
+            registration_frontier_event_id,
         })
     }
 
@@ -173,6 +185,52 @@ impl<'daemon> StudyAdmissionAuthority<'daemon> {
         let command_id = self.command_id(sequence)?;
         self.daemon
             .execute_study_admission_transition(command_id, command)
+    }
+
+    /// Read the bounded, attributable public F0 Forum for one fully terminal
+    /// episode. This is an analysis input only: it excludes Pi transcripts,
+    /// private views, and unsealed content, so an application may parse an
+    /// explicit public output grammar without claiming access to cognition.
+    pub fn post_actor_public_forum(
+        &self,
+        episode_id: StudyEpisodeId,
+    ) -> Result<StudyPostActorPublicForumObservation, StudyAdmissionError> {
+        self.daemon.study_post_actor_public_forum(episode_id)
+    }
+
+    /// Read one normalized matched-pair projection through the daemon without
+    /// acquiring a database handle. Applications use this only after their
+    /// own closure barrier; the kernel projection remains the source of the
+    /// durable treatment, completion, measurement, and replay facts.
+    pub fn study_pair_observation(
+        &self,
+        pair_id: StudyPairId,
+    ) -> Result<StudyPairObservation, StudyAdmissionError> {
+        self.daemon.study_pair_observation_for_admission(pair_id)
+    }
+
+    /// Read the bounded typed obligation projection for one episode through
+    /// the same admission authority. A recovered application coordinator uses
+    /// it only to distinguish an already completed seat from one still
+    /// active; it does not receive a work item, attempt, native child, or
+    /// private prompt bytes.
+    pub fn study_actor_obligation_observations(
+        &self,
+        episode_id: StudyEpisodeId,
+    ) -> Result<Vec<StudyActorObligationObservation>, StudyAdmissionError> {
+        self.daemon
+            .study_actor_obligation_observations_for_admission(episode_id)
+    }
+
+    /// Read the finite sealed-run projection through the same narrow
+    /// application/daemon composition boundary. Plan bytes themselves remain
+    /// in immutable custody and are intentionally not returned here.
+    pub fn study_run_observation(
+        &self,
+        study_run_id: StudyRunId,
+    ) -> Result<StudyRunObservation, StudyAdmissionError> {
+        self.daemon
+            .study_run_observation_for_admission(study_run_id)
     }
 
     fn command_id(&self, sequence: u32) -> Result<CommandId, StudyAdmissionError> {

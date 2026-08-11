@@ -5,15 +5,16 @@
 //! public [`societyd::StudyAdmissionAuthority`] is the narrow composition
 //! route: it can seal this application's opaque plan and accept closed generic
 //! study transitions, but it grants no database handle, content writer, native
-//! executable choice, or TaskAttempt driver.  A later canonical runner must
-//! still own the admitted actor-task lifecycle and paired barriers.
+//! executable choice, or TaskAttempt driver. The concrete
+//! `ResidentPilotExecutionBackend` owns the admitted actor-task lifecycle and
+//! paired barriers; it remains claim-gated and accepts no native identity.
 
 use std::path::{Path, PathBuf};
 
 use society_kernel::{Blake3Digest, StudyRunPairCount};
 use societyd::{
-    Daemon, DaemonConfig, SealedStudyContent, StudyAdmissionContentSlot,
-    StudyAdmissionError, StudyAdmissionOperationId,
+    Daemon, DaemonConfig, SealedStudyContent, StudyAdmissionContentSlot, StudyAdmissionError,
+    StudyAdmissionOperationId,
 };
 
 use crate::LiveRunPlan;
@@ -68,10 +69,11 @@ impl std::fmt::Display for DaemonCompositionError {
             Self::InvalidPairCount => {
                 formatter.write_str("the CL-001 plan has an invalid generic pair count")
             }
-            Self::StudyAdmission(error) => write!(formatter, "daemon study admission failed: {error}"),
-            Self::AdmissionBytesDigestMismatch => formatter.write_str(
-                "the CL-001 admission bytes do not match the plan's sealed digest",
-            ),
+            Self::StudyAdmission(error) => {
+                write!(formatter, "daemon study admission failed: {error}")
+            }
+            Self::AdmissionBytesDigestMismatch => formatter
+                .write_str("the CL-001 admission bytes do not match the plan's sealed digest"),
             Self::PlanDigestMismatch => {
                 formatter.write_str("the resident seal did not preserve the CL-001 plan digest")
             }
@@ -133,7 +135,8 @@ impl PreparedLiveRunAdmission {
         daemon: &mut Daemon,
     ) -> Result<SealedLiveRunAdmission, DaemonCompositionError> {
         let mut admission = daemon.open_study_admission(self.operation.clone())?;
-        let plan_content = admission.seal_content(StudyAdmissionContentSlot::parse("plan")?, &self.plan_bytes)?;
+        let plan_content =
+            admission.seal_content(StudyAdmissionContentSlot::parse("plan")?, &self.plan_bytes)?;
         if plan_content.digest() != self.plan_digest {
             return Err(DaemonCompositionError::PlanDigestMismatch);
         }

@@ -651,7 +651,7 @@ pub struct QualifiedHostExecution {
 }
 
 impl QualifiedHostExecution {
-    fn verify_before_spawn(&self) -> Result<(), SupervisionError> {
+    pub(crate) fn verify_before_spawn(&self) -> Result<(), SupervisionError> {
         self.runtime
             .assert_v1()
             .map_err(SupervisionError::Protocol)?;

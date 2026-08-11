@@ -2,6 +2,8 @@ use std::fmt;
 
 use thiserror::Error;
 
+use crate::study::StudyActorObligationId;
+
 macro_rules! identifier {
     ($name:ident) => {
         #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -62,6 +64,9 @@ identifier!(ActorConfigurationId);
 identifier!(ActorConfigurationRevisionId);
 identifier!(ActorInstanceId);
 identifier!(ExecutionProfileId);
+identifier!(ExecutionProfileQualificationId);
+identifier!(StudyActorTaskAttemptLaunchId);
+identifier!(NativeExecutionProfileQualificationLaunchId);
 identifier!(ContextPackId);
 identifier!(WorkItemId);
 identifier!(WorkLeaseId);
@@ -950,6 +955,20 @@ pub enum Capability {
     RecordPiTaskAttemptSessionDisposeUsage = 111,
     RecordPiTaskAttemptSessionDisposeUsageFailure = 112,
     RecordPiTaskAttemptSessionDisposed = 113,
+    /// Records the one kernel-owned native Pi profile qualification.  The
+    /// command is admitted only from the dedicated qualification treatment;
+    /// its evidence is checked against the complete native-child custody
+    /// chain before the profile readiness changes.
+    QualifyNativeExecutionProfile = 114,
+    StartNativeExecutionProfileQualification = 115,
+    ClaimStudyActorTaskAttemptLaunch = 116,
+    ClaimNativeExecutionProfileQualificationLaunch = 117,
+    /// Root-owned, durable allocation of one sealed study seat to one ready
+    /// M3 work item. Acceptance atomically claims that item for its admitted
+    /// actor before recording the allocation. The resident may consume this
+    /// projection but cannot choose or replace its work item, budget ceiling,
+    /// or supervisor epoch.
+    AllocateStudyActorWork = 118,
 }
 
 impl Capability {
@@ -964,7 +983,7 @@ impl Capability {
         Self::AdmitOperatingCycle,
     ];
 
-    pub const ROOT_AUTHORITY: [Self; 44] = [
+    pub const ROOT_AUTHORITY: [Self; 45] = [
         Self::ProposeOperatingCycle,
         Self::AdmitOperatingCycle,
         Self::QuiesceOperatingCycle,
@@ -1009,9 +1028,18 @@ impl Capability {
         Self::ResolveOutcomeObligation,
         Self::RegisterDeterministicExperiment,
         Self::FinalizeDeterministicExperiment,
+        Self::AllocateStudyActorWork,
     ];
 
-    pub const KERNEL_SERVICE: [Self; 62] = [
+    pub const KERNEL_SERVICE: [Self; 70] = [
+        // The dedicated qualification treatment has no Office occupant. The
+        // resident must nevertheless be able to finish its own drained
+        // qualification lifecycle before the Root Authority can admit the
+        // later, separately identified live cycle.
+        Self::QuiesceOperatingCycle,
+        Self::ReconcileOperatingCycle,
+        Self::CloseOperatingCycle,
+        Self::ReserveBudget,
         Self::RecordCycleDrained,
         Self::RecordOfficeSessionReady,
         Self::SettleOfficeTurn,
@@ -1074,6 +1102,10 @@ impl Capability {
         Self::RecordPiTaskAttemptSessionDisposeUsage,
         Self::RecordPiTaskAttemptSessionDisposeUsageFailure,
         Self::RecordPiTaskAttemptSessionDisposed,
+        Self::QualifyNativeExecutionProfile,
+        Self::StartNativeExecutionProfileQualification,
+        Self::ClaimStudyActorTaskAttemptLaunch,
+        Self::ClaimNativeExecutionProfileQualificationLaunch,
     ];
 
     pub const fn requires_consumption(self) -> bool {
@@ -1407,6 +1439,10 @@ pub enum WorkLeaseState {
 pub enum PiChildOwner {
     ActorAttempt(ActorAttemptId),
     RootAuthorityOfficeSession(RootAuthorityOfficeSessionId),
+    /// A child admitted solely to qualify one native execution profile.  It
+    /// deliberately names the qualification cycle rather than an Office or
+    /// Actor jurisdiction, so the paid lab has no ordinary work surface.
+    NativeExecutionProfileQualification(OperatingCycleId),
 }
 
 /// The closed owner union for a native child.  Only the Pi arm has a Pi
@@ -2959,6 +2995,67 @@ pub enum CommandBody {
         disposed_sequence: PiProtocolSequence,
         transcript_receipt: PiTaskAttemptSessionTranscriptReceipt,
     },
+    QualifyNativeExecutionProfile {
+        operating_cycle_id: OperatingCycleId,
+        execution_profile_id: ExecutionProfileId,
+        native_child_spawn_admission_id: NativeChildSpawnAdmissionId,
+        native_child_id: NativeChildId,
+        runtime_identity_digest: Blake3Digest,
+        runtime_identity_content_object_id: ContentObjectId,
+        adapter_report_digest: Blake3Digest,
+        adapter_report_content_object_id: ContentObjectId,
+        probe_request_digest: Blake3Digest,
+        probe_response_digest: Blake3Digest,
+        probe_response_content_object_id: ContentObjectId,
+    },
+    /// Kernel-only transition which starts a dedicated qualification cycle
+    /// without creating a Root Authority Office work surface.
+    StartNativeExecutionProfileQualification {
+        operating_cycle_id: OperatingCycleId,
+    },
+    /// Atomically starts the generic M3 actor attempt selected for one active
+    /// study obligation and records the exact launch configuration. The
+    /// attempt, reservation, profile, cycle generation, epoch, and workspace
+    /// are all validated/derived by the kernel; no application payload or
+    /// caller-selected actor-attempt identity crosses this boundary.
+    ClaimStudyActorTaskAttemptLaunch {
+        study_actor_obligation_id: StudyActorObligationId,
+        operating_cycle_id: OperatingCycleId,
+        work_item_id: WorkItemId,
+        reservation_amount: UsdMicros,
+        supervisor_epoch_id: SupervisorEpochId,
+        supervisor_epoch_identity: SupervisorEpochIdentity,
+        native_workspace_id: NativeWorkspaceId,
+        canonical_workspace_path: CanonicalWorkspacePath,
+    },
+    /// Atomically claims the one native child launch used to qualify the
+    /// pinned execution profile.  The kernel derives the profile identity and
+    /// creates the budget reservation; the daemon supplies only its current
+    /// supervisor epoch and private workspace lease.
+    ClaimNativeExecutionProfileQualificationLaunch {
+        operating_cycle_id: OperatingCycleId,
+        reservation_amount: UsdMicros,
+        supervisor_epoch_id: SupervisorEpochId,
+        supervisor_epoch_identity: SupervisorEpochIdentity,
+        native_workspace_id: NativeWorkspaceId,
+        canonical_workspace_path: CanonicalWorkspacePath,
+    },
+    /// Records the complete root-selected allocation for one finite study
+    /// seat. It is deliberately separate from task launch: successor seats
+    /// can be allocated before their obligations exist, while native custody
+    /// is still claimed only once the selected obligation is active.
+    AllocateStudyActorWork {
+        study_run_id: crate::StudyRunId,
+        pair_ordinal: crate::StudyRunPairOrdinal,
+        treatment: crate::StudyTreatment,
+        phase: crate::StudyPopulationPhase,
+        role: crate::StudyRoleOrdinal,
+        operating_cycle_id: OperatingCycleId,
+        work_item_id: WorkItemId,
+        reservation_amount: UsdMicros,
+        supervisor_epoch_id: SupervisorEpochId,
+        supervisor_epoch_identity: SupervisorEpochIdentity,
+    },
     StudyTransition {
         command: crate::StudyCommand,
     },
@@ -3133,6 +3230,19 @@ impl CommandBody {
             Self::RecordPiTaskAttemptSessionDisposed { .. } => {
                 CommandKind::RecordPiTaskAttemptSessionDisposed
             }
+            Self::QualifyNativeExecutionProfile { .. } => {
+                CommandKind::QualifyNativeExecutionProfile
+            }
+            Self::StartNativeExecutionProfileQualification { .. } => {
+                CommandKind::StartNativeExecutionProfileQualification
+            }
+            Self::ClaimStudyActorTaskAttemptLaunch { .. } => {
+                CommandKind::ClaimStudyActorTaskAttemptLaunch
+            }
+            Self::ClaimNativeExecutionProfileQualificationLaunch { .. } => {
+                CommandKind::ClaimNativeExecutionProfileQualificationLaunch
+            }
+            Self::AllocateStudyActorWork { .. } => CommandKind::AllocateStudyActorWork,
             Self::StudyTransition { .. } => CommandKind::StudyTransition,
         }
     }
@@ -3150,6 +3260,16 @@ impl CommandBody {
             Self::StartRootAuthorityOfficeSession { .. } => {
                 Capability::StartRootAuthorityOfficeSession
             }
+            Self::StartNativeExecutionProfileQualification { .. } => {
+                Capability::StartNativeExecutionProfileQualification
+            }
+            Self::ClaimStudyActorTaskAttemptLaunch { .. } => {
+                Capability::ClaimStudyActorTaskAttemptLaunch
+            }
+            Self::ClaimNativeExecutionProfileQualificationLaunch { .. } => {
+                Capability::ClaimNativeExecutionProfileQualificationLaunch
+            }
+            Self::AllocateStudyActorWork { .. } => Capability::AllocateStudyActorWork,
             Self::RecordOfficeSessionReady { .. } => Capability::RecordOfficeSessionReady,
             Self::RecordOfficeSessionTerminal { .. } => Capability::RecordOfficeSessionTerminal,
             Self::OpenOfficeTurn { .. } => Capability::OpenOfficeTurn,
@@ -3301,6 +3421,7 @@ impl CommandBody {
             Self::RecordPiTaskAttemptSessionDisposed { .. } => {
                 Capability::RecordPiTaskAttemptSessionDisposed
             }
+            Self::QualifyNativeExecutionProfile { .. } => Capability::QualifyNativeExecutionProfile,
             Self::StudyTransition { .. } => Capability::RunStudyTransition,
         }
     }
@@ -3422,6 +3543,11 @@ pub enum CommandKind {
     RecordPiTaskAttemptSessionDisposeUsage = 111,
     RecordPiTaskAttemptSessionDisposeUsageFailure = 112,
     RecordPiTaskAttemptSessionDisposed = 113,
+    QualifyNativeExecutionProfile = 114,
+    StartNativeExecutionProfileQualification = 115,
+    ClaimStudyActorTaskAttemptLaunch = 116,
+    ClaimNativeExecutionProfileQualificationLaunch = 117,
+    AllocateStudyActorWork = 118,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -4054,6 +4180,48 @@ pub enum EventBody {
         observed_cumulative_micro_usd: UsdMicros,
         budget_disposition: PiTaskAttemptSessionDisposeBudgetDisposition,
     },
+    NativeExecutionProfileQualified {
+        qualification_id: ExecutionProfileQualificationId,
+        operating_cycle_id: OperatingCycleId,
+        execution_profile_id: ExecutionProfileId,
+        native_child_spawn_admission_id: NativeChildSpawnAdmissionId,
+        native_child_id: NativeChildId,
+    },
+    NativeExecutionProfileQualificationStarted {
+        operating_cycle_id: OperatingCycleId,
+        generation: AdmissionGeneration,
+    },
+    StudyActorTaskAttemptLaunchClaimed {
+        launch_claim_id: StudyActorTaskAttemptLaunchId,
+        study_actor_obligation_id: StudyActorObligationId,
+        operating_cycle_id: OperatingCycleId,
+        work_item_id: WorkItemId,
+        actor_attempt_id: ActorAttemptId,
+        budget_reservation_id: BudgetReservationId,
+        execution_profile_id: ExecutionProfileId,
+        supervisor_epoch_id: SupervisorEpochId,
+        admission_generation: AdmissionGeneration,
+    },
+    NativeExecutionProfileQualificationLaunchClaimed {
+        launch_claim_id: NativeExecutionProfileQualificationLaunchId,
+        operating_cycle_id: OperatingCycleId,
+        budget_reservation_id: BudgetReservationId,
+        execution_profile_id: ExecutionProfileId,
+        supervisor_epoch_id: SupervisorEpochId,
+        admission_generation: AdmissionGeneration,
+    },
+    StudyActorWorkAllocated {
+        study_run_id: crate::StudyRunId,
+        pair_ordinal: crate::StudyRunPairOrdinal,
+        treatment: crate::StudyTreatment,
+        phase: crate::StudyPopulationPhase,
+        role: crate::StudyRoleOrdinal,
+        operating_cycle_id: OperatingCycleId,
+        work_item_id: WorkItemId,
+        reservation_amount: UsdMicros,
+        supervisor_epoch_id: SupervisorEpochId,
+        admission_generation: AdmissionGeneration,
+    },
     StudyTransition {
         event: crate::StudyEvent,
     },
@@ -4169,6 +4337,11 @@ pub enum EventKind {
     PiTaskAttemptSessionDisposeUsageRecorded = 105,
     PiTaskAttemptSessionDisposeUsageFrozen = 106,
     PiTaskAttemptSessionDisposed = 107,
+    NativeExecutionProfileQualified = 108,
+    NativeExecutionProfileQualificationStarted = 109,
+    StudyActorTaskAttemptLaunchClaimed = 110,
+    NativeExecutionProfileQualificationLaunchClaimed = 111,
+    StudyActorWorkAllocated = 112,
 }
 
 impl EventBody {
@@ -4326,6 +4499,19 @@ impl EventBody {
                 EventKind::PiTaskAttemptSessionDisposeUsageFrozen
             }
             Self::PiTaskAttemptSessionDisposed { .. } => EventKind::PiTaskAttemptSessionDisposed,
+            Self::NativeExecutionProfileQualified { .. } => {
+                EventKind::NativeExecutionProfileQualified
+            }
+            Self::NativeExecutionProfileQualificationStarted { .. } => {
+                EventKind::NativeExecutionProfileQualificationStarted
+            }
+            Self::StudyActorTaskAttemptLaunchClaimed { .. } => {
+                EventKind::StudyActorTaskAttemptLaunchClaimed
+            }
+            Self::NativeExecutionProfileQualificationLaunchClaimed { .. } => {
+                EventKind::NativeExecutionProfileQualificationLaunchClaimed
+            }
+            Self::StudyActorWorkAllocated { .. } => EventKind::StudyActorWorkAllocated,
             Self::StudyTransition { .. } => EventKind::StudyTransition,
         }
     }

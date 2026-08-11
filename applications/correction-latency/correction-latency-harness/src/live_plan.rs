@@ -11,12 +11,12 @@
 use std::fmt;
 
 use correction_latency_world::{
-    PrivateViewKind, ROLE_COUNT, RoleKind, RoleOrdinal, canonical_role_prompt_revision_digest,
-    canonical_role_specifications, canonical_role_topology_digest,
+    canonical_role_prompt_revision_digest, canonical_role_specifications,
+    canonical_role_topology_digest, PrivateViewKind, RoleKind, RoleOrdinal, ROLE_COUNT,
 };
 use society_kernel::{
-    Blake3Digest, StudyPairObservation as PersistedStudyPairObservation, StudyRunObservation,
-    forum_f0_awareness_digest, forum_f0_tool_contract_digest,
+    forum_f0_awareness_digest, forum_f0_tool_contract_digest, Blake3Digest,
+    StudyPairObservation as PersistedStudyPairObservation, StudyRunObservation,
 };
 
 use crate::{

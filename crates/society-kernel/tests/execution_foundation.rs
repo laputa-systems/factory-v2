@@ -18,7 +18,7 @@ use society_kernel::{
     CanonicalPiSessionTranscriptPath, CanonicalWorkspacePath, Capability, ChildRecoveryObservation,
     ChildStreamKind, ChildStreamSealCompleteness, CommandBody, CommandDisposition, CommandId,
     CommandReceipt, CommandRequest, ContentObjectId, ContentSealReceiptId, ContextPackPurpose,
-    DeterministicEvaluationReceiptId, DeterministicEvaluatorScheduleClaim,
+    CostObservation, DeterministicEvaluationReceiptId, DeterministicEvaluatorScheduleClaim,
     DeterministicEvaluatorScheduleClaimRequest, DeterministicExperimentId, DevelopmentalAttractor,
     DirectChildWaitStatus, EvaluatorRevisionId, EventBody, EventId, EvidenceApplicability,
     EvidenceLimitationKind, EvidenceSemanticRole, ExecutionProfileId, ExpectedGeneration,
@@ -5654,6 +5654,310 @@ fn execution_profile_admission_is_closed_by_treatment_and_readiness() {
             },
         );
     }
+}
+
+#[test]
+fn native_qualification_launch_claim_atomically_starts_and_binds_runtime_inputs() {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("society-native-qualification-launch-{nonce}"));
+    let mut store = KernelStore::connect_test_path(&path).unwrap();
+    let (_root_authority, cycle) =
+        founded_cycle(&mut store, OperatingCycleTreatment::PiSdkQualificationV1);
+    let epoch = SupervisorEpochId::new(1).unwrap();
+    let epoch_identity = SupervisorEpochIdentity::parse("qualification-launch-epoch").unwrap();
+    accepted(
+        &mut store,
+        "qualification-launch-epoch",
+        PrincipalId::KERNEL,
+        Capability::OpenSupervisorEpoch,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::OpenSupervisorEpoch {
+            supervisor_epoch_id: epoch,
+            supervisor_epoch_identity: epoch_identity.clone(),
+        },
+    );
+    let generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
+    let amount = UsdMicros::new(10_000).unwrap();
+    accepted(
+        &mut store,
+        "qualification-launch-claim",
+        PrincipalId::KERNEL,
+        Capability::ClaimNativeExecutionProfileQualificationLaunch,
+        generation,
+        CommandBody::ClaimNativeExecutionProfileQualificationLaunch {
+            operating_cycle_id: cycle,
+            reservation_amount: amount,
+            supervisor_epoch_id: epoch,
+            supervisor_epoch_identity: epoch_identity.clone(),
+            native_workspace_id: NativeWorkspaceId::parse("qualification-launch-workspace")
+                .unwrap(),
+            canonical_workspace_path: CanonicalWorkspacePath::parse(
+                "/tmp/qualification-launch-workspace",
+            )
+            .unwrap(),
+        },
+    );
+    let claim = store
+        .native_execution_profile_qualification_launch_claim(cycle)
+        .unwrap()
+        .expect("atomic claim projection");
+    assert_eq!(claim.operating_cycle_id(), cycle);
+    assert_eq!(claim.reservation_amount(), amount);
+    assert_eq!(
+        claim.execution_profile_id(),
+        ExecutionProfileId::NATIVE_PINNED_PI_SDK_V1
+    );
+    assert_eq!(claim.supervisor_epoch_id(), epoch);
+    assert_eq!(claim.supervisor_epoch_identity(), &epoch_identity);
+    assert_eq!(claim.admission_generation(), AdmissionGeneration::INITIAL);
+
+    rejected(
+        &mut store,
+        "qualification-launch-double-start",
+        PrincipalId::KERNEL,
+        Capability::StartNativeExecutionProfileQualification,
+        generation,
+        CommandBody::StartNativeExecutionProfileQualification {
+            operating_cycle_id: cycle,
+        },
+        Rejection::InvalidLifecycleTransition,
+    );
+    assert!(store.validate_replayed_materialized_state().is_ok());
+}
+
+#[test]
+fn native_profile_qualification_requires_the_complete_child_custody_chain() {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("society-native-profile-qualification-{nonce}"));
+    let mut store = KernelStore::connect_test_path(&path).unwrap();
+    let (root_authority, cycle) =
+        founded_cycle(&mut store, OperatingCycleTreatment::PiSdkQualificationV1);
+    assert!(
+        store
+            .active_capability_grant(PrincipalId::KERNEL, Capability::QuiesceOperatingCycle)
+            .unwrap()
+            .is_some(),
+        "kernel service must own the qualification shutdown capability"
+    );
+    let generation = ExpectedGeneration::Exact(AdmissionGeneration::INITIAL);
+    accepted(
+        &mut store,
+        "qualification-start",
+        PrincipalId::KERNEL,
+        Capability::StartNativeExecutionProfileQualification,
+        generation,
+        CommandBody::StartNativeExecutionProfileQualification {
+            operating_cycle_id: cycle,
+        },
+    );
+    accepted(
+        &mut store,
+        "qualification-reserve",
+        PrincipalId::KERNEL,
+        Capability::ReserveBudget,
+        generation,
+        CommandBody::ReserveBudget {
+            cycle_id: cycle,
+            amount: UsdMicros::new(10_000).unwrap(),
+        },
+    );
+    let epoch = SupervisorEpochId::new(1).unwrap();
+    let epoch_identity = SupervisorEpochIdentity::parse("qualification-epoch").unwrap();
+    accepted(
+        &mut store,
+        "qualification-epoch",
+        PrincipalId::KERNEL,
+        Capability::OpenSupervisorEpoch,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::OpenSupervisorEpoch {
+            supervisor_epoch_id: epoch,
+            supervisor_epoch_identity: epoch_identity.clone(),
+        },
+    );
+    let fixture = AdmittedPiOfficeFixture {
+        root_authority: PrincipalId::BOOTSTRAP,
+        cycle,
+        office_session: RootAuthorityOfficeSessionId::new(999).unwrap(),
+        admission: NativeChildSpawnAdmissionId::new(1).unwrap(),
+        child: NativeChildId::new(1).unwrap(),
+        pi_session_identity: PiBoundarySessionIdentity::parse("qualification-session").unwrap(),
+        spawn_nonce: SpawnNonce::parse("qualification-nonce").unwrap(),
+        admission_event_id: match accepted(
+            &mut store,
+            "qualification-admit-child",
+            PrincipalId::KERNEL,
+            Capability::AdmitPiChildSpawn,
+            generation,
+            CommandBody::AdmitPiChildSpawn {
+                operating_cycle_id: cycle,
+                owner: PiChildOwner::NativeExecutionProfileQualification(cycle),
+                budget_reservation_id: BudgetReservationId::new(1).unwrap(),
+                execution_profile_id: ExecutionProfileId::NATIVE_PINNED_PI_SDK_V1,
+                native_workspace_id: NativeWorkspaceId::parse("qualification-workspace").unwrap(),
+                canonical_workspace_path: CanonicalWorkspacePath::parse(
+                    "/tmp/qualification-workspace",
+                )
+                .unwrap(),
+                supervisor_epoch_id: epoch,
+                supervisor_epoch_identity: epoch_identity,
+                pi_session_identity: PiBoundarySessionIdentity::parse("qualification-session")
+                    .unwrap(),
+                spawn_nonce: SpawnNonce::parse("qualification-nonce").unwrap(),
+            },
+        )
+        .disposition
+        {
+            CommandDisposition::Accepted(event_id) => event_id,
+            CommandDisposition::Rejected(rejection) => {
+                panic!("qualification admission unexpectedly rejected: {rejection:?}")
+            }
+        },
+    };
+    record_fixture_session_ready(&mut store, &fixture, "qualification", generation, false);
+    finalize_fixture_child(&mut store, &fixture, "qualification", generation);
+
+    let probe_request_digest = Blake3Digest::of_bytes(b"create-qualification");
+    let probe_response_digest = Blake3Digest::of_bytes(b"qualification-stream-3");
+    rejected(
+        &mut store,
+        "qualification-detached-artifact",
+        PrincipalId::KERNEL,
+        Capability::QualifyNativeExecutionProfile,
+        generation,
+        CommandBody::QualifyNativeExecutionProfile {
+            operating_cycle_id: cycle,
+            execution_profile_id: ExecutionProfileId::NATIVE_PINNED_PI_SDK_V1,
+            native_child_spawn_admission_id: fixture.admission,
+            native_child_id: fixture.child,
+            runtime_identity_digest: Blake3Digest::of_bytes(b"qualification-stream-1"),
+            runtime_identity_content_object_id: ContentObjectId::new(2).unwrap(),
+            adapter_report_digest: Blake3Digest::of_bytes(b"qualification-stream-2"),
+            adapter_report_content_object_id: ContentObjectId::new(3).unwrap(),
+            probe_request_digest,
+            probe_response_digest,
+            probe_response_content_object_id: ContentObjectId::new(99).unwrap(),
+        },
+        Rejection::ChildStreamSealBindingMismatch,
+    );
+    accepted(
+        &mut store,
+        "qualification-accept",
+        PrincipalId::KERNEL,
+        Capability::QualifyNativeExecutionProfile,
+        generation,
+        CommandBody::QualifyNativeExecutionProfile {
+            operating_cycle_id: cycle,
+            execution_profile_id: ExecutionProfileId::NATIVE_PINNED_PI_SDK_V1,
+            native_child_spawn_admission_id: fixture.admission,
+            native_child_id: fixture.child,
+            runtime_identity_digest: Blake3Digest::of_bytes(b"qualification-stream-1"),
+            runtime_identity_content_object_id: ContentObjectId::new(2).unwrap(),
+            adapter_report_digest: Blake3Digest::of_bytes(b"qualification-stream-2"),
+            adapter_report_content_object_id: ContentObjectId::new(3).unwrap(),
+            probe_request_digest,
+            probe_response_digest,
+            probe_response_content_object_id: ContentObjectId::new(4).unwrap(),
+        },
+    );
+    // Qualification is a bounded bootstrap lab rather than the first live
+    // cycle. Once the native identity is qualified and its charge is
+    // reconciled, the kernel (there is no Office owner in this treatment)
+    // must be able to close that lab before the Root Authority can propose
+    // the separately identified pinned-live cycle.
+    accepted(
+        &mut store,
+        "qualification-quiesce",
+        PrincipalId::KERNEL,
+        Capability::QuiesceOperatingCycle,
+        generation,
+        CommandBody::QuiesceOperatingCycle { cycle_id: cycle },
+    );
+    accepted(
+        &mut store,
+        "qualification-drained",
+        PrincipalId::KERNEL,
+        Capability::RecordCycleDrained,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::RecordCycleDrained { cycle_id: cycle },
+    );
+    accepted(
+        &mut store,
+        "qualification-cost-reconciled",
+        PrincipalId::KERNEL,
+        Capability::ReconcileBudget,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::ReconcileBudget {
+            reservation_id: BudgetReservationId::new(1).unwrap(),
+            observation: CostObservation::Known(UsdMicros::new(10_000).unwrap()),
+        },
+    );
+    let closed_generation =
+        ExpectedGeneration::Exact(AdmissionGeneration::INITIAL.increment().unwrap());
+    accepted(
+        &mut store,
+        "qualification-begin-reconciliation",
+        PrincipalId::KERNEL,
+        Capability::ReconcileOperatingCycle,
+        closed_generation,
+        CommandBody::ReconcileOperatingCycle { cycle_id: cycle },
+    );
+    accepted(
+        &mut store,
+        "qualification-close",
+        PrincipalId::KERNEL,
+        Capability::CloseOperatingCycle,
+        closed_generation,
+        CommandBody::CloseOperatingCycle { cycle_id: cycle },
+    );
+    let live_cycle = OperatingCycleId::new(2).unwrap();
+    accepted(
+        &mut store,
+        "qualification-followed-by-live-proposal",
+        root_authority,
+        Capability::ProposeOperatingCycle,
+        ExpectedGeneration::NotApplicable,
+        CommandBody::ProposeOperatingCycle {
+            treatment: OperatingCycleTreatment::PinnedPiSdkLiveV1,
+            budget_ceiling: UsdMicros::new(1_000_000).unwrap(),
+        },
+    );
+    accepted(
+        &mut store,
+        "qualification-followed-by-live-admission",
+        root_authority,
+        Capability::AdmitOperatingCycle,
+        generation,
+        CommandBody::AdmitOperatingCycle {
+            cycle_id: live_cycle,
+        },
+    );
+    assert!(store.validate_replayed_materialized_state().is_ok());
+    drop(store);
+    let inspection = Connection::connect_test_path(&path).unwrap();
+    let readiness: i64 = inspection
+        .query_row(
+            "SELECT readiness FROM execution_profiles WHERE execution_profile_id = $1",
+            [ExecutionProfileId::NATIVE_PINNED_PI_SDK_V1.value()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(readiness, 3);
+    let qualification_count: i64 = inspection
+        .query_row(
+            "SELECT COUNT(*) FROM execution_profile_qualifications",
+            society_kernel::test_params![],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(qualification_count, 1);
+    drop(inspection);
+    let _ = fs::remove_file(path);
 }
 
 #[test]

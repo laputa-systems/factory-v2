@@ -21,10 +21,10 @@ use society_kernel::{
     CanonicalPiSessionTranscriptPath, CanonicalWorkspacePath, Capability, ChildStreamKind,
     ChildStreamSealCompleteness, CommandBody, CommandDisposition, CommandId, CommandRequest,
     ContentObjectId, DirectChildWaitStatus, EventBody, EventId, ExecutionProfileId,
-    ExpectedGeneration, KernelStore, NativeChildId, NativeChildPid, NativeChildSpawnAdmissionId,
-    NativeWorkspaceId as KernelWorkspaceId, OfficeTurnId,
-    OwnedProcessGroupId as KernelProcessGroupId, PiBoundarySessionIdentity, PiChildOwner,
-    PiCorrelationIdentity, PiCumulativeUsage, PiOfficeSessionFirstUserPromptReceipt,
+    ExecutionProfileQualificationId, ExpectedGeneration, KernelStore, NativeChildId,
+    NativeChildPid, NativeChildSpawnAdmissionId, NativeWorkspaceId as KernelWorkspaceId,
+    OfficeTurnId, OwnedProcessGroupId as KernelProcessGroupId, PiBoundarySessionIdentity,
+    PiChildOwner, PiCorrelationIdentity, PiCumulativeUsage, PiOfficeSessionFirstUserPromptReceipt,
     PiOfficeSessionTranscriptReceipt, PiOfficeTurnAssistantOutcome, PiOfficeTurnDisposition,
     PiOfficeTurnTerminalEvidence, PiOfficeTurnTranscriptDisposition, PiOfficeTurnUsageFailure,
     PiOfficeTurnUsageUnavailableReason, PiOfficeTurnUsageUnknownReason, PiProtocolSequence,
@@ -117,6 +117,7 @@ impl PiExecutionOperationId {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PiExecutionCommand {
+    StartQualification,
     AdmitSpawn,
     RecordInertSpawn,
     RecordAdapterReady,
@@ -132,12 +133,14 @@ enum PiExecutionCommand {
     SealStdout,
     SealStderr,
     Finalize,
+    QualifyProfile,
     RecordNotSpawned,
 }
 
 impl std::fmt::Display for PiExecutionCommand {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(match self {
+            Self::StartQualification => "start-qualification",
             Self::AdmitSpawn => "admit-spawn",
             Self::RecordInertSpawn => "record-inert-spawn",
             Self::RecordAdapterReady => "record-adapter-ready",
@@ -153,6 +156,7 @@ impl std::fmt::Display for PiExecutionCommand {
             Self::SealStdout => "seal-stdout",
             Self::SealStderr => "seal-stderr",
             Self::Finalize => "finalize",
+            Self::QualifyProfile => "qualify-profile",
             Self::RecordNotSpawned => "record-not-spawned",
         })
     }
@@ -447,6 +451,28 @@ pub(crate) struct TaskAttemptPiExecutionStart {
     pub(crate) spawn_request: PiSpawnRequest,
 }
 
+/// Inputs selected by the resident qualification scheduler for the one
+/// native execution-profile smoke. This owner is intentionally independent of
+/// both `ActorAttempt` and Root Authority Office jurisdiction; the Pi protocol
+/// session kind is only the adapter's closed wire shape and is never used as
+/// the durable kernel owner.
+#[derive(Clone, Debug)]
+pub(crate) struct NativeExecutionProfileQualificationStart {
+    pub(crate) operation: PiExecutionOperationId,
+    pub(crate) operating_cycle_id: society_kernel::OperatingCycleId,
+    pub(crate) budget_reservation_id: BudgetReservationId,
+    pub(crate) execution_profile_id: ExecutionProfileId,
+    pub(crate) expected_generation: AdmissionGeneration,
+    pub(crate) supervisor_epoch_id: SupervisorEpochId,
+    pub(crate) supervisor_epoch_identity: SupervisorEpochIdentity,
+    pub(crate) spawn_request: PiSpawnRequest,
+    /// Set only by the daemon's durable qualification-claim consumer. The
+    /// claim atomically moved the cycle to Running and reserved the budget,
+    /// so issuing the standalone Start transition here would be a duplicate
+    /// lifecycle mutation.
+    pub(crate) already_started: bool,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum OfficePiExecutionPhase {
     SpawnRegistered,
@@ -551,6 +577,43 @@ pub(crate) struct TaskAttemptPiExecutionChild {
     create_correlation: PiCorrelationIdentity,
     create_request_digest: KernelDigest,
     phase: TaskAttemptPiExecutionPhase,
+}
+
+/// Daemon-private custody for exactly one qualification child. It has no
+/// actor/Office identity and no task prompt surface. The host is driven only
+/// through AdapterReady/Create/SessionReady and a controlled native exit.
+#[derive(Clone, Debug)]
+pub(crate) struct NativeExecutionProfileQualificationChild {
+    operation: PiExecutionOperationId,
+    operating_cycle_id: society_kernel::OperatingCycleId,
+    execution_profile_id: ExecutionProfileId,
+    supervised_child_id: SupervisedChildId,
+    child_process_id: NativeChildId,
+    native_child_spawn_admission_id: NativeChildSpawnAdmissionId,
+    workspace_directory: AbsolutePath,
+    session_directory: AbsolutePath,
+    pi_session_identity: PiBoundarySessionIdentity,
+    spawn_nonce: KernelSpawnNonce,
+    expected_generation: AdmissionGeneration,
+    create_correlation: PiCorrelationIdentity,
+    create_request_digest: KernelDigest,
+    phase: NativeExecutionProfileQualificationPhase,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NativeExecutionProfileQualificationPhase {
+    SpawnRegistered,
+    PostSpawnSetupContained,
+    BoundaryContainmentRequired,
+    AdapterReadyRecorded,
+    CreateAuthorized,
+    CreateDelivered,
+    SessionReadyRecorded,
+    ControlledExitRequested,
+    DirectChildReapRecorded,
+    LingeringCleanupRecorded,
+    AwaitingLingeringGroupAbsence,
+    Reconciled,
 }
 
 /// Exact byte-bearing TaskAssignment prompt. The caller must arrange normal
@@ -1083,6 +1146,23 @@ pub(crate) enum TaskAttemptPiSpawnRegistration {
     },
 }
 
+#[derive(Debug)]
+pub(crate) enum NativeExecutionProfileQualificationSpawnRegistration {
+    Ready(NativeExecutionProfileQualificationChild),
+    PostSpawnSetupContained {
+        child: NativeExecutionProfileQualificationChild,
+        failure: PostSpawnSetupFailure,
+    },
+    RegisteredBoundaryContained {
+        child: NativeExecutionProfileQualificationChild,
+        failure: SupervisionError,
+    },
+    RegistrationUnresolved {
+        child: Box<UnregisteredPiChild>,
+        failure: PiExecutionError,
+    },
+}
+
 impl OfficePiExecutionChild {
     pub(crate) fn child_process_id(&self) -> NativeChildId {
         self.child_process_id
@@ -1169,6 +1249,62 @@ impl TaskAttemptPiExecutionChild {
             TaskAttemptPiExecutionPhase::Reconciled => "reconciled",
         }
     }
+}
+
+impl NativeExecutionProfileQualificationChild {
+    pub(crate) fn child_process_id(&self) -> NativeChildId {
+        self.child_process_id
+    }
+
+    pub(crate) fn native_child_spawn_admission_id(&self) -> NativeChildSpawnAdmissionId {
+        self.native_child_spawn_admission_id
+    }
+
+    pub(crate) fn phase(&self) -> &'static str {
+        match self.phase {
+            NativeExecutionProfileQualificationPhase::SpawnRegistered => "spawn_registered",
+            NativeExecutionProfileQualificationPhase::PostSpawnSetupContained => {
+                "post_spawn_setup_contained"
+            }
+            NativeExecutionProfileQualificationPhase::BoundaryContainmentRequired => {
+                "boundary_containment_required"
+            }
+            NativeExecutionProfileQualificationPhase::AdapterReadyRecorded => {
+                "adapter_ready_recorded"
+            }
+            NativeExecutionProfileQualificationPhase::CreateAuthorized => "create_authorized",
+            NativeExecutionProfileQualificationPhase::CreateDelivered => "create_delivered",
+            NativeExecutionProfileQualificationPhase::SessionReadyRecorded => {
+                "session_ready_recorded"
+            }
+            NativeExecutionProfileQualificationPhase::ControlledExitRequested => {
+                "controlled_exit_requested"
+            }
+            NativeExecutionProfileQualificationPhase::DirectChildReapRecorded => {
+                "direct_child_reap_recorded"
+            }
+            NativeExecutionProfileQualificationPhase::LingeringCleanupRecorded => {
+                "lingering_cleanup_recorded"
+            }
+            NativeExecutionProfileQualificationPhase::AwaitingLingeringGroupAbsence => {
+                "awaiting_lingering_group_absence"
+            }
+            NativeExecutionProfileQualificationPhase::Reconciled => "reconciled",
+        }
+    }
+}
+
+/// Stream identities retained by the daemon after the qualification child is
+/// physically finalized. The runner exposes these only to the resident
+/// qualification command; no content-store path or raw bytes cross the API.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct NativeExecutionProfileQualificationEvidence {
+    pub(crate) runtime_identity_digest: KernelDigest,
+    pub(crate) runtime_identity_content_object_id: ContentObjectId,
+    pub(crate) adapter_report_digest: KernelDigest,
+    pub(crate) adapter_report_content_object_id: ContentObjectId,
+    pub(crate) probe_response_digest: KernelDigest,
+    pub(crate) probe_response_content_object_id: ContentObjectId,
 }
 
 /// The resident-only process bridge.  It has no restart attach API: a new
@@ -1680,6 +1816,688 @@ impl PiExecutionDriver {
                 )
             }
         }
+    }
+
+    /// Opens a dedicated qualification child. The owner written to the
+    /// kernel is `NativeExecutionProfileQualification`, never an actor or an
+    /// Office session, even though the adapter's closed CreateSession wire
+    /// uses the TaskAttempt session shape and receives no Prompt. The one-shot
+    /// CreateSession/SessionReady exchange is the qualification probe: its
+    /// canonical Create digest becomes `probe_request_digest`, and the
+    /// retained stdout evidence is bound as `probe_response_digest` during
+    /// finalization. No actor prompt or Office turn is smuggled into this
+    /// owner. A normal daemon-internal fixture may use the standalone
+    /// qualification start transition; a durable qualification launch claim
+    /// sets `already_started` and enters this same path directly at child
+    /// admission, because the claim has already atomically moved the cycle to
+    /// Running and reserved its budget.
+    pub(crate) fn admit_native_profile_qualification_spawn_and_register(
+        &mut self,
+        store: &mut KernelStore,
+        start: NativeExecutionProfileQualificationStart,
+    ) -> Result<NativeExecutionProfileQualificationSpawnRegistration, PiExecutionError> {
+        if start.spawn_request.create_session.session_kind != SessionKind::TaskAttempt {
+            return Err(PiExecutionError::QualificationSessionKindRequired);
+        }
+        self.supervisor
+            .preflight_spawn(&start.spawn_request)
+            .map_err(PiExecutionError::Supervision)?;
+        if !start.already_started {
+            let started = execute_kernel_command(
+                store,
+                &start.operation,
+                PiExecutionCommand::StartQualification,
+                Capability::StartNativeExecutionProfileQualification,
+                ExpectedGeneration::Exact(start.expected_generation),
+                CommandBody::StartNativeExecutionProfileQualification {
+                    operating_cycle_id: start.operating_cycle_id,
+                },
+            )?;
+            if !matches!(
+                started,
+                EventBody::NativeExecutionProfileQualificationStarted {
+                    operating_cycle_id,
+                    generation,
+                } if operating_cycle_id == start.operating_cycle_id
+                    && generation == start.expected_generation
+            ) {
+                return Err(PiExecutionError::UnexpectedKernelEvent);
+            }
+        }
+        let expected_generation = ExpectedGeneration::Exact(start.expected_generation);
+        let workspace_id = kernel_workspace_identity(&start.spawn_request)?;
+        let workspace_path = kernel_workspace_path(&start.spawn_request)?;
+        let pi_session_identity = kernel_session_identity(&start.spawn_request.session_identity)?;
+        let spawn_nonce = kernel_spawn_nonce(&start.spawn_request.spawn_nonce)?;
+        let create_correlation =
+            kernel_correlation(&start.spawn_request.create_correlation_identity)?;
+        let create_request_digest = canonical_create_request_digest(&start.spawn_request)?;
+        let admitted = execute_kernel_command(
+            store,
+            &start.operation,
+            PiExecutionCommand::AdmitSpawn,
+            Capability::AdmitPiChildSpawn,
+            expected_generation,
+            CommandBody::AdmitPiChildSpawn {
+                operating_cycle_id: start.operating_cycle_id,
+                owner: PiChildOwner::NativeExecutionProfileQualification(start.operating_cycle_id),
+                budget_reservation_id: start.budget_reservation_id,
+                execution_profile_id: start.execution_profile_id,
+                native_workspace_id: workspace_id,
+                canonical_workspace_path: workspace_path,
+                supervisor_epoch_id: start.supervisor_epoch_id,
+                supervisor_epoch_identity: start.supervisor_epoch_identity.clone(),
+                pi_session_identity: pi_session_identity.clone(),
+                spawn_nonce: spawn_nonce.clone(),
+            },
+        )?;
+        let admission_id = match admitted {
+            EventBody::PiChildSpawnAdmitted {
+                native_child_spawn_admission_id,
+                owner: PiChildOwner::NativeExecutionProfileQualification(cycle),
+                budget_reservation_id,
+            } if cycle == start.operating_cycle_id
+                && budget_reservation_id == start.budget_reservation_id =>
+            {
+                native_child_spawn_admission_id
+            }
+            _ => return Err(PiExecutionError::UnexpectedKernelEvent),
+        };
+        let spawned = match self.supervisor.spawn_native(start.spawn_request.clone()) {
+            Ok(facts) => facts,
+            Err(spawn_error) => {
+                if let Some(reason) = proven_not_spawned_reason(&spawn_error) {
+                    let current_generation = store
+                        .current_operating_cycle_admission_generation(start.operating_cycle_id)?;
+                    execute_kernel_command(
+                        store,
+                        &start.operation,
+                        PiExecutionCommand::RecordNotSpawned,
+                        Capability::RecordNativeChildNotSpawned,
+                        ExpectedGeneration::Exact(current_generation),
+                        CommandBody::RecordNativeChildNotSpawned {
+                            native_child_spawn_admission_id: admission_id,
+                            reason,
+                        },
+                    )?;
+                }
+                return Err(PiExecutionError::Supervision(spawn_error));
+            }
+        };
+        let (child_identity, direct_child_pid, process_group_id) = match (
+            kernel_child_identity(&spawned.child_process_id),
+            kernel_child_pid(spawned.host_process_id.value()),
+            kernel_process_group_id(spawned.process_group_id.value()),
+        ) {
+            (Ok(child_identity), Ok(direct_child_pid), Ok(process_group_id)) => {
+                (child_identity, direct_child_pid, process_group_id)
+            }
+            (child_identity, direct_child_pid, process_group_id) => {
+                let failure = match child_identity {
+                    Err(error) => error,
+                    Ok(_) => match direct_child_pid {
+                        Err(error) => error,
+                        Ok(_) => match process_group_id {
+                            Err(error) => error,
+                            Ok(_) => unreachable!("successful conversion tuple was matched above"),
+                        },
+                    },
+                };
+                return Ok(self.unresolved_qualification_registration(
+                    spawned.child_process_id,
+                    admission_id,
+                    failure,
+                ));
+            }
+        };
+        let registration_generation =
+            match store.current_operating_cycle_admission_generation(start.operating_cycle_id) {
+                Ok(generation) => generation,
+                Err(error) => {
+                    return Ok(self.unresolved_qualification_registration(
+                        spawned.child_process_id,
+                        admission_id,
+                        PiExecutionError::Kernel(error),
+                    ));
+                }
+            };
+        let registered = execute_kernel_command(
+            store,
+            &start.operation,
+            PiExecutionCommand::RecordInertSpawn,
+            Capability::RecordInertChildSpawn,
+            ExpectedGeneration::Exact(registration_generation),
+            CommandBody::RecordInertChildSpawn {
+                native_child_spawn_admission_id: admission_id,
+                child_identity,
+                direct_child_pid,
+                process_group_id,
+            },
+        );
+        let registered = match registered {
+            Ok(event) => event,
+            Err(error) => {
+                return Ok(self.unresolved_qualification_registration(
+                    spawned.child_process_id,
+                    admission_id,
+                    error,
+                ));
+            }
+        };
+        let child_process_id = match registered {
+            EventBody::InertPiChildSpawnRecorded {
+                native_child_id,
+                native_child_spawn_admission_id,
+            } if native_child_spawn_admission_id == admission_id => native_child_id,
+            _ => {
+                return Ok(self.unresolved_qualification_registration(
+                    spawned.child_process_id,
+                    admission_id,
+                    PiExecutionError::UnexpectedKernelEvent,
+                ));
+            }
+        };
+        let mut child = NativeExecutionProfileQualificationChild {
+            operation: start.operation,
+            operating_cycle_id: start.operating_cycle_id,
+            execution_profile_id: start.execution_profile_id,
+            supervised_child_id: spawned.child_process_id,
+            child_process_id,
+            native_child_spawn_admission_id: admission_id,
+            workspace_directory: start.spawn_request.workspace.directory().clone(),
+            session_directory: start.spawn_request.create_session.session_directory.clone(),
+            pi_session_identity,
+            spawn_nonce,
+            expected_generation: registration_generation,
+            create_correlation,
+            create_request_digest,
+            phase: NativeExecutionProfileQualificationPhase::SpawnRegistered,
+        };
+        match self
+            .supervisor
+            .finish_inert_setup(&child.supervised_child_id, MonotonicTick::ZERO)
+        {
+            Ok(()) => Ok(NativeExecutionProfileQualificationSpawnRegistration::Ready(
+                child,
+            )),
+            Err(SupervisionError::PostSpawnSetup(failure)) => {
+                child.phase = NativeExecutionProfileQualificationPhase::PostSpawnSetupContained;
+                Ok(
+                    NativeExecutionProfileQualificationSpawnRegistration::PostSpawnSetupContained {
+                        child,
+                        failure,
+                    },
+                )
+            }
+            Err(error) => {
+                child.phase = NativeExecutionProfileQualificationPhase::BoundaryContainmentRequired;
+                self.contain(&child.supervised_child_id, MonotonicTick::ZERO);
+                Ok(NativeExecutionProfileQualificationSpawnRegistration::RegisteredBoundaryContained {
+                    child,
+                    failure: error,
+                })
+            }
+        }
+    }
+
+    fn unresolved_qualification_registration(
+        &mut self,
+        supervised_child_id: SupervisedChildId,
+        native_child_spawn_admission_id: NativeChildSpawnAdmissionId,
+        failure: PiExecutionError,
+    ) -> NativeExecutionProfileQualificationSpawnRegistration {
+        self.contain(&supervised_child_id, MonotonicTick::ZERO);
+        NativeExecutionProfileQualificationSpawnRegistration::RegistrationUnresolved {
+            child: Box::new(UnregisteredPiChild {
+                supervised_child_id,
+                native_child_spawn_admission_id,
+                phase: UnregisteredPiChildPhase::ContainmentRequired,
+                transient_completion: None,
+            }),
+            failure,
+        }
+    }
+
+    pub(crate) fn drive_native_profile_qualification_boundary_containment(
+        &mut self,
+        child: &NativeExecutionProfileQualificationChild,
+        now: MonotonicTick,
+    ) -> Result<(), PiExecutionError> {
+        if !matches!(
+            child.phase,
+            NativeExecutionProfileQualificationPhase::PostSpawnSetupContained
+                | NativeExecutionProfileQualificationPhase::BoundaryContainmentRequired
+        ) {
+            return Err(PiExecutionError::InvalidLifecycle);
+        }
+        self.supervisor
+            .drive_cancellation_without_reap(&child.supervised_child_id, now)
+            .map_err(PiExecutionError::Supervision)
+    }
+
+    pub(crate) fn observe_native_profile_qualification_adapter_ready(
+        &mut self,
+        store: &mut KernelStore,
+        child: &mut NativeExecutionProfileQualificationChild,
+        now: MonotonicTick,
+        deadline: HandshakeDeadline,
+    ) -> Result<bool, PiExecutionError> {
+        if child.phase != NativeExecutionProfileQualificationPhase::SpawnRegistered {
+            return Err(PiExecutionError::InvalidLifecycle);
+        }
+        let facts = match self.supervisor.observe_adapter_ready_at(
+            &child.supervised_child_id,
+            now,
+            deadline,
+        ) {
+            Ok(None) => return Ok(false),
+            Ok(Some(facts)) => facts,
+            Err(error) => {
+                self.begin_qualification_boundary_containment(child, now);
+                return Err(PiExecutionError::Supervision(error));
+            }
+        };
+        if facts.child_process_id != child.supervised_child_id
+            || kernel_session_identity(&facts.session_identity)? != child.pi_session_identity
+        {
+            self.begin_qualification_boundary_containment(child, now);
+            return Err(PiExecutionError::AdapterFactMismatch);
+        }
+        execute_kernel_command(
+            store,
+            &child.operation,
+            PiExecutionCommand::RecordAdapterReady,
+            Capability::RecordPiAdapterReady,
+            ExpectedGeneration::Exact(child.expected_generation),
+            CommandBody::RecordPiAdapterReady {
+                native_child_id: child.child_process_id,
+                pi_session_identity: child.pi_session_identity.clone(),
+                spawn_nonce: child.spawn_nonce.clone(),
+            },
+        )?;
+        child.phase = NativeExecutionProfileQualificationPhase::AdapterReadyRecorded;
+        Ok(true)
+    }
+
+    pub(crate) fn authorize_and_begin_native_profile_qualification_create(
+        &mut self,
+        store: &mut KernelStore,
+        child: &mut NativeExecutionProfileQualificationChild,
+        now: MonotonicTick,
+        deadline: ControlWriteDeadline,
+    ) -> Result<ControlWriteProgress, PiExecutionError> {
+        if child.phase != NativeExecutionProfileQualificationPhase::AdapterReadyRecorded {
+            return Err(PiExecutionError::InvalidLifecycle);
+        }
+        let mut gate = KernelCreateAuthorizationGate::new(
+            store,
+            &child.operation,
+            child.child_process_id,
+            child.expected_generation,
+            &child.create_correlation,
+            child.create_request_digest,
+        );
+        let progress = self.supervisor.send_create_session(
+            &child.supervised_child_id,
+            &mut gate,
+            now,
+            deadline,
+        );
+        if let Err(error) = gate.finish() {
+            self.begin_qualification_boundary_containment(child, now);
+            return Err(error);
+        }
+        child.phase = NativeExecutionProfileQualificationPhase::CreateAuthorized;
+        let progress = match progress {
+            Ok(progress) => progress,
+            Err(error) => {
+                self.begin_qualification_boundary_containment(child, now);
+                return Err(PiExecutionError::Supervision(error));
+            }
+        };
+        if progress == ControlWriteProgress::Delivered {
+            self.record_qualification_create_delivery(store, child, now)?;
+        }
+        Ok(progress)
+    }
+
+    pub(crate) fn drive_native_profile_qualification_create_delivery(
+        &mut self,
+        store: &mut KernelStore,
+        child: &mut NativeExecutionProfileQualificationChild,
+        now: MonotonicTick,
+    ) -> Result<ControlWriteProgress, PiExecutionError> {
+        if child.phase != NativeExecutionProfileQualificationPhase::CreateAuthorized {
+            return Err(PiExecutionError::InvalidLifecycle);
+        }
+        let progress = self
+            .supervisor
+            .drive_control_write(&child.supervised_child_id, now)
+            .map_err(|error| {
+                self.begin_qualification_boundary_containment(child, now);
+                PiExecutionError::Supervision(error)
+            })?;
+        if progress == ControlWriteProgress::Delivered {
+            self.record_qualification_create_delivery(store, child, now)?;
+        }
+        Ok(progress)
+    }
+
+    pub(crate) fn observe_native_profile_qualification_session_ready(
+        &mut self,
+        store: &mut KernelStore,
+        child: &mut NativeExecutionProfileQualificationChild,
+        now: MonotonicTick,
+        deadline: HandshakeDeadline,
+    ) -> Result<bool, PiExecutionError> {
+        if child.phase != NativeExecutionProfileQualificationPhase::CreateDelivered {
+            return Err(PiExecutionError::InvalidLifecycle);
+        }
+        if !self
+            .supervisor
+            .observe_session_ready_at(&child.supervised_child_id, now, deadline)
+            .map_err(|error| {
+                self.begin_qualification_boundary_containment(child, now);
+                PiExecutionError::Supervision(error)
+            })?
+        {
+            return Ok(false);
+        }
+        if self
+            .supervisor
+            .poll_direct_child_reap_at(&child.supervised_child_id)
+            .map_err(PiExecutionError::Supervision)?
+            .is_some()
+        {
+            self.begin_qualification_boundary_containment(child, now);
+            return Err(PiExecutionError::ExitedBeforeSessionReady);
+        }
+        let event = execute_kernel_command(
+            store,
+            &child.operation,
+            PiExecutionCommand::RecordSessionReady,
+            Capability::RecordPiSessionReady,
+            ExpectedGeneration::Exact(child.expected_generation),
+            CommandBody::RecordPiSessionReady {
+                native_child_id: child.child_process_id,
+                pi_session_identity: child.pi_session_identity.clone(),
+            },
+        )?;
+        match event {
+            EventBody::PiSessionReadyRecorded {
+                native_child_id, ..
+            } if native_child_id == child.child_process_id => {
+                child.phase = NativeExecutionProfileQualificationPhase::SessionReadyRecorded;
+                Ok(true)
+            }
+            _ => {
+                self.begin_qualification_boundary_containment(child, now);
+                Err(PiExecutionError::UnexpectedKernelEvent)
+            }
+        }
+    }
+
+    /// Ends the qualification session without a task/Office semantic close.
+    /// The native supervisor's fixed containment suffix owns the direct exit;
+    /// the kernel later accepts only the physical stream/finalization chain.
+    pub(crate) fn request_native_profile_qualification_exit(
+        &mut self,
+        child: &mut NativeExecutionProfileQualificationChild,
+        now: MonotonicTick,
+    ) -> Result<(), PiExecutionError> {
+        if child.phase != NativeExecutionProfileQualificationPhase::SessionReadyRecorded {
+            return Err(PiExecutionError::InvalidLifecycle);
+        }
+        self.begin_qualification_boundary_containment(child, now);
+        child.phase = NativeExecutionProfileQualificationPhase::ControlledExitRequested;
+        Ok(())
+    }
+
+    pub(crate) fn drive_native_profile_qualification_exit(
+        &mut self,
+        child: &NativeExecutionProfileQualificationChild,
+        now: MonotonicTick,
+    ) -> Result<(), PiExecutionError> {
+        if child.phase != NativeExecutionProfileQualificationPhase::ControlledExitRequested {
+            return Err(PiExecutionError::InvalidLifecycle);
+        }
+        self.supervisor
+            .drive_cancellation_without_reap(&child.supervised_child_id, now)
+            .map_err(PiExecutionError::Supervision)
+    }
+
+    pub(crate) fn poll_native_profile_qualification_reap_and_reconcile(
+        &mut self,
+        store: &mut KernelStore,
+        content: &ContentSealingAuthority,
+        child: &mut NativeExecutionProfileQualificationChild,
+        now: MonotonicTick,
+    ) -> Result<Option<NativeExecutionProfileQualificationEvidence>, PiExecutionError> {
+        if child.phase == NativeExecutionProfileQualificationPhase::Reconciled {
+            return Err(PiExecutionError::InvalidLifecycle);
+        }
+        let Some(direct_reap) = self
+            .supervisor
+            .poll_direct_child_reap_at(&child.supervised_child_id)
+            .map_err(PiExecutionError::Supervision)?
+        else {
+            return Ok(None);
+        };
+        if !matches!(
+            child.phase,
+            NativeExecutionProfileQualificationPhase::DirectChildReapRecorded
+                | NativeExecutionProfileQualificationPhase::LingeringCleanupRecorded
+                | NativeExecutionProfileQualificationPhase::AwaitingLingeringGroupAbsence
+        ) {
+            for (ordinal, signal) in direct_reap.prior_signal_receipts.iter().enumerate() {
+                if signal.action == SignalAction::LingeringGroupKill {
+                    return Err(PiExecutionError::SignalReceiptOrderingRequiresTwoPhaseReap);
+                }
+                record_signal_receipt_for_child(
+                    store,
+                    &child.operation,
+                    child.child_process_id,
+                    child.expected_generation,
+                    signal,
+                    ordinal,
+                )?;
+            }
+            if direct_reap.child_process_id != child.supervised_child_id {
+                return Err(PiExecutionError::ReceiptIdentityMismatch);
+            }
+            let liveness = kernel_liveness(direct_reap.group_liveness_after_direct_child_reap);
+            execute_kernel_command(
+                store,
+                &child.operation,
+                PiExecutionCommand::RecordReap,
+                Capability::RecordDirectChildReap,
+                ExpectedGeneration::Exact(child.expected_generation),
+                CommandBody::RecordDirectChildReap {
+                    native_child_id: child.child_process_id,
+                    wait_status: kernel_wait_status(direct_reap.status)?,
+                    group_liveness_before_cleanup: liveness,
+                    group_liveness_after_cleanup: liveness,
+                },
+            )?;
+            if direct_reap.group_liveness_after_direct_child_reap
+                == crate::supervision::ProcessGroupLiveness::Inaccessible
+            {
+                return Err(PiExecutionError::LingeringGroupInaccessible);
+            }
+            child.phase = NativeExecutionProfileQualificationPhase::DirectChildReapRecorded;
+        }
+        if child.phase == NativeExecutionProfileQualificationPhase::DirectChildReapRecorded {
+            if let Some(signal) = self
+                .supervisor
+                .issue_lingering_group_cleanup(&child.supervised_child_id, now)
+                .map_err(PiExecutionError::Supervision)?
+            {
+                record_signal_receipt_for_child(
+                    store,
+                    &child.operation,
+                    child.child_process_id,
+                    child.expected_generation,
+                    &signal,
+                    2,
+                )?;
+                match signal.group_liveness_after_attempt {
+                    crate::supervision::ProcessGroupLiveness::Present => {
+                        child.phase =
+                            NativeExecutionProfileQualificationPhase::AwaitingLingeringGroupAbsence;
+                        return Ok(None);
+                    }
+                    crate::supervision::ProcessGroupLiveness::Inaccessible => {
+                        return Err(PiExecutionError::LingeringGroupInaccessible);
+                    }
+                    crate::supervision::ProcessGroupLiveness::Absent => {}
+                }
+            }
+            child.phase = NativeExecutionProfileQualificationPhase::LingeringCleanupRecorded;
+        }
+        let liveness = self
+            .supervisor
+            .observe_group_liveness(&child.supervised_child_id)
+            .map_err(PiExecutionError::Supervision)?;
+        match liveness {
+            crate::supervision::ProcessGroupLiveness::Present => {
+                if child.phase
+                    == NativeExecutionProfileQualificationPhase::AwaitingLingeringGroupAbsence
+                {
+                    return Ok(None);
+                }
+                record_liveness_for_child(
+                    store,
+                    &child.operation,
+                    child.child_process_id,
+                    child.expected_generation,
+                    liveness,
+                )?;
+                return Err(PiExecutionError::ProcessGroupIdentityRegressed);
+            }
+            crate::supervision::ProcessGroupLiveness::Inaccessible => {
+                record_liveness_for_child(
+                    store,
+                    &child.operation,
+                    child.child_process_id,
+                    child.expected_generation,
+                    liveness,
+                )?;
+                return Err(PiExecutionError::LingeringGroupInaccessible);
+            }
+            crate::supervision::ProcessGroupLiveness::Absent => {
+                record_liveness_for_child(
+                    store,
+                    &child.operation,
+                    child.child_process_id,
+                    child.expected_generation,
+                    liveness,
+                )?;
+            }
+        }
+        let receipt = self
+            .supervisor
+            .complete_deferred_reap_at(&child.supervised_child_id)
+            .map_err(PiExecutionError::Supervision)?;
+        let evidence = seal_and_finalize_qualification_for_child(
+            store,
+            content,
+            &child.operation,
+            child.child_process_id,
+            child.expected_generation,
+            &child.supervised_child_id,
+            &receipt,
+        )?;
+        self.supervisor
+            .take_reaped_receipt(&child.supervised_child_id)
+            .ok_or(PiExecutionError::ReapReceiptLost)?;
+        child.phase = NativeExecutionProfileQualificationPhase::Reconciled;
+        Ok(Some(evidence))
+    }
+
+    /// Projects the daemon-owned, physically reconciled qualification child
+    /// into the typed kernel qualification.  The evidence is produced only by
+    /// `poll_native_profile_qualification_reap_and_reconcile`; callers cannot
+    /// provide replacement digests or content-object identities.
+    pub(crate) fn qualify_native_execution_profile(
+        &mut self,
+        store: &mut KernelStore,
+        child: &NativeExecutionProfileQualificationChild,
+        evidence: &NativeExecutionProfileQualificationEvidence,
+    ) -> Result<ExecutionProfileQualificationId, PiExecutionError> {
+        if child.phase != NativeExecutionProfileQualificationPhase::Reconciled {
+            return Err(PiExecutionError::InvalidLifecycle);
+        }
+        let event = execute_kernel_command(
+            store,
+            &child.operation,
+            PiExecutionCommand::QualifyProfile,
+            Capability::QualifyNativeExecutionProfile,
+            ExpectedGeneration::Exact(child.expected_generation),
+            CommandBody::QualifyNativeExecutionProfile {
+                operating_cycle_id: child.operating_cycle_id,
+                execution_profile_id: child.execution_profile_id,
+                native_child_spawn_admission_id: child.native_child_spawn_admission_id,
+                native_child_id: child.child_process_id,
+                runtime_identity_digest: evidence.runtime_identity_digest,
+                runtime_identity_content_object_id: evidence.runtime_identity_content_object_id,
+                adapter_report_digest: evidence.adapter_report_digest,
+                adapter_report_content_object_id: evidence.adapter_report_content_object_id,
+                probe_request_digest: child.create_request_digest,
+                probe_response_digest: evidence.probe_response_digest,
+                probe_response_content_object_id: evidence.probe_response_content_object_id,
+            },
+        )?;
+        match event {
+            EventBody::NativeExecutionProfileQualified {
+                qualification_id,
+                operating_cycle_id,
+                execution_profile_id,
+                native_child_spawn_admission_id,
+                native_child_id,
+            } if operating_cycle_id == child.operating_cycle_id
+                && execution_profile_id == child.execution_profile_id
+                && native_child_spawn_admission_id == child.native_child_spawn_admission_id
+                && native_child_id == child.child_process_id =>
+            {
+                Ok(qualification_id)
+            }
+            _ => Err(PiExecutionError::UnexpectedKernelEvent),
+        }
+    }
+
+    fn record_qualification_create_delivery(
+        &mut self,
+        store: &mut KernelStore,
+        child: &mut NativeExecutionProfileQualificationChild,
+        now: MonotonicTick,
+    ) -> Result<(), PiExecutionError> {
+        let event = execute_kernel_command(
+            store,
+            &child.operation,
+            PiExecutionCommand::RecordCreateDelivery,
+            Capability::RecordPiCreateSessionDelivery,
+            ExpectedGeneration::Exact(child.expected_generation),
+            CommandBody::RecordPiCreateSessionDelivery {
+                native_child_id: child.child_process_id,
+                correlation_identity: child.create_correlation.clone(),
+                create_request_digest: child.create_request_digest,
+            },
+        );
+        if let Err(error) = event {
+            self.begin_qualification_boundary_containment(child, now);
+            return Err(error);
+        }
+        child.phase = NativeExecutionProfileQualificationPhase::CreateDelivered;
+        Ok(())
+    }
+
+    fn begin_qualification_boundary_containment(
+        &mut self,
+        child: &mut NativeExecutionProfileQualificationChild,
+        now: MonotonicTick,
+    ) {
+        child.phase = NativeExecutionProfileQualificationPhase::BoundaryContainmentRequired;
+        self.contain(&child.supervised_child_id, now);
     }
 
     fn unresolved_task_attempt_registration(
@@ -5422,6 +6240,82 @@ fn seal_and_finalize_for_child(
     Ok(())
 }
 
+fn seal_and_finalize_qualification_for_child(
+    store: &mut KernelStore,
+    content: &ContentSealingAuthority,
+    operation: &PiExecutionOperationId,
+    child_process_id: NativeChildId,
+    expected_generation: AdmissionGeneration,
+    supervised_child_id: &SupervisedChildId,
+    receipt: &SupervisionReceipt,
+) -> Result<NativeExecutionProfileQualificationEvidence, PiExecutionError> {
+    if receipt.child_process_id != *supervised_child_id {
+        return Err(PiExecutionError::ReceiptIdentityMismatch);
+    }
+    let _reap = receipt
+        .reap
+        .as_ref()
+        .ok_or(PiExecutionError::MissingReapReceipt)?;
+    let mut seal = |stream_kind: ChildStreamKind,
+                    capture: &TransientStreamCapture|
+     -> Result<(KernelDigest, ContentObjectId), PiExecutionError> {
+        let retained_bytes = capture.retained_bytes();
+        let content_operation = ContentSealOperationId::parse(
+            operation.content_label(child_process_id, stream_kind)?,
+            KernelDigest::of_bytes(retained_bytes),
+        )
+        .map_err(|_| PiExecutionError::InvalidOperationIdentity)?;
+        let registration = content.seal_and_register(store, &content_operation, retained_bytes)?;
+        execute_kernel_command(
+            store,
+            operation,
+            stream_seal_command(stream_kind),
+            Capability::RecordChildStreamSeal,
+            ExpectedGeneration::Exact(expected_generation),
+            CommandBody::RecordChildStreamSeal {
+                native_child_id: child_process_id,
+                stream_kind,
+                full_observed_digest: kernel_digest_from_boundary(capture)?,
+                retained_content_object_id: registration.content_object_id,
+                completeness: kernel_stream_completeness(capture),
+            },
+        )?;
+        Ok((
+            kernel_digest_from_boundary(capture)?,
+            registration.content_object_id,
+        ))
+    };
+    let (runtime_identity_digest, runtime_identity_content_object_id) = seal(
+        ChildStreamKind::AdmittedControl,
+        &receipt.transient_evidence.admitted_control,
+    )?;
+    let (adapter_report_digest, adapter_report_content_object_id) = seal(
+        ChildStreamKind::PhysicalStdin,
+        &receipt.transient_evidence.stdin,
+    )?;
+    let (probe_response_digest, probe_response_content_object_id) =
+        seal(ChildStreamKind::Stdout, &receipt.transient_evidence.stdout)?;
+    seal(ChildStreamKind::Stderr, &receipt.transient_evidence.stderr)?;
+    execute_kernel_command(
+        store,
+        operation,
+        PiExecutionCommand::Finalize,
+        Capability::FinalizeChildProcess,
+        ExpectedGeneration::Exact(expected_generation),
+        CommandBody::FinalizeChildProcess {
+            native_child_id: child_process_id,
+        },
+    )?;
+    Ok(NativeExecutionProfileQualificationEvidence {
+        runtime_identity_digest,
+        runtime_identity_content_object_id,
+        adapter_report_digest,
+        adapter_report_content_object_id,
+        probe_response_digest,
+        probe_response_content_object_id,
+    })
+}
+
 struct KernelCreateAuthorizationGate<'a> {
     store: &'a mut KernelStore,
     operation: &'a PiExecutionOperationId,
@@ -6374,6 +7268,8 @@ pub(crate) enum PiExecutionError {
     OfficeSessionKindRequired,
     #[error("a TaskAttempt Pi child requires the exact TaskAttempt session kind")]
     TaskAttemptSessionKindRequired,
+    #[error("a qualification Pi child requires the exact inert TaskAttempt session shape")]
+    QualificationSessionKindRequired,
     #[error("the supplied Office prompt text is empty or differs from its sealed digest")]
     PromptContentDigestMismatch,
     #[error("validated Pi usage could not be represented by the exact kernel accounting types")]
@@ -6498,8 +7394,9 @@ mod tests {
     };
 
     use super::{
-        OfficePiExecutionStart, OfficePiSessionDisposeOutput, OfficePiSessionDisposeStart,
-        OfficePiSpawnRegistration, OfficePiTurnOutput, OfficePiTurnStart, PiExecutionDriver,
+        NativeExecutionProfileQualificationStart, OfficePiExecutionStart,
+        OfficePiSessionDisposeOutput, OfficePiSessionDisposeStart, OfficePiSpawnRegistration,
+        OfficePiTurnOutput, OfficePiTurnStart, PiExecutionDriver, PiExecutionError,
         PiExecutionOperationId, PiOfficeSessionDisposeCommand, PiOfficeSessionDisposeOperationId,
         PiOfficeTurnCommand, PiOfficeTurnOperationId, PiTaskAttemptPromptCommand,
         PiTaskAttemptPromptOperationId, PiTaskAttemptSessionDisposeCommand,
@@ -6580,6 +7477,39 @@ mod tests {
             error,
             super::PiExecutionError::TaskAttemptSessionKindRequired
         ));
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn qualification_path_rejects_office_session_before_admission() {
+        let fixture = NativeFixture::new("qualification-office-session");
+        let mut store = KernelStore::connect_test().unwrap();
+        let office = found_office_start(&mut store, &fixture, "qualification-office-session");
+        let before_commands = store.command_count().unwrap();
+        let mut driver = PiExecutionDriver::new();
+        let error = driver
+            .admit_native_profile_qualification_spawn_and_register(
+                &mut store,
+                NativeExecutionProfileQualificationStart {
+                    operation: PiExecutionOperationId::parse("qualification-office-session")
+                        .unwrap(),
+                    operating_cycle_id: office.cycle_id,
+                    budget_reservation_id: BudgetReservationId::new(1).unwrap(),
+                    execution_profile_id:
+                        society_kernel::ExecutionProfileId::DETERMINISTIC_PI_HOST_DOUBLE_V1,
+                    expected_generation: AdmissionGeneration::INITIAL,
+                    supervisor_epoch_id: SupervisorEpochId::new(1).unwrap(),
+                    supervisor_epoch_identity: office.epoch_identity,
+                    spawn_request: fixture.spawn_request(),
+                    already_started: false,
+                },
+            )
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            PiExecutionError::QualificationSessionKindRequired
+        ));
+        assert_eq!(store.command_count().unwrap(), before_commands);
         fixture.cleanup();
     }
 
