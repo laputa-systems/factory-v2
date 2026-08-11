@@ -92,7 +92,7 @@ run-society: postgres-test-ready
 	SOCIETY_POSTGRES_TEST_URL='$(SOCIETY_POSTGRES_TEST_URL)' cargo run --quiet --manifest-path applications/correction-latency/Cargo.toml -p correction-latency-harness
 
 # Explicitly paid, noncanonical adapter smoke: 16 actors total,
-# eight native Pi hosts at once, and a fixed $0.05 ceiling. It is pinned to
+# eight native Pi hosts at once, and a fixed $0.04 ceiling. It is pinned to
 # OpenRouter Ling 2.6 Flash with thinking off; another treatment needs a new
 # versioned profile rather than make-variable selection.
 run-society-cheapest-paid-smoke:

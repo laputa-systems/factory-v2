@@ -95,7 +95,7 @@ end-of-cycle aggregate remains separately scoped.
 The separately admitted `forum_isolated_v1` profile is exercised by
 `make run-society-cheapest-paid-smoke`. That reduced adapter smoke runs 16
 actor lifetimes with at most 8 native Pi hosts concurrently, applies a hard
-$0.05 aggregate provider-cost ceiling plus a 3,125 micro-USD per-actor
+$0.04 aggregate provider-cost ceiling plus a 3,125 micro-USD per-actor
 guardrail, and prints a
 world-simulation-style report with each actor's status, tokens, cost, Forum
 reads/posts, and errors. Its actor prompt uses ordinary participant language;

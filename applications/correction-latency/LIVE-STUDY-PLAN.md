@@ -71,21 +71,23 @@ The authorized total is exactly 250,000 micro-USD ($0.25).
 
 | Stage | Allocation | Fixed topology | Per-actor ceiling |
 | --- | ---: | --- | ---: |
-| Cheapest paid adapter smoke | 50,000 micro-USD ($0.05) | 16 noncanonical adapter actors | 3,125 micro-USD ($0.003125) |
+| Native-profile qualification | 10,000 micro-USD ($0.01) | one daemon-owned qualification child | qualification-cycle ceiling |
+| Cheapest paid adapter smoke | 40,000 micro-USD ($0.04) | 16 noncanonical adapter actors | 3,125 micro-USD ($0.003125) |
 | Feasibility pilot | 200,000 micro-USD ($0.20) | 2 pairs × 2 arms × 16 source/successor actors = 64 lifetimes | 3,125 micro-USD ($0.003125) |
 | Substantive study | no allocation | selected only after pilot analysis | requires new approval |
 
-For the pilot, one arm/episode is capped at 50,000 micro-USD and one
-retained/reset pair at 100,000 micro-USD. AuthorizedPilotBudget contains the
-exact integer arithmetic; there is no floating-point allocation or remainder.
-The adapter-smoke runner rounds a binary64 cost upward to micro-USD before
-applying its guardrail.
+The qualification ceiling is a separate 10,000 micro-USD reservation within
+the approved total. For the pilot, one arm/episode is capped at 50,000
+micro-USD and one retained/reset pair at 100,000 micro-USD.
+AuthorizedPilotBudget contains the exact integer arithmetic; there is no
+floating-point allocation or remainder. The adapter-smoke runner rounds a
+binary64 cost upward to micro-USD before applying its guardrail.
 
 ## Stage protocol
 
 ### 1. Optional cheapest paid adapter smoke
 
-make run-society-cheapest-paid-smoke is a fixed $0.05 adapter smoke. It is pinned to the
+make run-society-cheapest-paid-smoke is a fixed $0.04 adapter smoke. It is pinned to the
 approved treatment above and rejects a provider/model override. It retains
 qualification-artifact.json with provider usage, cost, Forum calls, artifact
 digests, and integer guardrails.

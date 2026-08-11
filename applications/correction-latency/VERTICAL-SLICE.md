@@ -211,9 +211,10 @@ adapter smoke into a CL-001 run.
 `LIVE-STUDY-PLAN.md` adds staged live-study planning without changing this
 CL-001 world contract. It fixes a candidate OpenRouter Ling 2.6 Flash,
 thinking-off runtime and partitions the current $0.25 authorization into a
-$0.05 optional noncanonical adapter smoke and a $0.20 two-pair feasibility
-pilot. It withholds substantive-study spend and sample size until pilot
-variance is observed and a new plan is sealed. This is planning material only:
+$0.01 native-profile qualification, a $0.04 optional noncanonical adapter
+smoke, and a $0.20 two-pair feasibility pilot. It withholds substantive-study
+spend and sample size until pilot variance is observed and a new plan is
+sealed. This is planning material only:
 the generic native profile remains unqualified and the daemon-owned canonical
 runner remains a prerequisite.
 

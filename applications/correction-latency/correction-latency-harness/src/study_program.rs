@@ -27,7 +27,8 @@ const ACTOR_POLICY_REVISION_BYTES: &[u8] = b"cl-001|actor-policy|openrouter-ling
 const SAMPLING_CONTRACT_BYTES: &[u8] = b"cl-001|sampling|v1|max-retries=2|base-delay-ms=2000|provider-timeout-ms=300000|provider-max-retries=1|provider-max-retry-delay-ms=30000|compaction=enabled|reserve-tokens=16384|keep-recent-tokens=20000|steering=one-at-a-time|follow-up=one-at-a-time|transport=sse|project-trust=never|telemetry=off|analytics=off|images=blocked";
 
 const AUTHORIZED_TOTAL_MICRO_USD: i64 = 250_000;
-const CHEAPEST_PAID_SMOKE_MICRO_USD: i64 = 50_000;
+const NATIVE_PROFILE_QUALIFICATION_MICRO_USD: i64 = 10_000;
+const CHEAPEST_PAID_SMOKE_MICRO_USD: i64 = 40_000;
 const CHEAPEST_PAID_SMOKE_ACTOR_LIFETIMES: u16 = 16;
 const PILOT_MICRO_USD: i64 = 200_000;
 const PILOT_PAIR_COUNT: usize = 2;
@@ -43,6 +44,11 @@ const AUTHORIZED_TOTAL: UsdMicros = match UsdMicros::new(AUTHORIZED_TOTAL_MICRO_
     Some(value) => value,
     None => panic!("authorized total must be nonnegative"),
 };
+const NATIVE_PROFILE_QUALIFICATION_TOTAL: UsdMicros =
+    match UsdMicros::new(NATIVE_PROFILE_QUALIFICATION_MICRO_USD) {
+        Some(value) => value,
+        None => panic!("native profile qualification total must be nonnegative"),
+    };
 const CHEAPEST_PAID_SMOKE_TOTAL: UsdMicros = match UsdMicros::new(CHEAPEST_PAID_SMOKE_MICRO_USD) {
     Some(value) => value,
     None => panic!("cheapest paid smoke total must be nonnegative"),
@@ -67,6 +73,7 @@ const PAIR_TOTAL: UsdMicros = match UsdMicros::new(PAIR_MICRO_USD) {
 /// The three stages stay distinct in all planning and reporting.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StudyStage {
+    NativeProfileQualification,
     CheapestPaidAdapterSmoke,
     FeasibilityPilot,
     SubstantiveStudy,
@@ -76,6 +83,7 @@ impl StudyStage {
     /// Stable stage label for a sealed application artifact.
     pub const fn name(self) -> &'static str {
         match self {
+            Self::NativeProfileQualification => "native-profile-qualification",
             Self::CheapestPaidAdapterSmoke => "cheapest-paid-adapter-smoke",
             Self::FeasibilityPilot => "feasibility-pilot",
             Self::SubstantiveStudy => "substantive-study",
@@ -223,13 +231,15 @@ impl CanonicalLiveRuntimeProfile {
 
 /// The complete $0.25 authorization, allocated before any provider call.
 ///
-/// `$0.05` is reserved for an optional noncanonical adapter smoke. `$0.20` is
-/// reserved for exactly two canonical pilot pairs. Nothing here authorizes a
-/// substantive study: its pair count and spend must be pre-registered later
-/// using observed pilot variance and the declared precision targets.
+/// `$0.01` is reserved for native-profile qualification, `$0.04` for an
+/// optional noncanonical adapter smoke, and `$0.20` for exactly two canonical
+/// pilot pairs. Nothing here authorizes a substantive study: its pair count
+/// and spend must be pre-registered later using observed pilot variance and
+/// the declared precision targets.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AuthorizedPilotBudget {
     total: UsdMicros,
+    native_profile_qualification: UsdMicros,
     cheapest_paid_smoke: UsdMicros,
     pilot: UsdMicros,
 }
@@ -239,6 +249,7 @@ impl AuthorizedPilotBudget {
     pub const fn canonical() -> Self {
         Self {
             total: AUTHORIZED_TOTAL,
+            native_profile_qualification: NATIVE_PROFILE_QUALIFICATION_TOTAL,
             cheapest_paid_smoke: CHEAPEST_PAID_SMOKE_TOTAL,
             pilot: PILOT_TOTAL,
         }
@@ -246,6 +257,10 @@ impl AuthorizedPilotBudget {
 
     pub const fn total(self) -> UsdMicros {
         self.total
+    }
+
+    pub const fn native_profile_qualification(self) -> UsdMicros {
+        self.native_profile_qualification
     }
 
     pub const fn cheapest_paid_smoke(self) -> UsdMicros {
@@ -553,10 +568,14 @@ mod tests {
     fn authorized_budget_is_exactly_partitioned_without_rounding() {
         let budget = AuthorizedPilotBudget::canonical();
         assert_eq!(budget.total().value(), 250_000);
-        assert_eq!(budget.cheapest_paid_smoke().value(), 50_000);
+        assert_eq!(budget.native_profile_qualification().value(), 10_000);
+        assert_eq!(budget.cheapest_paid_smoke().value(), 40_000);
         assert_eq!(budget.pilot().value(), 200_000);
         assert_eq!(
-            budget.cheapest_paid_smoke().checked_add(budget.pilot()),
+            budget
+                .native_profile_qualification()
+                .checked_add(budget.cheapest_paid_smoke())
+                .and_then(|pre_pilot| pre_pilot.checked_add(budget.pilot())),
             Some(budget.total())
         );
         assert_eq!(budget.cheapest_paid_smoke_actor_lifetimes(), 16);

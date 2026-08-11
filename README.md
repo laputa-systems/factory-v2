@@ -62,7 +62,7 @@ The separately admitted `forum_isolated_v1` profile gives an actor a natural,
 digest-bound Forum prompt and exactly two custom tools—read and post—with no
 shell, search, general filesystem, or native-child capability. `make
 run-society-cheapest-paid-smoke` runs a reduced adapter smoke of 16 actor lifetimes,
-with at most 8 native Pi hosts at once and a fixed $0.05 aggregate provider-
+with at most 8 native Pi hosts at once and a fixed $0.04 aggregate provider-
 cost ceiling. It is pinned to OpenRouter `inclusionai/ling-2.6-flash` with
 thinking off; another provider/model requires a new versioned profile, not a
 make-variable override. It reports per-actor tokens, cost, reads, posts, and
