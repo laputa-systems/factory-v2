@@ -1249,7 +1249,7 @@ impl Fixture {
         let runtime = RuntimeIdentity {
             node_version: NodeRuntimeVersion::parse(node_version).unwrap(),
             adapter_version: AdapterVersion::V1,
-            pi_sdk_version: PiSdkVersion::V0830,
+            pi_sdk_version: PiSdkVersion::V0841,
             node_executable_blake3: node_digest.clone(),
             lockfile_blake3: double_digest.clone(),
             adapter_build_blake3: double_digest.clone(),
@@ -1345,7 +1345,7 @@ impl Fixture {
             runtime: RuntimeIdentity {
                 node_version: NodeRuntimeVersion::parse(node_version()).unwrap(),
                 adapter_version: AdapterVersion::V1,
-                pi_sdk_version: PiSdkVersion::V0830,
+                pi_sdk_version: PiSdkVersion::V0841,
                 node_executable_blake3: node_digest,
                 lockfile_blake3: lockfile_digest,
                 adapter_build_blake3: entrypoint_digest,

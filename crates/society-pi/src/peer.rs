@@ -206,7 +206,7 @@ struct ActiveDispose {
     final_usage_sequence: Option<u64>,
 }
 
-/// The terminal evidence path Pi 0.83 actually exposes for an admitted
+/// The terminal evidence path Pi 0.84 actually exposes for an admitted
 /// Prompt. Non-lifecycle projected events remain sealed evidence, but the
 /// lifecycle facts that can certify a charged outcome are strictly ordered.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1367,7 +1367,7 @@ mod peer_tests {
         RuntimeIdentity {
             node_version: crate::protocol::NodeRuntimeVersion::parse("v22.19.0").unwrap(),
             adapter_version: AdapterVersion::V1,
-            pi_sdk_version: PiSdkVersion::V0830,
+            pi_sdk_version: PiSdkVersion::V0841,
             node_executable_blake3: digest_value(),
             lockfile_blake3: digest_value(),
             adapter_build_blake3: digest_value(),

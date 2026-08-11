@@ -638,7 +638,7 @@ pub enum PiPeerReceiptState {
 /// `pi_transitive_package_set` identifies a supplied package-set manifest. It
 /// does **not** prove an arbitrary adapter entrypoint imports that manifest;
 /// the adapter's v1 runtime report and the separately pinned host qualification
-/// remain the evidence for Pi 0.83 behavior.
+/// remain the evidence for Pi 0.84 behavior.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct QualifiedHostExecution {
     pub node_executable: VerifiedArtifact,

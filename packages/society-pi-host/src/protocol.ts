@@ -9,7 +9,7 @@ import { isAbsolute, normalize } from "node:path";
 
 export const ADAPTER_PROTOCOL_VERSION = "society-pi-host/v4" as const;
 export const ADAPTER_VERSION = "1" as const;
-export const PINNED_PI_SDK_VERSION = "0.83.0" as const;
+export const PINNED_PI_SDK_VERSION = "0.84.1" as const;
 export const PINNED_PROVIDER = "openrouter" as const;
 /** The original paid treatment remains the default profile model. */
 export const PINNED_MODEL = "deepseek/deepseek-v4-flash-0731" as const;
@@ -733,7 +733,7 @@ export interface MaterializedTranscriptFlushReceiptV1 {
 	readonly firstUserPrompt: FirstUserPromptReceipt;
 }
 
-/** Pi 0.83 lazily creates a session JSONL only after durable message activity. */
+/** Pi 0.84 lazily creates a session JSONL only after durable message activity. */
 export interface UnmaterializedTranscriptFlushReceiptV1 {
 	readonly format: "pi_session_manager_jsonl_v3";
 	readonly sessionIdentity: SessionIdentity;

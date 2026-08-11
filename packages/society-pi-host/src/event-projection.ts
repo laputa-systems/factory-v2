@@ -1,6 +1,6 @@
 /**
  * The host is the evidence boundary, not the provenance curator. It preserves
- * every current Pi 0.83 AgentSessionEvent in a closed, JSON-safe union; Rust
+ * every current Pi 0.84 AgentSessionEvent in a closed, JSON-safe union; Rust
  * decides which facts become curated operational influence and which remain
  * sealed forensic evidence.
  */

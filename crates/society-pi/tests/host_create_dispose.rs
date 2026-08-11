@@ -116,7 +116,7 @@ fn committed_host_create_then_dispose_is_sealed_without_a_provider_call() {
     let runtime = RuntimeIdentity {
         node_version: NodeRuntimeVersion::parse(node_version.trim()).unwrap(),
         adapter_version: AdapterVersion::V1,
-        pi_sdk_version: PiSdkVersion::V0830,
+        pi_sdk_version: PiSdkVersion::V0841,
         node_executable_blake3: Blake3Digest::parse(DIGEST).unwrap(),
         lockfile_blake3: Blake3Digest::parse(DIGEST).unwrap(),
         adapter_build_blake3: Blake3Digest::parse(&adapter_build_blake3).unwrap(),

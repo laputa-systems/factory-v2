@@ -613,7 +613,7 @@ class UsageInvariantError extends Error {
 /**
  * Pi exposes cumulative counters. Regressing counters or a cost bit-pattern
  * is execution-profile drift, never a second billable observation. `total`
- * follows Pi 0.83's documented sum-of-buckets semantics exactly.
+ * follows Pi 0.84's documented sum-of-buckets semantics exactly.
  */
 function assertUsageSnapshotAdmissible(previous: UsageTotals | undefined, current: UsageTotals): void {
 	const summed = current.inputTokens + current.outputTokens + current.cacheReadTokens + current.cacheWriteTokens;

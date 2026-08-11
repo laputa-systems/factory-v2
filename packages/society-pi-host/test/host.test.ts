@@ -35,8 +35,8 @@ test("host: remains inert through AdapterReady and creates exactly one session o
 	assert.equal(runtime.createCount, 0);
 	assert.equal(frames.length, 1);
 	assert.equal(frames[0]?.event, "AdapterReady");
-	if (frames[0]?.event === "AdapterReady") assert.equal(frames[0].runtime.piSdkVersion, "0.83.0");
-	assert.equal(resolvedInstalledPiSdkVersion(), "0.83.0");
+	if (frames[0]?.event === "AdapterReady") assert.equal(frames[0].runtime.piSdkVersion, "0.84.1");
+	assert.equal(resolvedInstalledPiSdkVersion(), "0.84.1");
 
 	await host.accept(decodeCommand(1, "CreateSession", createSessionPayload()));
 	assert.equal(runtime.createCount, 1);

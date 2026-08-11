@@ -23,7 +23,7 @@ const spawnNonce = requireArgument("--spawn-nonce");
 const runtime = {
 	nodeVersion: process.version,
 	adapterVersion: "1",
-	piSdkVersion: "0.83.0",
+	piSdkVersion: "0.84.1",
 	nodeExecutableBlake3: requireArgument("--node-executable-blake3"),
 	lockfileBlake3: requireArgument("--lockfile-blake3"),
 	adapterBuildBlake3: requireArgument("--adapter-build-blake3"),

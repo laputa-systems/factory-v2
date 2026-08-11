@@ -15,7 +15,7 @@ use crate::forum::{ForumSessionContractV1, ForumToolName};
 
 pub const ADAPTER_PROTOCOL_VERSION: &str = "society-pi-host/v4";
 pub const ADAPTER_VERSION: &str = "1";
-pub const PINNED_PI_SDK_VERSION: &str = "0.83.0";
+pub const PINNED_PI_SDK_VERSION: &str = "0.84.1";
 pub const PINNED_PROVIDER: &str = "openrouter";
 pub const PINNED_MODEL: &str = "deepseek/deepseek-v4-flash-0731";
 pub const PINNED_CANONICAL_MODEL_SLUG: &str = "deepseek/deepseek-v4-flash-20260731";
@@ -392,7 +392,7 @@ pub enum AdapterVersion {
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PiSdkVersion {
-    V0830,
+    V0841,
 }
 
 impl ToolProfile {
@@ -684,7 +684,7 @@ pub struct RuntimeIdentity {
 }
 impl RuntimeIdentity {
     pub fn assert_v1(&self) -> Result<(), ProtocolError> {
-        if self.adapter_version != AdapterVersion::V1 || self.pi_sdk_version != PiSdkVersion::V0830
+        if self.adapter_version != AdapterVersion::V1 || self.pi_sdk_version != PiSdkVersion::V0841
         {
             return Err(ProtocolError::InvalidFrame("runtime identity"));
         }
@@ -2689,7 +2689,7 @@ closed_enum!(transport,Transport,{"sse"=>Sse});
 closed_enum!(project_trust,ProjectTrust,{"never"=>Never});
 closed_enum!(images,Images,{"blocked"=>Blocked});
 closed_enum!(adapter_version,AdapterVersion,{"1"=>V1});
-closed_enum!(pi_sdk_version,PiSdkVersion,{"0.83.0"=>V0830});
+closed_enum!(pi_sdk_version,PiSdkVersion,{"0.84.1"=>V0841});
 closed_enum!(command_name,CommandName,{"CreateSession"=>CreateSession,"Prompt"=>Prompt,"FollowUp"=>FollowUp,"Steer"=>Steer,"Abort"=>Abort,"GetState"=>GetState,"Dispose"=>Dispose,"ForumToolResult"=>ForumToolResult});
 closed_enum!(adapter_phase,AdapterPhase,{"Inert"=>Inert,"Creating"=>Creating,"Ready"=>Ready,"Closing"=>Closing,"Disposed"=>Disposed,"Fatal"=>Fatal});
 closed_enum!(session_liveness,SessionLiveness,{"inert"=>Inert,"creating"=>Creating,"idle"=>Idle,"active"=>Active,"closing"=>Closing,"disposed"=>Disposed,"fatal"=>Fatal});

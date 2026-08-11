@@ -5,7 +5,7 @@ import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
 import { projectAgentSessionEvent } from "../src/event-projection.js";
 
-test("event projection: every Pi 0.83 event variant has a closed field-preserving JSON-safe projection", () => {
+test("event projection: every Pi 0.84 event variant has a closed field-preserving JSON-safe projection", () => {
 	const marker = { nested: { exact: "preserved" }, list: [1, true, null] };
 	const fixtures: readonly AgentSessionEvent[] = [
 		{ type: "agent_start" },
