@@ -1,6 +1,6 @@
 .PHONY: test postgres-test-ready postgres-test-clean run-society run-society-cheapest-paid-smoke
 POSTGRES_EXPECTED_VERSION_NUM ?= 180004
-POSTGRES_SCHEMA_REVISION ?= society-kernel-postgres-schema-v20
+POSTGRES_SCHEMA_REVISION ?= society-kernel-postgres-schema-v1
 CARGO_TEST_THREADS ?= 8
 SOCIETY_POSTGRES_TEST_URL ?= postgresql://$(shell id -un)@localhost/postgres
 SOCIETY_POSTGRES_TEST_TEMPLATE_DB ?= society_test_template

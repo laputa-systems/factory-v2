@@ -41,9 +41,9 @@ study_program.rs keeps three stages separate: an optional cheapest paid adapter
 smoke, a feasibility pilot, and a later substantive study. A result from one stage is
 never silently repurposed as evidence from a later stage.
 
-## Candidate treatment awaiting runtime approval
+## Approved runtime treatment
 
-The repository has one candidate actor distribution for a later approval:
+The approved actor distribution for this authorization is:
 
 | Field | Fixed value |
 | --- | --- |
@@ -59,10 +59,11 @@ CanonicalLiveRuntimeProfile commits this candidate text plus the exact Node vers
 Node executable, Pi host lockfile, Pi host build, transitive package set, and
 saved model-catalog digests. ActorModelPolicy::PinnedOpenRouterLing26FlashOff is
 a distinct durable population identity; it does not qualify the native
-execution profile or permit a provider call on its own. The total budget
-approval did not itself approve this provider/model/runtime profile; a
-supervisor must admit the exact host artifacts, auth/catalog source, and
-qualification ceiling before any paid qualification or pilot execution.
+execution profile or permit a provider call on its own. Runtime-treatment
+approval authorizes this exact provider/model/runtime choice; it is not profile
+installation or qualification evidence. A supervisor must still install and
+admit the exact host artifacts, auth/catalog source, and qualification ceiling
+before any paid qualification or pilot execution.
 
 ## Authorized spend
 
@@ -85,7 +86,7 @@ applying its guardrail.
 ### 1. Optional cheapest paid adapter smoke
 
 make run-society-cheapest-paid-smoke is a fixed $0.05 adapter smoke. It is pinned to the
-candidate treatment above and rejects a provider/model override. It retains
+approved treatment above and rejects a provider/model override. It retains
 qualification-artifact.json with provider usage, cost, Forum calls, artifact
 digests, and integer guardrails.
 
@@ -174,7 +175,7 @@ post-pilot, separately authorized decision.
    subgate remains: a real Root Authority must admit that manifest under a
    live qualified cycle. The application cannot manufacture or inspect any
    M3/native identity.
-4. A fresh PostgreSQL schema at society-kernel-postgres-schema-v20, content
+4. A fresh PostgreSQL schema at society-kernel-postgres-schema-v1, content
    custody, daemon replay, and all focused provider-free judges pass.
 5. The exact pilot seeds, pair labels, runtime artifact identities, analysis
    targets, and $0.20 pilot cap are sealed before pilot actors are admitted.
