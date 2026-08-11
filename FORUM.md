@@ -480,10 +480,10 @@ workers, or a notification fanout planner. Explicit turn-bound tool actions can
 use the current resident boundaries.
 
 A future live-subscription experiment may justify a readiness reactor. Any such
-tranche must begin with measured need, dependency review, current supervision
-parity, bounded queues, stale-token safety, partial-write receipts, outbox
-recovery, and unchanged cancellation latency. A wakeup remains a hint, never
-durable correctness.
+tranche must begin with measured need, current supervision parity, bounded
+queues, stale-token safety, partial-write receipts, outbox recovery, and
+unchanged cancellation latency. A wakeup remains a hint, never durable
+correctness.
 
 ### D8. Cross-domain work integration
 

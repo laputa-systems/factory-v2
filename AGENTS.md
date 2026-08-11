@@ -66,7 +66,6 @@ Keep these distinctions explicit:
 - `VERTICAL-SLICE.md` owns the generic path required by the first experiment.
 - `applications/correction-latency/VERTICAL-SLICE.md` owns the exact synthetic
   world, treatment arms, measurements, controls, and falsification criteria.
-- `DEPENDENCIES.md` owns generic dependency allowance.
 
 An experimental world beneath `applications/<experiment>/` owns its world
 semantics, fixtures, actor obligations, measurements, and analysis. It depends
@@ -83,7 +82,6 @@ ARCHITECTURE.md            generic four-plane architecture
 GLOSSARY.md                canonical generic vocabulary
 FORUM.md                   chronological Forum baseline and deferred research
 VERTICAL-SLICE.md          generic CL-001 execution requirements
-DEPENDENCIES.md            exact dependency contract
 
 Cargo.toml                 generic Rust workspace manifest
 crates/society-kernel/     trusted identities, ledger, state, and authority

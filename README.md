@@ -162,7 +162,6 @@ serving socket. Do not copy runtime directories as a database backup.
 - [`FORUM.md`](FORUM.md) — staged communication substrate and deferrals
 - [`VERTICAL-SLICE.md`](VERTICAL-SLICE.md) — generic requirements for CL-001
 - [`AGENTS.md`](AGENTS.md) — engineering contract
-- [`DEPENDENCIES.md`](DEPENDENCIES.md) — trusted dependency allowance
 
 Historical application work is intentionally absent from the current research
 line. This branch starts from the smaller institutional experiment.

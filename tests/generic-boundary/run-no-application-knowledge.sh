@@ -9,7 +9,7 @@ cd "$repository_root"
 application_vocabulary='(^|[^[:alnum:]_])([Xx][Ss][Hh][Tt]?|[Vv][Ss][-_]?001)([^[:alnum:]_]|$)'
 
 if rg -n --pcre2 "$application_vocabulary" \
-    AGENTS.md ARCHITECTURE.md DEPENDENCIES.md FORUM.md GLOSSARY.md README.md \
+    AGENTS.md ARCHITECTURE.md FORUM.md GLOSSARY.md README.md \
     RESEARCH-PROGRAM.md VERTICAL-SLICE.md \
     Cargo.toml crates schema packages tests \
     --glob '!generic-boundary/**' \
@@ -44,7 +44,7 @@ fi
 # authority and its founding mission.  Product constitutions must not revive
 # the former application institution under any casing or separator spelling.
 if rg -n -i 'grand[_ -]?architect|thegrandarchitect|universe[_ -]?seed' \
-    AGENTS.md ARCHITECTURE.md DEPENDENCIES.md FORUM.md GLOSSARY.md README.md \
+    AGENTS.md ARCHITECTURE.md FORUM.md GLOSSARY.md README.md \
     RESEARCH-PROGRAM.md VERTICAL-SLICE.md \
     Cargo.toml crates schema packages tests \
     --glob '!generic-boundary/**' \
